@@ -96,7 +96,14 @@ impl Method {
         if let Some(sgs) = Self::Assumption.execute_depth(goal, depth + 1) {
             if sgs.is_empty() { return Some(sgs); }
         }
-        // 2. Try elim (break down assumptions)
+        // 2. Try loaded HOL theorems (resolve)
+        if let Some(sgs) = Self::auto_resolve(goal) {
+            if sgs.is_empty() { return Some(sgs); }
+            if let Some(sgs2) = Self::Auto.execute_depth(&sgs[0], depth + 1) {
+                return Some(sgs2);
+            }
+        }
+        // 3. Try elim (break down assumptions)
         if let Some(sgs) = Self::auto_elim(goal) {
             return Self::Auto.execute_depth(&sgs[0], depth + 1).or(Some(sgs));
         }
@@ -114,6 +121,14 @@ impl Method {
         }
         // 4. Fall back to simp
         Self::Simp(crate::core::simplifier::beta_simp()).execute_depth(goal, depth + 1)
+    }
+
+    fn auto_resolve(goal: &Goal) -> Option<Vec<Goal>> {
+        use crate::hol::hol_loader::HolTheoremDb;
+        let db = HolTheoremDb::get();
+        let outcomes = crate::core::tactic::resolve_tac(&db.all).apply(goal);
+        // Take first successful outcome
+        outcomes.into_iter().next()
     }
 
     fn auto_elim(goal: &Goal) -> Option<Vec<Goal>> {

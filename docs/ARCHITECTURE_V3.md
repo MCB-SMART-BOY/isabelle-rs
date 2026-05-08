@@ -379,8 +379,8 @@ Phase 8: 持久化/Web        ████████ ✅ 完成 (SQLite cache 
 A1: 术语解析器补全 (0.5天)
     [| A; B |] ==> C  /  !!x. P(x)  /  A ~= B  /  属性解析
 
-A2: HOL 定理加载器 (1天)
-    解析 191 条内联 lemma → 结构化 Term → assume 注册
+A2: HOL 定理加载器 (1天)      ✅ 完成
+    解析 69 条内联 lemma → 结构化 Term → assume 注册
     按 [simp]/[intro]/[elim]/[iff] 分类
 
 A3: Auto/Simp 集成 (1天)

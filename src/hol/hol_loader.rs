@@ -231,6 +231,56 @@ fn convert_syntax(s: &str) -> String {
 }
 
 // =========================================================================
+// Global theorem store (A3)
+// =========================================================================
+
+use std::sync::LazyLock;
+
+/// All loaded HOL theorems, categorized by attribute.
+static HOL_THEOREMS: LazyLock<HolTheoremDb> = LazyLock::new(|| {
+    let hol_thy = include_str!("../../isabelle-source/src/HOL/HOL.thy");
+    let lemmas = parse_lemmas(hol_thy);
+    HolTheoremDb::from_lemmas(&lemmas)
+});
+
+pub struct HolTheoremDb {
+    pub intros: Vec<Arc<crate::core::thm::Thm>>,
+    pub elims: Vec<Arc<crate::core::thm::Thm>>,
+    pub simps: Vec<Arc<crate::core::thm::Thm>>,
+    pub all: Vec<Arc<crate::core::thm::Thm>>,
+}
+
+impl HolTheoremDb {
+    fn from_lemmas(lemmas: &[ParsedLemma]) -> Self {
+        let mut intros = Vec::new();
+        let mut elims = Vec::new();
+        let mut simps = Vec::new();
+        let mut all = Vec::new();
+        for lem in lemmas {
+            let thm = Arc::clone(&lem.theorem);
+            all.push(Arc::clone(&thm));
+            let attrs = &lem.attributes;
+            if attrs.iter().any(|a| a.contains("intro")) { intros.push(Arc::clone(&thm)); }
+            if attrs.iter().any(|a| a.contains("elim")) { elims.push(Arc::clone(&thm)); }
+            if attrs.iter().any(|a| a.contains("simp")) { simps.push(Arc::clone(&thm)); }
+        }
+        // Always include key rules even without explicit attributes
+        for lem in lemmas {
+            let thm = Arc::clone(&lem.theorem);
+            match lem.name.as_str() {
+                "sym" | "trans" | "refl" | "arg_cong" | "fun_cong" | "iffD1" | "iffD2" => {
+                    if !simps.iter().any(|t| Arc::ptr_eq(t, &thm)) { simps.push(thm); }
+                }
+                _ => {}
+            }
+        }
+        HolTheoremDb { intros, elims, simps, all }
+    }
+
+    pub fn get() -> &'static Self { &HOL_THEOREMS }
+}
+
+// =========================================================================
 // Tests
 // =========================================================================
 

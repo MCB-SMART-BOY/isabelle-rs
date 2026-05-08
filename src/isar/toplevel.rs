@@ -259,4 +259,17 @@ mod tests {
         let r = top.exec("foobar");
         assert!(r.unwrap().contains("unknown"));
     }
+
+    #[test]
+    fn test_equality_sym() {
+        let pure = Theory::pure();
+        let mut top = Toplevel::new(pure);
+
+        // A = B --> B = A  — uses sym from HOL.thy
+        top.exec("lemma eq_sym: \"A = B --> B = A\"").unwrap();
+        top.exec("proof").unwrap();
+        top.exec("apply auto").unwrap();
+        top.exec("done").unwrap();
+        assert!(matches!(top.state, ToplevelState::Theory { .. }));
+    }
 }
