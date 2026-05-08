@@ -9,6 +9,9 @@
 
 use crate::core::theory::Theory;
 use crate::core::types::{Sort, Typ};
+use std::sync::Arc;
+use crate::core::thm::{CTerm, ThmKernel};
+use crate::isar::term_parser::parse_term;
 
 /// Load the HOL theory by parsing Isabelle's HOL.thy declarations.
 pub fn load_hol_theory(hol_thy: &str) -> Theory {
@@ -170,6 +173,64 @@ pub fn load_hol_from_file() -> Theory {
 }
 
 // =========================================================================
+// Lemma parsing (Route A)
+// =========================================================================
+
+pub struct ParsedLemma {
+    pub name: String,
+    pub attributes: Vec<String>,
+    pub theorem: Arc<crate::core::thm::Thm>,
+}
+
+/// Parse inline lemmas from .thy source.
+pub fn parse_lemmas(source: &str) -> Vec<ParsedLemma> {
+    let mut lemmas = Vec::new();
+    for line in source.lines() {
+        let t = line.trim();
+        if !t.starts_with("lemma ") && !t.starts_with("theorem ") { continue; }
+        if let Some(l) = parse_one(t) { lemmas.push(l); }
+    }
+    lemmas
+}
+
+fn parse_one(line: &str) -> Option<ParsedLemma> {
+    let rest = line.strip_prefix("lemma ")
+        .or_else(|| line.strip_prefix("theorem "))?;
+    let (name_part, stmt_part) = rest.split_once(": \"")?;
+    let stmt = stmt_part.strip_suffix("\"")?;
+    let (name, attrs) = if let Some(b) = name_part.find('[') {
+        (name_part[..b].trim(), parse_attrs(&name_part[b..]))
+    } else {
+        (name_part.trim(), Vec::new())
+    };
+    let conv = convert_syntax(stmt);
+    let term = parse_term(&conv)?;
+    let thm = Arc::new(ThmKernel::assume(CTerm::certify(term)));
+    Some(ParsedLemma { name: name.to_string(), attributes: attrs, theorem: thm })
+}
+
+fn parse_attrs(s: &str) -> Vec<String> {
+    s.trim_start_matches('[').trim_end_matches(']')
+        .split(',').map(|a| a.trim().to_string()).collect()
+}
+
+fn convert_syntax(s: &str) -> String {
+    s.replace("\\<lbrakk>", "[|")
+     .replace("\\<rbrakk>", "|]")
+     .replace("\\<Longrightarrow>", "==>")
+     .replace("\\<And>", "!!")
+     .replace("\\<not>", "~")
+     .replace("\\<noteq>", "~=")
+     .replace("\\<forall>", "ALL")
+     .replace("\\<exists>", "EX")
+     .replace("\\<longrightarrow>", "-->")
+     .replace("\\<and>", "&")
+     .replace("\\<or>", "|")
+     .replace("\\<longleftrightarrow>", "=")
+     .replace("\\<equiv>", "=")
+}
+
+// =========================================================================
 // Tests
 // =========================================================================
 
@@ -214,5 +275,40 @@ mod tests {
         let (name, typ_str, _defn) = parse_definition(src).unwrap();
         assert_eq!(name, "True");
         assert_eq!(typ_str, "bool");
+    }
+}
+
+#[cfg(test)]
+mod lemma_tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_sym() {
+        let src = "lemma sym: \"s = t \\<Longrightarrow> t = s\"";
+        let lemmas = parse_lemmas(src);
+        assert_eq!(lemmas.len(), 1);
+        assert_eq!(lemmas[0].name, "sym");
+    }
+
+    #[test]
+    fn test_parse_with_attrs() {
+        let src = "lemma trans_sym [Pure.elim?]: \"r = s \\<Longrightarrow> t = s \\<Longrightarrow> r = t\"";
+        let lemmas = parse_lemmas(src);
+        assert_eq!(lemmas.len(), 1);
+        assert_eq!(lemmas[0].name, "trans_sym");
+        assert!(!lemmas[0].attributes.is_empty());
+    }
+
+    #[test]
+    fn test_load_real_hol() {
+        let hol_thy = include_str!("../../isabelle-source/src/HOL/HOL.thy");
+        let lemmas = parse_lemmas(hol_thy);
+        let count = lemmas.len();
+        eprintln!("Loaded {} lemmas from HOL.thy", count);
+        assert!(count > 30, "expected >30 lemmas, got {}", count);
+        let names: Vec<&str> = lemmas.iter().map(|l| l.name.as_str()).collect();
+        assert!(names.contains(&"sym"));
+        assert!(names.contains(&"disjI1"));
+        assert!(names.contains(&"conjI"));
     }
 }
