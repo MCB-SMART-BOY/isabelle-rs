@@ -37,6 +37,7 @@ impl Default for CheckContext {
 
 pub trait CommandExecutor: Send + Sync {
     fn execute(&self, command: &Command, ctx: &mut CheckContext) -> Vec<Diagnostic>;
+    fn clone_box(&self) -> Box<dyn CommandExecutor>;
 }
 
 // =========================================================================
@@ -54,6 +55,10 @@ impl RealExecutor {
 }
 
 impl CommandExecutor for RealExecutor {
+    fn clone_box(&self) -> Box<dyn CommandExecutor> {
+        Box::new(RealExecutor { theory: Arc::clone(&self.theory) })
+    }
+
     fn execute(&self, cmd: &Command, ctx: &mut CheckContext) -> Vec<Diagnostic> {
         let mut diags = Vec::new();
         let mut top = Toplevel::new(Arc::clone(&self.theory));

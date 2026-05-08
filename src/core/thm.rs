@@ -516,13 +516,60 @@ impl ThmKernel {
     }
 
     // =================================================================
+    // Primitive rules: forall_intr and forall_elim
+    // =================================================================
+
+    pub fn forall_intr(x_name: &str, x_typ: Typ, thm: &Thm) -> Thm {
+        for hyp in thm.hyps.iter() {
+            if free_in(x_name, hyp.term()) {
+                panic!("forall_intr: '{x_name}' free in hypotheses");
+            }
+        }
+        let all_term = Pure::mk_all(x_name, x_typ.clone(), thm.prop.term().clone());
+        Thm {
+            hyps: thm.hyps.clone(),
+            prop: CTerm::certify(all_term),
+            maxidx: thm.maxidx,
+            derivation: Derivation::Rule {
+                name: "forall_intr",
+                premises: vec![ThmDeriv { serial: thm.serial, prop: thm.prop.clone() }],
+            },
+            serial: new_serial(),
+        }
+    }
+
+    pub fn forall_elim(ct: CTerm, thm: &Thm) -> Thm {
+        let (_, p_body) = Pure::dest_all(thm.prop.term())
+            .expect("forall_elim: not a forall proposition");
+        let instantiated = super::term_subst::subst_bounds(&[ct.term().clone()], p_body);
+        Thm {
+            hyps: thm.hyps.clone(),
+            prop: CTerm::certify(instantiated),
+            maxidx: usize::max(thm.maxidx, ct.maxidx()),
+            derivation: Derivation::Rule {
+                name: "forall_elim",
+                premises: vec![ThmDeriv { serial: thm.serial, prop: thm.prop.clone() }],
+            },
+            serial: new_serial(),
+        }
+    }
+
+    // =================================================================
     // Derived rule: A ==> A  (identity)
     // =================================================================
 
-    /// Prove `⊢ A ==> A` using assume + implies_intr.
     pub fn trivial(ct: CTerm) -> Thm {
         let assumed = ThmKernel::assume(ct.clone());
         ThmKernel::implies_intr(&ct, &assumed)
+    }
+}
+
+fn free_in(var_name: &str, term: &Term) -> bool {
+    match term {
+        Term::Free { name, .. } => name.as_ref() == var_name,
+        Term::Const { .. } | Term::Bound(_) | Term::Var { .. } => false,
+        Term::Abs { body, .. } => free_in(var_name, body),
+        Term::App { func, arg } => free_in(var_name, func) || free_in(var_name, arg),
     }
 }
 

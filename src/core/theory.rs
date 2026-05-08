@@ -306,7 +306,7 @@ mod tests {
 
         ctx.fix("x", Typ::base("nat"));
         assert_eq!(ctx.fixes().len(), 1);
-        assert_eq!(ctx.fixes()[0].n.as_ref(), "x");
+        assert_eq!(ctx.fixes()[0].0.as_ref(), "x");
 
         ctx.assume(Term::const_("P", Typ::base("prop")));
         assert_eq!(ctx.assumptions().len(), 1);

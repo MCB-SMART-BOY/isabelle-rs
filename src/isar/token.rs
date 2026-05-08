@@ -423,10 +423,10 @@ mod tests {
         let toks = tokenize("==> !! == =>");
         let tokens = filter_tokens(&toks);
         assert_eq!(tokens.len(), 4);
-        match &tokens[0].kind { TokenKind::Symbol(s) => assert_eq!(k.as_ref(), "==>"), _ => panic!() }
-        match &tokens[1].kind { TokenKind::Symbol(s) => assert_eq!(k.as_ref(), "!!"), _ => panic!() }
-        match &tokens[2].kind { TokenKind::Symbol(s) => assert_eq!(k.as_ref(), "=="), _ => panic!() }
-        match &tokens[3].kind { TokenKind::Symbol(s) => assert_eq!(k.as_ref(), "=>"), _ => panic!() }
+        match &tokens[0].kind { TokenKind::Symbol(s) => assert_eq!(s.as_ref(), "==>"), _ => panic!() }
+        match &tokens[1].kind { TokenKind::Symbol(s) => assert_eq!(s.as_ref(), "!!"), _ => panic!() }
+        match &tokens[2].kind { TokenKind::Symbol(s) => assert_eq!(s.as_ref(), "=="), _ => panic!() }
+        match &tokens[3].kind { TokenKind::Symbol(s) => assert_eq!(s.as_ref(), "=>"), _ => panic!() }
     }
 
     #[test]

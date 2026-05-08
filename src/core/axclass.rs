@@ -93,7 +93,7 @@ mod tests {
         let def = ClassDef {
             name: Arc::from("order"),
             super_classes: vec![Arc::from("type")],
-            class_var: Typ::free("'a", Sort::singleton(intern("order"))),
+            class_var: Typ::free("'a", Sort::singleton("order")),
             axioms: vec![],
         };
         ax.define_class(def);

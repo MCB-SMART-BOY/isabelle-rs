@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    mpsc, Arc,
+    mpsc,
 };
 
 use super::lsp_types::{JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, RequestId};

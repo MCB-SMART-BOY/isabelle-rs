@@ -147,8 +147,8 @@ fn unify_dpairs(
         // ── Rigid-Rigid (App) ── simplify by decomposing
         (Term::App { func: f1, arg: a1 }, Term::App { func: f2, arg: a2 }) => {
             let mut new_pairs = rest.to_vec();
-            new_pairs.push((rbinder.clone(), f1.as_ref().clone(), f1.as_ref().clone()));
-            new_pairs.push((rbinder.clone(), f1.as_ref().clone(), f1.as_ref().clone()));
+            new_pairs.push((rbinder.clone(), f1.as_ref().clone(), f2.as_ref().clone()));
+            new_pairs.push((rbinder.clone(), a1.as_ref().clone(), a2.as_ref().clone()));
             unify_dpairs(env, &new_pairs, depth + 1, config)
         }
 
@@ -163,7 +163,7 @@ fn unify_dpairs(
                 return None;
             }
             let mut new_pairs = rest.to_vec();
-            new_pairs.push((new_rbinder, f1.as_ref().clone(), f1.as_ref().clone()));
+            new_pairs.push((new_rbinder, b1.as_ref().clone(), b2.as_ref().clone()));
             unify_dpairs(env, &new_pairs, depth + 1, config)
         }
 

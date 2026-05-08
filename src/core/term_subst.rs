@@ -243,14 +243,14 @@ pub fn beta_norm(term: &Term) -> Term {
 pub fn eta_contract(term: &Term) -> Term {
     match term {
         Term::Abs { body, .. } => {
-            match name.as_ref() {
+            match body.as_ref() {
                 Term::App { func, arg } => {
-                    match name.as_ref() {
+                    match arg.as_ref() {
                         Term::Bound(0) => {
                             // λx. f x  where x = Bound(0) and x ∉ FV(f)
-                            if !occurs_bound(0, func) {
+                            if !occurs_bound(0, func.as_ref()) {
                                 // Shift remaining Bound indices down by 1
-                                eta_contract(&lower_bound(func, 1))
+                                eta_contract(&lower_bound(func.as_ref(), 1))
                             } else {
                                 term.clone()
                             }

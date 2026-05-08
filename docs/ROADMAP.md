@@ -2,18 +2,35 @@
 
 ## 总体路线
 
-Isabelle-rs 的路线图分为 7 个 Tier，从内核完备性到生产就绪逐步推进。每个 Tier 都建立在前面 Tier 的基础上。
+Isabelle-rs 的路线图分为 7 个 Tier，从内核完备性到生产就绪逐步推进。
 
 ```
 Tier 0  ████████████  ✅ 完成    内核基础 (types, term, logic, sign, theory, thm)
-Tier 1  ░░░░░░░░░░░░  🔴 下一步  证明引擎 (unify, envir, tactic, drule)
-Tier 2  ░░░░░░░░░░░░  🟡 规划中  Isar 语言 (proof, toplevel, method)
-Tier 3  ░░░░░░░░░░░░  🟡 规划中  逻辑基础设施 (proofterm, net, consts)
-Tier 4  ░░░░░░░░░░░░  🟢 规划中  语法系统 (Syntax, parser, pretty printer)
-Tier 5  ░░░░░░░░░░░░  🟢 部分完成 LSP 服务器 (transport, handler, extensions)
-Tier 6  ░░░░░░░░░░░░  🔵 未来    HOL 对象逻辑
-Tier 7  ░░░░░░░░░░░░  ⚪ 远期    生产就绪 (concurrency, build system)
+Tier 1  ████████████  ✅ 完成    证明引擎 (envir, term_subst, unify, tactic, drule)
+Tier 2  ████████████  ✅ 完成    Isar 语言 (proof, toplevel, method, proof_context)
+Tier 3  ████████████  ✅ 完成    逻辑基础设施 (proofterm, net, consts, facts, axclass)
+Tier 4  ░░░░░░░░░░░░  🟡 规划中  语法系统 (Syntax, parser, pretty printer) [stubs 就位]
+Tier 5  ██████████░░  🟢 部分完成 LSP 服务器 (transport, handler, extensions) [router stub 就位]
+Tier 6  ░░░░░░░░░░░░  🔵 未来    HOL 对象逻辑 [hol_loader 就位]
+Tier 7  ░░░░░░░░░░░░  🔴 下一步  生产就绪 (Session Actor, FileWorker, Watchdog)
 ```
+
+## V3 迁移状态 (2025年7月)
+
+```
+Phase 1: Arena + Symbol    ✅ 完成 (arena.rs 就位, Symbol = Arc<str>, 未激活)
+Phase 2: 模块合并          ✅ 完成 (kernel/derived.rs + kernel/data.rs, 14 tests)
+Phase 3: Session Actor     ✅ 完成 (Session + FileWorker, 5 integration tests, Fleche delegates to Session)
+Phase 4: Tactic AST        ✅ 完成 (enum Tactic + apply() + simplify(), 10 tests)
+Phase 5: LSP tower         ✅ 完成 (Router + 7 handler modules, 5 new tests)
+Phase 6: Rowan CST         ✅ 完成 (SyntaxTree + CstBuilder + AST bridge, 11 tests)
+Phase 7: WASM 插件         ✅ 完成 (WasmRuntime + Plugin trait + host functions + Method integration, 7 tests)
+Phase 8: 持久化/Web        ✅ 完成 (SQLite cache + CLI build + lib.rs, 3 tests)
+```
+
+## Phase 7-8 详细设计
+
+见 [ARCHITECTURE_V3.md](./ARCHITECTURE_V3.md) 末尾的详细设计章节。
 
 ---
 

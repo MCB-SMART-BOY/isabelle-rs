@@ -39,7 +39,7 @@ impl IsabelleServer {
         tracing::info!(" LSP server started, waiting for client...");
 
         while self.lifecycle != ServerLifecycle::Shutdown {
-            let transport = self.transport.expect("transport required for sync mode");
+            let transport = self.transport.as_mut().expect("transport required for sync mode");
             match transport.recv() {
                 Some(msg) => self.handle_message(msg),
                 None => {
@@ -340,7 +340,7 @@ impl IsabelleServer {
 
     /// Send a successful response.
     fn send_result(&self, id: RequestId, result: serde_json::Value) {
-        self.transport.unwrap().send(OutgoingMessage::Response(JsonRpcResponse {
+        self.transport.as_ref().unwrap().send(OutgoingMessage::Response(JsonRpcResponse {
             jsonrpc: "2.0".into(),
             id,
             result: Some(result),
@@ -350,7 +350,7 @@ impl IsabelleServer {
 
     /// Send an error response.
     fn send_error(&self, id: RequestId, error: JsonRpcError) {
-        self.transport.unwrap().send(OutgoingMessage::Response(JsonRpcResponse {
+        self.transport.as_ref().unwrap().send(OutgoingMessage::Response(JsonRpcResponse {
             jsonrpc: "2.0".into(),
             id,
             result: None,
@@ -365,7 +365,7 @@ impl IsabelleServer {
             "diagnostics": diags,
         });
 
-        self.transport.unwrap().send(OutgoingMessage::Notification(JsonRpcNotification {
+        self.transport.as_ref().unwrap().send(OutgoingMessage::Notification(JsonRpcNotification {
             jsonrpc: "2.0".into(),
             method: notifications::PUBLISH_DIAGNOSTICS.into(),
             params,
