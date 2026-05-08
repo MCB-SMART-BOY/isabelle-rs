@@ -1,37 +1,20 @@
 //! Tactics and tacticals — the proof search combinators.
 //!
-//! Corresponds to `src/Pure/tactic.ML` + `src/Pure/tactical.ML`.
+//! ## V3: Tactic as AST
 //!
-//! ## Isabelle's tactic philosophy
-//!
-//! A **tactic** is a function from a goal to a (lazy) sequence of outcomes.
-//! Tactics can succeed (producing subgoals), fail (producing nothing),
-//! or produce multiple outcomes (search branching).
-//!
-//! **Tacticals** combine tactics: `THEN`, `ORELSE`, `REPEAT`, etc.
+//! Instead of `Box<dyn Fn>`, tactics are an `enum` (AST), enabling
+//! Display/Debug, analysis, optimization, and serialization.
 
+use std::fmt;
 use std::sync::Arc;
 
 use super::envir::Envir;
-use super::term::Term;
-use super::thm::{CTerm, Thm, ThmKernel};
-use super::types::Typ;
-use super::logic::Pure;
+use super::thm::{CTerm, Thm};
 use super::unify::{self, UnifyConfig};
 
-// =========================================================================
-// Goal — a single proof obligation
-// =========================================================================
-
-/// A goal: a list of assumptions and a conclusion to prove.
-///
-/// In Isabelle's kernel, a goal `[A1, ..., An] ⇒ C` is represented
-/// as the theorem `[A1, ..., An] ⊢ C`.
 #[derive(Clone, Debug)]
 pub struct Goal {
-    /// The assumptions (hypotheses).
     pub assumptions: Vec<CTerm>,
-    /// The conclusion to prove.
     pub conclusion: CTerm,
 }
 
@@ -42,161 +25,143 @@ impl Goal {
 }
 
 // =========================================================================
-// Tactic — the core type
+// Tactic AST
 // =========================================================================
 
-/// A tactic transforms a goal into zero or more sequences of subgoals.
-/// Each outcome is a list of new subgoals (empty = proved).
-pub type Tactic = Box<dyn Fn(Goal) -> Vec<Vec<Goal>> + Send + Sync>;
-
-// =========================================================================
-// Basic tactics
-// =========================================================================
-
-/// `all_tac`: identity tactic — passes the goal through unchanged.
-pub fn all_tac() -> Tactic {
-    Box::new(|goal| vec![vec![goal]])
+#[derive(Clone)]
+pub enum Tactic {
+    All,
+    No,
+    Assume,
+    Resolve(Vec<Arc<Thm>>),
+    Then(Box<Tactic>, Box<Tactic>),
+    OrElse(Box<Tactic>, Box<Tactic>),
+    Repeat(Box<Tactic>),
+    Every(Vec<Tactic>),
+    First(Vec<Tactic>),
 }
 
-/// `no_tac`: always fails — returns no outcomes.
-pub fn no_tac() -> Tactic {
-    Box::new(|_| vec![])
-}
+impl Tactic {
+    pub fn apply(&self, goal: &Goal) -> Vec<Vec<Goal>> {
+        match self {
+            Tactic::All => vec![vec![goal.clone()]],
+            Tactic::No => vec![],
+            Tactic::Assume => Self::apply_assume(goal),
+            Tactic::Resolve(thms) => Self::apply_resolve(thms, goal),
+            Tactic::Then(t1, t2) => Self::apply_then(t1, t2, goal),
+            Tactic::OrElse(t1, t2) => {
+                let r = t1.apply(goal);
+                if r.is_empty() { t2.apply(goal) } else { r }
+            }
+            Tactic::Repeat(t) => Self::apply_repeat(t, goal),
+            Tactic::Every(ts) => ts.iter().fold(Tactic::All, |a, t|
+                Tactic::Then(Box::new(a), Box::new(t.clone()))).apply(goal),
+            Tactic::First(ts) => ts.iter().fold(Tactic::No, |a, t|
+                Tactic::OrElse(Box::new(t.clone()), Box::new(a))).apply(goal),
+        }
+    }
 
-/// `assume_tac`: solve the goal if the conclusion matches one of the assumptions.
-/// Equivalent to Isabelle's `assume_tac`.
-pub fn assume_tac() -> Tactic {
-    Box::new(|goal| {
+    fn apply_assume(goal: &Goal) -> Vec<Vec<Goal>> {
         let config = UnifyConfig::default();
-        for assm in &goal.assumptions {
+        for a in &goal.assumptions {
             let env = Envir::init();
-            if let Some(_) = unify::unifiers(
-                &env,
-                &[(assm.term().clone(), goal.conclusion.term().clone())],
-                &config,
-            ) {
-                return vec![vec![]]; // proved!
+            if unify::unifiers(&env, &[(a.term().clone(), goal.conclusion.term().clone())], &config).is_some() {
+                return vec![vec![]];
             }
         }
-        vec![] // no match found
-    })
-}
+        vec![]
+    }
 
-/// `resolve_tac`: apply a list of theorems as resolution rules.
-/// Each theorem `Γ ⊢ P` is used to close the goal if `P` unifies with
-/// the goal's conclusion (and the assumptions are discharged).
-pub fn resolve_tac(theorems: &[Arc<Thm>]) -> Tactic {
-    let thms = theorems.to_vec();
-    Box::new(move |goal| {
-        let mut outcomes = Vec::new();
+    fn apply_resolve(thms: &[Arc<Thm>], goal: &Goal) -> Vec<Vec<Goal>> {
+        let mut out = Vec::new();
         let config = UnifyConfig::default();
-        for thm in &thms {
+        for thm in thms {
             let env = Envir::init();
-            // Try to unify the theorem's conclusion with the goal's conclusion
-            if let Some(env) = unify::unifiers(
-                &env,
-                &[(thm.prop().term().clone(), goal.conclusion.term().clone())],
-                &config,
-            ) {
-                // Success: goal is solved; remaining subgoals are
-                // the theorem's hypotheses instantiated
-                let subgoals: Vec<Goal> = thm.hyps()
-                    .iter()
-                    .map(|h| {
-                        let instantiated = env.norm_term(h.term());
-                        Goal::new(vec![], CTerm::certify(instantiated))
-                    })
-                    .collect();
-                outcomes.push(subgoals);
+            if let Some(env) = unify::unifiers(&env, &[(thm.prop().term().clone(), goal.conclusion.term().clone())], &config) {
+                let sgs: Vec<Goal> = thm.hyps().iter().map(|h| {
+                    Goal::new(vec![], CTerm::certify(env.norm_term(h.term())))
+                }).collect();
+                out.push(sgs);
             }
         }
-        outcomes
-    })
-}
+        out
+    }
 
-// =========================================================================
-// Tacticals — tactic combinators
-// =========================================================================
-
-/// `THEN`: sequence two tactics. `tac1 THEN tac2` applies `tac1` first,
-/// then applies `tac2` to ALL resulting subgoals.
-pub fn then_tac(tac1: Tactic, tac2: Tactic) -> Tactic {
-    Box::new(move |goal| {
+    fn apply_then(t1: &Tactic, t2: &Tactic, goal: &Goal) -> Vec<Vec<Goal>> {
         let mut results = Vec::new();
-        for subgoals in tac1(goal.clone()) {
-            // For each outcome of tac1, apply tac2 to each subgoal
-            if subgoals.is_empty() {
-                results.push(vec![]); // tac1 already proved it
+        for sgs in t1.apply(goal) {
+            if sgs.is_empty() {
+                results.push(vec![]);
             } else {
-                // Apply tac2 to each subgoal and collect all combinations
-                let mut current = vec![vec![]];
-                for sg in &subgoals {
-                    let sg_results = tac2(sg.clone());
-                    let mut new_current = Vec::new();
-                    for prefix in &current {
-                        for sg_outcome in &sg_results {
-                            let mut combined = prefix.clone();
-                            combined.extend(sg_outcome.clone());
-                            new_current.push(combined);
+                let mut current: Vec<Vec<Goal>> = vec![vec![]];
+                for sg in &sgs {
+                    let sg_r = t2.apply(sg);
+                    let mut nc = Vec::new();
+                    for p in &current {
+                        for o in &sg_r {
+                            let mut c = p.clone();
+                            c.extend(o.clone());
+                            nc.push(c);
                         }
                     }
-                    current = new_current;
+                    current = nc;
                 }
                 results.extend(current);
             }
         }
         results
-    })
-}
+    }
 
-/// `ORELSE`: try first tactic; if it fails, try the second.
-pub fn orelse_tac(tac1: Tactic, tac2: Tactic) -> Tactic {
-    Box::new(move |goal| {
-        let results = tac1(goal.clone());
-        if results.is_empty() {
-            tac2(goal)
-        } else {
-            results
-        }
-    })
-}
-
-/// `REPEAT`: apply a tactic repeatedly until it fails.
-pub fn repeat_tac(tac: Tactic) -> Tactic {
-    Box::new(move |goal| {
-        let mut all_outcomes = Vec::new();
-        let mut current_goals = vec![goal];
+    fn apply_repeat(t: &Tactic, goal: &Goal) -> Vec<Vec<Goal>> {
+        let mut current = vec![goal.clone()];
         let mut changed = true;
         while changed {
             changed = false;
-            let mut new_goals = Vec::new();
-            for g in &current_goals {
-                let results = tac(g.clone());
-                if results.is_empty() {
-                    new_goals.push(g.clone()); // keep this goal
-                } else {
-                    changed = true;
-                    for outcome in results {
-                        new_goals.extend(outcome);
-                    }
-                }
+            let mut ng = Vec::new();
+            for g in &current {
+                let r = t.apply(g);
+                if r.is_empty() { ng.push(g.clone()); }
+                else { changed = true; for o in r { ng.extend(o); } }
             }
-            current_goals = new_goals;
+            current = ng;
         }
-        all_outcomes.push(current_goals);
-        all_outcomes
-    })
+        vec![current]
+    }
 }
 
-/// `EVERY`: apply a list of tactics in sequence (like `THEN` chain).
-pub fn every_tac(tactics: Vec<Tactic>) -> Tactic {
-    tactics.into_iter().fold(all_tac(), |acc, tac| then_tac(acc, tac))
+impl fmt::Debug for Tactic {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Tactic::All => write!(f, "all"),
+            Tactic::No => write!(f, "no"),
+            Tactic::Assume => write!(f, "assume"),
+            Tactic::Resolve(ts) => write!(f, "resolve({})", ts.len()),
+            Tactic::Then(a, b) => write!(f, "({:?} THEN {:?})", a, b),
+            Tactic::OrElse(a, b) => write!(f, "({:?} ORELSE {:?})", a, b),
+            Tactic::Repeat(t) => write!(f, "REPEAT({:?})", t),
+            Tactic::Every(ts) => write!(f, "EVERY({})", ts.len()),
+            Tactic::First(ts) => write!(f, "FIRST({})", ts.len()),
+        }
+    }
 }
 
-/// `FIRST`: try a list of tactics, return the first successful outcome.
-pub fn first_tac(tactics: Vec<Tactic>) -> Tactic {
-    tactics.into_iter().fold(no_tac(), |acc, tac| orelse_tac(tac, acc))
+impl fmt::Display for Tactic {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { fmt::Debug::fmt(self, f) }
 }
+
+// =========================================================================
+// Constructor functions (backward-compatible)
+// =========================================================================
+
+pub fn all_tac() -> Tactic { Tactic::All }
+pub fn no_tac() -> Tactic { Tactic::No }
+pub fn assume_tac() -> Tactic { Tactic::Assume }
+pub fn resolve_tac(thms: &[Arc<Thm>]) -> Tactic { Tactic::Resolve(thms.to_vec()) }
+pub fn then_tac(t1: Tactic, t2: Tactic) -> Tactic { Tactic::Then(Box::new(t1), Box::new(t2)) }
+pub fn orelse_tac(t1: Tactic, t2: Tactic) -> Tactic { Tactic::OrElse(Box::new(t1), Box::new(t2)) }
+pub fn repeat_tac(t: Tactic) -> Tactic { Tactic::Repeat(Box::new(t)) }
+pub fn every_tac(ts: Vec<Tactic>) -> Tactic { Tactic::Every(ts) }
+pub fn first_tac(ts: Vec<Tactic>) -> Tactic { Tactic::First(ts) }
 
 // =========================================================================
 // Tests
@@ -205,6 +170,8 @@ pub fn first_tac(tactics: Vec<Tactic>) -> Tactic {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::term::Term;
+    use crate::core::types::Typ;
 
     fn prop(name: &str) -> CTerm {
         CTerm::certify(Term::const_(name, Typ::base("prop")))
@@ -214,25 +181,23 @@ mod tests {
     fn test_assume_tac_solves() {
         let a = prop("A");
         let goal = Goal::new(vec![a.clone()], a.clone());
-        let outcomes = assume_tac()(goal);
+        let outcomes = assume_tac().apply(&goal);
         assert!(!outcomes.is_empty());
-        assert!(outcomes[0].is_empty()); // no subgoals left
+        assert!(outcomes[0].is_empty());
     }
 
     #[test]
     fn test_assume_tac_fails() {
         let a = prop("A");
         let b = prop("B");
-        let goal = Goal::new(vec![a], b);
-        let outcomes = assume_tac()(goal);
+        let outcomes = assume_tac().apply(&Goal::new(vec![a], b));
         assert!(outcomes.is_empty());
     }
 
     #[test]
     fn test_all_tac() {
         let a = prop("A");
-        let goal = Goal::new(vec![], a);
-        let outcomes = all_tac()(goal);
+        let outcomes = all_tac().apply(&Goal::new(vec![], a));
         assert_eq!(outcomes.len(), 1);
         assert_eq!(outcomes[0].len(), 1);
     }
@@ -240,21 +205,14 @@ mod tests {
     #[test]
     fn test_no_tac() {
         let a = prop("A");
-        let goal = Goal::new(vec![], a);
-        let outcomes = no_tac()(goal);
-        assert!(outcomes.is_empty());
+        assert!(no_tac().apply(&Goal::new(vec![], a)).is_empty());
     }
 
     #[test]
     fn test_then_orelse() {
         let a = prop("A");
         let goal = Goal::new(vec![a.clone()], a);
-        // (assume_tac ORELSE all_tac) THEN assume_tac
-        let tac = then_tac(
-            orelse_tac(assume_tac(), all_tac()),
-            assume_tac(),
-        );
-        let outcomes = tac(goal);
-        assert!(!outcomes.is_empty());
+        let tac = then_tac(orelse_tac(assume_tac(), all_tac()), assume_tac());
+        assert!(!tac.apply(&goal).is_empty());
     }
 }

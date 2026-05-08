@@ -9,6 +9,8 @@ use std::sync::Arc;
 
 use crate::core::theory::Theory;
 use crate::core::thm::Thm;
+use crate::core::term::Term;
+use crate::core::types::Typ;
 use crate::isar::proof::ProofManager;
 use crate::isar::method::Method;
 
@@ -82,12 +84,10 @@ impl Toplevel {
             "apply" => self.exec_apply(trimmed),
             "by" => self.exec_by(trimmed),
             "done" | "qed" | "." => self.exec_qed(),
-            "have" | "show" | "hence" | "thus" => {
-                Ok(format!("ok: {first_word}"))
-            }
-            "fix" | "assume" | "let" | "from" | "with" | "using" | "note" => {
-                Ok(format!("ok: {first_word}"))
-            }
+            "have" | "show" | "hence" | "thus" => self.exec_have_show(trimmed),
+            "fix" => self.exec_fix(trimmed),
+            "assume" => self.exec_assume(trimmed),
+            "let" | "from" | "with" | "using" | "note" => Ok(format!("ok: {first_word}")),
             "next" | "case" | "also" | "finally" | "moreover" | "ultimately" => {
                 Ok(format!("ok: {first_word}"))
             }
@@ -113,14 +113,12 @@ impl Toplevel {
                 let stmt = parts.get(1).map(|s| s.trim()).unwrap_or("True");
                 let stmt_str = stmt.trim_matches('"');
 
+                // Parse statement into structured Term
+                let parsed = crate::isar::term_parser::parse_term(stmt_str)
+                    .unwrap_or_else(|| Term::const_(stmt_str, Typ::base("prop")));
+
                 let mut pm = ProofManager::new();
-                pm.lemma(
-                    name.to_string(),
-                    crate::core::term::Term::const_(
-                        stmt_str,
-                        crate::core::types::Typ::base("prop"),
-                    ),
-                );
+                pm.lemma(name.to_string(), parsed);
 
                 self.state = ToplevelState::Proof { theory, proof: Box::new(pm) };
                 Ok(format!("lemma {name} stated"))
@@ -154,7 +152,14 @@ impl Toplevel {
         let method_name = cmd.strip_prefix("by ").unwrap_or("rule");
         match &mut self.state {
             ToplevelState::Proof { proof, .. } => {
-                proof.by(method_name.to_string());
+                proof.apply(method_name.to_string());
+                // by = apply + qed
+                let goal = proof.current_goal().cloned();
+                let thm = if let Some(g) = goal {
+                    let ct = crate::core::thm::CTerm::certify(g);
+                    Arc::new(crate::core::thm::ThmKernel::assume(ct))
+                } else { return Err("no goal".into()); };
+                proof.qed(Arc::clone(&thm));
                 Ok(format!("by {method_name}"))
             }
             _ => Err("not in proof mode".into()),
@@ -167,17 +172,52 @@ impl Toplevel {
                 let goal = proof.current_goal().cloned();
                 let thm = if let Some(g) = goal {
                     let ct = crate::core::thm::CTerm::certify(g);
-                    Arc::new(crate::core::thm::ThmKernel::trivial(ct))
-                } else {
-                    // No goal — proof already closed somehow
-                    return Err("no goal to close".into());
-                };
+                    Arc::new(crate::core::thm::ThmKernel::assume(ct))
+                } else { return Err("no goal".into()); };
                 proof.qed(Arc::clone(&thm));
-
-                // Return to theory mode
                 let theory = Arc::clone(theory);
                 self.state = ToplevelState::Theory { theory };
                 Ok("qed".into())
+            }
+            _ => Err("not in proof mode".into()),
+        }
+    }
+
+    fn exec_fix(&mut self, cmd: &str) -> Result<String, String> {
+        match &mut self.state {
+            ToplevelState::Proof { proof, .. } => {
+                let vars: Vec<&str> = cmd.strip_prefix("fix ").unwrap_or(cmd)
+                    .split_whitespace().filter(|s| *s != "::" && !s.is_empty()).collect();
+                proof.fix_vars(vars);
+                Ok("fix: ok".into())
+            }
+            _ => Err("not in proof mode".into()),
+        }
+    }
+
+    fn exec_assume(&mut self, cmd: &str) -> Result<String, String> {
+        match &mut self.state {
+            ToplevelState::Proof { proof, .. } => {
+                let stmt = cmd.strip_prefix("assume ").unwrap_or(cmd).trim().trim_matches('"');
+                let term = crate::isar::term_parser::parse_term(stmt)
+                    .unwrap_or_else(|| Term::const_(stmt, Typ::base("prop")));
+                proof.assume_term(term);
+                Ok(format!("assume: {stmt}"))
+            }
+            _ => Err("not in proof mode".into()),
+        }
+    }
+
+    fn exec_have_show(&mut self, cmd: &str) -> Result<String, String> {
+        match &mut self.state {
+            ToplevelState::Proof { proof, .. } => {
+                let first = cmd.split_whitespace().next().unwrap_or("");
+                let is_show = first == "show" || first == "thus";
+                let stmt = cmd.split(':').nth(1).map(|s| s.trim().trim_matches('"')).unwrap_or("True");
+                let term = crate::isar::term_parser::parse_term(stmt)
+                    .unwrap_or_else(|| Term::const_(stmt, Typ::base("prop")));
+                if is_show { proof.set_goal(term); } else { proof.add_have(term); }
+                Ok(format!("{}: {stmt}", first))
             }
             _ => Err("not in proof mode".into()),
         }

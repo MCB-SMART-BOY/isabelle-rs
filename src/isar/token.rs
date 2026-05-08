@@ -1,4 +1,5 @@
 use crate::core::types::Symbol;
+use crate::core::types::intern;
 // Isabelle tokenizer — lexical analysis of Isabelle theory files.
 //
 // Corresponds to `src/Pure/Isar/token.ML`.
@@ -132,6 +133,7 @@ pub const COMMAND_KEYWORDS: &[&str] = &[
     "hide_class", "hide_type", "hide_const", "hide_fact",
     "schematic_goal",
     "text", "txt", "chapter", "section", "subsection", "subsubsection",
+    "ALL", "EX",
 ];
 
 /// Is a string an Isabelle keyword?
@@ -202,31 +204,31 @@ impl Lexer {
             // Symbols: try longest match first (==> before ==, =>)
             '=' if self.peek_n(1) == Some('=') && self.peek_n(2) == Some('>') => {
                 self.advance_by(3);
-                Token::new(TokenKind::Symbol(Arc::from("==>")), "==>".into(), start_offset)
+                Token::new(TokenKind::Symbol(intern("==>")), "==>".into(), start_offset)
             }
             '=' if self.peek_n(1) == Some('>') => {
                 self.advance_by(2);
-                Token::new(TokenKind::Symbol(Arc::from("=>")), "=>".into(), start_offset)
+                Token::new(TokenKind::Symbol(intern("=>")), "=>".into(), start_offset)
             }
             '=' if self.peek_n(1) == Some('=') => {
                 self.advance_by(2);
-                Token::new(TokenKind::Symbol(Arc::from("==")), "==".into(), start_offset)
+                Token::new(TokenKind::Symbol(intern("==")), "==".into(), start_offset)
             }
             '!' if self.peek_n(1) == Some('!') => {
                 self.advance_by(2);
-                Token::new(TokenKind::Symbol(Arc::from("!!")), "!!".into(), start_offset)
+                Token::new(TokenKind::Symbol(intern("!!")), "!!".into(), start_offset)
             }
             '-' if self.peek_n(1) == Some('-') && self.peek_n(2) == Some('>') => {
                 self.advance_by(3);
-                Token::new(TokenKind::Symbol(Arc::from("-->")), "-->".into(), start_offset)
+                Token::new(TokenKind::Symbol(intern("-->")), "-->".into(), start_offset)
             }
             '<' if self.peek_n(1) == Some('=') && self.peek_n(2) == Some('>') => {
                 self.advance_by(3);
-                Token::new(TokenKind::Symbol(Arc::from("<=>")), "<=>".into(), start_offset)
+                Token::new(TokenKind::Symbol(intern("<=>")), "<=>".into(), start_offset)
             }
             '<' if self.peek_n(1) == Some('-') && self.peek_n(2) == Some('>') => {
                 self.advance_by(3);
-                Token::new(TokenKind::Symbol(Arc::from("<->")), "<->".into(), start_offset)
+                Token::new(TokenKind::Symbol(intern("<->")), "<->".into(), start_offset)
             }
 
             // Identifiers: start with letter, _, or type variable quote
@@ -236,13 +238,18 @@ impl Lexer {
             // Numbers
             c if c.is_ascii_digit() => self.lex_number(),
 
-            '.' => { self.advance(); Token::new(TokenKind::Symbol(Arc::from(".")), '.'.into(), start_offset) }
-            '%' => { self.advance(); Token::new(TokenKind::Symbol(Arc::from("%")), '%'.into(), start_offset) }
+            '.' => { self.advance(); Token::new(TokenKind::Symbol(intern(".")), '.'.into(), start_offset) }
+            '%' => { self.advance(); Token::new(TokenKind::Symbol(intern("%")), '%'.into(), start_offset) }
             // Single-character symbols
             ':' => {
                 self.advance();
-                Token::new(TokenKind::Symbol(Arc::from(":")), ":".into(), start_offset)
+                Token::new(TokenKind::Symbol(intern(":")), ":".into(), start_offset)
             }
+            '&' => { self.advance(); Token::new(TokenKind::Symbol(intern("&")), '&'.into(), start_offset) }
+            '|' => { self.advance(); Token::new(TokenKind::Symbol(intern("|")), '|'.into(), start_offset) }
+            '~' => { self.advance(); Token::new(TokenKind::Symbol(intern("~")), '~'.into(), start_offset) }
+            '(' => { self.advance(); Token::new(TokenKind::Symbol(intern("(")), '('.into(), start_offset) }
+            ')' => { self.advance(); Token::new(TokenKind::Symbol(intern(")")), ')'.into(), start_offset) }
             // Error
             _ => {
                 self.advance();
@@ -267,7 +274,7 @@ impl Lexer {
         if text.contains('.') && text.len() > 1 {
             Token::new(TokenKind::LongIdent, text, start_offset)
         } else if is_keyword(&text) {
-            Token::new(TokenKind::Keyword(Arc::from(text.as_str())), text, start_offset)
+            Token::new(TokenKind::Keyword(intern(&text)), text, start_offset)
         } else {
             Token::new(TokenKind::Ident, text, start_offset)
         }

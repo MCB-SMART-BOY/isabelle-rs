@@ -54,6 +54,9 @@ pub fn parse_term(input: &str) -> Option<Term> {
 }
 
 fn parse_trm(s: &mut P) -> Option<Term> {
+    // Quantifiers: ALL x. P / EX x. P
+    if s.is_kw("ALL") || s.is_sym("!") { s.adv(); return parse_quant(s, "HOL.All"); }
+    if s.is_kw("EX") || s.is_sym("?") { s.adv(); return parse_quant(s, "HOL.Ex"); }
     // Lambda: %x. body
     if s.is_sym("%") || s.is_sym("λ") { s.adv();
         let mut vars = vec![];
@@ -70,11 +73,25 @@ fn parse_trm(s: &mut P) -> Option<Term> {
     let mut head = parse_atom(s)?;
     loop {
         if s.is_sym("(") { s.adv(); let a = parse_trm(s)?; s.is_sym(")"); s.adv(); head = Term::app(head, a); continue; }
-        if s.is_sym("=>") || s.is_sym("==>") {
-            let is_meta = s.is_sym("==>");
+        if s.is_sym("==>") || s.is_sym("-->") || s.is_sym("⟶") {
             s.adv(); let rhs = parse_trm(s)?;
-            return if is_meta { Some(crate::core::logic::Pure::mk_implies(head, rhs)) }
-                   else { Some(crate::core::logic::Pure::mk_implies(head, rhs)) };
+            head = make_binary("Pure.imp", head, rhs);
+            return Some(head);
+        }
+        if s.is_sym("&&&") || s.is_sym("&") || s.is_sym("∧") {
+            s.adv(); let rhs = parse_trm(s)?;
+            head = make_binary("HOL.conj", head, rhs);
+            return Some(head);
+        }
+        if s.is_sym("|||") || s.is_sym("|") || s.is_sym("∨") {
+            s.adv(); let rhs = parse_trm(s)?;
+            head = make_binary("HOL.disj", head, rhs);
+            return Some(head);
+        }
+        if s.is_sym("~") || s.is_sym("¬") {
+            let not_const = Term::const_("HOL.Not", Typ::arrow(Typ::base("prop"), Typ::base("prop")));
+            head = Term::app(not_const, head);
+            break;
         }
         if s.is_id() || matches!(s.kind(), Some(TokenKind::String | TokenKind::Number)) {
             if let Some(a) = parse_atom(s) { head = Term::app(head, a); continue; }
@@ -82,6 +99,23 @@ fn parse_trm(s: &mut P) -> Option<Term> {
         break;
     }
     Some(head)
+}
+
+fn parse_quant(s: &mut P, qname: &str) -> Option<Term> {
+    let mut vars = vec![];
+    while s.is_id() { let n = Arc::from(s.src()?.as_str()); s.adv(); vars.push((n, Typ::dummy())); }
+    if s.is_sym(".") { s.adv(); }
+    let body = parse_trm(s)?;
+    let inner = vars.into_iter().rfold(body, |b,(n,t)| Term::abs(n,t,b));
+    let prop = Typ::base("prop");
+    let qt = Typ::arrow(Typ::arrow(Typ::dummy(), prop.clone()), prop);
+    Some(Term::app(Term::const_(qname, qt), inner))
+}
+
+fn make_binary(conn: &str, a: Term, b: Term) -> Term {
+    let p = Typ::base("prop");
+    let ct = Typ::arrow(p.clone(), Typ::arrow(p.clone(), p));
+    Term::app(Term::app(Term::const_(conn, ct), a), b)
 }
 
 fn parse_atom(s: &mut P) -> Option<Term> {

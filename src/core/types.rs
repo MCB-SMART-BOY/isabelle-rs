@@ -3,9 +3,15 @@
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 use std::sync::Arc;
+use std::cell::RefCell;
+
+thread_local! { static IT: RefCell<HashMap<String, Arc<str>>> = RefCell::new(HashMap::new()); }
+
+pub fn intern(s: &str) -> Arc<str> {
+    IT.with(|t| { let mut t = t.borrow_mut(); if let Some(e) = t.get(s) { Arc::clone(e) } else { let a: Arc<str> = Arc::from(s); t.insert(s.to_string(), Arc::clone(&a)); a } })
+}
 
 /// Symbol — interned name. Currently an alias for Arc<str>.
-/// Will become u32 after thread_local! interning is activated.
 pub type Symbol = Arc<str>;
 pub type Class = Symbol;  // Symbol alias
 

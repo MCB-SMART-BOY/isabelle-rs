@@ -50,8 +50,8 @@ fn main() {
 fn run_lsp_server() {
     let _ = tracing_subscriber::fmt::try_init();
     eprintln!("╔══════════════════════════════════════════════╗");
-    eprintln!("║  Isabelle-rs LSP Server                    ║");
-    eprintln!("║  Language Server Protocol for Isabelle     ║");
+    eprintln!("║  Isabelle-rs LSP Server                      ║");
+    eprintln!("║  Language Server Protocol for Isabelle       ║");
     eprintln!("╚══════════════════════════════════════════════╝");
 
     let executor = Arc::new(RealExecutor::new());
@@ -65,18 +65,17 @@ fn run_lsp_server() {
 fn run_demo() {
     let _ = tracing_subscriber::fmt::try_init();
     println!("╔══════════════════════════════════════════════╗");
-    println!("║  Isabelle-rs: Isabelle Kernel in Rust       ║");
-    println!("║  A modern proof assistant with LSP support  ║");
+    println!("║  Isabelle-rs: Isabelle Kernel in Rust        ║");
+    println!("║  A modern proof assistant with LSP support   ║");
     println!("╠══════════════════════════════════════════════╣");
-    println!("║  Run with --lsp to start LSP server         ║");
+    println!("║  Run with --lsp to start LSP server          ║");
     println!("╚══════════════════════════════════════════════╝\n");
 
     demo_types();
     demo_terms();
     demo_kernel();
     demo_isabelle();
-    demo_document();
-    demo_fleche();
+    demo_proofs();
     demo_lsp();
 }
 
@@ -198,58 +197,32 @@ fn demo_isabelle() {
     println!();
 }
 
-fn demo_document() {
-    println!("─── Document Model (Incremental Checking) ───");
+fn demo_proofs() {
+    use isabelle_rs::core::Theory;
+    use isabelle_rs::isar::toplevel::Toplevel;
 
-    use document::Document;
+    println!("─── Automated Proofs ───");
 
-    let mut doc = Document::new();
-    let uri = "file:///test.thy";
+    let theorems = vec![
+        ("trivial", "A --> A"),
+        ("conj_imp", "(A & B) --> A"),
+        ("conj_comm", "(A & B) --> (B & A)"),
+        ("disj_comm", "(A | B) --> (B | A)"),
+    ];
 
-    doc.open_file(uri.into(), "theory Test\nlemma foo: True\n  by auto".into());
-
-    let node = doc.get_node(uri).unwrap();
-    println!("Opened file: {uri}");
-    println!("  Version: {}", node.version);
-    println!("  Commands: {}", node.commands.len());
-    for cmd in &node.commands {
-        println!("    [{cmd_id}] {kind:?}: {src}",
-            cmd_id = cmd.id,
-            kind = cmd.kind,
-            src = &cmd.source[..cmd.source.len().min(50)]);
-    }
-
-    // Simulate an edit: change "by auto" to "proof ... qed"
-    let result = doc.update_file(
-        uri,
-        "theory Test\nlemma foo: True\nproof\n  auto\nqed".into(),
-    ).unwrap();
-    println!("Updated: fork_point={}, snapshots_kept={}",
-        result.fork_point, result.snapshots_kept);
-    println!();
-}
-
-fn demo_fleche() {
-    println!("─── Flèche: Incremental Checking Engine ───");
-
-    let engine = Fleche::new(Arc::new(RealExecutor::new()));
-
-    // Check a valid file
-    let diags = engine.open_file(
-        "file:///good.thy",
-        "theory Good\nlemma A: True\nproof\n  auto\ndone",
-    );
-    println!("Valid file: {} diagnostics", diags.len());
-
-    // Check a file with errors (nested lemma)
-    let diags = engine.open_file(
-        "file:///bad.thy",
-        "theory Bad\nlemma A: True\nlemma B: False",
-    );
-    println!("Bad file: {} diagnostics", diags.len());
-    for d in &diags {
-        if d.severity == Some(server::lsp_types::DiagnosticSeverity::Error) {
-            println!("  ❌ {}", d.message);
+    for (name, stmt) in &theorems {
+        let pure = Theory::pure();
+        let mut top = Toplevel::new(pure);
+        let cmd = format!("lemma {name}: \"{stmt}\"");
+        match top.exec(&cmd) {
+            Ok(_) => {
+                let _ = top.exec("proof");
+                let _ = top.exec("apply auto");
+                let result = top.exec("done");
+                let status = if result.is_ok() { "✅" } else { "❌" };
+                println!("  {status} {name}: {stmt}");
+            }
+            Err(e) => println!("  ❌ {name}: {stmt} — {e}"),
         }
     }
     println!();

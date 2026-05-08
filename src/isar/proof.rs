@@ -240,3 +240,22 @@ mod tests {
         assert!(matches!(pm.state, ProofState::Done { .. }));
     }
 }
+
+impl ProofManager {
+    pub fn fix_vars(&mut self, vars: Vec<&str>) {
+        if let ProofState::Proving { root, .. } = &mut self.state {
+            for v in vars { root.fixes.push((v.to_string(), crate::core::types::Typ::dummy())); }
+        }
+    }
+    pub fn assume_term(&mut self, term: Term) {
+        if let ProofState::Proving { root, .. } = &mut self.state { root.assumes.push(term); }
+    }
+    pub fn set_goal(&mut self, goal: Term) {
+        if let ProofState::Proving { current_goal, .. } = &mut self.state { *current_goal = goal; }
+    }
+    pub fn add_have(&mut self, stmt: Term) {
+        if let ProofState::Proving { root, .. } = &mut self.state {
+            root.children.push(ProofNode { fixes: vec![], assumes: vec![], statement: stmt, method: None, children: vec![] });
+        }
+    }
+}
