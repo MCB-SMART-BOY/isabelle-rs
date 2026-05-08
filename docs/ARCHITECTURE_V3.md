@@ -388,7 +388,7 @@ A3: Auto/Simp 集成 (1天)
     端到端: 加载 HOL.thy → 证明新定理
 ```
 
-最终: 158 tests | 0 errors | 0 failures 🎉
+最终: 164 tests | 0 errors | 0 failures 🎉
 ```
 
 ## 不变的基石

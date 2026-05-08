@@ -272,4 +272,30 @@ mod tests {
         top.exec("done").unwrap();
         assert!(matches!(top.state, ToplevelState::Theory { .. }));
     }
+
+    #[test]
+    fn test_equality_trans() {
+        let pure = Theory::pure();
+        let mut top = Toplevel::new(pure);
+
+        // (A = B) & (B = C) --> A = C  — uses trans from HOL.thy
+        top.exec("lemma eq_trans: \"(A = B) & (B = C) --> A = C\"").unwrap();
+        top.exec("proof").unwrap();
+        top.exec("apply auto").unwrap();
+        top.exec("done").unwrap();
+        assert!(matches!(top.state, ToplevelState::Theory { .. }));
+    }
+
+    #[test]
+    fn test_mp_modus_ponens() {
+        let pure = Theory::pure();
+        let mut top = Toplevel::new(pure);
+
+        // (A --> B) & A --> B  — uses mp from HOL.thy
+        top.exec("lemma mp_test: \"(A --> B) & A --> B\"").unwrap();
+        top.exec("proof").unwrap();
+        top.exec("apply auto").unwrap();
+        top.exec("done").unwrap();
+        assert!(matches!(top.state, ToplevelState::Theory { .. }));
+    }
 }
