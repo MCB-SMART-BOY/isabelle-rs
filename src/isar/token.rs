@@ -231,6 +231,21 @@ impl Lexer {
                 Token::new(TokenKind::Symbol(intern("<->")), "<->".into(), start_offset)
             }
 
+            // Bracketed assumptions: [| ... |]
+            '[' if self.peek_n(1) == Some('|') => {
+                self.advance_by(2);
+                Token::new(TokenKind::Symbol(intern("[|")), "[|".into(), start_offset)
+            }
+            '|' if self.peek_n(1) == Some(']') => {
+                self.advance_by(2);
+                Token::new(TokenKind::Symbol(intern("|]")), "|]".into(), start_offset)
+            }
+            // Inequality: ~=
+            '~' if self.peek_n(1) == Some('=') => {
+                self.advance_by(2);
+                Token::new(TokenKind::Symbol(intern("~=")), "~=".into(), start_offset)
+            }
+
             // Identifiers: start with letter, _, or type variable quote
             c if c.is_alphabetic() || c == '_' => self.lex_ident(),
             '\'' => self.lex_type_var(),
@@ -250,6 +265,9 @@ impl Lexer {
             '~' => { self.advance(); Token::new(TokenKind::Symbol(intern("~")), '~'.into(), start_offset) }
             '(' => { self.advance(); Token::new(TokenKind::Symbol(intern("(")), '('.into(), start_offset) }
             ')' => { self.advance(); Token::new(TokenKind::Symbol(intern(")")), ')'.into(), start_offset) }
+            '[' => { self.advance(); Token::new(TokenKind::Symbol(intern("[")), '['.into(), start_offset) }
+            ']' => { self.advance(); Token::new(TokenKind::Symbol(intern("]")), ']'.into(), start_offset) }
+            '=' => { self.advance(); Token::new(TokenKind::Symbol(intern("=")), '='.into(), start_offset) }
             // Error
             _ => {
                 self.advance();

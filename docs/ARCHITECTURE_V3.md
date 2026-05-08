@@ -372,9 +372,23 @@ Phase 8: 持久化/Web        ████████ ✅ 完成 (SQLite cache 
 阶段 F: Auto 增强 (disjE + disj_commute)            ✅ 完成
 阶段 G: HOL 理论加载 (内置定理数据库, 14 rules)      ✅ 完成
 阶段 H: 生产就绪 (LSP completion + demo + 错误改进)    ✅ 完成
+
+## 路线 A: HOL 定理加载
+
+```
+A1: 术语解析器补全 (0.5天)
+    [| A; B |] ==> C  /  !!x. P(x)  /  A ~= B  /  属性解析
+
+A2: HOL 定理加载器 (1天)
+    解析 191 条内联 lemma → 结构化 Term → assume 注册
+    按 [simp]/[intro]/[elim]/[iff] 分类
+
+A3: Auto/Simp 集成 (1天)
+    auto 查询定理库, simp 使用 [simp] 规则
+    端到端: 加载 HOL.thy → 证明新定理
 ```
 
-最终: 195 tests | 0 errors | 0 failures 🎉
+最终: 158 tests | 0 errors | 0 failures 🎉
 ```
 
 ## 不变的基石

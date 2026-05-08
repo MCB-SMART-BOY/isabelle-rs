@@ -70,6 +70,28 @@ fn parse_trm(s: &mut P) -> Option<Term> {
         return Some(vars.into_iter().rfold(body, |b, (n, t)| Term::abs(n, t, b)));
     }
     // Application: head arg1 arg2 ...
+    // [| A; B |] ==> C  — bracketed premises
+    if s.is_sym("[|") {
+        s.adv();
+        let mut prems = vec![];
+        loop {
+            let p = parse_trm(s)?;
+            prems.push(p);
+            if s.is_sym("|]") { s.adv(); break; }
+            if matches!(s.kind(), Some(TokenKind::Semicolon)) { s.adv(); continue; }
+            break;
+        }
+        if s.is_sym("==>") || s.is_sym("-->") {
+            s.adv();
+            let concl = parse_trm(s)?;
+            let mut result = concl;
+            for p in prems.into_iter().rev() {
+                result = make_binary("Pure.imp", p, result);
+            }
+            return Some(result);
+        }
+        return None;
+    }
     let mut head = parse_atom(s)?;
     loop {
         if s.is_sym("(") { s.adv(); let a = parse_trm(s)?; s.is_sym(")"); s.adv(); head = Term::app(head, a); continue; }
@@ -92,6 +114,18 @@ fn parse_trm(s: &mut P) -> Option<Term> {
             let not_const = Term::const_("HOL.Not", Typ::arrow(Typ::base("prop"), Typ::base("prop")));
             head = Term::app(not_const, head);
             break;
+        }
+        if s.is_sym("~=") {
+        if s.is_sym("=") {
+            s.adv(); let rhs = parse_trm(s)?;
+            head = make_binary("HOL.eq", head, rhs);
+            return Some(head);
+        }
+            s.adv(); let rhs = parse_trm(s)?;
+            head = make_binary("HOL.eq", head, rhs);
+            let not_const = Term::const_("HOL.Not", Typ::arrow(Typ::base("prop"), Typ::base("prop")));
+            head = Term::app(not_const, head);
+            return Some(head);
         }
         if s.is_id() || matches!(s.kind(), Some(TokenKind::String | TokenKind::Number)) {
             if let Some(a) = parse_atom(s) { head = Term::app(head, a); continue; }
@@ -188,3 +222,15 @@ mod tests {
         assert_eq!(print_term(&t), "%x. B_0");
     }
 }
+
+    #[test]
+    fn test_parse_bracket() {
+        let t = parse_term("[| A; B |] ==> C").unwrap();
+        assert!(matches!(t, Term::App { .. }));
+    }
+
+    #[test]
+    fn test_parse_inequality() {
+        let t = parse_term("A ~= B").unwrap();
+        assert!(matches!(t, Term::App { .. }));
+    }
