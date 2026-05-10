@@ -1,5 +1,20 @@
 # Isabelle 功能对照
 
+## 内核基础设施
+
+| 功能 | Isabelle | Isabelle-rs | 说明 |
+|------|:--:|:--:|------|
+| Thm.instantiate | ✅ | ❌ | 无法将 Envir 应用到 Thm |
+| Thm.bicompose | ✅ | ❌ | 所有 tactic 的核心操作 |
+| Thm.nprems_of / prem / concl | ✅ | ❌ | 无法访问目标状态 |
+| Thm.assume | ✅ | ✅ | |
+| Thm.implies_intr | ✅ | ✅ | |
+| Thm.implies_elim | ✅ | ✅ | |
+| Thm.reflexive / symmetric / transitive | ✅ | ✅ | |
+| Thm.combination / abstraction | ✅ | ✅ | |
+| Thm.beta_conversion | ✅ | ✅ | |
+| Thm.forall_intr / forall_elim | ✅ | ✅ | |
+
 ## 定理加载能力
 
 | 功能 | Isabelle | Isabelle-rs | 说明 |

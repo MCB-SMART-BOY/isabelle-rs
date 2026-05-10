@@ -57,10 +57,15 @@ cargo run -- --lsp
 .thy 源文件
     ↓ parse_lemmas()        ← 完整 Isabelle 语法解析器
 ParsedLemma { name, theorem }
-    ↓ ThmKernel::assume()   ← LCF 可信内核
+    ↓ ThmKernel::assume()   ← LCF 可信内核（当前全部为 assume，非验证）
 HolTheoremDb                ← 分类索引（intro/elim/simp）
-    ↓ Phase 1 (下一步)
-simp / auto / tactic        ← 证明引擎
+    ↓ Phase 1a (下一步)
+ThmKernel::instantiate      ← 将统一结果应用到定理
+ThmKernel::bicompose        ← 核心 resolution 操作（所有 tactic 的基础）
+    ↓ Phase 1b
+Tactic = Thm → Vec<Thm>    ← 对齐 Isabelle 架构
+    ↓ Phase 1c
+simp / auto                 ← 证明引擎
 ```
 
 ## 路线图

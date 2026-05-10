@@ -1,6 +1,7 @@
-# 架构设计 v4.0
+# 架构设计 v5.0
 
-> 保留 V3 的完整架构愿景，标注每个组件的实现状态。
+> 基于代码审计的精确架构分析，揭示证明引擎断层的根因。
+> 核心发现：`bicompose` 和 `ThmKernel::instantiate` 缺失——这是所有 tactic 的基础。
 
 ## 状态标记说明
 
@@ -24,7 +25,10 @@
 | **全局 Interning** | `[🚧 进行中]` | kernel/arena.rs 已存在；intern() 已激活；尚未用于 core/ |
 | **Rowan CST 解析器** | `[🚧 进行中]` | CstBuilder + SyntaxTree + AST 桥接已构建（672 行） |
 | **Session Actor** | `[🚧 进行中]` | Session + FileWorker + Watchdog（609 行，基于 tokio） |
-| **Tactic AST** | `[✅ 已完成]` | enum Tactic + 化简器，位于 core/tactic.rs（218 行） |
+| **内核基础设施** | `[🔵 一期]` | `ThmKernel::instantiate`, `ThmKernel::bicompose`, `Thm::nprems/prem/concl` |
+| **Tactic 系统** | `[🚧 需重写]` | 当前返回 `Vec<Vec<Goal>>` 不产生 `Thm`；需改为 `&Thm -> Vec<Thm>` |
+| **Method 系统** | `[🚧 需重写]` | 当前返回 `Option<Vec<Goal>>`；需基于新 Tactic |
+| **Proof State** | `[🚧 桩代码]` | Isar 生命周期，未连接证明引擎 |
 | **LSP tower** | `[⏸️ 暂缓]` | 0 tower 代码；当前 server/ + lsp/ handler 无需它即可工作 |
 | **WASM 插件** | `[🚧 进行中]` | wasm/ 具有运行时 + 13 个宿主函数 + SDK（508 行） |
 | **SQLite 缓存** | `[✅ 已完成]` | theory/cache.rs 已完成（203 行，3 个测试） |
@@ -86,11 +90,15 @@
 | `logic.ML` | 693 | `core/logic.rs` | ✅ Pure.imp/all/eq |
 | `sign.ML` | 597 | `core/sign.rs` | ✅ 签名+类型检查 |
 | `theory.ML` | — | `core/theory.rs` | ✅ Theory + ProofContext |
-| `thm.ML` | 2,752 | `core/thm.rs` | ✅ 11 条推理规则 |
+| `thm.ML` (assume/refl/...) | 2,752 | `core/thm.rs` | ✅ 11 条推理规则 |
+| `thm.ML` (instantiate) | — | `core/thm.rs` | ❌ **缺失** — 无法将 Envir 应用到 Thm |
+| `thm.ML` (bicompose) | — | `core/thm.rs` | ❌ **缺失** — 所有 tactic 的核心操作 |
 | `unify.ML` | 668 | `core/unify.rs` | ✅ 高阶统一 |
 | `envir.ML` | 428 | `core/envir.rs` | ✅ |
-| `term_subst.ML` | — | `core/term_subst.rs` | ✅ |
-| `tactic.ML` | — | `core/tactic.rs` | ✅ |
+| `term_subst.ML` | — | `core/term_subst.rs` | ✅ Term 级 instantiate |
+| `drule.ML` (compose) | — | `core/drule.rs` | 🚧 仅有 `==` 精确匹配，无统一 |
+| `bires.ML` (biresolution) | — | `core/bires.rs` | 🚧 桩代码，结果与输入 state 断开 |
+| `tactic.ML` | — | `core/tactic.rs` | 🚧 需重写：`Goal` 换 `Thm`，连接内核 |
 | `Isar/token.ML` | 854 | `isar/token.rs` | ✅ 原生 \<...> |
 | `Isar/parse.ML` | — | `isar/parse.rs` | ✅ 解析组合子 |
 | `Isar/proof.ML` | 1,370 | `isar/proof.rs` | 🚧 桩代码 |
@@ -110,6 +118,68 @@
 3. Isabelle 的语法、逻辑、LCF 内核不变。其他一切都可以重来。
 4. 目标是：最快的交互式定理证明器，最好的编辑器体验。
 ```
+
+---
+
+## 证明引擎断层的根因分析
+
+### 核心问题：`bicompose` 和 `instantiate` 缺失
+
+在 Isabelle 中，**所有** tactic 最终都调用同一个内核操作：`bicompose`。
+
+```
+assume_tac i state  → bicompose(true, Thm.assume(prem_i), state, i)
+resolve_tac thms i  → bicompose(true, thm, state, i)  for each thm
+eresolve_tac thms i → bicompose(true, refined_thm, state, i)
+```
+
+`bicompose(thm1, thm2, i)` 是证明引擎的唯一核心操作：
+
+```
+thm1:  [| H1; ...; Hm |] ==> A       （定理：前提 H1..Hm 蕴含结论 A）
+thm2:  [| ...; Gi; ... |] ==> ... ==> Gi ==> ... ==> C    （目标状态）
+
+若 A 与 Gi 可统一：
+  结果: [| ...; H1; ...; Hm; ... |] ==> ... ==> H1 ==> ... ==> Hm ==> ... ==> C
+        ↑ Gi 被 H1..Hm 替换          ↑ 子目标 Gi 被替换为 thm1 的前提
+```
+
+这不是 `implies_elim`（modus ponens）能做到的。`implies_elim` 只能处理第一个前提的精确匹配。
+`bicompose` 是更底层、更基础的操作——在嵌套蕴含链的任意位置做替换。
+
+### 缺失的内核基础设施
+
+| 操作 | Isabelle | 我们 | 影响 |
+|------|----------|------|------|
+| 定理实例化 | `Thm.instantiate` | `term_subst::instantiate` 只能操作 Term | 统一后无法产生新 Thm |
+| 双分解 | `Thm.bicompose` | `bires::biresolution` 桩代码，结果与输入 state 断开 | 无法将定理注入目标状态 |
+| 目标状态访问 | `Thm.nprems_of` / `prem` / `concl` | 无 | 无法访问子目标 |
+
+### 正确的构建顺序
+
+```
+Level 0 ✅: LCF 内核 (11 primitives) + 统一 (unify) + 环境 (Envir)
+
+Level 1 🎯: 补齐内核基础设施
+  ├── ThmKernel::instantiate(env, thm) -> Thm     ← 将 Envir 应用到 Thm
+  ├── ThmKernel::bicompose(thm1, thm2, i) -> Thm   ← 核心 resolution 操作
+  └── Thm::nprems(), Thm::prem(i), Thm::concl()    ← 目标状态访问
+
+Level 2: 重写 tactic 层
+  ├── Tactic = Thm -> Vec<Thm>                     ← 对齐 Isabelle
+  ├── assume_tac(i), resolve_tac(thms, i)          ← 基于 bicompose
+  └── 组合子: then, orelse, repeat, every, first   ← 保留现有结构
+
+Level 3: 方法层
+  ├── Method: rule, erule, drule, simp, auto       ← tactic 的命名包装
+  └── 通过 HolTheoremDb 查定理
+
+Level 4: Isar + 证明提取
+  ├── ProofState 持有 Thm 作为目标状态
+  └── 从 .thy 提取 proof 脚本
+```
+
+---
 
 ## Layer 0: 定理加载层 `[✅ 已完成]`
 
@@ -379,46 +449,44 @@ impl Service<HoverParams> for HoverService {
 
 ---
 
-### 5. 证明引擎：Tactic 的 Effect 系统 `[🔵 一期 — 未开始]`
+### 5. 证明引擎：Tactic = Thm → Vec\<Thm\> `[🔵 一期]`
 
-> **当前：** `core/tactic.rs`（218 行）实现了 `Tactic` 枚举和化简器。
-> Effect 系统（带 Trace/Timeout/Branch 的自由单子）已设计，但 JIT 编译器
-> 为 `todo!()` — 这是愿景架构，非已实现代码。
-
-Tactic 不是 `Box<dyn Fn>`，而是一等公民的 effect：
+> **当前：** `core/tactic.rs`（218 行）实现了 `Tactic` 枚举，但 `apply` 返回 `Vec<Vec<Goal>>`，
+> 不调用内核原语，无法产生 `Thm`。`Goal` 结构体丢失上下文——新子目标的 assumptions 为空。
+>
+> **根因：** 缺少 `ThmKernel::instantiate` 和 `ThmKernel::bicompose` 两个内核基础设施。
+> 没有它们，tactic 无法将定理注入目标状态、无法实例化定理。
+>
+> **正确设计：** 遵循 Isabelle 架构——`tactic = thm -> thm Seq.seq`。
 
 ```rust
-/// tactic 是一个带 effect 的计算，可以：
-/// - 访问目标状态
-/// - 产生子目标
-/// - 被取消
-/// - 被追踪
-enum Tactic<A> {
-    Pure(A),
-    Bind { tac: Box<Tactic<A>>, f: Box<dyn Fn(A) -> Tactic<B>> },
-    Goal(fn(&Goal) -> Vec<Goal>),
-    Trace(String, Box<Tactic<A>>),
-    Timeout(Duration, Box<Tactic<A>>),
-    Branch(Vec<Tactic<A>>),
-}
+/// 目标状态是一个 Thm：
+///   [H1, H2, ..., Hn] ⊢ H1 ==> H2 ==> ... ==> Hn ==> G
+///   其中 Hi 是子目标，G 是主结论。
+///
+/// tactic 将目标状态转换为新的目标状态（零个或多个）。
+/// 当所有 Hi 被消去（nprems() == 0），证明完成。
+pub type Tactic = Box<dyn Fn(&Thm) -> Vec<Thm>>;
 
-// Tactical 变为构造器：
-fn then<A: 'static>(t1: Tactic<A>, t2: Tactic<A>) -> Tactic<A> {
-    Tactic::Bind { tac: Box::new(t1), f: Box::new(move |_| t2) }
-}
+// 核心 tactic（基于 bicompose + instantiate）：
+fn assume_tac(i: usize) -> Tactic;    // 用 implies_elim/bicompose 消去子目标 i
+fn resolve_tac(thms: &[Thm], i: usize) -> Tactic;  // 用 bicompose 注入定理
 
-fn orelse<A: 'static>(t1: Tactic<A>, t2: Tactic<A>) -> Tactic<A> {
-    Tactic::Branch(vec![t1, t2])
-}
+// 组合子（与现有一致，只改类型）：
+fn then_tac(t1: Tactic, t2: Tactic) -> Tactic;     // THEN: 函数复合
+fn orelse_tac(t1: Tactic, t2: Tactic) -> Tactic;   // ORELSE: 回溯
+fn repeat_tac(t: Tactic) -> Tactic;                 // REPEAT: 迭代
+fn every_tac(ts: Vec<Tactic>) -> Tactic;            // EVERY: 序列
+fn first_tac(ts: Vec<Tactic>) -> Tactic;            // FIRST: 首个成功
 ```
 
-**为什么不用 `Box<dyn Fn>`**：
-- 一等公民 AST → 可序列化、可分析、可优化
-- 可以写 tactic 编译器（将 tactic 编译为优化的字节码）
-- 可以生成 tactic 的证明项（proofterm）
-- `Trace` → 自动记录策略执行日志
-- `Timeout` → 内置超时支持
-- `Branch` → 内置搜索分叉
+**关键区别 vs 当前实现**：
+- 当前：`apply(&Goal) -> Vec<Vec<Goal>>` — 两层嵌套，不产生 Thm
+- 正确：`apply(&Thm) -> Vec<Thm>` — 一层，每个结果是内核验证的 Thm
+- 当前：`Goal::new(vec![], ...)` 丢失上下文
+- 正确：`bicompose` 自动保留所有上下文
+- 当前：空 Vec 既表示 "tactic 不适用" 也表示 "证明完成"
+- 正确：`vec![state_with_0_prems]` 明确表示完成，`vec![]` 表示失败
 
 ---
 

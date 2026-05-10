@@ -25,65 +25,97 @@ Isabelle-rs 不追求 1:1 移植 Isabelle 40 年的全部架构。采用**价值
 
 ---
 
-## Phase 1：证明引擎 MVP（3-4 周）
+## Phase 1：证明引擎 MVP
 
 **目标**：利用已加载的 2,548 条定理，能够自动证明新目标。
 
-### 1.1 目标状态机
+### 架构根基：为什么不是直接写 auto/simp
+
+在 Isabelle 中，**所有** tactic（assume_tac, resolve_tac, eresolve_tac, ...）最终都调用
+同一个内核操作：`bicompose`。这不是 `implies_elim`（modus ponens）能做到的——
+`bicompose` 在嵌套蕴含链的任意位置做替换，而 `implies_elim` 只能处理第一个前提。
+
+当前我们有：
+- `ThmKernel` 11 条原语 ✅
+- `unify::matchers` 统一 ✅
+- `Envir::norm_term` 环境归一化 ✅
+
+但我们缺少：
+- `ThmKernel::instantiate(env, thm)` — 将统一结果应用到定理
+- `ThmKernel::bicompose(thm1, thm2, i)` — 将定理注入目标状态
+- `Thm::nprems()`, `Thm::prem(i)`, `Thm::concl()` — 访问目标状态
+
+**没有这三个基础设施，所有 tactic 都无法正确实现。**
+
+### 1.1 内核基础设施（第一优先）
 
 ```rust
-struct ProofState {
-    main_goal: Term,
-    subgoals: VecDeque<Goal>,
-    proved: Vec<Thm>,
-    depth: u32,
-    trace: Vec<ProofStep>,  // 可回溯
+// 在 thm.rs 中新增：
+impl ThmKernel {
+    /// 将 Envir（统一结果）应用到定理，产生新定理
+    pub fn instantiate(env: &Envir, thm: &Thm) -> Thm;
+    
+    /// 核心 resolution 操作：将 thm1 注入 thm2 的第 i 个子目标位置
+    pub fn bicompose(thm1: &Thm, thm2: &Thm, i: usize) -> Option<Thm>;
 }
 
-enum TacticResult {
-    Proved(Thm),
-    Reduced(Vec<Goal>),
-    NotApplicable,
-    Failed(ProofError),
+impl Thm {
+    fn nprems(&self) -> usize;    // 子目标数量
+    fn prem(&self, i: usize) -> Term;  // 第 i 个子目标（1-indexed）
+    fn concl(&self) -> Term;      // 主结论
 }
 ```
 
-### 1.2 定理索引
+### 1.2 Tactic 层重写
 
-- 按结论根符号索引（eq → [sym, trans, refl, ...]）
-- 重写规则提取（`[simp]` 定理 → `RewriteRule { lhs, rhs, conds }`）
-- intro/elim 规则分类
+基于 `bicompose` + `instantiate`，重写 `core/tactic.rs`：
 
-### 1.3 核心 Tactic
+```rust
+// 目标状态就是 Thm，不再需要 Goal 结构体
+// tactic = Thm -> Vec<Thm> （对齐 Isabelle 的 thm -> thm Seq.seq）
+pub type Tactic = Box<dyn Fn(&Thm) -> Vec<Thm>>;
 
-| Tactic | 说明 |
-|--------|------|
-| `rule` | 用单个定理匹配目标结论 |
-| `erule` | 用消除规则析构假设 |
-| `assumption` | 检查目标是否在假设中 |
-| `simp` | 用重写规则化简目标 |
-| `auto` | 经典推理器（安全规则优先 + 有限回溯） |
+// 基础 tactic
+fn all_tac() -> Tactic;    // |state| vec![state.clone()]
+fn no_tac() -> Tactic;     // |_| vec![]
+fn assume_tac(i: usize) -> Tactic;   // 用 bicompose + Thm.assume 消去子目标 i
+fn resolve_tac(thms: &[Thm], i: usize) -> Tactic;  // 用 bicompose 将定理注入子目标 i
 
-### 1.4 `simp` 重写引擎
-
-- 从最内层子项开始匹配 LHS
-- 前提条件递归验证
-- 重写直到不动点
-
-### 1.5 `auto` 经典推理器
-
+// 组合子（保留现有结构，只改类型）
+fn then_tac(t1: Tactic, t2: Tactic) -> Tactic;     // THEN: 函数复合
+fn orelse_tac(t1: Tactic, t2: Tactic) -> Tactic;   // ORELSE: 回溯
+fn repeat_tac(t: Tactic) -> Tactic;                 // REPEAT
+fn every_tac(ts: Vec<Tactic>) -> Tactic;            // EVERY
+fn first_tac(ts: Vec<Tactic>) -> Tactic;            // FIRST
 ```
-1. assumption    ← 安全（不增加子目标）
-2. simp          ← 安全（重写不改变可证明性）
-3. rule (intro)  ← 将目标分解为子目标（通常更简单）
-4. erule         ← 从假设中提取信息
-5. 有限回溯      ← 防止组合爆炸
+
+### 1.3 Method 层
+
+基于新 Tactic 重写 `isar/method.rs`：
+
+```rust
+impl Method {
+    /// 将方法转换为 tactic（查询 HolTheoremDb）
+    fn to_tactic(&self, db: &HolTheoremDb) -> Tactic {
+        match self {
+            Method::Assumption => assume_tac(1),
+            Method::Rule(thms) => resolve_tac(thms, 1),
+            Method::Simp => simp_tac(&db.simps),
+            Method::Auto => auto_tac(db),
+        }
+    }
+}
 ```
+
+### 1.4 Isar 集成
+
+更新 `isar/proof.rs`：`Proving` 状态持有 `Thm` 作为目标状态。
 
 ### Phase 1 完成标准
 
-- [ ] `prove("A & B --> B & A")` 返回 `Ok(Thm)`
-- [ ] `prove("(A = B) & (B = C) --> A = C")` 返回 `Ok(Thm)`  
+- [ ] `prove("A & B --> B & A")` 返回 `Ok(Thm)` — 通过内核原语构建
+- [ ] `prove("(A = B) & (B = C) --> A = C")` 返回 `Ok(Thm)`
+- [ ] `Thm` 的 derivation 是 `Derivation::Rule { ... }` 不是 `Derivation::Axiom`
 - [ ] 100+ 个命题逻辑 + 等式 + 量词测试用例通过
 
 ---
@@ -190,8 +222,10 @@ void isabelle_free(IsabelleCtx* ctx);
 
 | 阶段 | 时间 | 可交付 |
 |------|------|--------|
-| ✅ 已完成 | - | 2,548 条定理，100% 源覆盖 |
-| Phase 1 | 3-4 周 | simp + auto 可用 |
+| ✅ 已完成 | — | 2,548 条定理，100% 源覆盖 |
+| Phase 1a | 1 周 | `instantiate` + `bicompose` 内核基础设施 |
+| Phase 1b | 1 周 | Tactic 层重写（`Thm -> Vec<Thm>`） |
+| Phase 1c | 1-2 周 | simp + auto 可用 |
 | Phase 2 | 2-3 周 | ~65% 定理重新验证 |
 | Phase 3 | 2 周 | 100+ 理论文件加载 |
 | Phase 4 | 1-2 周 | `cargo add isabelle-rs` |
