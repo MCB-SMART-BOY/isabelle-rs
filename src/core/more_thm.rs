@@ -7,8 +7,6 @@
 use super::term::Term;
 use super::thm::{CTerm, Thm, ThmKernel};
 use super::logic::Pure;
-use super::types::Typ;
-use super::term_subst;
 use std::sync::Arc;
 
 // =========================================================================
@@ -119,6 +117,8 @@ pub fn rs(thm1: &Thm, thm2: &Thm) -> Option<Thm> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::types::Typ;
+    use crate::core::term::Term;
     use std::sync::Arc;
 
     fn prop(name: &str) -> CTerm {

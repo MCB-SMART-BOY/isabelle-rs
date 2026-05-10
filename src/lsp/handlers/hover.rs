@@ -27,7 +27,7 @@ pub fn handle_hover(ctx: &HandlerContext, req: JsonRpcRequest) {
                 }),
                 range: None,
             };
-            ctx.send_result(req.id, serde_json::to_value(hover).unwrap());
+            ctx.send_result(req.id, serde_json::to_value(hover).expect("Serialization failed"));
         }
         None => {
             ctx.send_result(req.id, serde_json::Value::Null);

@@ -19,7 +19,7 @@ pub fn handle_proof_goals(ctx: &HandlerContext, req: JsonRpcRequest) {
 
     match proof_state {
         Some(ps) => {
-            ctx.send_result(req.id, serde_json::to_value(ps).unwrap());
+            ctx.send_result(req.id, serde_json::to_value(ps).expect("Serialization failed"));
         }
         None => {
             ctx.send_result(req.id, serde_json::Value::Null);

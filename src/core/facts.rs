@@ -8,7 +8,7 @@
 //! - `[elim]` rules: elimination rules
 //! - Named theorems: `name: thm1 thm2 ...`
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use super::thm::Thm;

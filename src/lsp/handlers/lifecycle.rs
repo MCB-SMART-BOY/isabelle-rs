@@ -31,7 +31,7 @@ pub fn handle_initialize(ctx: &HandlerContext, req: JsonRpcRequest) {
         },
     };
 
-    ctx.send_result(req.id, serde_json::to_value(result).unwrap());
+    ctx.send_result(req.id, serde_json::to_value(result).expect("Serialization failed"));
 }
 
 /// Handle the `shutdown` request.

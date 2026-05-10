@@ -97,5 +97,5 @@ pub fn handle_completion(ctx: &HandlerContext, req: JsonRpcRequest) {
         is_incomplete: false,
         items,
     };
-    ctx.send_result(req.id, serde_json::to_value(result).unwrap());
+    ctx.send_result(req.id, serde_json::to_value(result).expect("Serialization failed"));
 }

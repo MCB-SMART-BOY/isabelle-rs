@@ -17,7 +17,6 @@ use crate::core::types::intern;
 // - **Spaces, newlines, tabs**
 
 use std::fmt;
-use std::sync::Arc;
 
 // =========================================================================
 // Token kinds
@@ -127,7 +126,7 @@ pub const COMMAND_KEYWORDS: &[&str] = &[
     "note", "also", "finally", "moreover", "ultimately",
     "case", "next",
     "if", "then", "else", "for",
-    "and", "is", "where", "when",
+    "and", "in", "is", "where", "when", "of",
     "ML", "ML_prf", "ML_val", "ML_command",
     "declare", "lemmas", "named_theorems",
     "hide_class", "hide_type", "hide_const", "hide_fact",
@@ -181,7 +180,7 @@ impl Lexer {
             return Token::new(TokenKind::EOF, String::new(), self.offset);
         }
 
-        let start = self.pos;
+        let _start = self.pos;
         let start_offset = self.offset;
         let ch = self.peek();
 
@@ -199,6 +198,25 @@ impl Lexer {
             ';' => {
                 self.advance();
                 Token::new(TokenKind::Semicolon, ";".into(), start_offset)
+            }
+
+            // Isabelle symbol escapes: \<name> (e.g., \<in>, \<forall>, \<Longrightarrow>)
+            '\\' if self.peek_n(1) == Some('<') => {
+                self.advance_by(2); // skip \<
+                let inner_start = self.pos;
+                while self.pos < self.input.len() {
+                    let c = self.peek();
+                    if c == '>' { break; }
+                    if c == '\n' { break; } // safety: don't cross lines
+                    if !c.is_alphanumeric() && c != '_' && c != '^' { break; }
+                    self.advance();
+                }
+                let inner: String = self.input[inner_start..self.pos].iter().collect();
+                if self.pos < self.input.len() && self.peek() == '>' {
+                    self.advance(); // skip >
+                }
+                let text = format!("\\<{}>", inner);
+                Token::new(TokenKind::Symbol(intern(&text)), text, start_offset)
             }
 
             // Symbols: try longest match first (==> before ==, =>)
@@ -222,6 +240,8 @@ impl Lexer {
                 self.advance_by(3);
                 Token::new(TokenKind::Symbol(intern("-->")), "-->".into(), start_offset)
             }
+            '-' => { self.advance(); Token::new(TokenKind::Symbol(intern("-")), '-'.into(), start_offset) }
+            '+' => { self.advance(); Token::new(TokenKind::Symbol(intern("+")), '+'.into(), start_offset) }
             '<' if self.peek_n(1) == Some('=') && self.peek_n(2) == Some('>') => {
                 self.advance_by(3);
                 Token::new(TokenKind::Symbol(intern("<=>")), "<=>".into(), start_offset)
@@ -230,6 +250,7 @@ impl Lexer {
                 self.advance_by(3);
                 Token::new(TokenKind::Symbol(intern("<->")), "<->".into(), start_offset)
             }
+            '<' => { self.advance(); Token::new(TokenKind::Symbol(intern("<")), '<'.into(), start_offset) }
 
             // Bracketed assumptions: [| ... |]
             '[' if self.peek_n(1) == Some('|') => {
@@ -255,6 +276,10 @@ impl Lexer {
 
             '.' => { self.advance(); Token::new(TokenKind::Symbol(intern(".")), '.'.into(), start_offset) }
             '%' => { self.advance(); Token::new(TokenKind::Symbol(intern("%")), '%'.into(), start_offset) }
+            ':' if self.peek_n(1) == Some(':') => {
+                self.advance_by(2);
+                Token::new(TokenKind::Symbol(intern("::")), "::".into(), start_offset)
+            }
             // Single-character symbols
             ':' => {
                 self.advance();
@@ -267,7 +292,13 @@ impl Lexer {
             ')' => { self.advance(); Token::new(TokenKind::Symbol(intern(")")), ')'.into(), start_offset) }
             '[' => { self.advance(); Token::new(TokenKind::Symbol(intern("[")), '['.into(), start_offset) }
             ']' => { self.advance(); Token::new(TokenKind::Symbol(intern("]")), ']'.into(), start_offset) }
+            '{' => { self.advance(); Token::new(TokenKind::Symbol(intern("{")), '{'.into(), start_offset) }
+            '}' => { self.advance(); Token::new(TokenKind::Symbol(intern("}")), '}'.into(), start_offset) }
             '=' => { self.advance(); Token::new(TokenKind::Symbol(intern("=")), '='.into(), start_offset) }
+            '#' => { self.advance(); Token::new(TokenKind::Symbol(intern("#")), '#'.into(), start_offset) }
+            '>' => { self.advance(); Token::new(TokenKind::Symbol(intern(">")), '>'.into(), start_offset) }
+            '@' => { self.advance(); Token::new(TokenKind::Symbol(intern("@")), '@'.into(), start_offset) }
+            '`' => { self.advance(); Token::new(TokenKind::Symbol(intern("`")), '`'.into(), start_offset) }
             // Error
             _ => {
                 self.advance();
@@ -281,8 +312,16 @@ impl Lexer {
         let start_offset = self.offset;
         while self.pos < self.input.len() {
             let ch = self.peek();
-            if ch.is_alphanumeric() || ch == '_' || ch == '\'' {
-                if ch == '.' && self.peek_n(1) == Some('.') { break; } // don't eat ..
+            if ch.is_alphanumeric() || ch == '_' || ch == '\'' || ch == '.' {
+                if ch == '.' {
+                    // Only include dot if it's part of a qualified name (next char is ident char, not another dot)
+                    match self.peek_n(1) {
+                        Some('.') => break, // don't eat ..
+                        Some(c) if !c.is_alphanumeric() && c != '_' && c != '\'' => break,
+                        None => break,
+                        _ => {} // dot followed by ident char => include it (qualified name)
+                    }
+                }
                 self.advance();
             } else {
                 break;

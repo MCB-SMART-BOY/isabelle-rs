@@ -8,9 +8,9 @@
 use std::sync::Arc;
 
 use crate::core::term::Term;
-use crate::core::thm::{CTerm, Thm, ThmKernel};
+use crate::core::thm::{CTerm, Thm};
 use crate::core::simplifier::Simplifier;
-use crate::core::tactic::{self, Goal, Tactic};
+use crate::core::tactic::{self, Goal};
 
 // =========================================================================
 // Method

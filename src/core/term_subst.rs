@@ -20,8 +20,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::term::Term;
-use super::types::Symbol;
-use super::types::{Sort, Typ};
+use super::types::Typ;
 
 use super::envir::VarKey;
 
@@ -120,7 +119,7 @@ pub fn instantiate_type(tyinst: &TypeInst, typ: &Typ) -> Typ {
 
 /// Instantiate a term: replace all Vars and TVars with their assignments.
 ///
-/// ```
+/// ```text
 /// instantiate({?'a := nat}, {?P := λx. x}, ?P(0))
 /// → (λx. x)(0)
 /// ```
@@ -211,7 +210,7 @@ fn generalize_inner(
 
 /// Fully β-normalize a term: reduce all β-redexes.
 ///
-/// ```
+/// ```text
 /// beta_norm( (λx. (λy. y) x) a )
 /// → a
 /// ```
@@ -302,6 +301,7 @@ fn lower_bound(term: &Term, cutoff: usize) -> Term {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::types::{Symbol, Sort};
 
     #[test]
     fn test_subst_bounds() {

@@ -89,7 +89,7 @@ impl Theory {
         parents: Vec<Arc<Theory>>,
     ) -> Theory {
         // Build the extended signature by inheriting from parents
-        let mut sig = if let Some(first) = parents.first() {
+        let sig = if let Some(first) = parents.first() {
             first.signature.extend()
         } else {
             Signature::pure()

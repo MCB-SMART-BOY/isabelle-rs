@@ -14,6 +14,7 @@
 //! | ∀ (all)   | `all_intr` | `all_elim` |
 //! | ∃ (ex)    | `ex_intr` | `ex_elim` |
 
+use crate::core::error::KernelError;
 use crate::core::term::Term;
 use crate::core::thm::{CTerm, Thm, ThmKernel};
 use crate::core::logic::Pure;
@@ -113,7 +114,7 @@ pub fn not_elim(_thm_not_p: &Thm, _thm_p: &Thm, goal: CTerm) -> Thm {
 // Universal quantifier (∀)
 // =========================================================================
 
-pub fn all_intr(x_name: &str, x_typ: Typ, thm: &Thm) -> Thm {
+pub fn all_intr(x_name: &str, x_typ: Typ, thm: &Thm) -> Result<Thm, KernelError> {
     ThmKernel::forall_intr(x_name, x_typ, thm)
 }
 
@@ -166,7 +167,7 @@ mod tests {
     fn test_all_elim() {
         let p = prop("P");
         let thm_p = ThmKernel::assume(p);
-        let thm_all = all_intr("x", Typ::base("nat"), &thm_p);
+        let thm_all = all_intr("x", Typ::base("nat"), &thm_p).expect("forall_intr should succeed");
         let t = CTerm::certify(Term::const_("t", Typ::base("nat")));
         let result = all_elim(t, &thm_all);
         assert_eq!(result.prop().term(), &Term::const_("P", Typ::base("prop")));
@@ -195,7 +196,7 @@ mod tests {
     fn test_all_intr_elim_roundtrip() {
         let p = prop("P");
         let thm_p = ThmKernel::assume(p);
-        let thm_all = all_intr("x", Typ::base("nat"), &thm_p);
+        let thm_all = all_intr("x", Typ::base("nat"), &thm_p).expect("forall_intr should succeed");
         assert!(Pure::dest_all(thm_all.prop().term()).is_some());
     }
 }

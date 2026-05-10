@@ -13,7 +13,6 @@ use std::sync::Arc;
 
 use super::term::Term;
 use super::types::Symbol;
-use super::types::Typ;
 
 // =========================================================================
 // Name context — tracks used names
@@ -268,6 +267,7 @@ fn replace_free_with_var(term: &Term, free_name: &str, var_idx: usize) -> Term {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::types::Typ;
 
     #[test]
     fn test_variant() {

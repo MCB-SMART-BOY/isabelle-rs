@@ -173,8 +173,8 @@ fn demo_isabelle() {
     let mut thy = Theory::begin("MyTheory", vec![pure.clone()]);
     thy.declare_const("MyTheory.zero", Typ::base("nat"));
     println!("\nExtended theory: {}", thy.name());
-    println!("  Inherited Pure.imp: {:?}", thy.const_type("Pure.imp").unwrap());
-    println!("  Own MyTheory.zero: {:?}", thy.const_type("MyTheory.zero").unwrap());
+    println!("  Inherited Pure.imp: {:?}", thy.const_type("Pure.imp").expect("Pure.imp not found"));
+    println!("  Own MyTheory.zero: {:?}", thy.const_type("MyTheory.zero").expect("MyTheory.zero not found"));
     assert!(thy.is_declared("Pure.all"));  // inherited
     assert!(thy.is_declared("MyTheory.zero")); // own
 

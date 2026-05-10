@@ -17,7 +17,6 @@
 //! | `zero_var_indexes` | Reset schematic variable indices |
 
 
-use super::term::Term;
 use super::thm::{CTerm, Thm, ThmKernel};
 use super::types::Typ;
 use super::logic::Pure;
@@ -73,7 +72,7 @@ pub fn implies_elim_list(thm: &Thm, antecedents: &[Thm]) -> Thm {
 /// This is the core of forward proof in Isabelle.
 pub fn compose(thm1: &Thm, thm2: &Thm, i: usize) -> Option<Thm> {
     // Get the i-th premise of thm2
-    let (prems, conc) = Pure::strip_imp_prems(thm2.prop().term());
+    let (prems, _conc) = Pure::strip_imp_prems(thm2.prop().term());
     if i >= prems.len() {
         return None;
     }
@@ -126,6 +125,7 @@ pub fn implies_intr_hyps(thm: &Thm) -> Thm {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::term::Term;
 
     fn prop(name: &str) -> CTerm {
         CTerm::certify(Term::const_(name, Typ::base("prop")))

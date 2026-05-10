@@ -13,7 +13,6 @@
 
 use super::envir::Envir;
 use super::term::Term;
-use super::types::Typ;
 use super::unify::{self, UnifyConfig};
 
 // =========================================================================
@@ -40,7 +39,7 @@ pub fn is_pattern(term: &Term) -> bool {
 
 fn all_distinct_bounds(term: &Term) -> bool {
     match term {
-        Term::Bound(i) => true,
+        Term::Bound(_i) => true,
         Term::App { func, arg } => all_distinct_bounds(func) && all_distinct_bounds(arg),
         _ => false, // non-Bound in spine = not a pattern
     }
@@ -84,6 +83,7 @@ pub fn rewrite(pat: &Term, replacement: &Term, target: &Term) -> Option<Term> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::types::Typ;
 
     #[test]
     fn test_is_pattern_var() {

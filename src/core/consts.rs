@@ -15,7 +15,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use super::types::Symbol;
-use super::types::{Sort, Typ};
+use super::types::Typ;
 
 // =========================================================================
 // Type scheme
@@ -36,7 +36,7 @@ impl TypeScheme {
     /// E.g., scheme `'a => 'a`, type `nat => nat` → true.
     pub fn is_instance(&self, typ: &Typ) -> bool {
         // Collect the free type variables in the scheme body
-        let scheme_tvars = collect_tfrees(&self.body);
+        let _scheme_tvars = collect_tfrees(&self.body);
 
         // Try to match: each TFree in the scheme should match a corresponding
         // subtree in the concrete type consistently.
@@ -136,6 +136,7 @@ impl Consts {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::types::Sort;
 
     #[test]
     fn test_is_instance() {

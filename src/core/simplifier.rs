@@ -18,7 +18,6 @@ use super::logic::Pure;
 use super::term::Term;
 use super::term_subst;
 use super::thm::{CTerm, Thm, ThmKernel};
-use super::types::Typ;
 use super::unify::{self, UnifyConfig};
 
 // =========================================================================
@@ -55,7 +54,7 @@ pub fn arg_conv(i: usize, conv: Conv) -> Conv {
             Term::App { func, arg } => {
                 if i == 0 {
                     conv(arg).map(|thm| {
-                        let (_, rhs) = Pure::dest_equals(thm.prop().term()).unwrap();
+                        let (_, _rhs) = Pure::dest_equals(thm.prop().term()).expect("Rewrite rule is not an equality");
                         ThmKernel::combination(
                             &ThmKernel::reflexive(CTerm::certify(func.as_ref().clone())),
                             &thm,
@@ -88,7 +87,7 @@ pub fn abs_conv(conv: Conv) -> Conv {
 pub fn fun_conv(conv: Conv) -> Conv {
     Box::new(move |t| {
         match t {
-            Term::App { func, arg } => {
+            Term::App { func, arg: _ } => {
                 conv(func).map(|thm| {
                     ThmKernel::combination(
                         &thm,
@@ -163,7 +162,7 @@ impl Simplifier {
         // Try conversions first
         for conv in &self.conversions {
             if let Some(thm) = conv(term) {
-                let (_, rhs) = Pure::dest_equals(thm.prop().term()).unwrap();
+                let (_, rhs) = Pure::dest_equals(thm.prop().term()).expect("Rewrite rule is not an equality");
                 return Some((rhs.clone(), thm));
             }
         }
@@ -199,7 +198,7 @@ impl Simplifier {
 
         // Check condition if present
         if let Some(cond) = &rule.condition {
-            let cond_inst = env.norm_term(cond);
+            let _cond_inst = env.norm_term(cond);
             // For unconditional rules, this is skipped
             // For conditional rules, we'd need to prove the condition
         }
@@ -244,6 +243,7 @@ pub fn beta_simp() -> Simplifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::types::Typ;
 
     #[test]
     fn test_rewrite_identity() {

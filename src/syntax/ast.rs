@@ -148,10 +148,11 @@ mod tests {
         let lemma_node = root.children()
             .find(|c| c.kind() == SyntaxKind::Lemma);
         assert!(lemma_node.is_some(), "no Lemma node found");
-        let ast = Ast::from_syntax(&lemma_node.unwrap());
+        let lemma_node = lemma_node.expect("Lemma node should exist");
+        let ast = Ast::from_syntax(&lemma_node);
         assert!(ast.is_some());
         // The lemma AST should be a Mixfix with name and statement
-        match &ast.unwrap() {
+        match &ast.expect("AST should exist") {
             Ast::Mixfix(op, args) => {
                 assert_eq!(op, "lemma");
                 assert_eq!(args.len(), 2);

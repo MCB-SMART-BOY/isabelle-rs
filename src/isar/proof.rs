@@ -20,7 +20,7 @@
 use std::sync::Arc;
 
 use crate::core::term::Term;
-use crate::core::thm::{CTerm, Thm, ThmKernel};
+use crate::core::thm::Thm;
 use crate::core::types::Typ;
 
 // =========================================================================
@@ -92,7 +92,7 @@ impl ProofState {
     /// Begin the proof of the currently stated lemma.
     pub fn begin_proof(&self) -> Option<Self> {
         match self {
-            ProofState::Stated { name, statement } => {
+            ProofState::Stated { name: _, statement } => {
                 let node = ProofNode {
                     fixes: vec![],
                     assumes: vec![],
@@ -216,6 +216,7 @@ impl Default for ProofManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::thm::{ThmKernel, CTerm};
 
     #[test]
     fn test_proof_lifecycle() {

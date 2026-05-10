@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use crate::core::term::Term;
 use crate::core::thm::Thm;
-use crate::core::types::{Symbol, Typ, Sort};
+use crate::core::types::{Symbol, Typ};
 
 // =========================================================================
 // Facts — named theorem tables
@@ -369,7 +369,7 @@ mod tests {
     use super::*;
     use crate::core::thm::{CTerm, ThmKernel};
     use crate::core::term::Term as Tm;
-    use crate::core::types::Typ;
+    use crate::core::types::{Typ, Sort};
 
     fn dummy_thm() -> Arc<Thm> {
         let a = CTerm::certify(Tm::const_("A", Typ::base("prop")));

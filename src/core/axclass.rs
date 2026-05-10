@@ -6,7 +6,7 @@
 //! has axioms like `x <= x` (reflexivity). The axclass module
 //! manages class definitions with their associated axioms.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use super::term::Term;

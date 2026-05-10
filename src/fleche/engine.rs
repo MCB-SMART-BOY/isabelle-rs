@@ -5,9 +5,6 @@
 
 use std::sync::{Arc, Mutex};
 
-use crate::core::term::Term;
-use crate::core::thm::{CTerm, ThmKernel};
-use crate::core::types::Typ;
 use crate::core::theory::Theory;
 use crate::isar::toplevel::Toplevel;
 use crate::document::document::*;
@@ -124,7 +121,7 @@ impl Fleche {
     }
 
     pub fn open_file(&self, uri: &str, content: &str) -> Vec<Diagnostic> {
-        let mut doc = self.document.lock().unwrap();
+        let mut doc = self.document.lock().expect("Document lock poisoned");
         doc.open_file(uri.to_string(), content.to_string());
         drop(doc);
         self.check_file(uri)
@@ -132,7 +129,7 @@ impl Fleche {
 
     pub fn update_file(&self, uri: &str, content: &str) -> Vec<Diagnostic> {
         let result = {
-            let mut doc = self.document.lock().unwrap();
+            let mut doc = self.document.lock().expect("Document lock poisoned");
             doc.update_file(uri, content.to_string())
         };
         if result.is_none() {
@@ -142,12 +139,12 @@ impl Fleche {
     }
 
     pub fn close_file(&self, uri: &str) {
-        let mut doc = self.document.lock().unwrap();
+        let mut doc = self.document.lock().expect("Document lock poisoned");
         doc.close_file(uri);
     }
 
     fn check_file(&self, uri: &str) -> Vec<Diagnostic> {
-        let mut doc = self.document.lock().unwrap();
+        let mut doc = self.document.lock().expect("Document lock poisoned");
         let node = match doc.get_node_mut(uri) {
             Some(n) => n,
             None => return Vec::new(),
@@ -171,7 +168,7 @@ impl Fleche {
     }
 
     pub fn get_proof_state(&self, uri: &str, _line: u32) -> Option<ProofState> {
-        let doc = self.document.lock().unwrap();
+        let doc = self.document.lock().expect("Document lock poisoned");
         let node = doc.get_node(uri)?;
         node.snapshots.iter().rev().find_map(|s| s.proof_state.clone())
     }
@@ -181,7 +178,7 @@ impl Fleche {
     }
 
     pub fn get_diagnostics(&self, uri: &str) -> Vec<Diagnostic> {
-        let doc = self.document.lock().unwrap();
+        let doc = self.document.lock().expect("Document lock poisoned");
         doc.diagnostics(uri)
     }
 }

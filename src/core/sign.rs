@@ -1,6 +1,6 @@
 //! Signature — the gatekeeper for type-checking.
 use std::collections::HashMap;
-use super::types::{ClassAlgebra, Sort, Typ, Symbol, Class};
+use super::types::{ClassAlgebra, Sort, Typ, Symbol};
 
 #[derive(Clone, Debug)]
 pub enum TypeDecl { Logical { arity: usize }, Abbreviation { rhs: Typ }, Nonterminal }

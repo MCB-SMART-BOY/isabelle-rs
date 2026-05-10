@@ -1,290 +1,198 @@
-# Roadmap
+# 开发路线图
 
-## 总体路线
+## 总体路线：现代化重写策略
 
-Isabelle-rs 的路线图分为 7 个 Tier，从内核完备性到生产就绪逐步推进。
+Isabelle-rs 不追求 1:1 移植 Isabelle 40 年的全部架构。采用**价值优先、逐步净化**策略：
 
-```
-Tier 0  ████████████  ✅ 完成    内核基础 (types, term, logic, sign, theory, thm)
-Tier 1  ████████████  ✅ 完成    证明引擎 (envir, term_subst, unify, tactic, drule)
-Tier 2  ████████████  ✅ 完成    Isar 语言 (proof, toplevel, method, proof_context)
-Tier 3  ████████████  ✅ 完成    逻辑基础设施 (proofterm, net, consts, facts, axclass)
-Tier 4  ░░░░░░░░░░░░  🟡 规划中  语法系统 (Syntax, parser, pretty printer) [stubs 就位]
-Tier 5  ██████████░░  🟢 部分完成 LSP 服务器 (transport, handler, extensions) [router stub 就位]
-Tier 6  ░░░░░░░░░░░░  🔵 未来    HOL 对象逻辑 [hol_loader 就位]
-Tier 7  ░░░░░░░░░░░░  🔴 下一步  生产就绪 (Session Actor, FileWorker, Watchdog)
-```
-
-## V3 迁移状态 (2025年7月)
-
-```
-Phase 1: Arena + Symbol    ✅ 完成 (arena.rs 就位, Symbol = Arc<str>, 未激活)
-Phase 2: 模块合并          ✅ 完成 (kernel/derived.rs + kernel/data.rs, 14 tests)
-Phase 3: Session Actor     ✅ 完成 (Session + FileWorker, 5 integration tests, Fleche delegates to Session)
-Phase 4: Tactic AST        ✅ 完成 (enum Tactic + apply() + simplify(), 10 tests)
-Phase 5: LSP tower         ✅ 完成 (Router + 7 handler modules, 5 new tests)
-Phase 6: Rowan CST         ✅ 完成 (SyntaxTree + CstBuilder + AST bridge, 11 tests)
-Phase 7: WASM 插件         ✅ 完成 (WasmRuntime + Plugin trait + host functions + Method integration, 7 tests)
-Phase 8: 持久化/Web        ✅ 完成 (SQLite cache + CLI build + lib.rs, 3 tests)
-```
-
-## Phase 7-8 详细设计
-
-见 [ARCHITECTURE_V3.md](./ARCHITECTURE_V3.md) 末尾的详细设计章节。
+1. 先让已加载定理产生实际证明能力
+2. 再用原始 proof 脚本自我验证
+3. 扩展理论覆盖，最终达到完全替代
 
 ---
 
-## Tier 0 — 内核基础 ✅ 完成
+## ✅ 已完成：定理表示层
 
-**状态**：30 个测试通过，~3,200 行 Rust。
-
-### 已完成模块
-
-| 模块 | 文件 | 内容 |
-|------|------|------|
-| 类型系统 | `core/types.rs` | Sort, Typ, ClassAlgebra, dummyS, dummyT, maxidx |
-| Lambda 项 | `core/term.rs` | 6 个构造器 (Const, Free, Var, Bound, Abs, App), de Bruijn |
-| Pure 元逻辑 | `core/logic.rs` | Pure.imp `==>` / Pure.all `!!` / Pure.eq `==` |
-| 签名系统 | `core/sign.rs` | TypeSignature, Signature, certify_typ, const_type |
-| 理论管理 | `core/theory.rs` | Theory (pure, begin, add_theorem), ProofContext |
-| LCF 内核 | `core/thm.rs` | ThmKernel: 9 条推理规则, CTerm, Hyps (α-equiv), Derivation |
-| 文档模型 | `document/*` | Document, Node, Command, Snapshot, fork-point diff |
-| 增量引擎 | `fleche/*` | Flèche, CommandExecutor trait, SimpleExecutor |
-| LSP 服务器 | `server/*` | LSP 3.17 types, JSON-RPC transport, Request handler, Isabelle extensions |
+| 组件 | 说明 |
+|------|------|
+| LCF 内核 | `ThmKernel`: assume/reflexive/beta/forall_intr/forall_elim 等 |
+| Term 解析器 | 完整 Isabelle 语法：量词、case、if、let、集合、列表、范围 |
+| Tokenizer | 原生 `\<...>` 符号 + 全部 ASCII 操作符 + cartouche |
+| 引理解析 | 多行 assumes/shows/fixes/obtains、匿名引理、多结论 |
+| 定理加载 | 5 个核心 .thy 文件，**2,436/2,436 源声明 100% 覆盖** |
+| 定理数据库 | 2,548 条已索引（intro/elim/simp/by-name/by-root-symbol） |
+| 文档模型 | Snapshot-based incremental checking |
+| LSP 服务器 | 7 个 handlers + Isabelle 自定义扩展 |
 
 ---
 
-## Tier 1 — 证明引擎 🔴 下一步
+## Phase 1：证明引擎 MVP（3-4 周）
 
-**目标**：使 Isabelle-rs 能够执行基本的证明搜索。
+**目标**：利用已加载的 2,548 条定理，能够自动证明新目标。
 
-### 需要实现的模块
+### 1.1 目标状态机
 
-#### 1. `core/envir.rs` — 变量环境 (~400 行)
+```rust
+struct ProofState {
+    main_goal: Term,
+    subgoals: VecDeque<Goal>,
+    proved: Vec<Thm>,
+    depth: u32,
+    trace: Vec<ProofStep>,  // 可回溯
+}
 
-```
-Environment = Map<Var → Term> × Map<TVar → Typ>
-```
-- `Envir.empty(maxidx)`: 创建空环境
-- `Envir.genvar(name, typ)`: 生成 fresh schematic variable
-- `Envir.lookup(var)`: 查找变量绑定
-- `Envir.update(var, term)`: 更新绑定
-- `Envir.norm_term(env, term)`: 正规化（替换所有已绑定变量）
-
-对应 Isabelle: `envir.ML` (428 行)
-
-#### 2. `core/term_subst.rs` — 代入 (~300 行)
-
-- `subst_bounds(args, body)`: `(λx y. body)[x:=a, y:=b]`
-- `subst_Vars(env, term)`: 替换所有 Var
-- `subst_TVars(env, typ)`: 替换所有 TVar
-- `instantiate(tyinst, tminst, term)`: 类型+项实例化
-- `beta_norm(term)`: 完全 β-正规化（当前 `beta_conversion` 只处理一步）
-
-对应 Isabelle: `term_subst.ML`
-
-#### 3. ✅ `core/pattern.rs` — 模式匹配 (~160 行)
-
-- `Pattern.match_(pat, obj)`: 将 `?P(x, y)` 匹配到具体项
-- `Pattern.unify(pat1, pat2)`: 两个模式的统一
-- `Pattern.rewrite(rule, goal)`: 用规则重写目标
-
-对应 Isabelle: `pattern.ML` (526 行)
-
-#### 4. `core/unify.rs` — 高阶统一 (~600 行)
-
-Isabelle 统一算法的核心：
-- `Unify.unifiers(env, pairs)`: 返回所有 unifier 的序列
-- `Unify.matchers(env, pairs)`: 返回所有 matcher
-- 使用 Huet 的高阶统一算法（半可判定但实践中足够）
-- 限制搜索深度防止无穷循环
-
-对应 Isabelle: `unify.ML` (668 行)
-
-#### 5. `core/tactic.rs` + `core/tactical.rs` — 策略系统 (~400 行)
-
-```
-type Tactic = Goal → GoalSeq
-
-fn all_tac(goal) → [goal]
-fn no_tac(goal) → []
-fn THEN(tac1, tac2)(goal) → tac2 ∘ tac1
-fn ORELSE(tac1, tac2)(goal) → tac1(goal) | tac2(goal)
-fn REPEAT(tac)(goal) → 重复应用直到失败
-fn resolve_tac(thm)(goal) → 用定理消解目标
-fn assume_tac(goal) → 若假设匹配则成功
+enum TacticResult {
+    Proved(Thm),
+    Reduced(Vec<Goal>),
+    NotApplicable,
+    Failed(ProofError),
+}
 ```
 
-对应 Isabelle: `tactic.ML` + `tactical.ML`
+### 1.2 定理索引
 
-#### 6. ✅ `core/drule.rs` — 派生推理规则 (~170 行)
+- 按结论根符号索引（eq → [sym, trans, refl, ...]）
+- 重写规则提取（`[simp]` 定理 → `RewriteRule { lhs, rhs, conds }`）
+- intro/elim 规则分类
+
+### 1.3 核心 Tactic
+
+| Tactic | 说明 |
+|--------|------|
+| `rule` | 用单个定理匹配目标结论 |
+| `erule` | 用消除规则析构假设 |
+| `assumption` | 检查目标是否在假设中 |
+| `simp` | 用重写规则化简目标 |
+| `auto` | 经典推理器（安全规则优先 + 有限回溯） |
+
+### 1.4 `simp` 重写引擎
+
+- 从最内层子项开始匹配 LHS
+- 前提条件递归验证
+- 重写直到不动点
+
+### 1.5 `auto` 经典推理器
 
 ```
-forall_intr (x, thm) → ∀x. P(x)  如果 x 不在假设中
-forall_elim (ct, thm) → P(t)      如果 ∀x. P(x)
-implies_intr_list ([A,B], C) → A==>B==>C
-implies_elim_list (A==>B==>C, [A,B]) → C
-zero_var_indexes (thm) → 重置所有 ?var 索引
-incr_indexes (thm) → 增加所有索引
-lift_rule (thm) → 提升规则到更大的上下文
+1. assumption    ← 安全（不增加子目标）
+2. simp          ← 安全（重写不改变可证明性）
+3. rule (intro)  ← 将目标分解为子目标（通常更简单）
+4. erule         ← 从假设中提取信息
+5. 有限回溯      ← 防止组合爆炸
 ```
 
-对应 Isabelle: `drule.ML` (839 行)
+### Phase 1 完成标准
 
-#### 7. ✅ `core/variable.rs` — 变量操作 (~330 行)
-
-```
-Variable.variant_fixes (names, ctxt) → 重命名避免冲突
-Variable.import_terms (terms, ctxt) → 导入到上下文
-Variable.export_terms (terms, ctxt) → 从上下文导出
-Variable.focus (term, ctxt) → 提取子目标
-Variable.polymorphic (ctxt, term) → 泛化自由变量
-```
-
-对应 Isabelle: `variable.ML` (791 行)
-
-### Tier 1 完成标准
-
-- [ ] 两个项可以通过 `unify` 统一
-- [ ] 可以用 `resolve_tac` 使用已知定理
-- [ ] 可以执行 `by (rule ...)` 风格的简单证明
-- [ ] `assume_tac` 可以闭合目标
+- [ ] `prove("A & B --> B & A")` 返回 `Ok(Thm)`
+- [ ] `prove("(A = B) & (B = C) --> A = C")` 返回 `Ok(Thm)`  
+- [ ] 100+ 个命题逻辑 + 等式 + 量词测试用例通过
 
 ---
 
-## Tier 2 — Isar 证明语言 🟡 规划中
+## Phase 2：自我验证（2-3 周）
 
-**目标**：支持 Isabelle/Isar 的结构化证明语法。
+**目标**：用 .thy 文件中的原始 proof 脚本重新验证已加载定理。
 
-### 需要实现的模块
-
-| 模块 | 行数估计 | 对应 Isabelle |
-|------|---------|---------------|
-| ✅ `isar/token.rs` | ~436 | `Isar/token.ML` (854) — 词法分析器 |
-| ✅ `isar/parse.rs` | ~181 | 解析组合子 |
-| ✅ `isar/proof.rs` | ~244 | `Isar/proof.ML` (1,370) — 证明状态机 |
-| ✅ `isar/proof_context.rs` | ~230 | `Isar/proof_context.ML` (1,776) |
-| ✅ `isar/toplevel.rs` | ~223 | `Isar/toplevel.ML` (788) — 顶层命令循环 |
-| ✅ `isar/method.rs` | ~199 | `Isar/method.ML` (837) — proof method 系统 |
-| `core/simplifier.rs` | ✅ ~280 | `raw_simplifier.ML` (1,576) — 重写引擎 |
-
-### Isar 语法支持
+### 数据流
 
 ```
-theory Foo
-imports Bar
-begin
-
-lemma my_lemma:
-  assumes "A" and "B"
-  shows "A ∧ B"
-proof (rule conjI)
-  case 1
-  show "A" using assms(1) .
-next
-  case 2
-  show "B" using assms(2) .
-qed
-
-end
+.thy 源文件
+    ↓ parse_lemmas()         ← Phase 0 已完成
+    ↓ extract_proof()        ← Phase 2 新增：提取 "by auto" 等 proof 脚本
+    ↓ exec_proof()           ← 用 Phase 1 的引擎执行
+    ↓
+Verified → 替换原 assume() 版本
+Failed   → 保留原 assume() 版本（标记 unchecked）
 ```
 
-- [ ] `have` / `show` / `hence` / `thus`
-- [ ] `fix` / `assume` / `obtain`
-- [ ] `proof (cases/induct/rule)` / `qed`
-- [ ] `using` / `unfolding` / `from` / `with`
-- [ ] `next` / `{ ... }` / `note`
+### proof 脚本解析
+
+支持的 proof 方法：
+- `by auto` / `by simp` / `by blast` / `by iprover`
+- `by (rule name)` / `by (erule name)` / `by (drule name)`
+- `by (simp add: thm1 thm2)`
+- `by (blast intro: A elim: B)`
+
+暂不支持的（保留 unchecked）：
+- `by (induct ...)` / `proof ... qed` / `apply ... done`
+- `by induction_schema` / `pat_completeness`
+
+### 预期验证率
+
+| 文件 | 定理数 | 可验证 proof | 预计验证率 |
+|------|--------|-------------|:--:|
+| HOL.thy | 254 | by auto/simp/rule/blast | ~70% |
+| Orderings.thy | 153 | by auto/simp/iprover/rule | ~75% |
+| Nat.thy | 360 | by auto/simp/induct | ~55% |
+| Set.thy | 412 | by auto/simp/blast/iprover | ~70% |
+| List.thy | 1,257 | by auto/simp/induct/iprover | ~60% |
+| **合计** | **2,436** | | **~65%** |
+
+### Phase 2 完成标准
+
+- [ ] ~1,600 条定理被重新验证（带上 `Derivation::Verified`）
+- [ ] 验证报告：每条定理的 proof 方法 + 验证状态
 
 ---
 
-## Tier 3 — 逻辑基础设施 🟡 规划中
+## Phase 3：理论 DAG + 增量加载（2 周）
 
-| 模块 | 行数估计 | 对应 Isabelle |
-|------|---------|---------------|
-| ✅ `core/proofterm.rs` | ~2,000 | `proofterm.ML` (2,248) — 可检查的证明项 |
-| ✅ `core/conjunction.rs` | ~300 | `conjunction.ML` — `A &&& B` |
-| ✅ `core/bires.rs` | ~400 | `bires.ML` — 双向消解 |
-| ✅ `core/net.rs` | ~350 | `net.ML` — 判别网 |
-| ✅ `core/consts.rs` | ~400 | `consts.ML` (420) — 多态常量 |
-| `core/defs.rs` | ~300 | `defs.ML` — 定义管理 |
-| ✅ `core/facts.rs` | ~350 | `facts.ML` — 命名定理集 |
-| ✅ `core/axclass.rs` | ~450 | `axclass.ML` (481) — 类型类 |
-| ✅ `core/global_theory.rs` | ~400 | `global_theory.ML` (419) |
+**目标**：加载全部 100+ 个 .thy 文件，按理论依赖图拓扑排序。
+
+```rust
+struct TheoryGraph {
+    nodes: HashMap<String, TheoryNode>,
+    load_order: Vec<String>,  // 拓扑排序
+}
+
+struct TheoryNode {
+    name: String,
+    imports: Vec<String>,     // 依赖
+    theorems: Vec<Arc<Thm>>,
+}
+```
+
+### 加载流程
+
+1. 扫描 `isabelle-source/src/HOL/` 下所有 .thy 文件
+2. 解析 `theory Foo imports Bar Baz begin`
+3. 构建 DAG，检测循环依赖
+4. 拓扑排序，继承父理论的定理数据库
+5. 增量加载：每个理论扩展定理索引
 
 ---
 
-## Tier 4 — 语法系统 🟢 规划中
+## Phase 4：库化 + FFI（1-2 周）
 
-| 模块 | 行数估计 | 对应 Isabelle |
-|------|---------|---------------|
-| ✅ `isar/token.rs` | ~436 | Isabelle 符号词法分析 |
-| `syntax/parser.rs` | ~700 | Earley 解析器 |
-| `syntax/ast.rs` | ~400 | 抽象语法树 |
-| ✅ `isar/term_parser.rs` | ~160 | Parser + Pretty printer |
-| `syntax/syntax_phases.rs` | ~1,000 | 语法阶段管道 |
-| `general/name_space.rs` | ~700 | 分层命名空间 |
-| `general/binding.rs` | ~300 | 名称绑定 |
-| `general/position.rs` | ~300 | 源码位置 |
+**目标**：isabelle-rs 成为真正的 Rust crate。
 
----
+```rust
+// Cargo.toml
+[lib]
+name = "isabelle_rs"
+crate-type = ["lib", "cdylib"]
 
-## Tier 5 — LSP 服务器完善 🟢 部分完成
-
-| 功能 | 状态 |
-|------|:--:|
-| `initialize` / `shutdown` | ✅ |
-| `textDocument/didOpen` / `didChange` / `didClose` / `didSave` | ✅ |
-| `textDocument/publishDiagnostics` | ✅ |
-| `textDocument/hover` | ✅ |
-| `textDocument/completion` | 🚧 |
-| `textDocument/definition` | 🚧 |
-| `textDocument/documentSymbol` | 🚧 |
-| `textDocument/semanticTokens` | ❌ |
-| `$/isabelle/proofStateChanged` | 🚧 |
-| `$/isabelle/commandProgress` | 🚧 |
-| `isabelle/proofStep` / `isabelle/proofUndo` | ❌ |
-| `isabelle/waitForChecking` | ❌ |
-
----
-
-## Tier 6 — HOL 对象逻辑 🔵 未来
-
-HOL (Higher-Order Logic) 是 Isabelle 最常用的对象逻辑。🚧 已启动 — `hol/hol_theory.rs` 定义了 bool, Trueprop, 连接词和量词。
-
-### HOL 核心 (~20,000 行所需)
-
-```
-hol/
-├── hol_types.rs    — bool, nat, list, set, 'a option, 'a × 'b, ...
-├── hol_consts.rs   — True, False, ∧, ∨, ⟶, ¬, ∀, ∃, =, THE, ...
-├── hol_axioms.rs   — refl, subst, ext, select, Infinity
-├── hol_derived.rs  — 派生规则 (ccontr, classical, ...)
-├── nat.rs          — 自然数理论
-├── set.rs          — 集合论
-├── list.rs         — 列表理论
-└── ...
+// 公共 API
+pub fn prove(goal: &str, context: &[String]) -> Result<Thm, Error>;
+pub fn load_theory(path: &str) -> Result<Theory, Error>;
+pub fn check_proof(source: &str) -> Result<Vec<Diagnostic>, Error>;
 ```
 
-### 所需工具 (~10,000 行)
-
-```
-tools/
-├── argo.rs         — 线性算术求解器
-├── simp.rs         — HOL 化简器
-├── blast.rs        — 表aux证明
-├── auto.rs         — 自动化证明
-├── sledgehammer.rs — 外部 ATP 集成 (未来)
-└── codegen.rs      — 代码生成 (HOL → SML/OCaml/Haskell/Scala)
+```c
+// C FFI
+IsabelleCtx* isabelle_new(void);
+const char* isabelle_prove(IsabelleCtx* ctx, const char* goal);
+void isabelle_free(IsabelleCtx* ctx);
 ```
 
 ---
 
-## Tier 7 — 生产就绪 ⚪ 远期
+## 时间线总览
 
-- [ ] 并发执行（tokio async）
-- [ ] Per-file worker 进程（Lean 4 风格 Watchdog）
-- [ ] `.thy` 文件编译为二进制 artifact
-- [ ] Session 管理（`ROOT` 文件解析）
-- [ ] 与现有 Isabelle 理论的互操作
-- [ ] QuickCheck 风格的内核测试
-- [ ] 性能基准测试
+| 阶段 | 时间 | 可交付 |
+|------|------|--------|
+| ✅ 已完成 | - | 2,548 条定理，100% 源覆盖 |
+| Phase 1 | 3-4 周 | simp + auto 可用 |
+| Phase 2 | 2-3 周 | ~65% 定理重新验证 |
+| Phase 3 | 2 周 | 100+ 理论文件加载 |
+| Phase 4 | 1-2 周 | `cargo add isabelle-rs` |
+| **合计** | **8-11 周** | **可嵌入的、自验证的证明助手库** |

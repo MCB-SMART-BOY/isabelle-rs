@@ -62,6 +62,10 @@ pub enum KernelError {
     /// Hypothesis not found.
     #[error("hypothesis not found in assumptions")]
     HypothesisNotFound,
+
+    /// Free variable in hypotheses during forall_intr.
+    #[error("free var '{name}' in hypotheses for forall_intr")]
+    FreeVarInHypotheses { name: String },
 }
 
 /// Type system errors.

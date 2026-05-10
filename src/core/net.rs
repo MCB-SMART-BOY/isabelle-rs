@@ -11,7 +11,6 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use super::term::Term;
-use super::thm::Thm;
 
 // =========================================================================
 // Net node
@@ -114,7 +113,7 @@ fn insert_into<T: Clone>(node: &mut NetNode<T>, pattern: &Term, item: Arc<T>) {
     }
 }
 
-fn insert_into_app<T: Clone>(node: &mut NetNode<T>, func: &Term, arg: &Term, item: Arc<T>) {
+fn insert_into_app<T: Clone>(node: &mut NetNode<T>, func: &Term, _arg: &Term, item: Arc<T>) {
     match func {
         Term::Const { name, .. } => {
             let child = node.children.entry(name.to_string()).or_insert_with(NetNode::new);
@@ -148,7 +147,7 @@ fn lookup_in<T: Clone>(node: &NetNode<T>, term: &Term, results: &mut Vec<Arc<T>>
                 lookup_in(child, term, results);
             }
         }
-        Term::App { func, arg } => {
+        Term::App { func, arg: _ } => {
             // Look up by head
             if let Term::Const { name, .. } = func.as_ref() {
                 if let Some(child) = node.children.get(name.as_ref()) {

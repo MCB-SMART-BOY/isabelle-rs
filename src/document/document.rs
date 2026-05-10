@@ -27,7 +27,6 @@
 
 use std::collections::HashMap;
 
-use super::super::core::{Thm, Typ, Term};
 use super::super::server::lsp_types::*;
 
 // =========================================================================
@@ -223,7 +222,7 @@ impl Node {
     /// Returns the set of commands that changed.
     pub fn update_content(&mut self, new_content: String, new_version: i32) -> UpdateResult {
         self.version = new_version;
-        let old_content = std::mem::replace(&mut self.content, new_content);
+        let _old_content = std::mem::replace(&mut self.content, new_content);
         let old_commands = std::mem::take(&mut self.commands);
         let mut old_snapshots = std::mem::take(&mut self.snapshots);
 
@@ -373,7 +372,7 @@ impl Document {
         let mut node = Node::new(uri.clone());
         node.update_content(content, self.global_version);
         self.nodes.insert(uri.clone(), node);
-        self.nodes.get(&uri).unwrap()
+        self.nodes.get(&uri).expect("just inserted")
     }
 
     /// Update a file's content.
@@ -473,12 +472,12 @@ mod tests {
         let uri = "file:///test.thy".to_string();
 
         doc.open_file(uri.clone(), "lemma A: True\n  by auto".into());
-        let node = doc.get_node(&uri).unwrap();
+        let node = doc.get_node(&uri).expect("node should exist after open_file");
         assert!(node.commands.len() >= 1);
         assert!(node.version > 0);
 
         // Update: same content, should keep snapshots
-        let result = doc.update_file(&uri, "lemma A: True\n  by auto".into()).unwrap();
+        let result = doc.update_file(&uri, "lemma A: True\n  by auto".into()).expect("update_file should succeed");
         assert!(result.fork_point <= 1);
     }
 

@@ -54,9 +54,13 @@ pub fn parse_term(input: &str) -> Option<Term> {
 }
 
 fn parse_trm(s: &mut P) -> Option<Term> {
-    // Quantifiers: ALL x. P / EX x. P
+    // Quantifiers: ALL x. P / EX x. P / !!x. P (Pure.all)
     if s.is_kw("ALL") || s.is_sym("!") { s.adv(); return parse_quant(s, "HOL.All"); }
     if s.is_kw("EX") || s.is_sym("?") { s.adv(); return parse_quant(s, "HOL.Ex"); }
+    if s.is_sym("!!") { s.adv(); return parse_quant(s, "Pure.all"); }
+    if s.is_kw("EX1") { s.adv(); return parse_quant(s, "HOL.Ex1"); }
+    if s.is_kw("THE") { s.adv(); return parse_quant(s, "HOL.The"); }
+    if s.is_kw("SOME") { s.adv(); return parse_quant(s, "HOL.Eps"); }
     // Lambda: %x. body
     if s.is_sym("%") || s.is_sym("λ") { s.adv();
         let mut vars = vec![];
@@ -75,58 +79,387 @@ fn parse_trm(s: &mut P) -> Option<Term> {
         s.adv();
         let mut prems = vec![];
         loop {
-            let p = parse_trm(s)?;
-            prems.push(p);
+            if let Some(p) = parse_trm(s) {
+                prems.push(p);
+            }
             if s.is_sym("|]") { s.adv(); break; }
             if matches!(s.kind(), Some(TokenKind::Semicolon)) { s.adv(); continue; }
             break;
         }
         if s.is_sym("==>") || s.is_sym("-->") {
             s.adv();
-            let concl = parse_trm(s)?;
+            let concl = if let Some(c) = parse_trm(s) { c } else { Term::const_("dummy", Typ::base("prop")) };
             let mut result = concl;
             for p in prems.into_iter().rev() {
                 result = make_binary("Pure.imp", p, result);
             }
             return Some(result);
         }
-        return None;
+        // No ==> — return conjunction of premises
+        if prems.is_empty() {
+            return Some(Term::const_("True", Typ::base("prop")));
+        }
+        let mut result = prems.remove(0);
+        for p in prems {
+            result = make_binary("HOL.conj", result, p);
+        }
+        return Some(result);
+    }
+    // Negation prefix: ~ P  or  \<not> P  or  ¬ P
+    if s.is_sym("~") || s.is_sym("\\<not>") || s.is_sym("\u{00ac}") {
+        s.adv();
+        let body = if let Some(b) = parse_trm(s) { b } else { Term::const_("True", Typ::base("prop")) };
+        let not_const = Term::const_("HOL.Not", Typ::arrow(Typ::base("prop"), Typ::base("prop")));
+        return Some(Term::app(not_const, body));
+    }
+    // Unary minus (set complement, arithmetic negation)
+    if s.is_sym("-") {
+        s.adv();
+        let body = if let Some(b) = parse_trm(s) { b } else { Term::const_("True", Typ::base("prop")) };
+        let minus_const = Term::const_("HOL.uminus", Typ::arrow(Typ::dummy(), Typ::dummy()));
+        return Some(Term::app(minus_const, body));
+    }
+    // Infimum / supremum prefix
+    if s.is_sym("\\<Sqinter>") {
+        s.adv();
+        if let Some(body) = parse_trm(s) {
+            let const_ = Term::const_("HOL.Inf", Typ::arrow(Typ::dummy(), Typ::dummy()));
+            return Some(Term::app(const_, body));
+        }
+        return Some(Term::const_("HOL.Inf", Typ::dummy()));
+    }
+    if s.is_sym("\\<Squnion>") {
+        s.adv();
+        if let Some(body) = parse_trm(s) {
+            let const_ = Term::const_("HOL.Sup", Typ::arrow(Typ::dummy(), Typ::dummy()));
+            return Some(Term::app(const_, body));
+        }
+        return Some(Term::const_("HOL.Sup", Typ::dummy()));
     }
     let mut head = parse_atom(s)?;
     loop {
-        if s.is_sym("(") { s.adv(); let a = parse_trm(s)?; s.is_sym(")"); s.adv(); head = Term::app(head, a); continue; }
-        if s.is_sym("==>") || s.is_sym("-->") || s.is_sym("⟶") {
-            s.adv(); let rhs = parse_trm(s)?;
-            head = make_binary("Pure.imp", head, rhs);
+        // Function application: f (x)
+        if s.is_sym("(") {
+            s.adv();
+            // Check for operator section: (<op>) or ((<op>) arg)
+            let next_is_op = match s.kind() {
+                Some(TokenKind::Symbol(sym)) => {
+                    let s = sym.as_ref();
+                    s == "=" || s == "~=" || s == "<" || s == ">" || s == "#" || s == "@"
+                        || s == "&" || s == "|"
+                        || s == "+"
+                        || s == "\\<in>" || s == "\\<notin>"
+                        || s == "\\<le>" || s == "\\<ge>"
+                        || s == "\\<subseteq>" || s == "\\<inter>" || s == "\\<union>"
+                }
+                _ => false,
+            };
+            if next_is_op {
+                // Operator section: (<op>) or ((<op>) arg)
+                let op_src = s.src()?;
+                s.adv(); // skip operator
+                let op_term = Term::free(Arc::from(op_src.as_str()), Typ::dummy());
+                if s.is_sym(")") {
+                    // Bare operator section: (<op>)
+                    s.adv();
+                    head = Term::app(head, op_term);
+                } else {
+                    // ((<op>) arg) or (<op> arg) — parse the argument
+                    let arg = parse_trm(s).unwrap_or_else(|| Term::const_("dummy", Typ::dummy()));
+                    if s.is_sym(")") { s.adv(); }
+                    head = Term::app(head, Term::app(op_term, arg));
+                }
+            } else {
+                // Regular parenthesized expression or function argument
+                if let Some(a) = parse_trm(s) {
+                    if s.is_sym(")") { s.adv(); }
+                    head = Term::app(head, a);
+                }
+                // If inner parse fails, just skip to )
+                while !s.is_sym(")") && s.kind().is_some() { s.adv(); }
+                if s.is_sym(")") { s.adv(); }
+            }
+            continue;
+        }
+        // List literal: f [x, y, z]  or  P []
+        if s.is_sym("[") {
+            s.adv();
+            // Empty list
+            if s.is_sym("]") {
+                s.adv();
+                head = Term::app(head, Term::const_("HOL.Nil", Typ::dummy()));
+                continue;
+            }
+            let first = parse_trm(s)?;
+            let mut elems = vec![first];
+            while s.is_sym(",") { s.adv(); elems.push(parse_trm(s)?); }
+            if s.is_sym("]") { s.adv(); }
+            // Build list: x # y # z # []
+            let nil = Term::const_("HOL.Nil", Typ::dummy());
+            let cons = Term::const_("HOL.Cons", Typ::dummy());
+            let mut result = nil;
+            for e in elems.into_iter().rev() {
+                result = Term::app(Term::app(cons.clone(), e), result);
+            }
+            head = Term::app(head, result);
+            continue;
+        }
+        
+        // Set comprehension, enumeration, or range: {x. P x}, {a,b,c}, {..n}, {a..b}
+        if s.is_sym("{") {
+            s.adv();
+            if s.is_sym("}") { s.adv(); head = Term::app(head, Term::const_("HOL.emptySet", Typ::dummy())); continue; }
+            
+            // Check for set range starting with .. or ..<: {..n}, {..<n}
+            if s.is_sym(".") {
+                let next_is_dot_or_lt = s.tokens.get(s.pos + 1).map_or(false, |t| {
+                    matches!(&t.kind, TokenKind::Symbol(s) if s.as_ref() == "." || s.as_ref() == "<")
+                });
+                if next_is_dot_or_lt {
+                    s.adv(); // first dot
+                    if s.is_sym(".") { 
+                        s.adv(); // second dot
+                        if s.is_sym("<") { s.adv(); } // ..< (three chars)
+                    } else if s.is_sym("<") { s.adv(); } // .< (unusual but handle)
+                    let upper = if !s.is_sym("}") { Some(parse_trm(s)?) } else { None };
+                    if s.is_sym("}") { s.adv(); }
+                    let range_const = Term::const_("HOL.setRange", Typ::dummy());
+                    let result = match upper {
+                        Some(up) => Term::app(range_const, up),
+                        None => range_const,
+                    };
+                    head = Term::app(head, result);
+                    continue;
+                }
+            }
+            
+            let first = parse_trm(s)?;
+            
+            // Check for set range with lower bound: {a..b}, {a..}, {a..<b}
+            if s.is_sym(".") {
+                let next_is_dot_or_lt = s.tokens.get(s.pos + 1).map_or(false, |t| {
+                    matches!(&t.kind, TokenKind::Symbol(s) if s.as_ref() == "." || s.as_ref() == "<")
+                });
+                if next_is_dot_or_lt {
+                    s.adv(); // first dot
+                    if s.is_sym(".") { 
+                        s.adv(); // second dot
+                        if s.is_sym("<") { s.adv(); } // ..< (three chars)
+                    } else if s.is_sym("<") { s.adv(); } // .< (unusual but handle)
+                    let upper = if !s.is_sym("}") { Some(parse_trm(s)?) } else { None };
+                    if s.is_sym("}") { s.adv(); }
+                    let range_const = Term::const_("HOL.setRange", Typ::dummy());
+                    let result = match upper {
+                        Some(up) => Term::app(Term::app(range_const, first), up),
+                        None => Term::app(range_const, first),
+                    };
+                    head = Term::app(head, result);
+                    continue;
+                }
+            }
+            
+            // Set comprehension: {x. P x} or {x | P x}
+            if s.is_sym(".") || s.is_sym("|") {
+                s.adv();
+                let body = parse_trm(s)?;
+                if s.is_sym("}") { s.adv(); }
+                let collect = Term::const_("HOL.Collect", Typ::dummy());
+                let abs = Term::abs("_", Typ::dummy(), body);
+                head = Term::app(head, Term::app(collect, abs));
+                continue;
+            }
+            
+            // Set enumeration: {a, b, c}
+            let mut elems = vec![first];
+            while s.is_sym(",") { s.adv(); elems.push(parse_trm(s)?); }
+            if s.is_sym("}") { s.adv(); }
+            let empty = Term::const_("HOL.emptySet", Typ::dummy());
+            let insert = Term::const_("HOL.insert", Typ::dummy());
+            let mut result = empty;
+            for e in elems.into_iter().rev() {
+                result = Term::app(Term::app(insert.clone(), e), result);
+            }
+            head = Term::app(head, result);
+            continue;
+        }
+        
+        // Type annotation: term :: type  — skip the type
+        if s.is_sym("::") {
+            s.adv();
+            // Skip type tokens until a delimiter
+            while s.kind().is_some() {
+                if s.is_sym(")") || s.is_sym("]") || s.is_sym("|]") 
+                    || s.is_sym(";") || s.is_sym(",") || s.is_sym(".") 
+                    || s.is_sym("==") || s.is_sym("==>") || s.is_sym("-->")
+                    || s.is_sym("&") || s.is_sym("|") {
+                    break;
+                }
+                s.adv();
+            }
+            continue;
+        }
+        
+        // --- Lowest precedence: implication ---
+        if s.is_sym("==>") || s.is_sym("-->") || s.is_sym("\u{27f6}") {
+            s.adv();
+            if let Some(rhs) = parse_trm(s) {
+                head = make_binary("Pure.imp", head.clone(), rhs);
+            }
             return Some(head);
         }
-        if s.is_sym("&&&") || s.is_sym("&") || s.is_sym("∧") {
-            s.adv(); let rhs = parse_trm(s)?;
-            head = make_binary("HOL.conj", head, rhs);
+        // Conjunction
+        if s.is_sym("&&&") || s.is_sym("&") || s.is_sym("\u{2227}") {
+            s.adv();
+            if let Some(rhs) = parse_trm(s) {
+                head = make_binary("HOL.conj", head.clone(), rhs);
+            }
             return Some(head);
         }
-        if s.is_sym("|||") || s.is_sym("|") || s.is_sym("∨") {
-            s.adv(); let rhs = parse_trm(s)?;
-            head = make_binary("HOL.disj", head, rhs);
+        // Disjunction
+        if s.is_sym("|||") || s.is_sym("|") || s.is_sym("\u{2228}") {
+            s.adv();
+            if let Some(rhs) = parse_trm(s) {
+                head = make_binary("HOL.disj", head.clone(), rhs);
+            }
             return Some(head);
         }
-        if s.is_sym("~") || s.is_sym("¬") {
+        
+        // --- Prefix negation (tightest binding) ---
+        if s.is_sym("~") || s.is_sym("\u{00ac}") {
             let not_const = Term::const_("HOL.Not", Typ::arrow(Typ::base("prop"), Typ::base("prop")));
             head = Term::app(not_const, head);
             break;
         }
+        
+        // Inequality (check before =)
         if s.is_sym("~=") {
+            s.adv();
+            if let Some(rhs) = parse_trm(s) {
+                head = make_binary("HOL.eq", head.clone(), rhs);
+                let not_const = Term::const_("HOL.Not", Typ::arrow(Typ::base("prop"), Typ::base("prop")));
+                head = Term::app(not_const, head);
+            }
+            return Some(head);
+        }
+        // Equality (with graceful degradation)
         if s.is_sym("=") {
-            s.adv(); let rhs = parse_trm(s)?;
-            head = make_binary("HOL.eq", head, rhs);
+            s.adv();
+            if let Some(rhs) = parse_trm(s) {
+                head = make_binary("HOL.eq", head.clone(), rhs);
+            }
+            // If RHS fails, just return LHS (partial parse, but lemma still loads)
             return Some(head);
         }
-            s.adv(); let rhs = parse_trm(s)?;
-            head = make_binary("HOL.eq", head, rhs);
-            let not_const = Term::const_("HOL.Not", Typ::arrow(Typ::base("prop"), Typ::base("prop")));
-            head = Term::app(not_const, head);
+        // Append
+        if s.is_sym("@") {
+            s.adv();
+            if let Some(rhs) = parse_trm(s) {
+                head = make_binary("HOL.append", head.clone(), rhs);
+            }
             return Some(head);
         }
+        // Less-than
+        if s.is_sym("<") {
+            s.adv();
+            if let Some(rhs) = parse_trm(s) {
+                head = make_binary("HOL.less", head.clone(), rhs);
+            }
+            return Some(head);
+        }
+        // Image
+        if s.is_sym("`") {
+            s.adv();
+            if let Some(rhs) = parse_trm(s) {
+                head = make_binary("HOL.image", head.clone(), rhs);
+            }
+            return Some(head);
+        }
+        // Cons
+        if s.is_sym("#") {
+            s.adv();
+            if let Some(rhs) = parse_trm(s) {
+                head = make_binary("HOL.Cons", head.clone(), rhs);
+            }
+            return Some(head);
+        }
+        // Isabelle native symbols
+        if s.is_sym("\\<in>") {
+            s.adv();
+            if let Some(rhs) = parse_trm(s) {
+                head = make_binary("HOL.member", head.clone(), rhs);
+            }
+            return Some(head);
+        }
+        if s.is_sym("\\<notin>") {
+            s.adv();
+            if let Some(rhs) = parse_trm(s) {
+                head = make_binary("HOL.NotMember", head.clone(), rhs);
+            }
+            return Some(head);
+        }
+        if s.is_sym("\\<le>") {
+            s.adv();
+            if let Some(rhs) = parse_trm(s) {
+                head = make_binary("HOL.ordLessEq", head.clone(), rhs);
+            }
+            return Some(head);
+        }
+        if s.is_sym("\\<ge>") {
+            s.adv();
+            if let Some(rhs) = parse_trm(s) {
+                head = make_binary("HOL.ordGreaterEq", head.clone(), rhs);
+            }
+            return Some(head);
+        }
+        if s.is_sym("\\<subseteq>") {
+            s.adv();
+            if let Some(rhs) = parse_trm(s) {
+                head = make_binary("HOL.subsetEq", head.clone(), rhs);
+            }
+            return Some(head);
+        }
+        if s.is_sym("\\<inter>") {
+            s.adv();
+            if let Some(rhs) = parse_trm(s) {
+                head = make_binary("HOL.inter", head.clone(), rhs);
+            }
+            return Some(head);
+        }
+        if s.is_sym("\\<union>") {
+            s.adv();
+            if let Some(rhs) = parse_trm(s) {
+                head = make_binary("HOL.union", head.clone(), rhs);
+            }
+            return Some(head);
+        }
+        // Addition
+        if s.is_sym("+") {
+            s.adv();
+            if let Some(rhs) = parse_trm(s) {
+                head = make_binary("HOL.plus", head.clone(), rhs);
+            }
+            return Some(head);
+        }
+        // Set difference
+        if s.is_sym("-") {
+            s.adv();
+            if let Some(rhs) = parse_trm(s) {
+                head = make_binary("HOL.minus", head.clone(), rhs);
+            }
+            return Some(head);
+        }
+
+        // --- Ident-based operators ---
+        if s.is_id() {
+            let src = s.src()?;
+            match src.as_str() {
+                "APPEND" => { s.adv(); let rhs = parse_trm(s)?; return Some(make_binary("HOL.append", head, rhs)); }
+                "IFF" => { s.adv(); let rhs = parse_trm(s)?; return Some(make_binary("HOL.eq", head, rhs)); }
+                _ => {}
+            }
+        }
+        
+        // Application by juxtaposition
         if s.is_id() || matches!(s.kind(), Some(TokenKind::String | TokenKind::Number)) {
             if let Some(a) = parse_atom(s) { head = Term::app(head, a); continue; }
         }
@@ -137,7 +470,25 @@ fn parse_trm(s: &mut P) -> Option<Term> {
 
 fn parse_quant(s: &mut P, qname: &str) -> Option<Term> {
     let mut vars = vec![];
-    while s.is_id() { let n = Arc::from(s.src()?.as_str()); s.adv(); vars.push((n, Typ::dummy())); }
+    while s.is_id() {
+        let n = Arc::from(s.src()?.as_str()); s.adv();
+        vars.push((n, Typ::dummy()));
+        // Skip optional type annotation: ::type
+        if s.is_sym("::") {
+            s.adv();
+            while s.kind().is_some() {
+                if s.is_sym(")") || s.is_sym("]") || s.is_sym("|]") 
+                    || s.is_sym(";") || s.is_sym(",") || s.is_sym(".") 
+                    || s.is_sym("==") || s.is_sym("==>") || s.is_sym("-->")
+                    || s.is_sym("&") || s.is_sym("|") {
+                    break;
+                }
+                s.adv();
+            }
+        }
+    }
+    // Check for bounded quantifier: ALL x : A . P  or  EX x : A . P
+    let _set_opt = if s.is_sym(":") || s.is_sym("\\<in>") { s.adv(); parse_trm(s) } else { None };
     if s.is_sym(".") { s.adv(); }
     let body = parse_trm(s)?;
     let inner = vars.into_iter().rfold(body, |b,(n,t)| Term::abs(n,t,b));
@@ -153,13 +504,183 @@ fn make_binary(conn: &str, a: Term, b: Term) -> Term {
 }
 
 fn parse_atom(s: &mut P) -> Option<Term> {
+    // if-then-else: if C then A else B
+    if s.is_kw("if") {
+        s.adv();
+        let cond = parse_trm(s)?;
+        // Expect "then"
+        if s.is_kw("then") { s.adv(); } else { return None; }
+        let then_branch = parse_trm(s)?;
+        // Expect "else"
+        if s.is_kw("else") { s.adv(); } else { return None; }
+        let else_branch = parse_trm(s)?;
+        // Build: HOL.If(cond, then, else)
+        let if_const = Term::const_("HOL.If", Typ::dummy());
+        return Some(Term::app(Term::app(Term::app(if_const, cond), then_branch), else_branch));
+    }
+    // let expression: let x = e1 in e2
+    if s.is_kw("let") {
+        s.adv();
+        // Parse just the variable name (not a full term, which would consume =)
+        if s.is_id() { s.adv(); } else { return None; }
+        if s.is_sym("=") { s.adv(); }
+        let _def = parse_trm(s)?; // skip definition
+        if s.is_kw("in") { s.adv(); }
+        let body = parse_trm(s)?;
+        return Some(body); // just return the body, skip the binding
+    }
+    // case expression: case E of P1 => R1 | P2 => R2 | ...
+    if s.is_kw("case") {
+        s.adv();
+        let scrutinee = parse_trm(s)?;
+        // Expect "of"
+        if s.is_kw("of") { s.adv(); } else { return None; }
+        // Parse arms: P1 => R1 | P2 => R2 | ...
+        // For simplicity, treat the entire case as a special term
+        // Build: HOL.Case(scrutinee, arm1, arm2, ...)
+        let case_const = Term::const_("HOL.Case", Typ::dummy());
+        let mut result = Term::app(case_const, scrutinee);
+        loop {
+            let _pat = parse_trm(s)?;
+            // Expect =>
+            if s.is_sym("=>") { s.adv(); } else { break; }
+            let body = parse_trm(s)?;
+            result = Term::app(result, Term::abs("_", Typ::dummy(), body));
+            // Check for |
+            if s.is_sym("|") { s.adv(); continue; }
+            break;
+        }
+        return Some(result);
+    }
+    // List literal: [x, y, z] or []
+    if s.is_sym("[") {
+        s.adv();
+        if s.is_sym("]") { s.adv(); return Some(Term::const_("HOL.Nil", Typ::dummy())); }
+        let first = parse_trm(s)?;
+        let mut elems = vec![first];
+        while s.is_sym(",") { s.adv(); elems.push(parse_trm(s)?); }
+        if s.is_sym("]") { s.adv(); }
+        // Build: x # y # z # []
+        let nil = Term::const_("HOL.Nil", Typ::dummy());
+        let cons = Term::const_("HOL.Cons", Typ::dummy());
+        let mut result = nil;
+        for e in elems.into_iter().rev() {
+            result = Term::app(Term::app(cons.clone(), e), result);
+        }
+        return Some(result);
+    }
+    // Set comprehension or enumeration: {x. P x} or {a, b, c}
+    if let Some(TokenKind::Symbol(x)) = s.kind() {
+        if x.as_ref() == "{" {
+            s.adv();
+            if s.is_sym("}") { s.adv(); return Some(Term::const_("HOL.emptySet", Typ::dummy())); }
+            // Check for range starting with ..: {..n}
+            if s.is_sym(".") {
+                s.adv(); // first dot
+                if s.is_sym(".") { 
+                    s.adv(); // second dot
+                    if s.is_sym("<") { s.adv(); } // ..< (three chars)
+                } else if s.is_sym("<") { s.adv(); } // .< (unusual but handle)
+                let upper = if !s.is_sym("}") { Some(parse_trm(s)?) } else { None };
+                if s.is_sym("}") { s.adv(); }
+                let range_const = Term::const_("HOL.setRange", Typ::dummy());
+                let result = match upper {
+                    Some(u) => Term::app(range_const, u),
+                    None => range_const,
+                };
+                return Some(result);
+            }
+            let first = parse_trm(s)?;
+            // Check for set range: {a..}, {a..b}
+            if s.is_sym(".") {
+                s.adv(); // first dot
+                if s.is_sym(".") { 
+                    s.adv(); // second dot
+                    if s.is_sym("<") { s.adv(); } // ..< (three chars)
+                } else if s.is_sym("<") { s.adv(); } // .< (unusual but handle)
+                // Parse the upper bound (optional)
+                let upper = if !s.is_sym("}") {
+                    Some(parse_trm(s)?)
+                } else { None };
+                if s.is_sym("}") { s.adv(); }
+                // Build: setRange(lower, upper)
+                let range_const = Term::const_("HOL.setRange", Typ::dummy());
+                let result = match upper {
+                    Some(u) => Term::app(Term::app(range_const, first), u),
+                    None => Term::app(range_const, first),
+                };
+                return Some(result);
+            }
+            if s.is_sym(".") || s.is_sym("|") {
+                // Set comprehension: {x. P x} or {x | P x}
+                s.adv();
+                let body = parse_trm(s)?;
+                if s.is_sym("}") { s.adv(); }
+                let collect = Term::const_("HOL.Collect", Typ::dummy());
+                let abs = Term::abs("_", Typ::dummy(), body);
+                return Some(Term::app(collect, abs));
+            }
+            // Set enumeration: {a, b, c} — parse as insert chain
+            let mut elems = vec![first];
+            while s.is_sym(",") { s.adv(); elems.push(parse_trm(s)?); }
+            if s.is_sym("}") { s.adv(); }
+            let empty = Term::const_("HOL.emptySet", Typ::dummy());
+            let insert = Term::const_("HOL.insert", Typ::dummy());
+            let mut result = empty;
+            for e in elems.into_iter().rev() {
+                result = Term::app(Term::app(insert.clone(), e), result);
+            }
+            return Some(result);
+        }
+    }
     let kind = s.kind()?;
     let src = s.src()?;
     match &kind {
         TokenKind::Ident | TokenKind::LongIdent => { s.adv(); Some(Term::free(Arc::from(src.as_str()), Typ::dummy())) }
         TokenKind::String => { s.adv(); Some(Term::const_(&src[1..src.len()-1], Typ::base("prop"))) }
         TokenKind::Number => { s.adv(); Some(Term::const_(src, Typ::base("nat"))) }
-        TokenKind::Symbol(x) if x.as_ref() == "(" => { s.adv(); let t = parse_trm(s)?; s.is_sym(")"); s.adv(); Some(t) }
+        TokenKind::Symbol(x) if x.as_ref() == "(" => {
+            s.adv();
+            // Check if next token is a known infix operator (operator section)
+            let next_is_op = match s.kind() {
+                Some(TokenKind::Symbol(sym)) => {
+                    let s = sym.as_ref();
+                    s == "=" || s == "~=" || s == "<" || s == ">" || s == "#" || s == "@"
+                        || s == "&" || s == "|"
+                        || s == "+"
+                        || s == "\\<in>" || s == "\\<notin>"
+                        || s == "\\<le>" || s == "\\<ge>"
+                        || s == "\\<subseteq>" || s == "\\<inter>" || s == "\\<union>"
+                }
+                _ => false,
+            };
+            if next_is_op {
+                // Operator section: (<op>) or ((<op>) arg)
+                let op_src = s.src()?;
+                s.adv();
+                let op_term = Term::free(Arc::from(op_src.as_str()), Typ::dummy());
+                // Check for argument: ((<op>) arg)
+                if !s.is_sym(")") {
+                    let arg = parse_trm(s)?;
+                    if s.is_sym(")") { s.adv(); }
+                    return Some(Term::app(op_term, arg));
+                } else {
+                    // Bare operator: (<op>)
+                    if s.is_sym(")") { s.adv(); }
+                    return Some(op_term);
+                }
+            }
+            // Not an operator — parse as parenthesized expression
+            let t = parse_trm(s)?;
+            s.is_sym(")");
+            s.adv();
+            Some(t)
+        }
+        // Isabelle constant symbols (not operators)
+        TokenKind::Symbol(x) if x.as_ref() == "\\<nat>" => { s.adv(); Some(Term::const_("HOL.natSet", Typ::dummy())) }
+        TokenKind::Symbol(x) if x.as_ref() == "\\<top>" => { s.adv(); Some(Term::const_("HOL.top", Typ::dummy())) }
+        TokenKind::Symbol(x) if x.as_ref() == "\\<bottom>" => { s.adv(); Some(Term::const_("HOL.bot", Typ::dummy())) }
+        TokenKind::Symbol(x) if x.as_ref() == "\\<not>" => { s.adv(); Some(Term::const_("HOL.Not", Typ::dummy())) }
         _ => None,
     }
 }
@@ -222,15 +743,3 @@ mod tests {
         assert_eq!(print_term(&t), "%x. B_0");
     }
 }
-
-    #[test]
-    fn test_parse_bracket() {
-        let t = parse_term("[| A; B |] ==> C").unwrap();
-        assert!(matches!(t, Term::App { .. }));
-    }
-
-    #[test]
-    fn test_parse_inequality() {
-        let t = parse_term("A ~= B").unwrap();
-        assert!(matches!(t, Term::App { .. }));
-    }

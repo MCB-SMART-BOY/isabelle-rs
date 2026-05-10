@@ -21,6 +21,7 @@
 
 use std::sync::Arc;
 
+use crate::core::error::KernelError;
 use crate::core::term::Term;
 use crate::core::thm::{CTerm, Thm, ThmKernel};
 use crate::core::types::Typ;
@@ -33,7 +34,7 @@ use crate::core::envir::Envir;
 // =========================================================================
 
 /// forall_intr(x_name, x_typ, thm): from P derive !!x. P(x)
-pub fn forall_intr(x_name: &str, x_typ: Typ, thm: &Thm) -> Thm {
+pub fn forall_intr(x_name: &str, x_typ: Typ, thm: &Thm) -> Result<Thm, KernelError> {
     ThmKernel::forall_intr(x_name, x_typ, thm)
 }
 

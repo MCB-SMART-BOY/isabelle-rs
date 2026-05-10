@@ -24,7 +24,6 @@ use super::envir::Envir;
 use super::term::Term;
 use super::types::Symbol;
 use super::types::Typ;
-use super::term_subst;
 
 // =========================================================================
 // Types
@@ -246,9 +245,9 @@ pub fn matchers(
     env: &Envir,
     pat: &Term,
     obj: &Term,
-    config: &UnifyConfig,
+    _config: &UnifyConfig,
 ) -> Option<Envir> {
-    let mut env = env.clone();
+    let env = env.clone();
     match_pattern(env, pat, obj)
 }
 
@@ -318,7 +317,7 @@ mod tests {
         let zero = Term::const_("zero", Typ::base("nat"));
         let result = unifiers(&env, &[(x.clone(), zero.clone())], &UnifyConfig::default());
         assert!(result.is_some());
-        let env = result.unwrap();
+        let env = result.expect("unification should succeed");
         assert_eq!(env.norm_term(&x), zero);
     }
 
@@ -336,7 +335,7 @@ mod tests {
         );
         let result = unifiers(&env, &[(fx.clone(), fa)], &UnifyConfig::default());
         assert!(result.is_some());
-        let env = result.unwrap();
+        let env = result.expect("unification should succeed");
         assert_eq!(
             env.norm_term(&Term::var("x", 0, Typ::base("nat"))),
             Term::free("a", Typ::base("nat"))
@@ -364,7 +363,7 @@ mod tests {
         let result = matchers(&env, &pat, &obj, &UnifyConfig::default());
         assert!(result.is_some());
         assert_eq!(
-            result.unwrap().norm_term(&pat),
+            result.expect("matching should succeed").norm_term(&pat),
             obj
         );
     }

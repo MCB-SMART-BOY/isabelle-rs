@@ -9,8 +9,6 @@ use std::sync::Arc;
 
 use super::theory::Theory;
 use super::thm::Thm;
-use super::facts::Facts;
-use super::net::Net;
 
 /// Add a named theorem to the global fact table.
 pub fn add_fact(theory: &mut Theory, name: &str, thms: Vec<Arc<Thm>>) {
@@ -23,7 +21,7 @@ pub fn add_fact(theory: &mut Theory, name: &str, thms: Vec<Arc<Thm>>) {
 }
 
 /// Name a theorem: give it a name in the theory.
-pub fn name_thm(name: &str, thm: &Thm) -> Thm {
+pub fn name_thm(_name: &str, thm: &Thm) -> Thm {
     // In Isabelle, naming attaches metadata. Here we just clone.
     thm.clone()
 }

@@ -1,97 +1,63 @@
 # Isabelle 功能对照
 
-## 核心设计：不变与变化
+## 定理加载能力
 
-| 方面 | 原始 Isabelle | Isabelle-rs | 说明 |
-|------|:---:|:---:|------|
-| **.thy 文件语法** | ✅ | ✅ 不变 | `theory Foo imports Bar begin ... end` |
-| **Isar 语言** | ✅ | ✅ 不变 | `lemma`, `proof`, `qed`, `have`, `show` 等 |
-| **LCF 可信任内核** | ✅ | ✅ 不变 | `Thm` 无公开构造器 |
-| **Pure 元逻辑** | ✅ | ✅ 不变 | `Pure.all`, `Pure.imp`, `Pure.eq` |
-| **de Bruijn 表示** | ✅ | ✅ 不变 | 绑定变量用索引 |
-| **实现语言** | SML + Scala | **Rust** | 变化 |
-| **编辑器协议** | PIDE (XML/YXML) | **LSP 3.17** (JSON-RPC) | 变化 |
-| **编辑器生态** | jEdit + VSCode 插件 | **任意 LSP 编辑器** | 变化 |
-| **构建系统** | Isabelle/Scala + Poly/ML | Cargo + Rust | 变化 |
+| 功能 | Isabelle | Isabelle-rs | 说明 |
+|------|:--:|:--:|------|
+| 内联引理 `lemma name: "stmt"` | ✅ | ✅ | |
+| 多行 assumes/shows | ✅ | ✅ | |
+| fixes/obtains | ✅ | ✅ | 跳过 fixes 绑定 |
+| 匿名引理 `lemma [code]:` | ✅ | ✅ | 自动生成 [anon:...] 名称 |
+| 多结论内联 `"A" "B"` | ✅ | ✅ | 生成 name_2, name_3 |
+| Cartouche `\<open>...\<close>` | ✅ | ✅ | 转换为双引号 |
+| Locale 引理 `(in loc)` | ✅ | ✅ | 剥离 locale 前缀 |
+| `lemmas` 命令 | ✅ | ❌ | |
+| `class`/`context` 块内引理 | ✅ | ❌ | |
 
-## PIDE vs LSP
+## 语法支持
 
-Isabelle 的 PIDE 与标准 LSP 的详细对比：
+| 语法 | 状态 | 说明 |
+|------|:--:|------|
+| `\<forall>`/`\<exists>`/`\<And>` | ✅ | 量词 |
+| `\<in>`/`\<notin>` | ✅ | 集合隶属 |
+| `\<le>`/`\<ge>`/`\<subseteq>` | ✅ | 序关系 |
+| `\<union>`/`\<inter>`/`\<Union>` | ✅ | 集合运算 |
+| `\<lbrakk>`/`\<rbrakk>` | ✅ | 结构化前提 |
+| `==>`/`-->`/`\<Longrightarrow>` | ✅ | 蕴含 |
+| `&`/`|`/`~`/`=`/`~=` | ✅ | 逻辑连接词 |
+| `#` (Cons) / `@` (Append) | ✅ | 列表操作 |
+| `<` / `>` / `+` / `-` | ✅ | 算术/集合运算 |
+| `{..n}` / `{a..b}` | ✅ | 集合范围 |
+| `[a..b]` / `[a..<b]` | ✅ | 列表范围 |
+| `{x. P x}` / `{x \| P x}` | ✅ | 集合推导 |
+| `if C then A else B` | ✅ | 条件表达式 |
+| `case E of P => R` | ✅ | Case 表达式 |
+| `let x = e in b` | ✅ | Let 绑定 |
+| `(<)` / `((#) x)` | ✅ | 操作符章节 |
+| `\<Sqinter>` / `\<Squnion>` | ✅ | 下确界/上确界 |
+| `\<exists>\<^sub>\<le>\<^sub>1` | ✅ | 至多一个存在 |
 
-### PIDE 能做什么，LSP 如何替代？
+## 定理覆盖
 
-| PIDE 功能 | 标准 LSP | Isabelle-rs 方案 |
-|-----------|:--:|------|
-| 文档同步 | ✅ `textDocument/didChange` | 直接使用 |
-| 诊断推送 | ✅ `textDocument/publishDiagnostics` | 直接使用 |
-| 类型 Hover | ✅ `textDocument/hover` | 直接使用 |
-| 跳转定义 | ✅ `textDocument/definition` | 直接使用 |
-| 命令执行状态 (`running`/`finished`) | ❌ | `$/isabelle/commandProgress` 扩展 |
-| 证明目标推送 | ❌ | `$/isabelle/proofStateChanged` 扩展 |
-| Output 面板 | ❌ | `$/isabelle/outputMessage` 扩展 |
-| 逐步执行 | ❌ | `isabelle/proofStep` / `proofUndo` 扩展 |
-| 嵌套语言 markup | ❌ | `textDocument/semanticTokens` (标准) |
-| 撤销/重做 | ❌ | 扩展 + 文档版本管理 |
+| 理论文件 | 总声明 | 已加载 | 覆盖率 |
+|----------|--------|--------|:--:|
+| HOL.thy | 254 | 254 | 100% |
+| Orderings.thy | 153 | 153 | 100% |
+| Nat.thy | 360 | 360 | 100% |
+| Set.thy | 412 | 412 | 100% |
+| List.thy | 1,257 | 1,257 | 100% |
+| **合计** | **2,436** | **2,436** | **100%** |
 
-### 架构对比
+## 待实现
 
-```
-原始 Isabelle (PIDE):
-  Editor → XML/YXML → Scala Wrapper → Poly/ML Process
-  (专用)   (自定义)    (JVM)          (SML)
-
-Isabelle-rs (LSP):
-  Editor → JSON-RPC → Rust Server → Flèche Engine → Rust Kernel
-  (任意)   (标准)     (原生)        (增量)          (原生)
-```
-
-### 关键优势
-
-1. **编辑器无关**：任何支持 LSP 的编辑器都能使用，不需要专门插件
-2. **原生性能**：Rust 编译为原生代码，无需 JVM 或 Poly/ML 运行时
-3. **生态系统**：可以使用 Rust 的整个包生态系统（serde, tokio, rowan, tower...）
-4. **类型安全**：Rust 的类型系统在编译期捕获比 SML 更多的错误
-5. **工具链**：cargo build/test/bench/doc 统一工具链
-
-## 模块完成度对照
-
-参见 [ARCHITECTURE.md](./ARCHITECTURE.md#模块对照isabelle-pure--isabelle-rs) 中的对照表。
-
-## 测试对照
-
-```
-原始 Isabelle:
-  · 内核有少量单元测试（主要在 Pure/Examples/）
-  · 主要通过 HOL 理论库的构建验证正确性（回归测试）
-  · 没有 fuzzing 或 property-based testing
-
-Isabelle-rs:
-  · 每条推理规则 + 类型操作都有单元测试（30 个）
-  · 未来：proptest/quickcheck 随机测试
-  · 未来：与 Isabelle 的 cross-validation（相同输入 → 相同输出）
-```
-
-## 性能预期
-
-| 操作 | Isabelle (SML) | Isabelle-rs (Rust) | 预期 |
-|------|:---:|:---:|------|
-| Term 构造 | 堆分配 (SML) | 堆分配 (Box/Arc) | 相近 |
-| Term 比较 | 递归遍历 | 递归遍历 | 相近 |
-| 定理检查 | 即时的 (LCF) | 即时的 (LCF) | 相同 |
-| 解析 | Earley Parser (SML) | Earley Parser (Rust) | 更快 |
-| I/O | 通过 Scala 层 | 原生 Rust | 更快 |
-| 内存占用 | Poly/ML GC | Rust ownership | 更低 |
-| 启动时间 | JVM + Poly/ML 初始化 | 原生二进制 | 更快 |
-
-> 注：当前 Isabelle-rs 不追求性能优化（如 Arena 分配、Hash Consing）。这些可以在后续引入，而不影响正确性。
-
-## 与其他现代证明助手的对比
-
-| 特性 | Isabelle-rs | Lean 4 | Coq-lsp | Rocq (原 Coq) |
-|------|:---:|:---:|:---:|:---:|
-| 实现语言 | Rust | Lean (自举) | OCaml | OCaml |
-| 编辑器协议 | LSP | LSP | LSP | LSP (via coq-lsp) |
-| 内核架构 | LCF | 类型检查器 | 类型检查器 | 类型检查器 |
-| 证明语言 | Isar | Tactic + Term | Ltac2 / SSReflect | Ltac / Ltac2 |
-| 自动化 | 强 (sledgehammer) | 强 (aesop, omega) | 中 (auto, lia) | 中 (auto, lia) |
-| 增量检查 | ✅ (Flèche) | ✅ (Snapshot) | ✅ (Flèche) | ✅ (coq-lsp) |
+| 功能 | 优先级 |
+|------|:--:|
+| `apply`/`done` 证明脚本执行 | 🔴 |
+| `simp`/`auto` tactic | 🔴 |
+| `by (induct ...)` 归纳证明 | 🟠 |
+| `proof ... qed` 结构化证明 | 🟠 |
+| `have`/`show`/`hence`/`thus` | 🟡 |
+| `case`/`cases`/`fix`/`assume`/`obtain` | 🟡 |
+| 类型推理 (Typ::dummy → 实际类型) | 🟡 |
+| 理论导入图 (theory DAG) | 🟢 |
+| 全部 100+ .thy 文件加载 | 🟢 |

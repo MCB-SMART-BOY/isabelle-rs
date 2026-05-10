@@ -173,7 +173,7 @@ impl IsabelleServer {
             },
         };
 
-        self.send_result(req.id, serde_json::to_value(result).unwrap());
+        self.send_result(req.id, serde_json::to_value(result).expect("Serialization failed"));
         self.lifecycle = ServerLifecycle::Initialized;
 
         tracing::info!(" Initialized — ready for requests!");
@@ -287,7 +287,7 @@ impl IsabelleServer {
                     }),
                     range: None,
                 };
-                self.send_result(req.id, serde_json::to_value(hover).unwrap());
+                self.send_result(req.id, serde_json::to_value(hover).expect("Serialization failed"));
             }
             None => {
                 self.send_result(req.id, serde_json::Value::Null);
@@ -301,7 +301,7 @@ impl IsabelleServer {
             is_incomplete: false,
             items: vec![],
         };
-        self.send_result(req.id, serde_json::to_value(result).unwrap());
+        self.send_result(req.id, serde_json::to_value(result).expect("Serialization failed"));
     }
 
     fn handle_definition(&mut self, req: JsonRpcRequest) {
@@ -326,7 +326,7 @@ impl IsabelleServer {
 
         match proof_state {
             Some(ps) => {
-                self.send_result(req.id, serde_json::to_value(ps).unwrap());
+                self.send_result(req.id, serde_json::to_value(ps).expect("Serialization failed"));
             }
             None => {
                 self.send_result(req.id, serde_json::Value::Null);
@@ -340,7 +340,7 @@ impl IsabelleServer {
 
     /// Send a successful response.
     fn send_result(&self, id: RequestId, result: serde_json::Value) {
-        self.transport.as_ref().unwrap().send(OutgoingMessage::Response(JsonRpcResponse {
+        self.transport.as_ref().expect("Transport not initialized").send(OutgoingMessage::Response(JsonRpcResponse {
             jsonrpc: "2.0".into(),
             id,
             result: Some(result),
@@ -350,7 +350,7 @@ impl IsabelleServer {
 
     /// Send an error response.
     fn send_error(&self, id: RequestId, error: JsonRpcError) {
-        self.transport.as_ref().unwrap().send(OutgoingMessage::Response(JsonRpcResponse {
+        self.transport.as_ref().expect("Transport not initialized").send(OutgoingMessage::Response(JsonRpcResponse {
             jsonrpc: "2.0".into(),
             id,
             result: None,
@@ -365,7 +365,7 @@ impl IsabelleServer {
             "diagnostics": diags,
         });
 
-        self.transport.as_ref().unwrap().send(OutgoingMessage::Notification(JsonRpcNotification {
+        self.transport.as_ref().expect("Transport not initialized").send(OutgoingMessage::Notification(JsonRpcNotification {
             jsonrpc: "2.0".into(),
             method: notifications::PUBLISH_DIAGNOSTICS.into(),
             params,

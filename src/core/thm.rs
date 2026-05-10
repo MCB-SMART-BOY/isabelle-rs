@@ -17,9 +17,9 @@
 //! 4. **Derivations**: theorems carry proof terms (or oracle tags)
 //! 5. **Maxidx**: proper tracking for fresh variable generation
 
-use std::collections::BTreeSet;
 use std::fmt;
 
+use super::error::KernelError;
 use super::logic::Pure;
 use super::term::Term;
 use super::types::Typ;
@@ -261,7 +261,7 @@ impl ThmKernel {
 
     /// **Assume** `ct`: `{ct} ⊢ ct`.
     ///
-    /// ```
+    /// ```text
     /// —————— (assume)
     /// A ⊢ A
     /// ```
@@ -283,7 +283,7 @@ impl ThmKernel {
     ///
     /// The equality uses `Pure.eq` with the appropriate type.
     ///
-    /// ```
+    /// ```text
     /// —————— (reflexive)
     /// ⊢ t ≡ t
     /// ```
@@ -519,14 +519,14 @@ impl ThmKernel {
     // Primitive rules: forall_intr and forall_elim
     // =================================================================
 
-    pub fn forall_intr(x_name: &str, x_typ: Typ, thm: &Thm) -> Thm {
+    pub fn forall_intr(x_name: &str, x_typ: Typ, thm: &Thm) -> Result<Thm, KernelError> {
         for hyp in thm.hyps.iter() {
             if free_in(x_name, hyp.term()) {
-                panic!("forall_intr: '{x_name}' free in hypotheses");
+                return Err(KernelError::FreeVarInHypotheses { name: x_name.to_string() });
             }
         }
         let all_term = Pure::mk_all(x_name, x_typ.clone(), thm.prop.term().clone());
-        Thm {
+        Ok(Thm {
             hyps: thm.hyps.clone(),
             prop: CTerm::certify(all_term),
             maxidx: thm.maxidx,
@@ -535,7 +535,7 @@ impl ThmKernel {
                 premises: vec![ThmDeriv { serial: thm.serial, prop: thm.prop.clone() }],
             },
             serial: new_serial(),
-        }
+        })
     }
 
     pub fn forall_elim(ct: CTerm, thm: &Thm) -> Thm {
@@ -598,7 +598,7 @@ mod tests {
         let a = prop("A");
         let thm = ThmKernel::trivial(a);
         assert!(thm.is_unconditional());
-        let (x, y) = Pure::dest_implies(thm.prop.term()).unwrap();
+        let (x, y) = Pure::dest_implies(thm.prop.term()).expect("Not an implication");
         assert_eq!(x, &Term::const_("A", Typ::base("prop")));
         assert_eq!(y, &Term::const_("A", Typ::base("prop")));
     }

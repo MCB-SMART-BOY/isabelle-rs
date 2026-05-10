@@ -8,11 +8,9 @@
 use std::sync::Arc;
 
 use crate::core::theory::Theory;
-use crate::core::thm::Thm;
 use crate::core::term::Term;
 use crate::core::types::Typ;
 use crate::isar::proof::ProofManager;
-use crate::isar::method::Method;
 
 // =========================================================================
 // Toplevel State
