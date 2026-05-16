@@ -549,14 +549,18 @@ mod tests {
     }
 
     #[test]
-    fn test_debug_subst_in_db() {
-        let db = HolTheoremDb::get();
-        let keys = ["subst", "sym", "trans", "refl", "TrueI", "iffD1", "iffD2"];
-        for k in &keys {
-            eprintln!("{}: {}", k, db.by_name.contains_key(*k));
+    fn test_debug_subst_name() {
+        let hol_thy = include_str!("../../isabelle-source/src/HOL/HOL.thy");
+        let lemmas = crate::hol::hol_loader::parse_lemmas(hol_thy);
+        // Find lemmas named subst, refl, TrueI
+        for name in &["subst", "refl", "TrueI", "iffD1", "iffD2"] {
+            let found: Vec<_> = lemmas.iter().filter(|l| l.name.contains(name)).collect();
+            eprintln!("Search '{}': {} matches", name, found.len());
+            for lem in found.iter().take(3) {
+                eprintln!("  name='{}', attr={:?}, proof={:?}",
+                    lem.name, lem.attributes, lem.proof_script);
+            }
         }
-        eprintln!("Total by_name entries: {}", db.by_name.len());
-        eprintln!("Total all theorems: {}", db.all.len());
     }
 
     #[test]

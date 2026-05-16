@@ -881,7 +881,9 @@ static HOL_THEOREMS: LazyLock<HolTheoremDb> = LazyLock::new(|| {
     lemmas.extend(parse_lemmas(nat_thy));
     lemmas.extend(parse_lemmas(set_thy));
     lemmas.extend(parse_lemmas(list_thy));
-    HolTheoremDb::from_lemmas(&lemmas)
+    let mut db = HolTheoremDb::from_lemmas(&lemmas);
+    HolTheoremDb::add_builtins(&mut db);
+    db
 });
 
 pub struct HolTheoremDb {
@@ -923,6 +925,34 @@ impl HolTheoremDb {
             }
         }
         HolTheoremDb { intros, elims, simps, all, by_name }
+    }
+
+    /// Add built-in Pure theorems that are not in any .thy file.
+    fn add_builtins(db: &mut HolTheoremDb) {
+        use crate::core::logic::Pure;
+        // refl: ⊢ ?t == ?t
+        let t = Term::var("t", 0, Typ::dummy());
+        let refl_thm = Arc::new(ThmKernel::reflexive(CTerm::certify(t)));
+        if !db.by_name.contains_key("refl") {
+            db.by_name.insert("refl".into(), Arc::clone(&refl_thm));
+            db.simps.push(Arc::clone(&refl_thm));
+            db.all.push(refl_thm);
+        }
+
+        // subst: [| s = t; P(s) |] ==> P(t)
+        if !db.by_name.contains_key("subst") {
+            let s = Term::var("s", 0, Typ::dummy());
+            let t = Term::var("t", 1, Typ::dummy());
+            let p = Term::var("P", 2, Typ::arrow(Typ::dummy(), Typ::base("prop")));
+            let eq = Pure::mk_equals(Typ::dummy(), s.clone(), t.clone());
+            let ps = Term::app(p.clone(), s);
+            let pt = Term::app(p, t);
+            let subst_stmt = Pure::mk_implies(eq, Pure::mk_implies(ps, pt));
+            let subst_thm = Arc::new(ThmKernel::assume(CTerm::certify(subst_stmt)));
+            db.by_name.insert("subst".into(), Arc::clone(&subst_thm));
+            db.elims.push(Arc::clone(&subst_thm));
+            db.all.push(subst_thm);
+        }
     }
 
     pub fn get() -> &'static Self { &HOL_THEOREMS }

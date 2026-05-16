@@ -632,8 +632,10 @@ impl ThmKernel {
 
         // 3. Match or unify
         let (env, full_match) = if match_flag {
+            let maxidx = usize::max(thm1.maxidx(), thm2.maxidx());
+            let env = super::envir::Envir::empty(maxidx);
             (super::unify::matchers(
-                &super::envir::Envir::init(),
+                &env,
                 concl_1,
                 prem_i,
                 &super::unify::UnifyConfig::default(),
@@ -759,9 +761,10 @@ impl ThmKernel {
 
         // 2. Unify major premise with some hypothesis of thm2
         let env = if match_flag {
+            let maxidx = usize::max(thm1.maxidx(), thm2.maxidx());
             let mut found_env = None;
             for hyp in thm2.hyps.iter() {
-                let env = super::envir::Envir::init();
+                let env = super::envir::Envir::empty(maxidx);
                 let pairs: Vec<(Term, Term)> = vec![
                     ((*major_prem).clone(), hyp.term().clone()),
                     ((*concl_1).clone(), prem_i.clone()),
