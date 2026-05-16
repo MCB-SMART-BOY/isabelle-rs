@@ -23,6 +23,9 @@ use std::sync::Arc;
 
 use super::thm::{CTerm, Thm, ThmKernel};
 use super::simplifier::Simplifier;
+use super::term::Term;
+use super::types::Typ;
+use super::drule;
 
 // =========================================================================
 // Tactic AST
@@ -262,6 +265,51 @@ pub fn depth_limit(max: usize, t: Tactic) -> Tactic {
 /// `eresolve_tac(thms, i)`: elim-resolution on subgoal `i`.
 pub fn eresolve_tac(thms: &[Arc<Thm>], i: usize) -> Tactic {
     Tactic::Eresolve(thms.to_vec(), i)
+}
+
+/// `dresolve_tac(thms, i)`: forward chaining — apply destruct rule to hypotheses.
+/// Uses make_elim to convert destruct rules to elimination rules, then eresolve_tac.
+pub fn dresolve_tac(thms: &[Arc<Thm>], i: usize) -> Tactic {
+    let elim_rules: Vec<Arc<Thm>> = thms
+        .iter()
+        .filter_map(|thm| make_elim(thm))
+        .map(Arc::new)
+        .collect();
+    Tactic::Eresolve(elim_rules, i)
+}
+
+/// Convert a destruct rule to an elimination rule (Isabelle's make_elim).
+///
+/// Given `rl: [| A1;...;An |] ==> C`, produces:
+/// `[| A1;...;An; C ==> Q |] ==> Q`
+///
+/// This uses the reverse cut rule: `[| P; P ==> Q |] ==> Q`.
+pub fn make_elim(rl: &Thm) -> Option<Thm> {
+    // revcut_rl: [| P; P==>Q |] ==> Q (with schematic P, Q)
+    let revcut = revcut_rl();
+    // rl RS revcut_rl: match rl's conclusion against revcut's first premise
+    // Use bicompose: revcut as thm1, rl as thm2? Actually:
+    // thm1 RS thm2 = bicompose(false, thm1, thm2, 0)
+    // Here we want rl RS revcut: bicompose(false, rl, revcut, 0)
+    // rl's conclusion matches revcut's first premise
+    ThmKernel::bicompose(true, rl, &revcut, 0)
+}
+
+/// The reverse cut rule: `[| P; P ==> Q |] ==> Q`
+/// Used by make_elim to convert destruct rules to elimination rules.
+pub fn revcut_rl() -> Thm {
+    use std::sync::LazyLock;
+    static REVCUT: LazyLock<Thm> = LazyLock::new(|| {
+        let p = Term::var("P", 0, Typ::base("prop"));
+        let q = Term::var("Q", 1, Typ::base("prop"));
+        let assume_p = ThmKernel::assume(CTerm::certify(p.clone()));
+        let p_imp_q = super::logic::Pure::mk_implies(p.clone(), q.clone());
+        let assume_pq = ThmKernel::assume(CTerm::certify(p_imp_q));
+        let result = ThmKernel::implies_elim(&assume_pq, &assume_p).unwrap();
+        let hyps: Vec<CTerm> = result.hyps().iter().cloned().collect();
+        super::drule::implies_intr_list(&hyps, &result).unwrap()
+    });
+    REVCUT.clone()
 }
 
 /// `simp_tac(simps, i)`: rewrite subgoal `i` using [simp] theorems.

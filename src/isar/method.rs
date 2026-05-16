@@ -250,6 +250,17 @@ pub fn exec_proof(state: &Thm, proof_script: &str) -> Option<Thm> {
         }
     }
 
+    // by (drule name)
+    if let Some(rest) = script.strip_prefix("by (drule ") {
+        if let Some(name) = rest.strip_suffix(")") {
+            let db = HolTheoremDb::get();
+            if let Some(thm) = db.by_name.get(name.trim()) {
+                let results = crate::core::tactic::dresolve_tac(&[Arc::clone(thm)], 0).apply(state);
+                return results.into_iter().find(|r| r.nprems() == 0);
+            }
+        }
+    }
+
     // Unknown proof script
     None
 }
