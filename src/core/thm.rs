@@ -631,18 +631,21 @@ impl ThmKernel {
         let (_, concl_1) = Pure::strip_imp_prems(thm1.prop.term());
 
         // 3. Match or unify
-        let env = if match_flag {
-            super::unify::matchers(
+        let (env, full_match) = if match_flag {
+            (super::unify::matchers(
                 &super::envir::Envir::init(),
                 concl_1,
                 prem_i,
                 &super::unify::UnifyConfig::default(),
-            )?
+            )?, false)
         } else {
-            if !Hyps::alpha_eq(concl_1, prem_i) {
+            if Hyps::alpha_eq(thm1.prop.term(), prem_i) {
+                (super::envir::Envir::init(), true)   // full match — assume_tac
+            } else if Hyps::alpha_eq(concl_1, prem_i) {
+                (super::envir::Envir::init(), false)  // conclusion match — resolve_tac
+            } else {
                 return None;
             }
-            super::envir::Envir::init()
         };
 
         // 4. Instantiate both theorems with the unifier
@@ -650,12 +653,18 @@ impl ThmKernel {
         let thm2 = Self::instantiate(&env, thm2);
 
         // 5. Build the result: replace thm2's i-th premise with thm1's premise chain
-        let (prems_1, _) = Pure::strip_imp_prems(thm1.prop.term());
+        let prems_1: Vec<Term> = if full_match {
+            // Full match: entire subgoal is a hypothesis — no new premises
+            Vec::new()
+        } else {
+            let (p, _) = Pure::strip_imp_prems(thm1.prop.term());
+            p.iter().cloned().cloned().collect()
+        };
         let (prems_2, concl_2) = Pure::strip_imp_prems(thm2.prop.term());
 
         let mut new_prems: Vec<Term> = Vec::new();
         new_prems.extend(prems_2[..i].iter().cloned().cloned());
-        new_prems.extend(prems_1.iter().cloned().cloned());
+        new_prems.extend(prems_1.iter().cloned());
         new_prems.extend(prems_2[i + 1..].iter().cloned().cloned());
 
         let mut new_prop = concl_2.clone();
@@ -766,9 +775,13 @@ impl ThmKernel {
             }
             found_env?
         } else {
-            // Exact match: major_prem must equal some hypothesis, concl must equal prem_i
+            // Exact match with two-tier support
             let hyp_matches = thm2.hyps.iter().any(|h| Hyps::alpha_eq(major_prem, h.term()));
-            if !hyp_matches || !Hyps::alpha_eq(concl_1, prem_i) {
+            if !hyp_matches {
+                return None;
+            }
+            if !Hyps::alpha_eq(thm1.prop.term(), prem_i) 
+                && !Hyps::alpha_eq(concl_1, prem_i) {
                 return None;
             }
             super::envir::Envir::init()
