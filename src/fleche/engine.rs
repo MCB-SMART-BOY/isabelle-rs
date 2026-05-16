@@ -199,7 +199,7 @@ mod tests {
             end: Position { line: 0, character: 16 },
         }, 0);
         let mut ctx = CheckContext::default();
-        let diags = exec.execute(&cmd, &mut ctx);
+        let _diags = exec.execute(&cmd, &mut ctx);
         assert!(ctx.in_proof);
     }
 

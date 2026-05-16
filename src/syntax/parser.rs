@@ -391,7 +391,7 @@ mod tests {
     #[test]
     fn test_parse_full_theory() {
         let source = "theory Test imports Pure begin\nlemma foo: \"True\"\nby auto\nend";
-        let (tree, errors) = SyntaxTree::parse(source);
+        let (tree, _errors) = SyntaxTree::parse(source);
         // May have errors due to incomplete parser (end not handled)
         // But should not panic
         let root = tree.root();

@@ -70,6 +70,7 @@ pub struct FileWorker {
     /// The command executor (kernel + Isar toplevel logic).
     executor: Box<dyn CommandExecutor>,
     /// Current toplevel state (None until first command).
+    #[allow(dead_code)]
     toplevel: Option<Toplevel>,
     /// Monotonic version counter for snapshots.
     version: u64,

@@ -31,6 +31,7 @@ struct RuntimeState {
     /// Memory shared with the WASM module.
     memory: Option<Memory>,
     /// Plugin context (named theorems etc).
+    #[allow(dead_code)]
     ctx: PluginContext,
 }
 
@@ -41,6 +42,7 @@ struct RuntimeState {
 /// Manages a loaded WASM plugin instance.
 pub struct WasmRuntime {
     _engine: Engine,
+    #[allow(dead_code)]
     store: Store<RuntimeState>,
     /// The `apply_tactic` function exported by the plugin.
     _apply_func: TypedFunc<(i32, i32), i32>,

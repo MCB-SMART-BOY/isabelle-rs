@@ -44,6 +44,7 @@ pub enum WorkerStatus {
 /// Monitors the health of all FileWorkers in a session.
 pub struct Watchdog {
     /// Heartbeat interval.
+    #[allow(dead_code)]
     interval: Duration,
     /// Last successful check time.
     _last_check: Instant,

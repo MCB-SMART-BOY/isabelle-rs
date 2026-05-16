@@ -889,7 +889,7 @@ mod tests {
 
     #[test]
     fn test_parse_const_decl() {
-        let (name, typ) = parse_const_decl("implies :: \"[bool, bool] => bool\"").unwrap();
+        let (name, _typ) = parse_const_decl("implies :: \"[bool, bool] => bool\"").unwrap();
         assert_eq!(name, "implies");
     }
 
@@ -930,7 +930,6 @@ mod tests {
 #[cfg(test)]
 mod lemma_tests {
     use super::*;
-    use crate::isar::term_parser::parse_term;
 
     #[test]
     fn test_parse_sym() {

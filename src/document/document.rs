@@ -437,6 +437,7 @@ fn offset_to_line(content: &str, offset: usize) -> u32 {
     slice.chars().filter(|c| *c == '\n').count() as u32
 }
 
+#[allow(dead_code)]
 fn line_start_offset(content: &str, offset: usize) -> u32 {
     let slice = &content[..offset.min(content.len())];
     if let Some(pos) = slice.rfind('\n') {

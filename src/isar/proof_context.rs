@@ -173,7 +173,6 @@ mod tests {
     use super::*;
     use crate::core::theory::Theory;
     use crate::core::thm::{CTerm, ThmKernel};
-    use crate::core::types::Symbol;
     use crate::core::types::Typ;
 
     fn init_context() -> IsarContext {

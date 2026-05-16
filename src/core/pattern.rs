@@ -118,11 +118,11 @@ mod tests {
     fn test_pattern_matches() {
         // Pattern: ?P(0, 1) matches target: f(a, b)
         let p = Term::var("P", 0, Typ::dummy());
-        let pat = Term::app(
+        let _pat = Term::app(
             Term::app(p, Term::bound(0)),
             Term::bound(1),
         );
-        let obj = Term::app(
+        let _obj = Term::app(
             Term::app(
                 Term::free("f", Typ::dummy()),
                 Term::free("a", Typ::dummy()),

@@ -120,7 +120,6 @@ mod tests {
     use super::*;
     use crate::core::types::Typ;
     use crate::core::term::Term;
-    use std::sync::Arc;
 
     fn prop(name: &str) -> CTerm {
         CTerm::certify(Term::const_(name, Typ::base("prop")))

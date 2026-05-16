@@ -9,6 +9,7 @@ pub enum TypeDecl { Logical { arity: usize }, Abbreviation { rhs: Typ }, Nonterm
 pub struct TypeSignature {
     types: HashMap<Symbol, TypeDecl>,
     algebra: ClassAlgebra,
+    #[allow(dead_code)]
     logical_types: Vec<Symbol>,
 }
 impl TypeSignature {
