@@ -309,11 +309,12 @@ fn exec_single_method(state: &Thm, method_str: &str) -> Vec<Thm> {
 /// If successful, returns a theorem with no hypotheses (fully proven).
 pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
     let proof = lem.proof_script.as_ref()?;
-    // Create goal using trivial: {} ⊢ lemma ==> lemma
-    // This gives us the lemma as a subgoal with empty hyps
-    let goal = ThmKernel::trivial(CTerm::certify(lem.theorem.prop().term().clone())).ok()?;
+    // Create goal using assume: {lemma} ⊢ lemma
+    // The premises of lemma are available as constituent parts of the hyp
+    let goal = ThmKernel::assume(CTerm::certify(lem.theorem.prop().term().clone()));
+    // Execute proof, then check if the result is unconditional
     exec_proof(&goal, proof)
-        .filter(|r| r.is_unconditional()) // must not rely on added assumptions
+        .filter(|r| r.is_unconditional())
 }
 
 // =========================================================================

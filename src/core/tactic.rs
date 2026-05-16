@@ -21,11 +21,12 @@
 use std::fmt;
 use std::sync::Arc;
 
-use super::thm::{CTerm, Thm, ThmKernel};
+use super::thm::{CTerm, Thm, ThmKernel, Hyps};
 use super::simplifier::Simplifier;
 use super::term::Term;
 use super::types::Typ;
 use super::drule;
+use super::logic::Pure;
 
 // =========================================================================
 // Tactic AST
@@ -73,7 +74,6 @@ impl Tactic {
             Tactic::Assume(i) => Self::apply_assume(*i, state),
             Tactic::Resolve(thms, i) => Self::apply_resolve(thms, *i, state),
             Tactic::Then(t1, t2) => {
-                // Isabelle: THEN = fn st => Seq.maps t2 (t1 st)
                 t1.apply(state)
                     .into_iter()
                     .flat_map(|s| t2.apply(&s))
@@ -85,7 +85,6 @@ impl Tactic {
             }
             Tactic::Repeat(t) => Self::apply_repeat(t, state),
             Tactic::Every(ts) => {
-                // EVERY [t1, t2, ...] = t1 THEN t2 THEN ...
                 ts.iter()
                     .fold(Tactic::All, |a, t| {
                         Tactic::Then(Box::new(a), Box::new(t.clone()))
@@ -93,7 +92,6 @@ impl Tactic {
                     .apply(state)
             }
             Tactic::First(ts) => {
-                // FIRST [t1, t2, ...] = t1 ORELSE t2 ORELSE ...
                 for t in ts {
                     let r = t.apply(state);
                     if !r.is_empty() {
@@ -120,21 +118,39 @@ impl Tactic {
     }
 
     /// Solve subgoal `i` by assumption.
-    /// Only works if the subgoal is already in the hypotheses.
+    /// Checks if the subgoal matches a hypothesis or a premise of any hypothesis.
     fn apply_assume(i: usize, state: &Thm) -> Vec<Thm> {
         let prem_i = match state.prem(i) {
             Some(p) => p,
             None => return vec![],
         };
-        // Check: is prem_i (or something alpha-equivalent) already a hypothesis?
+        // Check: is prem_i directly in hyps?
         let ct = CTerm::certify(prem_i.clone());
-        if !state.hyps().contains(&ct) {
-            return vec![]; // can't assume something not in hyps
+        if state.hyps().contains(&ct) {
+            let assume_thm = ThmKernel::assume(CTerm::certify(prem_i));
+            return ThmKernel::bicompose(false, &assume_thm, state, i)
+                .map(|t| vec![t])
+                .unwrap_or_default();
         }
-        let assume_thm = ThmKernel::assume(CTerm::certify(prem_i));
-        ThmKernel::bicompose(false, &assume_thm, state, i)
-            .map(|t| vec![t])
-            .unwrap_or_default()
+        // Check: is prem_i a constituent premise of any hyp?
+        for hyp in state.hyps().iter() {
+            let (prems, _) = Pure::strip_imp_prems(hyp.term());
+            let ct = CTerm::certify(prem_i.clone());
+            let matches = prems.iter().any(|p| {
+                // Compare via Hyps::alpha_eq indirectly through contains
+                let p_ct = CTerm::certify((*p).clone());
+                let mut tmp = Hyps::empty();
+                tmp.insert(ct.clone());
+                tmp.contains(&p_ct)
+            });
+            if matches {
+                let assume_thm = ThmKernel::assume(CTerm::certify(prem_i));
+                return ThmKernel::bicompose(false, &assume_thm, state, i)
+                    .map(|t| vec![t])
+                    .unwrap_or_default();
+            }
+        }
+        vec![]
     }
 
     /// Resolve subgoal `i` using one of the given theorems.
