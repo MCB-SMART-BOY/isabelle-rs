@@ -721,6 +721,98 @@ impl ThmKernel {
     }
 
     // =================================================================
+    // Primitive: bicompose_eresolve — resolution with hypothesis elimination
+    // =================================================================
+
+    /// Like `bicompose`, but also consumes a matching hypothesis.
+    ///
+    /// `thm1`: `[| H; G1; ...; Gm |] ==> A`  (H is the "major premise")
+    /// `thm2`: goal state with subgoal `i` matching `A`
+    ///
+    /// If `match_flag` is true, unifies `A` with subgoal `i` and `H` with
+    /// some hypothesis of `thm2`. Then replaces subgoal `i` with `G1...Gm`
+    /// (excluding `H`) and keeps the consumed hypothesis in hyps.
+    ///
+    /// This is the kernel implementation of `eresolve_tac`.
+    pub fn bicompose_eresolve(
+        match_flag: bool,
+        thm1: &Thm,
+        thm2: &Thm,
+        i: usize,
+    ) -> Option<Thm> {
+        // 1. Get the i-th premise of thm2 and thm1's conclusion
+        let prem_i = Pure::nth_premise(thm2.prop.term(), i)?;
+        let (prems_1, concl_1) = Pure::strip_imp_prems(thm1.prop.term());
+
+        // thm1 must have at least one premise (the major premise to consume)
+        let major_prem = prems_1.first()?;
+        let _rest_prems = &prems_1[1..];
+
+        // 2. Unify major premise with some hypothesis of thm2
+        let env = if match_flag {
+            let mut found_env = None;
+            for hyp in thm2.hyps.iter() {
+                let env = super::envir::Envir::init();
+                let pairs: Vec<(Term, Term)> = vec![
+                    ((*major_prem).clone(), hyp.term().clone()),
+                    ((*concl_1).clone(), prem_i.clone()),
+                ];
+                if let Some(env) = super::unify::unifiers(
+                    &env, &pairs, &super::unify::UnifyConfig::default()
+                ) {
+                    found_env = Some(env);
+                    break;
+                }
+            }
+            found_env?
+        } else {
+            // Exact match: major_prem must equal some hypothesis, concl must equal prem_i
+            let hyp_matches = thm2.hyps.iter().any(|h| Hyps::alpha_eq(major_prem, h.term()));
+            if !hyp_matches || !Hyps::alpha_eq(concl_1, prem_i) {
+                return None;
+            }
+            super::envir::Envir::init()
+        };
+
+        // 3. Instantiate both theorems
+        let thm1 = Self::instantiate(&env, thm1);
+        let thm2 = Self::instantiate(&env, thm2);
+
+        // 4. Build result: thm2's i-th premise replaced by thm1's REST premises (excluding major)
+        let (prems_1_inst, _) = Pure::strip_imp_prems(thm1.prop.term());
+        let rest_prems_inst: Vec<Term> = if prems_1_inst.is_empty() {
+            Vec::new()
+        } else {
+            prems_1_inst[1..].iter().cloned().cloned().collect()
+        };
+        let (prems_2, concl_2) = Pure::strip_imp_prems(thm2.prop.term());
+
+        let mut new_prems: Vec<Term> = Vec::new();
+        new_prems.extend(prems_2[..i].iter().cloned().cloned());
+        new_prems.extend(rest_prems_inst.iter().cloned());
+        new_prems.extend(prems_2[i + 1..].iter().cloned().cloned());
+
+        let mut new_prop = concl_2.clone();
+        for p in new_prems.iter().rev() {
+            new_prop = Pure::mk_implies(p.clone(), new_prop);
+        }
+
+        Some(Thm {
+            hyps: thm1.hyps.union(&thm2.hyps),
+            prop: CTerm::certify(new_prop),
+            maxidx: usize::max(thm1.maxidx, thm2.maxidx),
+            derivation: Derivation::Rule {
+                name: "bicompose_eresolve",
+                premises: vec![
+                    ThmDeriv { serial: thm1.serial, prop: thm1.prop.clone() },
+                    ThmDeriv { serial: thm2.serial, prop: thm2.prop.clone() },
+                ],
+            },
+            serial: new_serial(),
+        })
+    }
+
+    // =================================================================
     // Derived rule: A ==> A  (identity)
     // =================================================================
 

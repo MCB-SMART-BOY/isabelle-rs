@@ -125,10 +125,23 @@ impl Method {
         }
 
         // 3. Safe: resolve with intro/elim theorems on first subgoal
-        let resolve_results = tactic::resolve_tac(&db.all, 0).apply(state);
+        let resolve_results = tactic::resolve_tac(&db.intros, 0).apply(state);
+        let eresolve_results = tactic::eresolve_tac(&db.elims, 0).apply(state);
 
         let mut all_solved = Vec::new();
         for r in &resolve_results {
+            if r.nprems() == 0 {
+                all_solved.push(r.clone());
+            } else if r.nprems() < state.nprems() + 5 {
+                let sub = Self::auto_exec(r, depth + 1);
+                for s in &sub {
+                    if s.nprems() == 0 {
+                        all_solved.push(s.clone());
+                    }
+                }
+            }
+        }
+        for r in &eresolve_results {
             if r.nprems() == 0 {
                 all_solved.push(r.clone());
             } else if r.nprems() < state.nprems() + 5 {

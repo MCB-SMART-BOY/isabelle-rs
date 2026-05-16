@@ -56,6 +56,8 @@ pub enum Tactic {
     DepthLimit(usize, Box<Tactic>),
     /// Rewrite subgoal `i` using the given simplifier
     Simp(Arc<Simplifier>, usize),
+    /// Elim-resolution: match conclusion AND consume matching hypothesis
+    Eresolve(Vec<Arc<Thm>>, usize),
 }
 
 impl Tactic {
@@ -110,6 +112,7 @@ impl Tactic {
                 t.apply(state)
             }
             Tactic::Simp(simp, i) => Self::apply_simp(simp, *i, state),
+            Tactic::Eresolve(thms, i) => Self::apply_eresolve(thms, *i, state),
         }
     }
 
@@ -130,6 +133,17 @@ impl Tactic {
         let mut results = Vec::new();
         for thm in thms {
             if let Some(new_state) = ThmKernel::bicompose(true, thm, state, i) {
+                results.push(new_state);
+            }
+        }
+        results
+    }
+
+    /// Elim-resolution: like resolve, but also consumes a matching hypothesis.
+    fn apply_eresolve(thms: &[Arc<Thm>], i: usize, state: &Thm) -> Vec<Thm> {
+        let mut results = Vec::new();
+        for thm in thms {
+            if let Some(new_state) = ThmKernel::bicompose_eresolve(true, thm, state, i) {
                 results.push(new_state);
             }
         }
@@ -191,6 +205,7 @@ impl fmt::Debug for Tactic {
             Tactic::Trace(name, t) => write!(f, "TRACE({}, {:?})", name, t),
             Tactic::DepthLimit(max, t) => write!(f, "DEPTH({}, {:?})", max, t),
             Tactic::Simp(_, i) => write!(f, "simp({})", i),
+            Tactic::Eresolve(ts, i) => write!(f, "eresolve({}, {})", ts.len(), i),
         }
     }
 }
@@ -242,6 +257,11 @@ pub fn trace_tac(name: impl Into<String>, t: Tactic) -> Tactic {
 
 pub fn depth_limit(max: usize, t: Tactic) -> Tactic {
     Tactic::DepthLimit(max, Box::new(t))
+}
+
+/// `eresolve_tac(thms, i)`: elim-resolution on subgoal `i`.
+pub fn eresolve_tac(thms: &[Arc<Thm>], i: usize) -> Tactic {
+    Tactic::Eresolve(thms.to_vec(), i)
 }
 
 /// `simp_tac(simps, i)`: rewrite subgoal `i` using [simp] theorems.
