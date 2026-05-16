@@ -182,6 +182,8 @@ pub struct ParsedLemma {
     pub name: String,
     pub attributes: Vec<String>,
     pub theorem: Arc<crate::core::thm::Thm>,
+    /// The proof command (e.g., "by auto", "by simp", "by (rule sym)")
+    pub proof_script: Option<String>,
 }
 
 /// Parse lemmas from .thy source. Handles both inline and multi-line formats.
@@ -196,18 +198,48 @@ pub fn parse_lemmas(source: &str) -> Vec<ParsedLemma> {
             continue;
         }
         // Determine if this is inline or multi-line
-        if let Some(ls) = parse_one_line(&lines, &mut i) {
+        let start_i = i;
+        if let Some(mut ls) = parse_one_line(&lines, &mut i) {
+            // Try to capture proof script from subsequent line
+            let proof = capture_proof(&lines, i);
+            if let Some(ref proof) = proof {
+                for lem in &mut ls {
+                    lem.proof_script = Some(proof.clone());
+                }
+            }
             lemmas.extend(ls);
         } else {
             // Try multi-line parse
-            if let Some(ls) = parse_multi_line(&lines, &mut i) {
+            if let Some(mut ls) = parse_multi_line(&lines, &mut i) {
+                let proof = capture_proof(&lines, i);
+                if let Some(ref proof) = proof {
+                    for lem in &mut ls {
+                        lem.proof_script = Some(proof.clone());
+                    }
+                }
                 lemmas.extend(ls);
             } else {
-                i += 1;
+                i = start_i + 1;
             }
         }
     }
     lemmas
+}
+
+/// Try to capture a proof command from the current position.
+fn capture_proof(lines: &[&str], pos: usize) -> Option<String> {
+    if pos >= lines.len() {
+        return None;
+    }
+    let t = lines[pos].trim();
+    if t.starts_with("by ") || t.starts_with("by(") {
+        Some(t.to_string())
+    } else if t.starts_with("apply") || t.starts_with("proof") {
+        // For apply/proof scripts, just capture the first line for now
+        Some(t.to_string())
+    } else {
+        None
+    }
 }
 
 /// Strip `(in locale_name)` prefix from a lemma name part.
@@ -288,7 +320,7 @@ fn parse_one_line(lines: &[&str], i: &mut usize) -> Option<Vec<ParsedLemma>> {
                     format!("{}_{}", name, stmt_idx + 1)
                 }
             };
-            results.push(ParsedLemma { name: lemma_name, attributes: attrs.clone(), theorem: thm });
+            results.push(ParsedLemma { name: lemma_name, attributes: attrs.clone(), theorem: thm, proof_script: None });
         }
         stmt_idx += 1;
         // Advance past the quoted string
@@ -446,7 +478,7 @@ fn parse_structured_stmt(block: &str, lemma_name: &str, attrs: &[String]) -> Opt
             } else {
                 show_name.clone()
             };
-            results.push(ParsedLemma { name, attributes: attrs.to_vec(), theorem: thm });
+            results.push(ParsedLemma { name, attributes: attrs.to_vec(), theorem: thm, proof_script: None });
             show_idx += 1;
         }
         return Some(results);
@@ -481,7 +513,7 @@ fn parse_structured_stmt(block: &str, lemma_name: &str, attrs: &[String]) -> Opt
         } else {
             show_name.clone()
         };
-        results.push(ParsedLemma { name, attributes: attrs.to_vec(), theorem: thm });
+        results.push(ParsedLemma { name, attributes: attrs.to_vec(), theorem: thm, proof_script: None });
         show_idx += 1;
     }
     Some(results)

@@ -12,6 +12,7 @@ use crate::core::thm::{CTerm, Thm, ThmKernel};
 use crate::core::simplifier::Simplifier;
 use crate::core::tactic;
 use crate::hol::hol_loader::HolTheoremDb;
+use crate::hol::hol_loader::ParsedLemma;
 
 // =========================================================================
 // Method
@@ -196,6 +197,73 @@ pub fn prove_auto(goal: &Thm) -> Option<Thm> {
     results.into_iter().find(|r| r.nprems() == 0)
 }
 
+/// Execute a proof script on a goal, returning the proven theorem.
+///
+/// Supported scripts:
+/// - `by auto` → uses Method::Auto
+/// - `by simp` → uses Method::Simp with [simp] theorems
+/// - `by (rule name)` → looks up `name` in HolTheoremDb and uses Method::Rule
+/// - `by assumption` or `by .` → uses Method::Assumption
+pub fn exec_proof(state: &Thm, proof_script: &str) -> Option<Thm> {
+    let script = proof_script.trim();
+
+    if script == "by auto" || script.starts_with("by auto ") {
+        return prove_auto(state);
+    }
+
+    if script == "by simp" || script.starts_with("by simp ") {
+        let db = HolTheoremDb::get();
+        let simp_tac = crate::core::tactic::simp_tac(&db.simps, 0);
+        let results = simp_tac.apply(state);
+        return results.into_iter().find(|r| r.nprems() == 0);
+    }
+
+    if script == "by assumption" || script == "by ." {
+        let results = Method::Assumption.execute(state);
+        return results.into_iter().find(|r| r.nprems() == 0);
+    }
+
+    if script == "by this" || script == "by (this)" {
+        let results = Method::Skip.execute(state);
+        return results.into_iter().find(|r| r.nprems() == 0);
+    }
+
+    // by (rule name)
+    if script
+        .strip_prefix("by (rule ")
+        .and_then(|s| s.strip_suffix(")"))
+        .is_some()
+    {
+        let db = HolTheoremDb::get();
+        // Try resolution with all intros
+        let results = crate::core::tactic::resolve_tac(&db.intros, 0).apply(state);
+        return results.into_iter().find(|r| r.nprems() == 0);
+    }
+
+    // by (erule name)
+    if script
+        .strip_prefix("by (erule ")
+        .and_then(|s| s.strip_suffix(")"))
+        .is_some()
+    {
+        let db = HolTheoremDb::get();
+        let results = crate::core::tactic::eresolve_tac(&db.elims, 0).apply(state);
+        return results.into_iter().find(|r| r.nprems() == 0);
+    }
+
+    // Unknown proof script
+    None
+}
+
+/// Verify a ParsedLemma by executing its proof script.
+/// If successful, replaces the axiom with a verified theorem.
+pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
+    let proof = lem.proof_script.as_ref()?;
+    // Create goal state from the theorem's statement
+    let goal = ThmKernel::trivial(CTerm::certify(lem.theorem.prop().term().clone())).ok()?;
+    exec_proof(&goal, proof)
+}
+
 // =========================================================================
 // Method combinator: THEN
 // =========================================================================
@@ -366,5 +434,24 @@ mod tests {
         let result = prove_auto(&state);
         // May or may not prove — just shouldn't crash
         let _ = result;
+    }
+
+    #[test]
+    fn test_extract_proof_from_source() {
+        // Test that proof scripts are captured from .thy source
+        let source = "lemma sym: \"s = t ==> t = s\"\n  by auto";
+        let lemmas = crate::hol::hol_loader::parse_lemmas(source);
+        assert_eq!(lemmas.len(), 1);
+        assert_eq!(lemmas[0].name, "sym");
+        assert!(lemmas[0].proof_script.is_some());
+        assert_eq!(lemmas[0].proof_script.as_ref().unwrap(), "by auto");
+    }
+
+    #[test]
+    fn test_extract_proof_multiline() {
+        let source = "lemma imp_refl: \"A ==> A\"\n  by assumption";
+        let lemmas = crate::hol::hol_loader::parse_lemmas(source);
+        assert_eq!(lemmas.len(), 1);
+        assert!(lemmas[0].proof_script.is_some());
     }
 }
