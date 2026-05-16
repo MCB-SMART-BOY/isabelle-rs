@@ -59,7 +59,7 @@ src/
 
 ### 正确的构建顺序
 
-1. `thm.rs`: 添加 `instantiate`, `bicompose`, `nprems()`, `prem(i)`, `concl()`
+1. ~~`thm.rs`: 添加 `instantiate`, `bicompose`, `nprems()`, `prem(i)`, `concl()`~~ ✅ 已完成
 2. `tactic.rs`: 重写为 `Tactic = Thm -> Vec<Thm>`（对齐 Isabelle 的 `thm -> thm Seq.seq`）
 3. `method.rs`: 重写为 tactic 的命名包装 + HolTheoremDb 查询
 4. `proof.rs`: 更新 Isar 状态机，`Proving` 持有 `Thm`

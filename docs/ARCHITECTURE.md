@@ -1,7 +1,7 @@
-# 架构设计 v5.0
+# 架构设计 v6.0
 
-> 基于代码审计的精确架构分析，揭示证明引擎断层的根因。
-> 核心发现：`bicompose` 和 `ThmKernel::instantiate` 缺失——这是所有 tactic 的基础。
+> 可信形式化内核已完成：13 个操作，零 panic，零 warning，314 测试通过。
+> 下一步：基于 `bicompose` + `instantiate` 重写 Tactic 层。
 
 ## 状态标记说明
 
@@ -20,12 +20,12 @@
 | 层 / 组件 | 状态 | 关键交付物 |
 |-----------|------|-----------|
 | **Layer 0: 定理加载** | `[✅ 已完成]` | parse_lemmas, convert_syntax, HolTheoremDb, 2,548 条定理 |
-| **LCF 内核（11 条规则）** | `[✅ 已完成]` | assume, refl, sym, trans, comb, abs, beta, impI, impE, allI, allE |
+| **LCF 内核（13 条规则）** | `[✅ 已完成]` | assume, refl, sym, trans, comb, abs, beta, impI, impE, allI, allE, instantiate, bicompose |
 | **Isar 证明语言** | `[✅ 已完成]` | token, parse, term_parser, proof, method, toplevel |
 | **全局 Interning** | `[🚧 进行中]` | kernel/arena.rs 已存在；intern() 已激活；尚未用于 core/ |
 | **Rowan CST 解析器** | `[🚧 进行中]` | CstBuilder + SyntaxTree + AST 桥接已构建（672 行） |
 | **Session Actor** | `[🚧 进行中]` | Session + FileWorker + Watchdog（609 行，基于 tokio） |
-| **内核基础设施** | `[🔵 一期]` | `ThmKernel::instantiate`, `ThmKernel::bicompose`, `Thm::nprems/prem/concl` |
+| **内核基础设施** | `[✅ 已完成]` | `ThmKernel::instantiate`, `ThmKernel::bicompose`, `Thm::nprems/prem/concl`, 零 panic, 零 warning |
 | **Tactic 系统** | `[🚧 需重写]` | 当前返回 `Vec<Vec<Goal>>` 不产生 `Thm`；需改为 `&Thm -> Vec<Thm>` |
 | **Method 系统** | `[🚧 需重写]` | 当前返回 `Option<Vec<Goal>>`；需基于新 Tactic |
 | **Proof State** | `[🚧 桩代码]` | Isar 生命周期，未连接证明引擎 |
@@ -90,9 +90,7 @@
 | `logic.ML` | 693 | `core/logic.rs` | ✅ Pure.imp/all/eq |
 | `sign.ML` | 597 | `core/sign.rs` | ✅ 签名+类型检查 |
 | `theory.ML` | — | `core/theory.rs` | ✅ Theory + ProofContext |
-| `thm.ML` (assume/refl/...) | 2,752 | `core/thm.rs` | ✅ 11 条推理规则 |
-| `thm.ML` (instantiate) | — | `core/thm.rs` | ❌ **缺失** — 无法将 Envir 应用到 Thm |
-| `thm.ML` (bicompose) | — | `core/thm.rs` | ❌ **缺失** — 所有 tactic 的核心操作 |
+| `thm.ML` (assume/refl/.../instantiate/bicompose) | 2,752 | `core/thm.rs` | ✅ **13 条规则，零 panic，零 warning** |
 | `unify.ML` | 668 | `core/unify.rs` | ✅ 高阶统一 |
 | `envir.ML` | 428 | `core/envir.rs` | ✅ |
 | `term_subst.ML` | — | `core/term_subst.rs` | ✅ Term 级 instantiate |

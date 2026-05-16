@@ -4,16 +4,17 @@
 
 | 功能 | Isabelle | Isabelle-rs | 说明 |
 |------|:--:|:--:|------|
-| Thm.instantiate | ✅ | ❌ | 无法将 Envir 应用到 Thm |
-| Thm.bicompose | ✅ | ❌ | 所有 tactic 的核心操作 |
-| Thm.nprems_of / prem / concl | ✅ | ❌ | 无法访问目标状态 |
+| Thm.instantiate | ✅ | ✅ | Envir → Thm |
+| Thm.bicompose | ✅ | ✅ | 核心 resolution 操作 |
+| Thm.nprems_of / prem / concl | ✅ | ✅ | 目标状态访问 |
 | Thm.assume | ✅ | ✅ | |
-| Thm.implies_intr | ✅ | ✅ | |
-| Thm.implies_elim | ✅ | ✅ | |
-| Thm.reflexive / symmetric / transitive | ✅ | ✅ | |
-| Thm.combination / abstraction | ✅ | ✅ | |
+| Thm.implies_intr | ✅ | ✅ | 零 panic |
+| Thm.implies_elim | ✅ | ✅ | 零 panic |
+| Thm.reflexive / symmetric / transitive | ✅ | ✅ | 零 panic |
+| Thm.combination / abstraction | ✅ | ✅ | 副作用检查 |
 | Thm.beta_conversion | ✅ | ✅ | |
-| Thm.forall_intr / forall_elim | ✅ | ✅ | |
+| Thm.forall_intr / forall_elim | ✅ | ✅ | 零 panic |
+| **总计** | **13** | **13** | **100% 等价** |
 
 ## 定理加载能力
 

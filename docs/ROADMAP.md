@@ -29,6 +29,17 @@ Isabelle-rs 不追求 1:1 移植 Isabelle 40 年的全部架构。采用**价值
 
 **目标**：利用已加载的 2,548 条定理，能够自动证明新目标。
 
+### ✅ Phase 1a 已完成：内核基础设施
+
+- [x] `ThmKernel::instantiate(env, thm) -> Thm` — 将 Envir 应用到 Thm
+- [x] `ThmKernel::bicompose(thm1, thm2, i) -> Option<Thm>` — 核心 resolution 操作
+- [x] `Thm::nprems()`, `Thm::prem(i)`, `Thm::concl()` — 目标状态访问
+- [x] 所有 13 个内核操作返回 `Result` — 零 panic
+- [x] 全部副作用检查已强制（abstraction free_in, transitive alpha_eq, etc.）
+- [x] 314 测试通过，零 warning
+
+### 🔵 Phase 1b 当前：Tactic 层重写
+
 ### 架构根基：为什么不是直接写 auto/simp
 
 在 Isabelle 中，**所有** tactic（assume_tac, resolve_tac, eresolve_tac, ...）最终都调用
@@ -222,10 +233,10 @@ void isabelle_free(IsabelleCtx* ctx);
 
 | 阶段 | 时间 | 可交付 |
 |------|------|--------|
-| ✅ 已完成 | — | 2,548 条定理，100% 源覆盖 |
-| Phase 1a | 1 周 | `instantiate` + `bicompose` 内核基础设施 |
-| Phase 1b | 1 周 | Tactic 层重写（`Thm -> Vec<Thm>`） |
-| Phase 1c | 1-2 周 | simp + auto 可用 |
+| ✅ Phase 0 | — | 2,548 条定理，100% 源覆盖 |
+| ✅ Phase 1a | 已完成 | `instantiate` + `bicompose` 内核基础设施 |
+| 🔵 Phase 1b | 1 周 | Tactic 层重写（`Thm -> Vec<Thm>`） |
+| 🔵 Phase 1c | 1-2 周 | simp + auto 可用 |
 | Phase 2 | 2-3 周 | ~65% 定理重新验证 |
 | Phase 3 | 2 周 | 100+ 理论文件加载 |
 | Phase 4 | 1-2 周 | `cargo add isabelle-rs` |

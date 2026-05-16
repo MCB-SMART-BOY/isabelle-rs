@@ -83,7 +83,7 @@ impl SymbolTable {
 
     /// Get a reference to the string (for Debug/Display).
     pub fn get(&self, sym: Symbol) -> &str {
-        self.strings.get(sym.0 as usize).map(|s| /*FIXME*/).unwrap_or("?")
+        self.strings.get(sym.0 as usize).map(|s| "/*FIXME*/").unwrap_or("?")
     }
 }
 

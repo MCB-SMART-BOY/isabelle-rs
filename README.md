@@ -15,15 +15,16 @@ Isabelle 是目前最强大的交互式定理证明器之一。Isabelle-rs 用 R
 
 | 组件 | 状态 | 说明 |
 |------|:--:|------|
-| 内核 (types/term/logic/sign/theory/thm) | ✅ | LCF 风格，9 条推理规则 |
+| 可信内核 | ✅ | **13 条推理规则**，零 panic，零 warning |
 | Term 解析器 | ✅ | 完整 Isabelle 语法（量词、case、if、let、集合、列表、范围） |
 | Tokenizer | ✅ | 原生 `\<...>` 符号 + 全部 ASCII 操作符 |
 | 定理加载 | ✅ | **2436/2436 源声明 100% 覆盖** |
 | 多行引理解析 | ✅ | assumes/shows/fixes/obtains/cartouche |
 | 定理数据库 | ✅ | 2,548 条已索引（intro/elim/simp/by-name） |
+| 内核基础设施 | ✅ | `instantiate` + `bicompose` + 目标状态访问 |
 | 文档模型 | 🚧 | Snapshot-based incremental checking |
 | LSP 服务器 | 🚧 | 7 个 handlers + Isabelle 扩展 |
-| 证明引擎 | 🔵 下一步 | simp/auto/tactic 系统 |
+| 证明引擎 | 🔵 下一步 | Tactic 层重写（`&Thm -> Vec<Thm>`） |
 | 理论 DAG | 🔵 规划中 | 拓扑排序加载全部 100+ 个 .thy 文件 |
 | Isar 执行 | 🔵 规划中 | proof/qed、have/show、case/induct |
 
@@ -59,12 +60,12 @@ cargo run -- --lsp
 ParsedLemma { name, theorem }
     ↓ ThmKernel::assume()   ← LCF 可信内核（当前全部为 assume，非验证）
 HolTheoremDb                ← 分类索引（intro/elim/simp）
-    ↓ Phase 1a (下一步)
+    ✅ Phase 1a 完成
 ThmKernel::instantiate      ← 将统一结果应用到定理
 ThmKernel::bicompose        ← 核心 resolution 操作（所有 tactic 的基础）
-    ↓ Phase 1b
+    🔵 Phase 1b 当前
 Tactic = Thm → Vec<Thm>    ← 对齐 Isabelle 架构
-    ↓ Phase 1c
+    🔵 Phase 1c
 simp / auto                 ← 证明引擎
 ```
 
