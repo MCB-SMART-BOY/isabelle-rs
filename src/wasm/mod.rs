@@ -18,7 +18,6 @@
 
 use std::sync::Arc;
 
-use crate::core::tactic::Goal;
 use crate::core::thm::Thm;
 
 pub mod runtime;
@@ -40,11 +39,11 @@ pub trait Plugin: Send + Sync {
     /// Plugin version string.
     fn version(&self) -> &str;
 
-    /// Apply the plugin's tactic to a goal.
+    /// Apply the plugin's tactic to a goal state.
     ///
-    /// Returns a list of outcomes (each outcome is a list of subgoals).
+    /// Returns a list of new goal states.
     /// Empty list = tactic failed.
-    fn apply(&self, goal: &Goal, thms: &[Arc<Thm>]) -> Vec<Vec<Goal>>;
+    fn apply(&self, state: &Thm, thms: &[Arc<Thm>]) -> Vec<Thm>;
 }
 
 // =========================================================================

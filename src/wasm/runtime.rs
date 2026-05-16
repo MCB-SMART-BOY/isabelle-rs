@@ -19,7 +19,6 @@ use wasmtime::{
 };
 
 use super::{Plugin, PluginContext};
-use crate::core::tactic::Goal;
 use crate::core::thm::Thm;
 
 // =========================================================================
@@ -154,7 +153,7 @@ impl WasmRuntime {
     ///
     /// Currently returns an empty result — full implementation requires
     /// proper memory management between host and WASM.
-    pub fn call_tactic(&mut self, _goal: &Goal, _ctx: PluginContext) -> Result<Vec<Vec<Goal>>, String> {
+    pub fn call_tactic(&mut self, _state: &Thm, _ctx: PluginContext) -> Result<Vec<Thm>, String> {
         // Full implementation would:
         // 1. Convert Goal → PluginGoal, serialize to JSON
         // 2. Write JSON bytes to WASM memory
@@ -174,10 +173,8 @@ impl Plugin for WasmRuntime {
         &self.version
     }
 
-    fn apply(&self, goal: &Goal, thms: &[Arc<Thm>]) -> Vec<Vec<Goal>> {
-        // Placeholder: returns empty (tactic not yet called).
-        // Real implementation uses interior mutability for the Store.
-        let _ = (goal, thms);
+    fn apply(&self, state: &Thm, thms: &[Arc<Thm>]) -> Vec<Thm> {
+        let _ = (state, thms);
         Vec::new()
     }
 }

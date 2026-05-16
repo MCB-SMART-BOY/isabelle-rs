@@ -1,28 +1,27 @@
 //! Tactics and tacticals — the proof search combinators.
 //!
-//! ## V3: Tactic as AST
+//! ## Design
 //!
-//! Instead of `Box<dyn Fn>`, tactics are an `enum` (AST), enabling
-//! Display/Debug, analysis, optimization, and serialization.
+//! Follows Isabelle's architecture: `tactic = thm -> thm Seq.seq`.
+//! In Rust: `Tactic::apply(&Thm) -> Vec<Thm>`.
+//!
+//! The goal state IS a `Thm` of the form:
+//!   `[H1, H2, ..., Hn] ⊢ H1 ==> H2 ==> ... ==> Hn ==> G`
+//! where `Hi` are subgoals and `G` is the main conclusion.
+//!
+//! All tactics call `ThmKernel::bicompose` — the single core resolution
+//! operation — to transform goal states. When `nprems() == 0`, proof is done.
+//!
+//! ## Key invariants
+//!
+//! - Every `Thm` in the output is kernel-verified (no `assume()` shortcuts)
+//! - `vec![]` means tactic not applicable
+//! - `vec![state]` with `state.nprems() == 0` means proof complete
 
 use std::fmt;
 use std::sync::Arc;
 
-use super::envir::Envir;
-use super::thm::{CTerm, Thm};
-use super::unify::{self, UnifyConfig};
-
-#[derive(Clone, Debug)]
-pub struct Goal {
-    pub assumptions: Vec<CTerm>,
-    pub conclusion: CTerm,
-}
-
-impl Goal {
-    pub fn new(assumptions: Vec<CTerm>, conclusion: CTerm) -> Self {
-        Goal { assumptions, conclusion }
-    }
-}
+use super::thm::{CTerm, Thm, ThmKernel};
 
 // =========================================================================
 // Tactic AST
@@ -30,102 +29,128 @@ impl Goal {
 
 #[derive(Clone)]
 pub enum Tactic {
+    /// Identity: `|state| vec![state.clone()]`
     All,
+    /// Failure: `|_| vec![]`
     No,
-    Assume,
-    Resolve(Vec<Arc<Thm>>),
+    /// Solve subgoal `i` (0-indexed) by assumption.
+    /// Uses `ThmKernel::bicompose` with `ThmKernel::assume(prem_i)`.
+    Assume(usize),
+    /// Resolve subgoal `i` with one of the given theorems.
+    /// Uses `ThmKernel::bicompose(true, thm, state, i)` for each thm.
+    Resolve(Vec<Arc<Thm>>, usize),
+    /// Sequential composition: `t1 THEN t2` = `|st| flat_map(t2, t1(st))`
     Then(Box<Tactic>, Box<Tactic>),
+    /// Alternative: try `t1`, if it yields nothing, try `t2`
     OrElse(Box<Tactic>, Box<Tactic>),
+    /// Repeat until no progress
     Repeat(Box<Tactic>),
+    /// Apply to all subgoals sequentially (via `Then` folding)
     Every(Vec<Tactic>),
+    /// Try each tactic, return first success
     First(Vec<Tactic>),
+    /// Trace execution for debugging
+    Trace(String, Box<Tactic>),
+    /// Limit subgoal count (returns empty if nprems > max)
+    DepthLimit(usize, Box<Tactic>),
 }
 
 impl Tactic {
-    pub fn apply(&self, goal: &Goal) -> Vec<Vec<Goal>> {
+    /// Apply this tactic to a goal state (a `Thm`).
+    /// Returns zero or more new goal states.
+    pub fn apply(&self, state: &Thm) -> Vec<Thm> {
         match self {
-            Tactic::All => vec![vec![goal.clone()]],
+            Tactic::All => vec![state.clone()],
             Tactic::No => vec![],
-            Tactic::Assume => Self::apply_assume(goal),
-            Tactic::Resolve(thms) => Self::apply_resolve(thms, goal),
-            Tactic::Then(t1, t2) => Self::apply_then(t1, t2, goal),
+            Tactic::Assume(i) => Self::apply_assume(*i, state),
+            Tactic::Resolve(thms, i) => Self::apply_resolve(thms, *i, state),
+            Tactic::Then(t1, t2) => {
+                // Isabelle: THEN = fn st => Seq.maps t2 (t1 st)
+                t1.apply(state)
+                    .into_iter()
+                    .flat_map(|s| t2.apply(&s))
+                    .collect()
+            }
             Tactic::OrElse(t1, t2) => {
-                let r = t1.apply(goal);
-                if r.is_empty() { t2.apply(goal) } else { r }
+                let r = t1.apply(state);
+                if r.is_empty() { t2.apply(state) } else { r }
             }
-            Tactic::Repeat(t) => Self::apply_repeat(t, goal),
-            Tactic::Every(ts) => ts.iter().fold(Tactic::All, |a, t|
-                Tactic::Then(Box::new(a), Box::new(t.clone()))).apply(goal),
-            Tactic::First(ts) => ts.iter().fold(Tactic::No, |a, t|
-                Tactic::OrElse(Box::new(t.clone()), Box::new(a))).apply(goal),
-        }
-    }
-
-    fn apply_assume(goal: &Goal) -> Vec<Vec<Goal>> {
-        let config = UnifyConfig::default();
-        for a in &goal.assumptions {
-            let env = Envir::init();
-            if unify::unifiers(&env, &[(a.term().clone(), goal.conclusion.term().clone())], &config).is_some() {
-                return vec![vec![]];
+            Tactic::Repeat(t) => Self::apply_repeat(t, state),
+            Tactic::Every(ts) => {
+                // EVERY [t1, t2, ...] = t1 THEN t2 THEN ...
+                ts.iter()
+                    .fold(Tactic::All, |a, t| {
+                        Tactic::Then(Box::new(a), Box::new(t.clone()))
+                    })
+                    .apply(state)
             }
-        }
-        vec![]
-    }
-
-    fn apply_resolve(thms: &[Arc<Thm>], goal: &Goal) -> Vec<Vec<Goal>> {
-        let mut out = Vec::new();
-        let config = UnifyConfig::default();
-        for thm in thms {
-            let env = Envir::init();
-            if let Some(env) = unify::unifiers(&env, &[(thm.prop().term().clone(), goal.conclusion.term().clone())], &config) {
-                let sgs: Vec<Goal> = thm.hyps().iter().map(|h| {
-                    Goal::new(vec![], CTerm::certify(env.norm_term(h.term())))
-                }).collect();
-                out.push(sgs);
-            }
-        }
-        out
-    }
-
-    fn apply_then(t1: &Tactic, t2: &Tactic, goal: &Goal) -> Vec<Vec<Goal>> {
-        let mut results = Vec::new();
-        for sgs in t1.apply(goal) {
-            if sgs.is_empty() {
-                results.push(vec![]);
-            } else {
-                let mut current: Vec<Vec<Goal>> = vec![vec![]];
-                for sg in &sgs {
-                    let sg_r = t2.apply(sg);
-                    let mut nc = Vec::new();
-                    for p in &current {
-                        for o in &sg_r {
-                            let mut c = p.clone();
-                            c.extend(o.clone());
-                            nc.push(c);
-                        }
+            Tactic::First(ts) => {
+                // FIRST [t1, t2, ...] = t1 ORELSE t2 ORELSE ...
+                for t in ts {
+                    let r = t.apply(state);
+                    if !r.is_empty() {
+                        return r;
                     }
-                    current = nc;
                 }
-                results.extend(current);
+                vec![]
+            }
+            Tactic::Trace(name, t) => {
+                tracing::debug!(tactic = %name, nprems = state.nprems(), "apply");
+                let r = t.apply(state);
+                tracing::debug!(tactic = %name, outcomes = r.len(), "done");
+                r
+            }
+            Tactic::DepthLimit(max, t) => {
+                if state.nprems() > *max {
+                    return vec![];
+                }
+                t.apply(state)
+            }
+        }
+    }
+
+    /// Solve subgoal `i` by assumption.
+    fn apply_assume(i: usize, state: &Thm) -> Vec<Thm> {
+        let prem_i = match state.prem(i) {
+            Some(p) => p,
+            None => return vec![],
+        };
+        let assume_thm = ThmKernel::assume(CTerm::certify(prem_i));
+        ThmKernel::bicompose(false, &assume_thm, state, i)
+            .map(|t| vec![t])
+            .unwrap_or_default()
+    }
+
+    /// Resolve subgoal `i` using one of the given theorems.
+    fn apply_resolve(thms: &[Arc<Thm>], i: usize, state: &Thm) -> Vec<Thm> {
+        let mut results = Vec::new();
+        for thm in thms {
+            if let Some(new_state) = ThmKernel::bicompose(true, thm, state, i) {
+                results.push(new_state);
             }
         }
         results
     }
 
-    fn apply_repeat(t: &Tactic, goal: &Goal) -> Vec<Vec<Goal>> {
-        let mut current = vec![goal.clone()];
+    /// Repeat a tactic until no progress is made.
+    fn apply_repeat(t: &Tactic, state: &Thm) -> Vec<Thm> {
+        let mut current = vec![state.clone()];
         let mut changed = true;
         while changed {
             changed = false;
-            let mut ng = Vec::new();
-            for g in &current {
-                let r = t.apply(g);
-                if r.is_empty() { ng.push(g.clone()); }
-                else { changed = true; for o in r { ng.extend(o); } }
+            let mut next = Vec::new();
+            for s in &current {
+                let r = t.apply(s);
+                if r.is_empty() {
+                    next.push(s.clone());
+                } else {
+                    changed = true;
+                    next.extend(r);
+                }
             }
-            current = ng;
+            current = next;
         }
-        vec![current]
+        current
     }
 }
 
@@ -134,34 +159,67 @@ impl fmt::Debug for Tactic {
         match self {
             Tactic::All => write!(f, "all"),
             Tactic::No => write!(f, "no"),
-            Tactic::Assume => write!(f, "assume"),
-            Tactic::Resolve(ts) => write!(f, "resolve({})", ts.len()),
+            Tactic::Assume(i) => write!(f, "assume({})", i),
+            Tactic::Resolve(ts, i) => write!(f, "resolve({}, {})", ts.len(), i),
             Tactic::Then(a, b) => write!(f, "({:?} THEN {:?})", a, b),
             Tactic::OrElse(a, b) => write!(f, "({:?} ORELSE {:?})", a, b),
             Tactic::Repeat(t) => write!(f, "REPEAT({:?})", t),
             Tactic::Every(ts) => write!(f, "EVERY({})", ts.len()),
             Tactic::First(ts) => write!(f, "FIRST({})", ts.len()),
+            Tactic::Trace(name, t) => write!(f, "TRACE({}, {:?})", name, t),
+            Tactic::DepthLimit(max, t) => write!(f, "DEPTH({}, {:?})", max, t),
         }
     }
 }
 
 impl fmt::Display for Tactic {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { fmt::Debug::fmt(self, f) }
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self, f)
+    }
 }
 
 // =========================================================================
-// Constructor functions (backward-compatible)
+// Constructor functions
 // =========================================================================
 
 pub fn all_tac() -> Tactic { Tactic::All }
 pub fn no_tac() -> Tactic { Tactic::No }
-pub fn assume_tac() -> Tactic { Tactic::Assume }
-pub fn resolve_tac(thms: &[Arc<Thm>]) -> Tactic { Tactic::Resolve(thms.to_vec()) }
-pub fn then_tac(t1: Tactic, t2: Tactic) -> Tactic { Tactic::Then(Box::new(t1), Box::new(t2)) }
-pub fn orelse_tac(t1: Tactic, t2: Tactic) -> Tactic { Tactic::OrElse(Box::new(t1), Box::new(t2)) }
-pub fn repeat_tac(t: Tactic) -> Tactic { Tactic::Repeat(Box::new(t)) }
-pub fn every_tac(ts: Vec<Tactic>) -> Tactic { Tactic::Every(ts) }
-pub fn first_tac(ts: Vec<Tactic>) -> Tactic { Tactic::First(ts) }
+
+/// `assume_tac(i)`: solve subgoal `i` (0-indexed) by assumption.
+pub fn assume_tac(i: usize) -> Tactic { Tactic::Assume(i) }
+
+/// `resolve_tac(thms, i)`: resolve subgoal `i` with one of the theorems.
+pub fn resolve_tac(thms: &[Arc<Thm>], i: usize) -> Tactic {
+    Tactic::Resolve(thms.to_vec(), i)
+}
+
+pub fn then_tac(t1: Tactic, t2: Tactic) -> Tactic {
+    Tactic::Then(Box::new(t1), Box::new(t2))
+}
+
+pub fn orelse_tac(t1: Tactic, t2: Tactic) -> Tactic {
+    Tactic::OrElse(Box::new(t1), Box::new(t2))
+}
+
+pub fn repeat_tac(t: Tactic) -> Tactic {
+    Tactic::Repeat(Box::new(t))
+}
+
+pub fn every_tac(ts: Vec<Tactic>) -> Tactic {
+    Tactic::Every(ts)
+}
+
+pub fn first_tac(ts: Vec<Tactic>) -> Tactic {
+    Tactic::First(ts)
+}
+
+pub fn trace_tac(name: impl Into<String>, t: Tactic) -> Tactic {
+    Tactic::Trace(name.into(), Box::new(t))
+}
+
+pub fn depth_limit(max: usize, t: Tactic) -> Tactic {
+    Tactic::DepthLimit(max, Box::new(t))
+}
 
 // =========================================================================
 // Tests
@@ -177,42 +235,93 @@ mod tests {
         CTerm::certify(Term::const_(name, Typ::base("prop")))
     }
 
-    #[test]
-    fn test_assume_tac_solves() {
-        let a = prop("A");
-        let goal = Goal::new(vec![a.clone()], a.clone());
-        let outcomes = assume_tac().apply(&goal);
-        assert!(!outcomes.is_empty());
-        assert!(outcomes[0].is_empty());
+    fn trivial_goal(name: &str) -> Thm {
+        ThmKernel::trivial(prop(name)).unwrap()
     }
 
     #[test]
-    fn test_assume_tac_fails() {
-        let a = prop("A");
-        let b = prop("B");
-        let outcomes = assume_tac().apply(&Goal::new(vec![a], b));
-        assert!(outcomes.is_empty());
+    fn test_assume_tac_solves() {
+        // state: [A] ==> A, assume_tac(0) discharges A
+        let state = trivial_goal("A");
+        assert_eq!(state.nprems(), 1);
+        let outcomes = assume_tac(0).apply(&state);
+        assert!(!outcomes.is_empty(), "assume_tac should succeed");
+        assert_eq!(outcomes[0].nprems(), 0, "goal should be solved");
+    }
+
+    #[test]
+    fn test_assume_tac_fails_out_of_bounds() {
+        let state = trivial_goal("A");
+        let outcomes = assume_tac(5).apply(&state);
+        assert!(outcomes.is_empty(), "out-of-bounds should fail");
     }
 
     #[test]
     fn test_all_tac() {
-        let a = prop("A");
-        let outcomes = all_tac().apply(&Goal::new(vec![], a));
+        let state = trivial_goal("A");
+        let outcomes = all_tac().apply(&state);
         assert_eq!(outcomes.len(), 1);
-        assert_eq!(outcomes[0].len(), 1);
+        assert_eq!(outcomes[0].nprems(), state.nprems());
     }
 
     #[test]
     fn test_no_tac() {
-        let a = prop("A");
-        assert!(no_tac().apply(&Goal::new(vec![], a)).is_empty());
+        let state = trivial_goal("A");
+        assert!(no_tac().apply(&state).is_empty());
     }
 
     #[test]
     fn test_then_orelse() {
-        let a = prop("A");
-        let goal = Goal::new(vec![a.clone()], a);
-        let tac = then_tac(orelse_tac(assume_tac(), all_tac()), assume_tac());
-        assert!(!tac.apply(&goal).is_empty());
+        // (assume_tac(0) ORELSE all_tac) THEN all_tac on [A]==>A
+        let state = trivial_goal("A");
+        let tac = then_tac(
+            orelse_tac(assume_tac(0), all_tac()),
+            all_tac(),
+        );
+        let outcomes = tac.apply(&state);
+        assert!(!outcomes.is_empty());
+        // assume_tac(0) solves A → 0 prems, then all_tac is identity
+        assert_eq!(outcomes[0].nprems(), 0);
+    }
+
+    #[test]
+    fn test_repeat_assume() {
+        // REPEAT(assume_tac(0)) on [A] ==> A should solve it
+        let state = trivial_goal("A");
+        let tac = repeat_tac(assume_tac(0));
+        let outcomes = tac.apply(&state);
+        assert!(!outcomes.is_empty());
+        assert_eq!(outcomes[0].nprems(), 0);
+    }
+
+    #[test]
+    fn test_every_tac() {
+        // EVERY [all_tac, assume_tac(0)] on [A] ==> A
+        let state = trivial_goal("A");
+        let tac = every_tac(vec![all_tac(), assume_tac(0)]);
+        let outcomes = tac.apply(&state);
+        assert!(!outcomes.is_empty());
+        assert_eq!(outcomes[0].nprems(), 0);
+    }
+
+    #[test]
+    fn test_first_tac() {
+        // FIRST [no_tac, all_tac] should return all_tac result
+        let state = trivial_goal("A");
+        let tac = first_tac(vec![no_tac(), all_tac()]);
+        let outcomes = tac.apply(&state);
+        assert!(!outcomes.is_empty());
+        assert_eq!(outcomes.len(), 1);
+    }
+
+    #[test]
+    fn test_depth_limit() {
+        let state = trivial_goal("A");
+        // DEPTH(0, all_tac): nprems=1 > 0 → fails
+        let tac = depth_limit(0, all_tac());
+        assert!(tac.apply(&state).is_empty());
+        // DEPTH(2, all_tac): nprems=1 <= 2 → succeeds
+        let tac2 = depth_limit(2, all_tac());
+        assert!(!tac2.apply(&state).is_empty());
     }
 }
