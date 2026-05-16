@@ -350,7 +350,7 @@ fn parse_multi_line(lines: &[&str], i: &mut usize) -> Option<Vec<ParsedLemma>> {
     // Try to split name from statement on the header line.
     // If there's no colon on the header line (e.g., name on one line,
     // attributes/colon on the next), scan forward for the colon.
-    let (name, attrs, block_lines) = if let Some((name_part, after_colon)) = split_name_statement(rest) {
+    let (name, attrs, block_lines, proof_cmd) = if let Some((name_part, after_colon)) = split_name_statement(rest) {
         let after_colon = after_colon.trim();
         let (name_ref, attrs) = parse_name_attrs(name_part);
         let name = name_ref.to_string();
@@ -361,8 +361,8 @@ fn parse_multi_line(lines: &[&str], i: &mut usize) -> Option<Vec<ParsedLemma>> {
         // Advance past header line
         *i += 1;
         // Collect remaining block lines
-        collect_block_lines(lines, i, &mut block_lines);
-        (name, attrs, block_lines)
+        let proof_cmd = collect_block_lines(lines, i, &mut block_lines);
+        (name, attrs, block_lines, proof_cmd)
     } else {
         // No colon on header line — combine header with next lines until we find a colon
         let mut combined = String::from(rest);
@@ -402,16 +402,25 @@ fn parse_multi_line(lines: &[&str], i: &mut usize) -> Option<Vec<ParsedLemma>> {
         if !after_colon_owned.is_empty() {
             block_lines.push(after_colon_owned);
         }
-        collect_block_lines(lines, i, &mut block_lines);
-        (name, attrs, block_lines)
+        let proof_cmd = collect_block_lines(lines, i, &mut block_lines);
+        (name, attrs, block_lines, proof_cmd)
     };
 
     let block = block_lines.join("\n");
-    parse_structured_stmt(&block, &name, &attrs)
+    let mut lemmas = parse_structured_stmt(&block, &name, &attrs)?;
+    // Set proof_script on all parsed lemmas
+    if let Some(ref proof) = proof_cmd {
+        for lem in &mut lemmas {
+            lem.proof_script = Some(proof.clone());
+        }
+    }
+    Some(lemmas)
 }
 
 /// Collect block lines after the header (until a proof command or next lemma).
-fn collect_block_lines(lines: &[&str], i: &mut usize, block_lines: &mut Vec<String>) {
+/// Returns the proof command if one was found.
+fn collect_block_lines(lines: &[&str], i: &mut usize, block_lines: &mut Vec<String>) -> Option<String> {
+    let mut proof_cmd = None;
     while *i < lines.len() {
         let t = lines[*i].trim();
         if t.is_empty() {
@@ -421,7 +430,6 @@ fn collect_block_lines(lines: &[&str], i: &mut usize, block_lines: &mut Vec<Stri
         if t.starts_with("lemma ") || t.starts_with("theorem ") {
             break;
         }
-        // Check for proof-start keywords (at any indentation level that's not part of the block)
         let is_proof_cmd = t.starts_with("by ") || t.starts_with("by(")
             || t.starts_with("proof") || t.starts_with("apply")
             || t == "done" || t.starts_with("done ")
@@ -432,12 +440,14 @@ fn collect_block_lines(lines: &[&str], i: &mut usize, block_lines: &mut Vec<Stri
         if is_proof_cmd && !t.starts_with("assumes") && !t.starts_with("shows")
            && !t.starts_with("and ") && !t.starts_with("fixes") && !t.starts_with("obtains")
         {
+            proof_cmd = Some(t.to_string());
             *i += 1;
             break;
         }
         block_lines.push(lines[*i].to_string());
         *i += 1;
     }
+    proof_cmd
 }
 
 /// Parse an `assumes ... shows ...` structured statement block.

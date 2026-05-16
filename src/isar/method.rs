@@ -492,9 +492,23 @@ mod tests {
         assert_eq!(lemmas.len(), 1, "should parse one lemma");
         let lem = &lemmas[0];
         assert!(lem.proof_script.is_some(), "should capture proof script");
-        // Try to verify
         let result = verify_lemma(lem);
         assert!(result.is_some(), "verify_lemma should succeed for A ==> A by assumption");
         assert_eq!(result.unwrap().nprems(), 0);
+    }
+
+    #[test]
+    fn test_proof_script_coverage() {
+        // Check how many loaded theorems have proof scripts
+        let hol_thy = include_str!("../../isabelle-source/src/HOL/HOL.thy");
+        let lemmas = crate::hol::hol_loader::parse_lemmas(hol_thy);
+        let total = lemmas.len();
+        let with_proof: Vec<_> = lemmas.iter().filter(|l| l.proof_script.is_some()).collect();
+        eprintln!("HOL.thy: {}/{} lemmas have proof scripts", with_proof.len(), total);
+        for lem in with_proof.iter().take(5) {
+            eprintln!("  {}: {:?}", lem.name, lem.proof_script);
+        }
+        // At least some should have proof scripts
+        assert!(total > 0, "should parse some lemmas");
     }
 }
