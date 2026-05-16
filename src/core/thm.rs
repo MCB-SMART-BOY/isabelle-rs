@@ -679,6 +679,48 @@ impl ThmKernel {
     }
 
     // =================================================================
+    // Primitive: subst_premise — replace a premise using an equality
+    // =================================================================
+
+    /// Replace the i-th premise of `state` using an equality theorem.
+    ///
+    /// If `eq_thm` proves `t == u` and the i-th premise of `state` is
+    /// α-equivalent to `t`, replace it with `u`.
+    ///
+    /// Soundness: by substitutivity of equality, if `t == u` and `Γ, t ⊢ C`,
+    /// then `Γ, u ⊢ C`.
+    pub fn subst_premise(eq_thm: &Thm, state: &Thm, i: usize) -> Option<Thm> {
+        let (t, u) = Pure::dest_equals(eq_thm.prop.term())?;
+        let prem_i = Pure::nth_premise(state.prop.term(), i)?;
+        if !Hyps::alpha_eq(t, prem_i) {
+            return None;
+        }
+
+        let (prems, concl) = Pure::strip_imp_prems(state.prop.term());
+        let mut new_prems: Vec<Term> = prems.iter().cloned().cloned().collect();
+        new_prems[i] = u.clone();
+
+        let mut new_prop = concl.clone();
+        for p in new_prems.iter().rev() {
+            new_prop = Pure::mk_implies(p.clone(), new_prop);
+        }
+
+        Some(Thm {
+            hyps: state.hyps.union(&eq_thm.hyps),
+            prop: CTerm::certify(new_prop),
+            maxidx: usize::max(state.maxidx, eq_thm.maxidx),
+            derivation: Derivation::Rule {
+                name: "subst_premise",
+                premises: vec![
+                    ThmDeriv { serial: eq_thm.serial, prop: eq_thm.prop.clone() },
+                    ThmDeriv { serial: state.serial, prop: state.prop.clone() },
+                ],
+            },
+            serial: new_serial(),
+        })
+    }
+
+    // =================================================================
     // Derived rule: A ==> A  (identity)
     // =================================================================
 

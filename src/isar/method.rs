@@ -109,18 +109,29 @@ impl Method {
             }
         }
 
-        // 2. Safe: resolve with all loaded HOL theorems on first subgoal
+        // 2. Safe: simp on first subgoal (uses [simp] theorems)
         let db = HolTheoremDb::get();
+        let simp_results = tactic::simp_tac(&db.simps, 0).apply(state);
+        for r in &simp_results {
+            if r.nprems() != state.nprems() {
+                // simp changed something — recurse
+                let sub = Self::auto_exec(r, depth + 1);
+                for s in &sub {
+                    if s.nprems() == 0 {
+                        return sub;
+                    }
+                }
+            }
+        }
+
+        // 3. Safe: resolve with intro/elim theorems on first subgoal
         let resolve_results = tactic::resolve_tac(&db.all, 0).apply(state);
 
         let mut all_solved = Vec::new();
-
-        // Try each resolution result
         for r in &resolve_results {
             if r.nprems() == 0 {
                 all_solved.push(r.clone());
             } else if r.nprems() < state.nprems() + 5 {
-                // Recurse only if we didn't explode in subgoals
                 let sub = Self::auto_exec(r, depth + 1);
                 for s in &sub {
                     if s.nprems() == 0 {
@@ -134,8 +145,7 @@ impl Method {
             return all_solved;
         }
 
-        // 3. If assumption gave partial results (non-empty but not fully solved),
-        //    recurse on them
+        // 4. Recurse on partial assumption results
         for r in &assume_results {
             if r.nprems() != 0 {
                 let sub = Self::auto_exec(r, depth + 1);
@@ -151,7 +161,7 @@ impl Method {
             return all_solved;
         }
 
-        // 4. Nothing worked — return original state (tactic failed to make progress)
+        // 5. Nothing worked — return original state
         vec![state.clone()]
     }
 

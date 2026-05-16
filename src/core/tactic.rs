@@ -22,6 +22,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use super::thm::{CTerm, Thm, ThmKernel};
+use super::simplifier::Simplifier;
 
 // =========================================================================
 // Tactic AST
@@ -53,6 +54,8 @@ pub enum Tactic {
     Trace(String, Box<Tactic>),
     /// Limit subgoal count (returns empty if nprems > max)
     DepthLimit(usize, Box<Tactic>),
+    /// Rewrite subgoal `i` using the given simplifier
+    Simp(Arc<Simplifier>, usize),
 }
 
 impl Tactic {
@@ -106,6 +109,7 @@ impl Tactic {
                 }
                 t.apply(state)
             }
+            Tactic::Simp(simp, i) => Self::apply_simp(simp, *i, state),
         }
     }
 
@@ -130,6 +134,24 @@ impl Tactic {
             }
         }
         results
+    }
+
+    /// Rewrite subgoal `i` using the simplifier.
+    fn apply_simp(simp: &Simplifier, i: usize, state: &Thm) -> Vec<Thm> {
+        let prem_i = match state.prem(i) {
+            Some(p) => p,
+            None => return vec![state.clone()],
+        };
+        // Try one rewrite step
+        match simp.rewrite(&prem_i) {
+            Some((next, eq_thm)) if next != prem_i => {
+                // eq_thm proves prem_i == next (or next == prem_i)
+                ThmKernel::subst_premise(&eq_thm, state, i)
+                    .map(|t| vec![t])
+                    .unwrap_or_else(|| vec![state.clone()])
+            }
+            _ => vec![state.clone()],
+        }
     }
 
     /// Repeat a tactic until no progress is made.
@@ -168,6 +190,7 @@ impl fmt::Debug for Tactic {
             Tactic::First(ts) => write!(f, "FIRST({})", ts.len()),
             Tactic::Trace(name, t) => write!(f, "TRACE({}, {:?})", name, t),
             Tactic::DepthLimit(max, t) => write!(f, "DEPTH({}, {:?})", max, t),
+            Tactic::Simp(_, i) => write!(f, "simp({})", i),
         }
     }
 }
@@ -219,6 +242,15 @@ pub fn trace_tac(name: impl Into<String>, t: Tactic) -> Tactic {
 
 pub fn depth_limit(max: usize, t: Tactic) -> Tactic {
     Tactic::DepthLimit(max, Box::new(t))
+}
+
+/// `simp_tac(simps, i)`: rewrite subgoal `i` using [simp] theorems.
+pub fn simp_tac(simps: &[Arc<Thm>], i: usize) -> Tactic {
+    let rules: Vec<super::simplifier::RewriteRule> = simps
+        .iter()
+        .filter_map(|thm| super::simplifier::RewriteRule::from_thm(Arc::clone(thm)))
+        .collect();
+    Tactic::Simp(Arc::new(Simplifier::new(rules)), i)
 }
 
 // =========================================================================
