@@ -68,7 +68,7 @@ proptest! {
     #[test]
     fn trivial_is_unconditional(name in prop_name()) {
         let a = CTerm::certify(Term::const_(name.as_str(), Typ::base("prop")));
-        let thm = ThmKernel::trivial(a);
+        let thm = ThmKernel::trivial(a).unwrap();
         assert!(thm.is_unconditional());
     }
 
@@ -76,7 +76,7 @@ proptest! {
     fn symmetric_reflexive_is_equality(name in type_name()) {
         let t = CTerm::certify(Term::const_(name.as_str(), Typ::base(name.as_str())));
         let refl = ThmKernel::reflexive(t);
-        let sym = ThmKernel::symmetric(&refl);
+        let sym = ThmKernel::symmetric(&refl).unwrap();
         assert!(Pure::dest_equals(sym.prop().term()).is_some());
     }
 

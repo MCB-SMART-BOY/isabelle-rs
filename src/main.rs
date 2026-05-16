@@ -180,7 +180,7 @@ fn demo_isabelle() {
 
     // 3. Prove a theorem and store it
     let a = CTerm::certify(Term::const_("A", Typ::base("prop")));
-    let trivial = ThmKernel::trivial(a);
+    let trivial = ThmKernel::trivial(a).unwrap();
     thy.add_theorem("trivial", trivial);
     println!("\n  Stored theorem 'trivial': {}", thy.lookup_theorem("trivial").is_some());
 

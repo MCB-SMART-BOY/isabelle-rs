@@ -49,7 +49,7 @@ mod tests {
         let pure = Theory::pure();
         let mut thy = Theory::begin("Test", vec![pure]);
         let a = CTerm::certify(Term::const_("A", Typ::base("prop")));
-        let thm = ThmKernel::trivial(a);
+        let thm = ThmKernel::trivial(a).unwrap();
         thy.add_theorem("my_thm", thm);
 
         let named = all_named_thms(&thy);

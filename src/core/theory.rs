@@ -293,7 +293,7 @@ mod tests {
 
         // Prove A ==> A in this theory
         let a = CTerm::certify(Term::const_("A", Typ::base("prop")));
-        let thm = ThmKernel::trivial(a);
+        let thm = ThmKernel::trivial(a).unwrap();
 
         my_theory.add_theorem("trivial", thm);
         assert!(my_theory.lookup_theorem("trivial").is_some());

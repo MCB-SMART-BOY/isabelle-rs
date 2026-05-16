@@ -6,6 +6,7 @@
 
 use super::term::Term;
 use super::thm::{CTerm, Thm, ThmKernel};
+use super::error::KernelError;
 use super::logic::Pure;
 use std::sync::Arc;
 
@@ -28,10 +29,10 @@ pub fn subst(thm_eq: &Thm, thm: &Thm) -> Option<Thm> {
     // Then combine with thm via implies_elim
     let refl_p = ThmKernel::reflexive(CTerm::certify(new_prop.clone()));
     let ct = CTerm::certify(prop.clone());
-    Some(ThmKernel::transitive(
+    ThmKernel::transitive(
         &ThmKernel::reflexive(ct),
         &refl_p,
-    ))
+    ).ok()
 }
 
 fn replace_in_term(term: &Term, from: &Term, to: &Term) -> Option<Term> {
@@ -101,12 +102,12 @@ impl AttributedThm {
 // =========================================================================
 
 /// `thm1 RSN (i, thm2)`: resolve thm1 with the i-th premise of thm2.
-pub fn rsn(thm1: &Thm, i: usize, thm2: &Thm) -> Option<Thm> {
+pub fn rsn(thm1: &Thm, i: usize, thm2: &Thm) -> Option<Result<Thm, KernelError>> {
     crate::core::drule::compose(thm1, thm2, i - 1)
 }
 
 /// `thm1 RS thm2`: resolve thm1 with the first premise of thm2.
-pub fn rs(thm1: &Thm, thm2: &Thm) -> Option<Thm> {
+pub fn rs(thm1: &Thm, thm2: &Thm) -> Option<Result<Thm, KernelError>> {
     rsn(thm1, 1, thm2)
 }
 
@@ -129,15 +130,16 @@ mod tests {
     fn test_rs_resolves() {
         let a = prop("A");
         let assumed = ThmKernel::assume(a.clone());
-        let trivial = ThmKernel::trivial(a);
+        let trivial = ThmKernel::trivial(a).unwrap();
         let result = rs(&assumed, &trivial);
         assert!(result.is_some());
+        assert!(result.unwrap().is_ok());
     }
 
     #[test]
     fn test_attributed_thm() {
         let a = prop("A");
-        let thm = ThmKernel::trivial(a);
+        let thm = ThmKernel::trivial(a).unwrap();
         let attr_thm = AttributedThm::new(thm, "my_lemma".into())
             .with_attr(ThmAttribute::Simp)
             .with_attr(ThmAttribute::Intro);

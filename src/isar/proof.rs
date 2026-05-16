@@ -236,7 +236,7 @@ mod tests {
         assert!(pm.current_goal().is_some());
 
         // qed
-        let trivial = Arc::new(ThmKernel::trivial(CTerm::certify(stmt)));
+        let trivial = Arc::new(ThmKernel::trivial(CTerm::certify(stmt)).unwrap());
         pm.qed(trivial);
         assert!(matches!(pm.state, ProofState::Done { .. }));
     }

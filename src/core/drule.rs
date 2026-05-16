@@ -18,6 +18,7 @@
 
 
 use super::thm::{CTerm, Thm, ThmKernel};
+use super::error::KernelError;
 use super::types::Typ;
 use super::logic::Pure;
 
@@ -43,23 +44,23 @@ pub fn forall_intr(_x_name: &str, _x_typ: Typ, _thm: &Thm) -> Thm {
 
 /// Chain `implies_intr` over a list of assumptions.
 /// `Γ ∪ {A1, ..., An} ⊢ B` → `Γ ⊢ A1 ==> ... ==> An ==> B`.
-pub fn implies_intr_list(assumptions: &[CTerm], thm: &Thm) -> Thm {
+pub fn implies_intr_list(assumptions: &[CTerm], thm: &Thm) -> Result<Thm, KernelError> {
     let mut result = thm.clone();
     for a in assumptions.iter().rev() {
-        result = ThmKernel::implies_intr(a, &result);
+        result = ThmKernel::implies_intr(a, &result)?;
     }
-    result
+    Ok(result)
 }
 
 /// Chain `implies_elim` over a list of antecedents.
 /// `Γ ⊢ A1 ==> ... ==> An ==> B` and `Δ1 ⊢ A1`, ..., `Δn ⊢ An`
 /// → `Γ ∪ Δ1 ∪ ... ∪ Δn ⊢ B`.
-pub fn implies_elim_list(thm: &Thm, antecedents: &[Thm]) -> Thm {
+pub fn implies_elim_list(thm: &Thm, antecedents: &[Thm]) -> Result<Thm, KernelError> {
     let mut result = thm.clone();
     for ante in antecedents {
-        result = ThmKernel::implies_elim(&result, ante);
+        result = ThmKernel::implies_elim(&result, ante)?;
     }
-    result
+    Ok(result)
 }
 
 // =========================================================================
@@ -70,7 +71,7 @@ pub fn implies_elim_list(thm: &Thm, antecedents: &[Thm]) -> Thm {
 /// a premise of `thm2`, producing a new theorem.
 ///
 /// This is the core of forward proof in Isabelle.
-pub fn compose(thm1: &Thm, thm2: &Thm, i: usize) -> Option<Thm> {
+pub fn compose(thm1: &Thm, thm2: &Thm, i: usize) -> Option<Result<Thm, KernelError>> {
     // Get the i-th premise of thm2
     let (prems, _conc) = Pure::strip_imp_prems(thm2.prop().term());
     if i >= prems.len() {
@@ -113,7 +114,7 @@ pub fn incr_indexes(_n: usize, _thm: &Thm) -> Thm {
 // =========================================================================
 
 /// `implies_intr_hyps`: discharge all hypotheses of a theorem.
-pub fn implies_intr_hyps(thm: &Thm) -> Thm {
+pub fn implies_intr_hyps(thm: &Thm) -> Result<Thm, KernelError> {
     let hyps: Vec<CTerm> = thm.hyps().iter().cloned().collect();
     implies_intr_list(&hyps, thm)
 }
@@ -135,16 +136,17 @@ mod tests {
     fn test_implies_intr_list() {
         let a = prop("A");
         let assumed = ThmKernel::assume(a.clone());
-        let result = implies_intr_list(&[a.clone()], &assumed);
+        let result = implies_intr_list(&[a.clone()], &assumed).unwrap();
         assert!(result.is_unconditional());
     }
 
     #[test]
     fn test_compose_trivial() {
         let a = prop("A");
-        let trivial = ThmKernel::trivial(a.clone());
+        let trivial = ThmKernel::trivial(a.clone()).unwrap();
         let assumed = ThmKernel::assume(a.clone());
         let result = compose(&assumed, &trivial, 0);
         assert!(result.is_some());
+        assert!(result.unwrap().is_ok());
     }
 }

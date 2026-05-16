@@ -78,7 +78,7 @@ mod tests {
     fn test_thm_table_register_and_get() {
         let mut table = ThmTable::new();
         let a = CTerm::certify(Term::const_("A", Typ::base("prop")));
-        let thm = Arc::new(ThmKernel::trivial(a));
+        let thm = Arc::new(ThmKernel::trivial(a).unwrap());
 
         let handle = table.register(Arc::clone(&thm));
         let retrieved = table.get(handle);

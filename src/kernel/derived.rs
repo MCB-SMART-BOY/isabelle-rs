@@ -39,7 +39,7 @@ pub fn forall_intr(x_name: &str, x_typ: Typ, thm: &Thm) -> Result<Thm, KernelErr
 }
 
 /// `forall_elim(ct, thm)`: From `!!x. P(x)` derive `P(t)`.
-pub fn forall_elim(ct: CTerm, thm: &Thm) -> Thm {
+pub fn forall_elim(ct: CTerm, thm: &Thm) -> Result<Thm, KernelError> {
     ThmKernel::forall_elim(ct, thm)
 }
 
@@ -49,27 +49,25 @@ pub fn forall_elim(ct: CTerm, thm: &Thm) -> Thm {
 
 /// Chain `implies_intr` over a list of assumptions.
 /// `Γ ∪ {A1, ..., An} ⊢ B` → `Γ ⊢ A1 ==> ... ==> An ==> B`.
-pub fn implies_intr_list(assumptions: &[CTerm], thm: &Thm) -> Thm {
+pub fn implies_intr_list(assumptions: &[CTerm], thm: &Thm) -> Result<Thm, KernelError> {
     let mut result = thm.clone();
     for a in assumptions.iter().rev() {
-        result = ThmKernel::implies_intr(a, &result);
+        result = ThmKernel::implies_intr(a, &result)?;
     }
-    result
+    Ok(result)
 }
 
 /// Chain `implies_elim` over a list of antecedents.
-/// `Γ ⊢ A1 ==> ... ==> An ==> B` and `Δ1 ⊢ A1`, ..., `Δn ⊢ An`
-/// → `Γ ∪ Δ1 ∪ ... ∪ Δn ⊢ B`.
-pub fn implies_elim_list(thm: &Thm, antecedents: &[Thm]) -> Thm {
+pub fn implies_elim_list(thm: &Thm, antecedents: &[Thm]) -> Result<Thm, KernelError> {
     let mut result = thm.clone();
     for ante in antecedents {
-        result = ThmKernel::implies_elim(&result, ante);
+        result = ThmKernel::implies_elim(&result, ante)?;
     }
-    result
+    Ok(result)
 }
 
 /// `implies_intr_hyps`: discharge all hypotheses of a theorem.
-pub fn implies_intr_hyps(thm: &Thm) -> Thm {
+pub fn implies_intr_hyps(thm: &Thm) -> Result<Thm, KernelError> {
     let hyps: Vec<CTerm> = thm.hyps().iter().cloned().collect();
     implies_intr_list(&hyps, thm)
 }
@@ -80,9 +78,7 @@ pub fn implies_intr_hyps(thm: &Thm) -> Thm {
 
 /// Compose `thm1` and `thm2`: match the conclusion of `thm1` with
 /// a premise of `thm2`, producing a new theorem.
-///
-/// This is the core of forward proof in Isabelle.
-pub fn compose(thm1: &Thm, thm2: &Thm, i: usize) -> Option<Thm> {
+pub fn compose(thm1: &Thm, thm2: &Thm, i: usize) -> Option<Result<Thm, KernelError>> {
     let (prems, _conc) = Pure::strip_imp_prems(thm2.prop().term());
     if i >= prems.len() {
         return None;
@@ -97,12 +93,12 @@ pub fn compose(thm1: &Thm, thm2: &Thm, i: usize) -> Option<Thm> {
 }
 
 /// `thm1 RSN (i, thm2)`: resolve thm1 with the i-th premise of thm2.
-pub fn rsn(thm1: &Thm, i: usize, thm2: &Thm) -> Option<Thm> {
+pub fn rsn(thm1: &Thm, i: usize, thm2: &Thm) -> Option<Result<Thm, KernelError>> {
     compose(thm1, thm2, i.saturating_sub(1))
 }
 
 /// `thm1 RS thm2`: resolve thm1 with the first premise of thm2.
-pub fn rs(thm1: &Thm, thm2: &Thm) -> Option<Thm> {
+pub fn rs(thm1: &Thm, thm2: &Thm) -> Option<Result<Thm, KernelError>> {
     rsn(thm1, 1, thm2)
 }
 
@@ -128,13 +124,13 @@ pub fn incr_indexes(_n: usize, thm: &Thm) -> Thm {
 // =========================================================================
 
 /// `t == u` and `P(t)` → `P(u)` (substitutivity of equality).
-pub fn subst(thm_eq: &Thm, thm: &Thm) -> Option<Thm> {
+pub fn subst(thm_eq: &Thm, thm: &Thm) -> Option<Result<Thm, KernelError>> {
     let (t, u) = Pure::dest_equals(thm_eq.prop().term())?;
     let prop = thm.prop().term();
 
     let new_prop = replace_in_term(prop, t, u)?;
     if &new_prop == prop {
-        return Some(thm.clone());
+        return Some(Ok(thm.clone()));
     }
 
     let refl_p = ThmKernel::reflexive(CTerm::certify(new_prop.clone()));
@@ -290,17 +286,18 @@ mod tests {
     fn test_implies_intr_list() {
         let a = prop("A");
         let assumed = ThmKernel::assume(a.clone());
-        let result = implies_intr_list(&[a.clone()], &assumed);
+        let result = implies_intr_list(&[a.clone()], &assumed).unwrap();
         assert!(result.is_unconditional());
     }
 
     #[test]
     fn test_compose_trivial() {
         let a = prop("A");
-        let trivial = ThmKernel::trivial(a.clone());
+        let trivial = ThmKernel::trivial(a.clone()).unwrap();
         let assumed = ThmKernel::assume(a.clone());
         let result = compose(&assumed, &trivial, 0);
         assert!(result.is_some());
+        assert!(result.unwrap().is_ok());
     }
 
     // ── more_thm tests ──
@@ -309,15 +306,16 @@ mod tests {
     fn test_rs_resolves() {
         let a = prop("A");
         let assumed = ThmKernel::assume(a.clone());
-        let trivial = ThmKernel::trivial(a);
+        let trivial = ThmKernel::trivial(a).unwrap();
         let result = rs(&assumed, &trivial);
         assert!(result.is_some());
+        assert!(result.unwrap().is_ok());
     }
 
     #[test]
     fn test_attributed_thm() {
         let a = prop("A");
-        let thm = ThmKernel::trivial(a);
+        let thm = ThmKernel::trivial(a).unwrap();
         let attr_thm = AttributedThm::new(thm, "my_lemma".into())
             .with_attr(ThmAttribute::Simp)
             .with_attr(ThmAttribute::Intro);
@@ -342,8 +340,8 @@ mod tests {
     #[test]
     fn test_biresolution_trivial() {
         let a = dummy_cterm("A");
-        let goal = ThmKernel::trivial(a.clone());
-        let rule = ThmKernel::trivial(a);
+        let goal = ThmKernel::trivial(a.clone()).unwrap();
+        let rule = ThmKernel::trivial(a).unwrap();
         let result = biresolution(&goal, &rule, false);
         assert!(result.is_some());
     }

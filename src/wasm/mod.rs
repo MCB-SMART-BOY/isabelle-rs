@@ -104,7 +104,7 @@ mod tests {
         let a_cterm = crate::core::thm::CTerm::certify(
             crate::core::term::Term::const_("A", crate::core::types::Typ::base("prop")),
         );
-        let thm = Arc::new(crate::core::thm::ThmKernel::trivial(a_cterm));
+        let thm = Arc::new(crate::core::thm::ThmKernel::trivial(a_cterm).unwrap());
         ctx.named_theorems.push(("trivial".into(), Arc::clone(&thm)));
         assert!(ctx.lookup("trivial").is_some());
         assert!(ctx.lookup("other").is_none());

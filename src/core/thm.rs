@@ -321,15 +321,15 @@ impl ThmKernel {
     // =================================================================
 
     /// **Symmetry**: `Γ ⊢ t ≡ u  ⟹  Γ ⊢ u ≡ t`.
-    pub fn symmetric(thm: &Thm) -> Thm {
+    pub fn symmetric(thm: &Thm) -> Result<Thm, KernelError> {
         let (t, u) = Pure::dest_equals(thm.prop.term())
-            .expect("symmetric: not an equality");
+            .ok_or_else(|| KernelError::NotEquality(thm.prop.term().clone()))?;
 
         let new_prop = CTerm::certify(
             Pure::mk_equals(Typ::dummy(), u.clone(), t.clone())
         );
 
-        Thm {
+        Ok(Thm {
             hyps: thm.hyps.clone(),
             prop: new_prop,
             maxidx: thm.maxidx,
@@ -338,7 +338,7 @@ impl ThmKernel {
                 premises: vec![ThmDeriv { serial: thm.serial, prop: thm.prop.clone() }],
             },
             serial: new_serial(),
-        }
+        })
     }
 
     // =================================================================
@@ -346,23 +346,22 @@ impl ThmKernel {
     // =================================================================
 
     /// **Transitivity**: `Γ ⊢ t ≡ u` and `Δ ⊢ u ≡ v` ⟹ `Γ ∪ Δ ⊢ t ≡ v`.
-    pub fn transitive(thm1: &Thm, thm2: &Thm) -> Thm {
+    pub fn transitive(thm1: &Thm, thm2: &Thm) -> Result<Thm, KernelError> {
         let (t, u1) = Pure::dest_equals(thm1.prop.term())
-            .expect("transitive: first arg not equality");
+            .ok_or_else(|| KernelError::NotEquality(thm1.prop.term().clone()))?;
         let (u2, v) = Pure::dest_equals(thm2.prop.term())
-            .expect("transitive: second arg not equality");
+            .ok_or_else(|| KernelError::NotEquality(thm2.prop.term().clone()))?;
 
         // In Isabelle, the middle terms must be α-equivalent
-        assert!(
-            Hyps::alpha_eq(u1, u2),
-            "transitive: middle terms are not alpha-equivalent"
-        );
+        if !Hyps::alpha_eq(u1, u2) {
+            return Err(KernelError::MidTermsNotEquiv);
+        }
 
         let new_prop = CTerm::certify(
             Pure::mk_equals(Typ::dummy(), t.clone(), v.clone())
         );
 
-        Thm {
+        Ok(Thm {
             hyps: thm1.hyps.union(&thm2.hyps),
             prop: new_prop,
             maxidx: usize::max(thm1.maxidx, thm2.maxidx),
@@ -374,7 +373,7 @@ impl ThmKernel {
                 ],
             },
             serial: new_serial(),
-        }
+        })
     }
 
     // =================================================================
@@ -382,11 +381,11 @@ impl ThmKernel {
     // =================================================================
 
     /// **Combination**: `Γ ⊢ f ≡ g` and `Δ ⊢ x ≡ y` ⟹ `Γ ∪ Δ ⊢ f x ≡ g y`.
-    pub fn combination(thm_f: &Thm, thm_x: &Thm) -> Thm {
+    pub fn combination(thm_f: &Thm, thm_x: &Thm) -> Result<Thm, KernelError> {
         let (f, g) = Pure::dest_equals(thm_f.prop.term())
-            .expect("combination: first arg not equality");
+            .ok_or_else(|| KernelError::NotEquality(thm_f.prop.term().clone()))?;
         let (x, y) = Pure::dest_equals(thm_x.prop.term())
-            .expect("combination: second arg not equality");
+            .ok_or_else(|| KernelError::NotEquality(thm_x.prop.term().clone()))?;
 
         let new_prop = CTerm::certify(
             Pure::mk_equals(
@@ -396,7 +395,7 @@ impl ThmKernel {
             )
         );
 
-        Thm {
+        Ok(Thm {
             hyps: thm_f.hyps.union(&thm_x.hyps),
             prop: new_prop,
             maxidx: usize::max(thm_f.maxidx, thm_x.maxidx),
@@ -408,7 +407,7 @@ impl ThmKernel {
                 ],
             },
             serial: new_serial(),
-        }
+        })
     }
 
     // =================================================================
@@ -418,17 +417,15 @@ impl ThmKernel {
     /// **Abstraction**: `Γ ⊢ t ≡ u` ⟹ `Γ ⊢ (λx. t) ≡ (λx. u)`.
     ///
     /// Side condition: `x` must not be free in `Γ`.
-    pub fn abstraction(x_name: &str, x_typ: Typ, thm: &Thm) -> Thm {
+    pub fn abstraction(x_name: &str, x_typ: Typ, thm: &Thm) -> Result<Thm, KernelError> {
         let (t, u) = Pure::dest_equals(thm.prop.term())
-            .expect("abstraction: not an equality");
+            .ok_or_else(|| KernelError::NotEquality(thm.prop.term().clone()))?;
 
         // Side condition: x must not be free in the hypotheses
         for hyp in thm.hyps.iter() {
-            assert!(
-                !free_in(x_name, hyp.term()),
-                "abstraction: variable '{}' is free in the hypotheses",
-                x_name
-            );
+            if free_in(x_name, hyp.term()) {
+                return Err(KernelError::FreeVarInHypotheses { name: x_name.to_string() });
+            }
         }
 
         let new_prop = CTerm::certify(
@@ -439,7 +436,7 @@ impl ThmKernel {
             )
         );
 
-        Thm {
+        Ok(Thm {
             hyps: thm.hyps.clone(),
             prop: new_prop,
             maxidx: thm.maxidx,
@@ -448,7 +445,7 @@ impl ThmKernel {
                 premises: vec![ThmDeriv { serial: thm.serial, prop: thm.prop.clone() }],
             },
             serial: new_serial(),
-        }
+        })
     }
 
     // =================================================================
@@ -487,17 +484,16 @@ impl ThmKernel {
 
     /// **Implication introduction**:
     /// `Γ ∪ {A} ⊢ B` ⟹ `Γ ⊢ A ==> B`.
-    pub fn implies_intr(assumption: &CTerm, thm: &Thm) -> Thm {
-        assert!(
-            thm.hyps.contains(assumption),
-            "implies_intr: assumption not found in hypotheses"
-        );
+    pub fn implies_intr(assumption: &CTerm, thm: &Thm) -> Result<Thm, KernelError> {
+        if !thm.hyps.contains(assumption) {
+            return Err(KernelError::HypothesisNotFound);
+        }
 
         let new_prop = CTerm::certify(
             Pure::mk_implies(assumption.term().clone(), thm.prop.term().clone())
         );
 
-        Thm {
+        Ok(Thm {
             hyps: thm.hyps.remove(assumption),
             prop: new_prop,
             maxidx: thm.maxidx,
@@ -506,7 +502,7 @@ impl ThmKernel {
                 premises: vec![ThmDeriv { serial: thm.serial, prop: thm.prop.clone() }],
             },
             serial: new_serial(),
-        }
+        })
     }
 
     // =================================================================
@@ -515,16 +511,15 @@ impl ThmKernel {
 
     /// **Implication elimination** (modus ponens):
     /// `Γ ⊢ A ==> B` and `Δ ⊢ A` ⟹ `Γ ∪ Δ ⊢ B`.
-    pub fn implies_elim(thm_imp: &Thm, thm_a: &Thm) -> Thm {
+    pub fn implies_elim(thm_imp: &Thm, thm_a: &Thm) -> Result<Thm, KernelError> {
         let (a, b) = Pure::dest_implies(thm_imp.prop.term())
-            .expect("implies_elim: not an implication");
+            .ok_or_else(|| KernelError::NotImplication(thm_imp.prop.term().clone()))?;
 
-        assert!(
-            Hyps::alpha_eq(a, thm_a.prop.term()),
-            "implies_elim: antecedent does not match"
-        );
+        if !Hyps::alpha_eq(a, thm_a.prop.term()) {
+            return Err(KernelError::AntecedentMismatch);
+        }
 
-        Thm {
+        Ok(Thm {
             hyps: thm_imp.hyps.union(&thm_a.hyps),
             prop: CTerm::certify(b.clone()),
             maxidx: usize::max(thm_imp.maxidx, thm_a.maxidx),
@@ -536,7 +531,7 @@ impl ThmKernel {
                 ],
             },
             serial: new_serial(),
-        }
+        })
     }
 
     // =================================================================
@@ -562,11 +557,11 @@ impl ThmKernel {
         })
     }
 
-    pub fn forall_elim(ct: CTerm, thm: &Thm) -> Thm {
+    pub fn forall_elim(ct: CTerm, thm: &Thm) -> Result<Thm, KernelError> {
         let (_, p_body) = Pure::dest_all(thm.prop.term())
-            .expect("forall_elim: not a forall proposition");
+            .ok_or_else(|| KernelError::NotForall(thm.prop.term().clone()))?;
         let instantiated = super::term_subst::subst_bounds(&[ct.term().clone()], p_body);
-        Thm {
+        Ok(Thm {
             hyps: thm.hyps.clone(),
             prop: CTerm::certify(instantiated),
             maxidx: usize::max(thm.maxidx, ct.maxidx()),
@@ -575,7 +570,7 @@ impl ThmKernel {
                 premises: vec![ThmDeriv { serial: thm.serial, prop: thm.prop.clone() }],
             },
             serial: new_serial(),
-        }
+        })
     }
 
     // =================================================================
@@ -687,7 +682,7 @@ impl ThmKernel {
     // Derived rule: A ==> A  (identity)
     // =================================================================
 
-    pub fn trivial(ct: CTerm) -> Thm {
+    pub fn trivial(ct: CTerm) -> Result<Thm, KernelError> {
         let assumed = ThmKernel::assume(ct.clone());
         ThmKernel::implies_intr(&ct, &assumed)
     }
@@ -727,7 +722,7 @@ mod tests {
     #[test]
     fn test_trivial() {
         let a = prop("A");
-        let thm = ThmKernel::trivial(a);
+        let thm = ThmKernel::trivial(a).unwrap();
         assert!(thm.is_unconditional());
         let (x, y) = Pure::dest_implies(thm.prop.term()).expect("Not an implication");
         assert_eq!(x, &Term::const_("A", Typ::base("prop")));
@@ -757,7 +752,7 @@ mod tests {
     fn test_nprems_prem_concl() {
         // trivial: [A] ==> A → 1 subgoal (A), conclusion = A
         let a = prop("A");
-        let thm = ThmKernel::trivial(a.clone());
+        let thm = ThmKernel::trivial(a.clone()).unwrap();
         assert_eq!(thm.nprems(), 1);
         assert_eq!(thm.prem(0), Some(a.term().clone()));
         assert_eq!(thm.concl(), a.term().clone());
@@ -791,7 +786,7 @@ mod tests {
         // assume(A): [A] ⊢ A
         // Result should have 0 premises (A discharged)
         let a = prop("A");
-        let state = ThmKernel::trivial(a.clone());
+        let state = ThmKernel::trivial(a.clone()).unwrap();
         let assume_a = ThmKernel::assume(a.clone());
         let result = ThmKernel::bicompose(false, &assume_a, &state, 0);
         assert!(result.is_some());

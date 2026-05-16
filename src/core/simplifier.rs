@@ -53,12 +53,12 @@ pub fn arg_conv(i: usize, conv: Conv) -> Conv {
         match t {
             Term::App { func, arg } => {
                 if i == 0 {
-                    conv(arg).map(|thm| {
-                        let (_, _rhs) = Pure::dest_equals(thm.prop().term()).expect("Rewrite rule is not an equality");
+                    conv(arg).and_then(|thm| {
+                        let (_, _rhs) = Pure::dest_equals(thm.prop().term())?;
                         ThmKernel::combination(
                             &ThmKernel::reflexive(CTerm::certify(func.as_ref().clone())),
                             &thm,
-                        )
+                        ).ok()
                     })
                 } else {
                     None
@@ -74,8 +74,8 @@ pub fn abs_conv(conv: Conv) -> Conv {
     Box::new(move |t| {
         match t {
             Term::Abs { name, typ, body } => {
-                conv(body).map(|thm| {
-                    ThmKernel::abstraction(name.as_ref(), typ.clone(), &thm)
+                conv(body).and_then(|thm| {
+                    ThmKernel::abstraction(name.as_ref(), typ.clone(), &thm).ok()
                 })
             }
             _ => None,
@@ -88,11 +88,11 @@ pub fn fun_conv(conv: Conv) -> Conv {
     Box::new(move |t| {
         match t {
             Term::App { func, arg: _ } => {
-                conv(func).map(|thm| {
+                conv(func).and_then(|thm| {
                     ThmKernel::combination(
                         &thm,
                         &ThmKernel::reflexive(CTerm::certify(func.as_ref().clone())),
-                    )
+                    ).ok()
                 })
             }
             _ => None,

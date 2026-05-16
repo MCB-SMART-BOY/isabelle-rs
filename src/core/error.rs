@@ -63,6 +63,18 @@ pub enum KernelError {
     #[error("hypothesis not found in assumptions")]
     HypothesisNotFound,
 
+    /// Middle terms not alpha-equivalent in transitive.
+    #[error("middle terms are not alpha-equivalent")]
+    MidTermsNotEquiv,
+
+    /// Antecedent does not match in implies_elim.
+    #[error("antecedent does not match")]
+    AntecedentMismatch,
+
+    /// Not a forall proposition.
+    #[error("not a forall proposition: {0:?}")]
+    NotForall(crate::core::term::Term),
+
     /// Free variable in hypotheses during forall_intr.
     #[error("free var '{name}' in hypotheses for forall_intr")]
     FreeVarInHypotheses { name: String },

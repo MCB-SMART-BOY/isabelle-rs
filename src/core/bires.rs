@@ -52,8 +52,8 @@ mod tests {
     #[test]
     fn test_biresolution_trivial() {
         let a = prop("A");
-        let goal = ThmKernel::trivial(a.clone());
-        let rule = ThmKernel::trivial(a);
+        let goal = ThmKernel::trivial(a.clone()).unwrap();
+        let rule = ThmKernel::trivial(a).unwrap();
         let result = biresolution(&goal, &rule, false);
         assert!(result.is_some());
     }

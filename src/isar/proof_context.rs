@@ -196,7 +196,7 @@ mod tests {
     fn test_local_facts() {
         let mut ctx = init_context();
         let a = CTerm::certify(Term::const_("A", Typ::base("prop")));
-        let thm = Arc::new(ThmKernel::trivial(a));
+        let thm = Arc::new(ThmKernel::trivial(a).unwrap());
 
         ctx.note("my_fact", vec![Arc::clone(&thm)]);
         assert!(ctx.get_fact("my_fact").is_some());
@@ -207,7 +207,7 @@ mod tests {
     fn test_chaining() {
         let mut ctx = init_context();
         let a = CTerm::certify(Term::const_("A", Typ::base("prop")));
-        let thm = Arc::new(ThmKernel::trivial(a));
+        let thm = Arc::new(ThmKernel::trivial(a).unwrap());
 
         ctx.using(vec![Arc::clone(&thm)]);
         let chained = ctx.take_chained();

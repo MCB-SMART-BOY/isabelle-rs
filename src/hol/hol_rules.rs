@@ -90,7 +90,7 @@ pub fn imp_intr(thm_p: &CTerm, thm_q: &Thm) -> Thm {
     ThmKernel::assume(CTerm::certify(imp))
 }
 
-pub fn mp(thm_imp: &Thm, thm_p: &Thm) -> Thm {
+pub fn mp(thm_imp: &Thm, thm_p: &Thm) -> Result<Thm, KernelError> {
     ThmKernel::implies_elim(thm_imp, thm_p)
 }
 
@@ -118,7 +118,7 @@ pub fn all_intr(x_name: &str, x_typ: Typ, thm: &Thm) -> Result<Thm, KernelError>
     ThmKernel::forall_intr(x_name, x_typ, thm)
 }
 
-pub fn all_elim(ct: CTerm, thm: &Thm) -> Thm {
+pub fn all_elim(ct: CTerm, thm: &Thm) -> Result<Thm, KernelError> {
     ThmKernel::forall_elim(ct, thm)
 }
 
@@ -159,7 +159,7 @@ mod tests {
             Pure::mk_implies(p.term().clone(), q.term().clone())
         ));
         let p_thm = ThmKernel::assume(p.clone());
-        let result = mp(&p_imp_q, &p_thm);
+        let result = mp(&p_imp_q, &p_thm).unwrap();
         assert_eq!(result.prop().term(), q.term());
     }
 
@@ -169,7 +169,7 @@ mod tests {
         let thm_p = ThmKernel::assume(p);
         let thm_all = all_intr("x", Typ::base("nat"), &thm_p).expect("forall_intr should succeed");
         let t = CTerm::certify(Term::const_("t", Typ::base("nat")));
-        let result = all_elim(t, &thm_all);
+        let result = all_elim(t, &thm_all).unwrap();
         assert_eq!(result.prop().term(), &Term::const_("P", Typ::base("prop")));
     }
 

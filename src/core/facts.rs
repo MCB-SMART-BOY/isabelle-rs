@@ -119,7 +119,7 @@ mod tests {
 
     fn dummy_thm() -> Arc<Thm> {
         let a = CTerm::certify(Term::const_("A", Typ::base("prop")));
-        Arc::new(ThmKernel::trivial(a))
+        Arc::new(ThmKernel::trivial(a).unwrap())
     }
 
     #[test]
