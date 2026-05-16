@@ -204,65 +204,105 @@ pub fn prove_auto(goal: &Thm) -> Option<Thm> {
 /// - `by simp` → uses Method::Simp with [simp] theorems
 /// - `by (rule name)` → looks up `name` in HolTheoremDb and uses Method::Rule
 /// - `by assumption` or `by .` → uses Method::Assumption
+/// - `by m1 m2` → chained: apply m1, then m2 to all remaining subgoals
 pub fn exec_proof(state: &Thm, proof_script: &str) -> Option<Thm> {
     let script = proof_script.trim();
 
-    if script == "by auto" || script.starts_with("by auto ") {
-        return prove_auto(state);
+    // Handle "by " prefix
+    let rest = script.strip_prefix("by ")?;
+
+    // Split into chained methods: "(erule subst) (rule refl)"
+    let methods = split_chained_methods(rest);
+
+    let mut current_states = vec![state.clone()];
+
+    for method_str in &methods {
+        let mut next_states = Vec::new();
+        for s in &current_states {
+            let results = exec_single_method(s, method_str);
+            next_states.extend(results);
+        }
+        if next_states.is_empty() {
+            return None;
+        }
+        current_states = next_states;
     }
 
-    if script == "by simp" || script.starts_with("by simp ") {
+    current_states.into_iter().find(|r| r.nprems() == 0)
+}
+
+/// Split "(erule subst) (rule refl)" into ["(erule subst)", "(rule refl)"]
+fn split_chained_methods(rest: &str) -> Vec<String> {
+    let mut methods = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    let chars: Vec<char> = rest.chars().collect();
+    for (i, &ch) in chars.iter().enumerate() {
+        if ch == '(' { depth += 1; }
+        else if ch == ')' { depth -= 1; }
+        else if depth == 0 && ch == ' ' && i > start {
+            let m = rest[start..i].trim().to_string();
+            if !m.is_empty() {
+                methods.push(m);
+            }
+            start = i + 1;
+        }
+    }
+    let last = rest[start..].trim().to_string();
+    if !last.is_empty() {
+        methods.push(last);
+    }
+    methods
+}
+
+/// Execute a single method string like "(erule subst)" or "auto"
+fn exec_single_method(state: &Thm, method_str: &str) -> Vec<Thm> {
+    let method_str = method_str.trim();
+
+    // Remove outer parentheses if present: "(erule subst)" → "erule subst"
+    let inner = if method_str.starts_with('(') && method_str.ends_with(')') {
+        method_str[1..method_str.len()-1].trim()
+    } else {
+        method_str
+    };
+
+    if inner == "auto" {
+        return Method::Auto.execute(state);
+    }
+    if inner == "simp" || inner.starts_with("simp ") {
         let db = HolTheoremDb::get();
-        let simp_tac = crate::core::tactic::simp_tac(&db.simps, 0);
-        let results = simp_tac.apply(state);
-        return results.into_iter().find(|r| r.nprems() == 0);
+        return crate::core::tactic::simp_tac(&db.simps, 0).apply(state);
+    }
+    if inner == "assumption" || inner == "." {
+        return Method::Assumption.execute(state);
+    }
+    if inner == "this" {
+        return Method::Skip.execute(state);
     }
 
-    if script == "by assumption" || script == "by ." {
-        let results = Method::Assumption.execute(state);
-        return results.into_iter().find(|r| r.nprems() == 0);
+    // (rule name)
+    if let Some(name) = inner.strip_prefix("rule ") {
+        let db = HolTheoremDb::get();
+        if let Some(thm) = db.by_name.get(name.trim()) {
+            return crate::core::tactic::resolve_tac(&[Arc::clone(thm)], 0).apply(state);
+        }
     }
-
-    if script == "by this" || script == "by (this)" {
-        let results = Method::Skip.execute(state);
-        return results.into_iter().find(|r| r.nprems() == 0);
+    // (erule name)
+    if let Some(name) = inner.strip_prefix("erule ") {
+        let db = HolTheoremDb::get();
+        if let Some(thm) = db.by_name.get(name.trim()) {
+            return crate::core::tactic::eresolve_tac(&[Arc::clone(thm)], 0).apply(state);
+        }
     }
-
-    // by (rule name)
-    if let Some(rest) = script.strip_prefix("by (rule ") {
-        if let Some(name) = rest.strip_suffix(")") {
-            let db = HolTheoremDb::get();
-            if let Some(thm) = db.by_name.get(name.trim()) {
-                let results = crate::core::tactic::resolve_tac(&[Arc::clone(thm)], 0).apply(state);
-                return results.into_iter().find(|r| r.nprems() == 0);
-            }
+    // (drule name)
+    if let Some(name) = inner.strip_prefix("drule ") {
+        let db = HolTheoremDb::get();
+        if let Some(thm) = db.by_name.get(name.trim()) {
+            return crate::core::tactic::dresolve_tac(&[Arc::clone(thm)], 0).apply(state);
         }
     }
 
-    // by (erule name)
-    if let Some(rest) = script.strip_prefix("by (erule ") {
-        if let Some(name) = rest.strip_suffix(")") {
-            let db = HolTheoremDb::get();
-            if let Some(thm) = db.by_name.get(name.trim()) {
-                let results = crate::core::tactic::eresolve_tac(&[Arc::clone(thm)], 0).apply(state);
-                return results.into_iter().find(|r| r.nprems() == 0);
-            }
-        }
-    }
-
-    // by (drule name)
-    if let Some(rest) = script.strip_prefix("by (drule ") {
-        if let Some(name) = rest.strip_suffix(")") {
-            let db = HolTheoremDb::get();
-            if let Some(thm) = db.by_name.get(name.trim()) {
-                let results = crate::core::tactic::dresolve_tac(&[Arc::clone(thm)], 0).apply(state);
-                return results.into_iter().find(|r| r.nprems() == 0);
-            }
-        }
-    }
-
-    // Unknown proof script
-    None
+    vec![]
 }
 
 /// Verify a ParsedLemma by executing its proof script.
@@ -509,17 +549,40 @@ mod tests {
     }
 
     #[test]
-    fn test_proof_script_coverage() {
-        // Check how many loaded theorems have proof scripts
+    fn test_debug_subst_in_db() {
+        let db = HolTheoremDb::get();
+        let keys = ["subst", "sym", "trans", "refl", "TrueI", "iffD1", "iffD2"];
+        for k in &keys {
+            eprintln!("{}: {}", k, db.by_name.contains_key(*k));
+        }
+        eprintln!("Total by_name entries: {}", db.by_name.len());
+        eprintln!("Total all theorems: {}", db.all.len());
+    }
+
+    #[test]
+    fn test_batch_verify_hol() {
+        // Try to verify all HOL.thy lemmas that have proof scripts
         let hol_thy = include_str!("../../isabelle-source/src/HOL/HOL.thy");
         let lemmas = crate::hol::hol_loader::parse_lemmas(hol_thy);
-        let total = lemmas.len();
         let with_proof: Vec<_> = lemmas.iter().filter(|l| l.proof_script.is_some()).collect();
-        eprintln!("HOL.thy: {}/{} lemmas have proof scripts", with_proof.len(), total);
-        for lem in with_proof.iter().take(5) {
-            eprintln!("  {}: {:?}", lem.name, lem.proof_script);
+        let total = with_proof.len();
+        let mut verified = 0usize;
+        let mut failed_names = Vec::new();
+
+        for lem in &with_proof {
+            if verify_lemma(lem).is_some() {
+                verified += 1;
+            } else {
+                failed_names.push(lem.name.clone());
+            }
         }
-        // At least some should have proof scripts
-        assert!(total > 0, "should parse some lemmas");
+
+        eprintln!("Batch verification: {}/{} verified ({:.1}%)",
+            verified, total,
+            if total > 0 { 100.0 * verified as f64 / total as f64 } else { 0.0 });
+        if !failed_names.is_empty() {
+            eprintln!("Failed (first 20): {:?}", &failed_names[..failed_names.len().min(20)]);
+        }
+        assert!(total > 0, "should have lemmas with proof scripts");
     }
 }
