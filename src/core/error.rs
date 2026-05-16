@@ -66,6 +66,10 @@ pub enum KernelError {
     /// Free variable in hypotheses during forall_intr.
     #[error("free var '{name}' in hypotheses for forall_intr")]
     FreeVarInHypotheses { name: String },
+
+    /// Beta conversion applied to non-redex.
+    #[error("beta_conversion: {0}")]
+    BetaConversion(String),
 }
 
 /// Type system errors.

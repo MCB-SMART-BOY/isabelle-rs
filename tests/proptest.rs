@@ -94,6 +94,6 @@ fn beta_conversion_is_equality() {
     let arg = Term::free("a", Typ::base("dummy"));
     let app = Term::app(lam, arg);
     let ct = CTerm::certify(app);
-    let thm = ThmKernel::beta_conversion(ct);
+    let thm = ThmKernel::beta_conversion(ct).expect("beta_conversion should succeed");
     assert!(Pure::dest_equals(thm.prop().term()).is_some());
 }

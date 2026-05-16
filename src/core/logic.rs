@@ -56,6 +56,12 @@ impl Pure {
         (prems, body)
     }
     pub fn count_prems(term: &Term) -> usize { Self::strip_imp_prems(term).0.len() }
+
+    /// Get the i-th premise (0-indexed).
+    pub fn nth_premise(term: &Term, i: usize) -> Option<&Term> {
+        let (prems, _) = Self::strip_imp_prems(term);
+        prems.get(i).copied()
+    }
 }
 
 #[cfg(test)]

@@ -218,6 +218,21 @@ impl Thm {
     pub fn is_unconditional(&self) -> bool { self.hyps.is_empty() }
     pub fn has_oracles(&self) -> bool { matches!(self.derivation, Derivation::Oracle { .. }) }
     pub fn serial(&self) -> u64 { self.serial }
+
+    /// Number of subgoals (premises in the prop chain).
+    pub fn nprems(&self) -> usize {
+        Pure::count_prems(self.prop.term())
+    }
+
+    /// Get the i-th subgoal (0-indexed).
+    pub fn prem(&self, i: usize) -> Option<Term> {
+        Pure::nth_premise(self.prop.term(), i).cloned()
+    }
+
+    /// Get the main conclusion (after stripping all ==>-chain premises).
+    pub fn concl(&self) -> Term {
+        Pure::strip_imp_prems(self.prop.term()).1.clone()
+    }
 }
 
 impl fmt::Debug for Thm {
@@ -407,6 +422,15 @@ impl ThmKernel {
         let (t, u) = Pure::dest_equals(thm.prop.term())
             .expect("abstraction: not an equality");
 
+        // Side condition: x must not be free in the hypotheses
+        for hyp in thm.hyps.iter() {
+            assert!(
+                !free_in(x_name, hyp.term()),
+                "abstraction: variable '{}' is free in the hypotheses",
+                x_name
+            );
+        }
+
         let new_prop = CTerm::certify(
             Pure::mk_equals(
                 Typ::dummy(),
@@ -432,29 +456,29 @@ impl ThmKernel {
     // =================================================================
 
     /// **Beta conversion**: `⊢ (λx. t) x ≡ t`.
-    pub fn beta_conversion(ct: CTerm) -> Thm {
+    pub fn beta_conversion(ct: CTerm) -> Result<Thm, KernelError> {
         // ct should be of the form (λx. t) x
         let (abs, _arg) = match ct.term() {
             Term::App { func, arg } => (func.as_ref(), arg.as_ref()),
-            _ => panic!("beta_conversion: not an application"),
+            _ => return Err(KernelError::BetaConversion("not an application".into())),
         };
 
         let body = match abs {
             Term::Abs { body, .. } => body.as_ref().clone(),
-            _ => panic!("beta_conversion: not a lambda"),
+            _ => return Err(KernelError::BetaConversion("not a lambda".into())),
         };
 
         let new_prop = CTerm::certify(
             Pure::mk_equals(Typ::dummy(), ct.term().clone(), body)
         );
 
-        Thm {
+        Ok(Thm {
             hyps: Hyps::empty(),
             prop: new_prop,
             maxidx: ct.maxidx(),
             derivation: Derivation::Axiom { name: "beta_conversion" },
             serial: new_serial(),
-        }
+        })
     }
 
     // =================================================================
@@ -555,6 +579,111 @@ impl ThmKernel {
     }
 
     // =================================================================
+    // Primitive: instantiate
+    // =================================================================
+
+    /// Apply an environment (from unification) to instantiate a theorem.
+    ///
+    /// If `Γ ⊢ φ` is a theorem schema (with schematic variables), then
+    /// for any substitution `θ`, `Γθ ⊢ φθ` is also a theorem.
+    pub fn instantiate(env: &super::envir::Envir, thm: &Thm) -> Thm {
+        let mut new_hyps = Hyps::empty();
+        for h in thm.hyps.iter() {
+            new_hyps.insert(CTerm::certify(env.norm_term(h.term())));
+        }
+        Thm {
+            hyps: new_hyps,
+            prop: CTerm::certify(env.norm_term(thm.prop.term())),
+            maxidx: usize::max(thm.maxidx, env.maxidx()),
+            derivation: Derivation::Rule {
+                name: "instantiate",
+                premises: vec![ThmDeriv {
+                    serial: thm.serial,
+                    prop: thm.prop.clone(),
+                }],
+            },
+            serial: new_serial(),
+        }
+    }
+
+    // =================================================================
+    // Primitive: bicompose — the core resolution operation
+    // =================================================================
+
+    /// Compose `thm1` with `thm2` at position `i`.
+    ///
+    /// `thm1`: `[| H1; ...; Hm |] ==> A`
+    /// `thm2`: `[| G1; ...; Gi; ...; Gn |] ==> C`
+    ///
+    /// If `match_flag` is true and `A` unifies with `Gi`, or if `match_flag`
+    /// is false and `A` is α-equivalent to `Gi`, then:
+    ///
+    /// `[| G1;...;Gi-1; H1;...;Hm; Gi+1;...;Gn |]`
+    ///   `==> G1 ==> ... ==> Gi-1 ==> H1 ==> ... ==> Hm ==> Gi+1 ==> ... ==> Gn ==> C`
+    ///
+    /// This is the single core operation behind ALL tactics (assume_tac,
+    /// resolve_tac, eresolve_tac, ...).
+    pub fn bicompose(
+        match_flag: bool,
+        thm1: &Thm,
+        thm2: &Thm,
+        i: usize,
+    ) -> Option<Thm> {
+        // 1. Get the i-th premise of thm2 (0-indexed)
+        let prem_i = Pure::nth_premise(thm2.prop.term(), i)?;
+
+        // 2. Get thm1's conclusion (last element after stripping all ==>-premises)
+        let (_, concl_1) = Pure::strip_imp_prems(thm1.prop.term());
+
+        // 3. Match or unify
+        let env = if match_flag {
+            super::unify::matchers(
+                &super::envir::Envir::init(),
+                concl_1,
+                prem_i,
+                &super::unify::UnifyConfig::default(),
+            )?
+        } else {
+            if !Hyps::alpha_eq(concl_1, prem_i) {
+                return None;
+            }
+            super::envir::Envir::init()
+        };
+
+        // 4. Instantiate both theorems with the unifier
+        let thm1 = Self::instantiate(&env, thm1);
+        let thm2 = Self::instantiate(&env, thm2);
+
+        // 5. Build the result: replace thm2's i-th premise with thm1's premise chain
+        let (prems_1, _) = Pure::strip_imp_prems(thm1.prop.term());
+        let (prems_2, concl_2) = Pure::strip_imp_prems(thm2.prop.term());
+
+        let mut new_prems: Vec<Term> = Vec::new();
+        new_prems.extend(prems_2[..i].iter().cloned().cloned());
+        new_prems.extend(prems_1.iter().cloned().cloned());
+        new_prems.extend(prems_2[i + 1..].iter().cloned().cloned());
+
+        let mut new_prop = concl_2.clone();
+        for p in new_prems.iter().rev() {
+            new_prop = Pure::mk_implies(p.clone(), new_prop);
+        }
+
+        Some(Thm {
+            hyps: thm1.hyps.union(&thm2.hyps),
+            prop: CTerm::certify(new_prop),
+            maxidx: usize::max(thm1.maxidx, thm2.maxidx),
+            derivation: Derivation::Rule {
+                name: "bicompose",
+                premises: vec![
+                    ThmDeriv { serial: thm1.serial, prop: thm1.prop.clone() },
+                    ThmDeriv { serial: thm2.serial, prop: thm2.prop.clone() },
+                ],
+            },
+            serial: new_serial(),
+        })
+    }
+
+    // =================================================================
     // Derived rule: A ==> A  (identity)
     // =================================================================
 
@@ -580,6 +709,8 @@ fn free_in(var_name: &str, term: &Term) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::envir::Envir;
+    use crate::core::types::Symbol;
 
     fn prop(name: &str) -> CTerm {
         CTerm::certify(Term::const_(name, Typ::base("prop")))
@@ -616,5 +747,114 @@ mod tests {
         let t2 = Term::abs("y", Typ::dummy(), Term::bound(0));
         assert_ne!(t1, t2);
         assert!(Hyps::alpha_eq(&t1, &t2));
+    }
+
+    // =================================================================
+    // Tests for new kernel infrastructure
+    // =================================================================
+
+    #[test]
+    fn test_nprems_prem_concl() {
+        // trivial: [A] ==> A → 1 subgoal (A), conclusion = A
+        let a = prop("A");
+        let thm = ThmKernel::trivial(a.clone());
+        assert_eq!(thm.nprems(), 1);
+        assert_eq!(thm.prem(0), Some(a.term().clone()));
+        assert_eq!(thm.concl(), a.term().clone());
+    }
+
+    #[test]
+    fn test_nprems_multiple() {
+        // assume(A ==> B): hyps={A==>B}, prop=A==>B → 1 subgoal (A), concl = B
+        let a = prop("A");
+        let b = prop("B");
+        let imp = Pure::mk_implies(a.term().clone(), b.term().clone());
+        let thm = ThmKernel::assume(CTerm::certify(imp));
+        assert_eq!(thm.nprems(), 1);  // A is the only premise
+        assert_eq!(thm.concl(), b.term().clone());  // B is the conclusion
+    }
+
+    #[test]
+    fn test_instantiate_idempotent() {
+        let a = prop("A");
+        let thm = ThmKernel::assume(a.clone());
+        let env = Envir::init();
+        let result = ThmKernel::instantiate(&env, &thm);
+        assert_eq!(result.prop(), thm.prop());
+        assert_eq!(result.hyps().len(), thm.hyps().len());
+    }
+
+    #[test]
+    fn test_bicompose_assume_tac() {
+        // Simulate assume_tac: use assume(A) to discharge first subgoal
+        // state: [A] ==> A  (trivial goal)
+        // assume(A): [A] ⊢ A
+        // Result should have 0 premises (A discharged)
+        let a = prop("A");
+        let state = ThmKernel::trivial(a.clone());
+        let assume_a = ThmKernel::assume(a.clone());
+        let result = ThmKernel::bicompose(false, &assume_a, &state, 0);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().nprems(), 0);
+    }
+
+    #[test]
+    fn test_bicompose_resolve() {
+        // Simulate resolve_tac with modus ponens:
+        // thm: [B ==> A] ⊢ B ==> A
+        // state: [A ==> C] ⊢ A ==> C
+        // Result should be: [B ==> A, B] ⊢ B ==> C  (A replaced by B)
+        let a = prop("A");
+        let b = prop("B");
+        let c = prop("C");
+        let thm = ThmKernel::assume(CTerm::certify(
+            Pure::mk_implies(b.term().clone(), a.term().clone())
+        ));
+        let state = ThmKernel::assume(CTerm::certify(
+            Pure::mk_implies(a.term().clone(), c.term().clone())
+        ));
+        let result = ThmKernel::bicompose(false, &thm, &state, 0);
+        assert!(result.is_some());
+        let r = result.unwrap();
+        // First premise should be B (from thm's premises)
+        assert!(Hyps::alpha_eq(&r.prem(0).unwrap(), b.term()));
+    }
+
+    #[test]
+    fn test_beta_conversion_ok() {
+        // (λx. x) A → A
+        let lam = Term::abs("x", Typ::dummy(), Term::bound(0));
+        let a = Term::free("a", Typ::dummy());
+        let app = CTerm::certify(Term::app(lam, a.clone()));
+        let result = ThmKernel::beta_conversion(app);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_beta_conversion_err() {
+        // Non-application should return Err, not panic
+        let t = CTerm::certify(Term::const_("x", Typ::dummy()));
+        let result = ThmKernel::beta_conversion(t);
+        assert!(result.is_err());
+        match result {
+            Err(KernelError::BetaConversion(_)) => {} // expected
+            _ => panic!("expected BetaConversion error"),
+        }
+    }
+
+    #[test]
+    fn test_instantiate_with_unifier() {
+        // Test instantiate with a non-empty environment
+        let mut env = Envir::empty(10);
+        let x_name: Symbol = "x".into();
+        let nat = Typ::base("nat");
+        let zero = Term::const_("zero", nat.clone());
+        env.update(x_name.clone(), 0, nat.clone(), zero.clone());
+
+        let var_term = Term::var("x", 0, nat);
+        let thm = ThmKernel::assume(CTerm::certify(var_term));
+        let result = ThmKernel::instantiate(&env, &thm);
+        // The var should be replaced by zero
+        assert_eq!(result.prop().term(), &zero);
     }
 }
