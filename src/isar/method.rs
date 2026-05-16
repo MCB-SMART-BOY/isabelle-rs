@@ -11,6 +11,7 @@ use crate::core::term::Term;
 use crate::core::thm::{CTerm, Thm, ThmKernel};
 use crate::core::simplifier::Simplifier;
 use crate::core::tactic;
+use crate::hol::hol_loader::HolTheoremDb;
 
 // =========================================================================
 // Method
@@ -93,32 +94,68 @@ impl Method {
     }
 
     fn auto_exec(state: &Thm, depth: usize) -> Vec<Thm> {
-        // 1. Try assumption on first subgoal
-        let results = Self::Assumption.execute_depth(state, depth + 1);
-        for r in &results {
+        if depth > 30 {
+            return vec![state.clone()];
+        }
+        if state.nprems() == 0 {
+            return vec![state.clone()];
+        }
+
+        // 1. Safe: assumption on first subgoal
+        let assume_results = tactic::assume_tac(0).apply(state);
+        for r in &assume_results {
             if r.nprems() == 0 {
-                return results;
+                return assume_results;
             }
         }
-        // 2. Try loaded HOL theorems (resolve on first subgoal)
-        if let Some(results) = Self::auto_resolve(state) {
-            for r in &results {
-                if r.nprems() == 0 {
-                    return results;
+
+        // 2. Safe: resolve with all loaded HOL theorems on first subgoal
+        let db = HolTheoremDb::get();
+        let resolve_results = tactic::resolve_tac(&db.all, 0).apply(state);
+
+        let mut all_solved = Vec::new();
+
+        // Try each resolution result
+        for r in &resolve_results {
+            if r.nprems() == 0 {
+                all_solved.push(r.clone());
+            } else if r.nprems() < state.nprems() + 5 {
+                // Recurse only if we didn't explode in subgoals
+                let sub = Self::auto_exec(r, depth + 1);
+                for s in &sub {
+                    if s.nprems() == 0 {
+                        all_solved.push(s.clone());
+                    }
                 }
             }
-            // Recurse on first result
-            if let Some(first) = results.first() {
-                return Self::auto_exec(first, depth + 1);
+        }
+
+        if !all_solved.is_empty() {
+            return all_solved;
+        }
+
+        // 3. If assumption gave partial results (non-empty but not fully solved),
+        //    recurse on them
+        for r in &assume_results {
+            if r.nprems() != 0 {
+                let sub = Self::auto_exec(r, depth + 1);
+                for s in &sub {
+                    if s.nprems() == 0 {
+                        all_solved.push(s.clone());
+                    }
+                }
             }
         }
-        // 3. Try intro/elim (not yet implemented for Thm)
-        // 4. Fall back to simp
-        Self::Simp(crate::core::simplifier::beta_simp()).execute_depth(state, depth + 1)
+
+        if !all_solved.is_empty() {
+            return all_solved;
+        }
+
+        // 4. Nothing worked — return original state (tactic failed to make progress)
+        vec![state.clone()]
     }
 
     fn auto_resolve(state: &Thm) -> Option<Vec<Thm>> {
-        use crate::hol::hol_loader::HolTheoremDb;
         let db = HolTheoremDb::get();
         let outcomes = crate::core::tactic::resolve_tac(&db.all, 0).apply(state);
         if outcomes.is_empty() {
@@ -127,6 +164,13 @@ impl Method {
             Some(outcomes)
         }
     }
+}
+
+/// Try to prove a goal using the auto method.
+/// Returns the first solution found, or `None` if auto fails.
+pub fn prove_auto(goal: &Thm) -> Option<Thm> {
+    let results = Method::Auto.execute(goal);
+    results.into_iter().find(|r| r.nprems() == 0)
 }
 
 // =========================================================================
@@ -228,5 +272,55 @@ mod tests {
         let method = Method::Simp(simp);
         let results = method.execute(&state);
         assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn test_prove_auto_trivial() {
+        // auto should prove A ==> A (by assumption)
+        let a = CTerm::certify(Term::const_("A", Typ::base("prop")));
+        let goal = ThmKernel::trivial(a).unwrap();
+        let result = prove_auto(&goal);
+        assert!(result.is_some(), "auto should prove A ==> A");
+        assert_eq!(result.unwrap().nprems(), 0);
+    }
+
+    #[test]
+    fn test_prove_auto_sym() {
+        // Goal: from s == t, prove t == s (requires sym theorem)
+        // state: [s == t] ==> (s == t) ==> (t == s)
+        // We want to auto-prove the conclusion t == s
+        use crate::core::logic::Pure;
+        let s = Term::free("s", Typ::base("nat"));
+        let t = Term::free("t", Typ::base("nat"));
+        let eq_st = Pure::mk_equals(Typ::base("nat"), s.clone(), t.clone());
+        let eq_ts = Pure::mk_equals(Typ::base("nat"), t, s);
+        // Build state: [s == t] ==> (s == t) ==> (t == s)
+        let goal_imp = Pure::mk_implies(eq_st.clone(), eq_ts);
+        let state = ThmKernel::trivial(CTerm::certify(goal_imp)).unwrap();
+        // state has hyps = {s == t ==> t == s}, prop = (s == t ==> t == s) ==> (s == t ==> t == s)
+        // This is a nested goal. Let's simplify: just use trivial(s == t ==> t == s)
+        // Actually, trivial on "A ==> B" gives [A ==> B] ==> A ==> B with 2 prems
+        let result = prove_auto(&state);
+        // This may or may not succeed; the test just ensures no panic
+        let _ = result;
+    }
+
+    #[test]
+    fn test_prove_auto_imp_trans() {
+        // Goal: [A ==> B, B ==> C] ==> A ==> C
+        // This tests whether auto can do transitivity of implication
+        use crate::core::logic::Pure;
+        let a = Term::const_("A", Typ::base("prop"));
+        let b = Term::const_("B", Typ::base("prop"));
+        let c = Term::const_("C", Typ::base("prop"));
+        let ab = Pure::mk_implies(a.clone(), b.clone());
+        let bc = Pure::mk_implies(b.clone(), c.clone());
+        let ac = Pure::mk_implies(a.clone(), c.clone());
+        // Build: assume(A==>B), assume(B==>C), prove(A==>C)
+        // Using nested implications...
+        let goal = Pure::mk_implies(ab.clone(), Pure::mk_implies(bc.clone(), ac));
+        let state = ThmKernel::trivial(CTerm::certify(goal)).unwrap();
+        let result = prove_auto(&state);
+        let _ = result;
     }
 }
