@@ -879,6 +879,8 @@ pub struct HolTheoremDb {
     pub elims: Vec<Arc<crate::core::thm::Thm>>,
     pub simps: Vec<Arc<crate::core::thm::Thm>>,
     pub all: Vec<Arc<crate::core::thm::Thm>>,
+    /// Theorem lookup by name (e.g., "sym", "trans", "refl")
+    pub by_name: std::collections::HashMap<String, Arc<crate::core::thm::Thm>>,
 }
 
 impl HolTheoremDb {
@@ -887,9 +889,14 @@ impl HolTheoremDb {
         let mut elims = Vec::new();
         let mut simps = Vec::new();
         let mut all = Vec::new();
+        let mut by_name = std::collections::HashMap::new();
         for lem in lemmas {
             let thm = Arc::clone(&lem.theorem);
             all.push(Arc::clone(&thm));
+            // Index by name (use first-come, keep first)
+            if !lem.name.is_empty() && !by_name.contains_key(&lem.name) {
+                by_name.insert(lem.name.clone(), Arc::clone(&thm));
+            }
             let attrs = &lem.attributes;
             if attrs.iter().any(|a| a.contains("intro")) { intros.push(Arc::clone(&thm)); }
             if attrs.iter().any(|a| a.contains("elim")) { elims.push(Arc::clone(&thm)); }
@@ -905,7 +912,7 @@ impl HolTheoremDb {
                 _ => {}
             }
         }
-        HolTheoremDb { intros, elims, simps, all }
+        HolTheoremDb { intros, elims, simps, all, by_name }
     }
 
     pub fn get() -> &'static Self { &HOL_THEOREMS }
