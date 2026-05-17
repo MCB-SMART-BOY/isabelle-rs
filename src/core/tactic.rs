@@ -360,21 +360,21 @@ mod tests {
         // {A} ⊢ A has nprems=0 — nothing to solve.
         // Test that assume_tac fails when subgoal not in hyps
         let state = trivial_goal("A"); // {} ⊢ A==>A, nprems=1, subgoal=A not in hyps
-        let outcomes = assume_tac(0).apply(&state);
+        let outcomes = assume_tac(0).apply(&state, &[]);
         assert!(outcomes.is_empty(), "assume_tac should fail when subgoal not in hyps");
     }
 
     #[test]
     fn test_assume_tac_fails_out_of_bounds() {
         let state = trivial_goal("A");
-        let outcomes = assume_tac(5).apply(&state);
+        let outcomes = assume_tac(5).apply(&state, &[]);
         assert!(outcomes.is_empty(), "out-of-bounds should fail");
     }
 
     #[test]
     fn test_all_tac() {
         let state = trivial_goal("A");
-        let outcomes = all_tac().apply(&state);
+        let outcomes = all_tac().apply(&state, &[]);
         assert_eq!(outcomes.len(), 1);
         assert_eq!(outcomes[0].nprems(), state.nprems());
     }
@@ -382,7 +382,7 @@ mod tests {
     #[test]
     fn test_no_tac() {
         let state = trivial_goal("A");
-        assert!(no_tac().apply(&state).is_empty());
+        assert!(no_tac().apply(&state, &[]).is_empty());
     }
 
     #[test]
@@ -393,7 +393,7 @@ mod tests {
             orelse_tac(all_tac(), no_tac()),
             all_tac(),
         );
-        let outcomes = tac.apply(&state);
+        let outcomes = tac.apply(&state, &[]);
         assert!(!outcomes.is_empty());
         assert_eq!(outcomes[0].nprems(), state.nprems());
     }
@@ -403,7 +403,7 @@ mod tests {
         // REPEAT(all_tac) should just return identity
         let state = trivial_goal("A");
         let tac = repeat_tac(all_tac());
-        let outcomes = tac.apply(&state);
+        let outcomes = tac.apply(&state, &[]);
         assert!(!outcomes.is_empty());
         assert_eq!(outcomes[0].nprems(), state.nprems());
     }
@@ -413,7 +413,7 @@ mod tests {
         // EVERY [all_tac, all_tac] on [A]==>A
         let state = trivial_goal("A");
         let tac = every_tac(vec![all_tac(), all_tac()]);
-        let outcomes = tac.apply(&state);
+        let outcomes = tac.apply(&state, &[]);
         assert!(!outcomes.is_empty());
         assert_eq!(outcomes[0].nprems(), state.nprems());
     }
@@ -423,7 +423,7 @@ mod tests {
         // FIRST [no_tac, all_tac] should return all_tac result
         let state = trivial_goal("A");
         let tac = first_tac(vec![no_tac(), all_tac()]);
-        let outcomes = tac.apply(&state);
+        let outcomes = tac.apply(&state, &[]);
         assert!(!outcomes.is_empty());
         assert_eq!(outcomes.len(), 1);
     }
@@ -433,9 +433,9 @@ mod tests {
         let state = trivial_goal("A");
         // DEPTH(0, all_tac): nprems=1 > 0 → fails
         let tac = depth_limit(0, all_tac());
-        assert!(tac.apply(&state).is_empty());
+        assert!(tac.apply(&state, &[]).is_empty());
         // DEPTH(2, all_tac): nprems=1 <= 2 → succeeds
         let tac2 = depth_limit(2, all_tac());
-        assert!(!tac2.apply(&state).is_empty());
+        assert!(!tac2.apply(&state, &[]).is_empty());
     }
 }

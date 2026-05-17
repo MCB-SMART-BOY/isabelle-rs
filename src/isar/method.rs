@@ -319,7 +319,7 @@ mod tests {
         let a = CTerm::certify(Term::const_("A", Typ::base("prop")));
         let state = ThmKernel::assume(a);
         assert_eq!(state.nprems(), 0); // trivially true
-        let results = Method::Assumption.execute(&state);
+        let results = Method::Assumption.execute(&state, &[]);
         // On a state with nprems=0, assume_tac(0) fails (no subgoal 0)
         assert!(results.is_empty());
     }
@@ -327,14 +327,14 @@ mod tests {
     #[test]
     fn test_method_fail() {
         let state = trivial_goal("A");
-        let results = Method::Fail.execute(&state);
+        let results = Method::Fail.execute(&state, &[]);
         assert!(results.is_empty());
     }
 
     #[test]
     fn test_method_skip() {
         let state = trivial_goal("A");
-        let results = Method::Skip.execute(&state);
+        let results = Method::Skip.execute(&state, &[]);
         assert!(results.is_empty());
     }
 
@@ -347,7 +347,7 @@ mod tests {
 
         let simp = crate::core::simplifier::beta_simp();
         let method = Method::Simp(simp);
-        let results = method.execute(&state);
+        let results = method.execute(&state, &[]);
         assert!(!results.is_empty());
     }
 
@@ -359,7 +359,7 @@ mod tests {
         let goal = ThmKernel::assume(CTerm::certify(a_imp_a));
         // hyps={A==>A}, prop=A==>A, nprems=1(A)
         // assume_tac checks: A is a premise of hyp A==>A → match!
-        let result = prove_auto(&goal);
+        let result = prove_auto(&goal, &[]);
         assert!(result.is_some(), "auto should prove A ==> A");
         assert_eq!(result.unwrap().nprems(), 0);
     }
@@ -406,7 +406,7 @@ mod tests {
         // result: {A, A==>B} ⊢ B, nprems=0
         assert_eq!(result.nprems(), 0);
         // auto should also be able to do this
-        let auto_result = prove_auto(&result);
+        let auto_result = prove_auto(&result, &[]);
         assert!(auto_result.is_some());
         assert_eq!(auto_result.unwrap().nprems(), 0);
     }
@@ -420,7 +420,7 @@ mod tests {
         let state = ThmKernel::trivial(CTerm::certify(a_imp_b)).unwrap();
         // This goal can't be proved (A doesn't imply B)
         // auto should hit depth limit and return original state
-        let result = prove_auto(&state);
+        let result = prove_auto(&state, &[]);
         // May or may not prove — just shouldn't crash
         let _ = result;
     }
@@ -456,7 +456,7 @@ mod tests {
         let state = ThmKernel::assume(CTerm::certify(goal));
         // This calls exec_proof with "by (rule sym)" — it won't succeed
         // but should not crash and should attempt the lookup
-        let result = exec_proof(&state, "by (rule sym)");
+        let result = exec_proof(&state, "by (rule sym)", &[]);
         // sym theorem's conclusion won't match A ==> A, so result is None
         assert!(result.is_none());
     }
@@ -468,7 +468,7 @@ mod tests {
         let goal_term = Pure::mk_implies(a.clone(), a.clone());
         // Use assume (not trivial): {A==>A} ⊢ A==>A, nprems=1 (just A)
         let state = ThmKernel::assume(CTerm::certify(goal_term));
-        let result = exec_proof(&state, "by assumption");
+        let result = exec_proof(&state, "by assumption", &[]);
         assert!(result.is_some(), "exec_proof should succeed");
         assert_eq!(result.unwrap().nprems(), 0);
     }
