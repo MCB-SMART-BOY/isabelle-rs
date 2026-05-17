@@ -14,6 +14,7 @@ use crate::core::simplifier::Simplifier;
 use crate::core::tactic;
 use crate::hol::hol_loader::HolTheoremDb;
 use crate::hol::hol_loader::ParsedLemma;
+use crate::hol::hol_loader::{scan_theory_files, load_theory_files};
 
 // =========================================================================
 // Method
@@ -550,6 +551,18 @@ mod tests {
                     lem.name, lem.attributes, lem.proof_script);
             }
         }
+    }
+
+    #[test]
+    fn test_scan_all_theories() {
+        let dir = "isabelle-source/src/HOL";
+        let files = scan_theory_files(dir);
+        eprintln!("Found {} .thy files", files.len());
+        let lemmas = load_theory_files(&files);
+        let total = lemmas.len();
+        let with_proof: Vec<_> = lemmas.iter().filter(|l| l.proof_script.is_some()).collect();
+        eprintln!("Loaded {} total lemmas, {} with proof scripts", total, with_proof.len());
+        assert!(total > 2000, "should load many theorems");
     }
 
     #[test]

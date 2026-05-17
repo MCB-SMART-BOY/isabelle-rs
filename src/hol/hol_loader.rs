@@ -959,6 +959,67 @@ impl HolTheoremDb {
 }
 
 // =========================================================================
+// Theory file scanner
+// =========================================================================
+
+/// Parse theory header: extract name and imports.
+/// Format: `theory Foo imports Bar Baz begin`
+pub fn parse_theory_header(source: &str) -> Option<(&str, Vec<&str>)> {
+    let rest = source.lines()
+        .find(|l| l.trim().starts_with("theory "))?
+        .trim()
+        .strip_prefix("theory ")?;
+    let (name_part, rest) = if let Some(idx) = rest.find("imports ") {
+        let name = rest[..idx].trim();
+        let after = &rest[idx + 8..];
+        (name, after)
+    } else if let Some(idx) = rest.find("begin") {
+        (rest[..idx].trim(), "")
+    } else {
+        return None;
+    };
+    let imports_str = if let Some(idx) = rest.find("begin") {
+        rest[..idx].trim()
+    } else {
+        rest.trim()
+    };
+    let imports: Vec<&str> = if imports_str.is_empty() {
+        Vec::new()
+    } else {
+        imports_str.split_whitespace().collect()
+    };
+    Some((name_part, imports))
+}
+
+/// Collect all .thy files from a directory and its subdirectories.
+pub fn scan_theory_files(dir: &str) -> Vec<String> {
+    let mut files = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                files.extend(scan_theory_files(&path.to_string_lossy()));
+            } else if path.extension().map_or(false, |e| e == "thy") {
+                files.push(path.to_string_lossy().to_string());
+            }
+        }
+    }
+    files
+}
+
+/// Load all theorems from a list of .thy files.
+pub fn load_theory_files(files: &[String]) -> Vec<ParsedLemma> {
+    let mut all_lemmas = Vec::new();
+    for file in files {
+        if let Ok(source) = std::fs::read_to_string(file) {
+            let lemmas = parse_lemmas(&source);
+            all_lemmas.extend(lemmas);
+        }
+    }
+    all_lemmas
+}
+
+// =========================================================================
 // Tests
 // =========================================================================
 
