@@ -154,22 +154,27 @@ impl Tactic {
         results
     }
 
-    /// Rewrite subgoal `i` using the simplifier.
+    /// Rewrite subgoal `i` using the simplifier, iterating to fixed point.
     fn apply_simp(simp: &Simplifier, i: usize, state: &Thm) -> Vec<Thm> {
-        let prem_i = match state.prem(i) {
-            Some(p) => p,
-            None => return vec![state.clone()],
-        };
-        // Try one rewrite step
-        match simp.rewrite(&prem_i) {
-            Some((next, eq_thm)) if next != prem_i => {
-                // eq_thm proves prem_i == next (or next == prem_i)
-                ThmKernel::subst_premise(&eq_thm, state, i)
-                    .map(|t| vec![t])
-                    .unwrap_or_else(|| vec![state.clone()])
+        let mut current = state.clone();
+        loop {
+            let prem_i = match current.prem(i) {
+                Some(p) => p,
+                None => return vec![current],
+            };
+            match simp.rewrite(&prem_i) {
+                Some((next, eq_thm)) if next != prem_i => {
+                    // Apply this rewrite step via subst_premise
+                    if let Some(new_state) = ThmKernel::subst_premise(&eq_thm, &current, i) {
+                        current = new_state;
+                        continue; // iterate
+                    }
+                }
+                _ => {}
             }
-            _ => vec![state.clone()],
+            break; // no change
         }
+        vec![current]
     }
 
     /// Repeat a tactic until no progress is made.

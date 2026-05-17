@@ -502,24 +502,26 @@ mod tests {
     }
 
     #[test]
-    fn test_batch_verify() {
-        let hol_thy = include_str!("../../isabelle-source/src/HOL/HOL.thy");
-        let lemmas = crate::hol::hol_loader::parse_lemmas(hol_thy);
-        let with_proof: Vec<_> = lemmas.iter().filter(|l| l.proof_script.is_some()).collect();
-        let total = with_proof.len();
-        let mut verified = 0usize;
-        let mut failed = Vec::new();
-        for lem in &with_proof {
-            if verify_lemma(lem).is_some() {
-                verified += 1;
-            } else if failed.len() < 10 {
-                failed.push(format!("{}: {:?}", lem.name, lem.proof_script));
-            }
+    fn test_batch_verify_all() {
+        let files: [(&str, &str); 5] = [
+            ("HOL", include_str!("../../isabelle-source/src/HOL/HOL.thy")),
+            ("Orderings", include_str!("../../isabelle-source/src/HOL/Orderings.thy")),
+            ("Nat", include_str!("../../isabelle-source/src/HOL/Nat.thy")),
+            ("Set", include_str!("../../isabelle-source/src/HOL/Set.thy")),
+            ("List", include_str!("../../isabelle-source/src/HOL/List.thy")),
+        ];
+        let mut grand_total = 0usize;
+        let mut grand_verified = 0usize;
+        for (name, source) in &files {
+            let lemmas = crate::hol::hol_loader::parse_lemmas(source);
+            let with_proof: Vec<_> = lemmas.iter().filter(|l| l.proof_script.is_some()).collect();
+            let total = with_proof.len();
+            let verified = with_proof.iter().filter(|l| verify_lemma(l).is_some()).count();
+            eprintln!("  {}: {}/{} verified", name, verified, total);
+            grand_total += total;
+            grand_verified += verified;
         }
-        eprintln!("Batch: {}/{} verified ({:.1}%)", verified, total,
-            100.0 * verified as f64 / total as f64);
-        for f in &failed {
-            eprintln!("  FAIL: {}", f);
-        }
+        eprintln!("Total: {}/{} verified ({:.1}%)", grand_verified, grand_total,
+            100.0 * grand_verified as f64 / grand_total as f64);
     }
 }
