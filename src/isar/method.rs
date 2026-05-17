@@ -193,22 +193,34 @@ fn exec_single_method(state: &Thm, method_str: &str, premises: &[Arc<Thm>]) -> V
     }
     if inner == "this" { return Method::Skip.execute(state, premises); }
 
-    if let Some(name) = inner.strip_prefix("rule ") {
+    // (rule name [OF ...])
+    if let Some(rest) = inner.strip_prefix("rule ") {
+        let (name, of_args) = parse_of_suffix(rest);
         let db = HolTheoremDb::get();
         if let Some(thm) = db.by_name.get(name.trim()) {
-            return crate::core::tactic::resolve_tac(&[Arc::clone(thm)], 0).apply(state, premises);
+            let thm = apply_of(Arc::clone(thm), of_args, db);
+            let results = crate::core::tactic::resolve_tac(&[thm], 0).apply(state, premises);
+            return results;
         }
     }
-    if let Some(name) = inner.strip_prefix("erule ") {
+    // (erule name [OF ...])
+    if let Some(rest) = inner.strip_prefix("erule ") {
+        let (name, of_args) = parse_of_suffix(rest);
         let db = HolTheoremDb::get();
         if let Some(thm) = db.by_name.get(name.trim()) {
-            return crate::core::tactic::eresolve_tac(&[Arc::clone(thm)], 0).apply(state, premises);
+            let thm = apply_of(Arc::clone(thm), of_args, db);
+            let results = crate::core::tactic::eresolve_tac(&[thm], 0).apply(state, premises);
+            return results;
         }
     }
-    if let Some(name) = inner.strip_prefix("drule ") {
+    // (drule name [OF ...])
+    if let Some(rest) = inner.strip_prefix("drule ") {
+        let (name, of_args) = parse_of_suffix(rest);
         let db = HolTheoremDb::get();
         if let Some(thm) = db.by_name.get(name.trim()) {
-            return crate::core::tactic::dresolve_tac(&[Arc::clone(thm)], 0).apply(state, premises);
+            let thm = apply_of(Arc::clone(thm), of_args, db);
+            let results = crate::core::tactic::dresolve_tac(&[thm], 0).apply(state, premises);
+            return results;
         }
     }
     vec![]
@@ -232,6 +244,45 @@ fn split_chained_methods(rest: &str) -> Vec<String> {
     let last = rest[start..].trim().to_string();
     if !last.is_empty() { methods.push(last); }
     methods
+}
+
+/// Split "(rule refl)" or "(drule name)" into the name part.
+fn parse_of_suffix(rest: &str) -> (&str, Vec<String>) {
+    // Check for [OF ...] suffix
+    if let Some(idx) = rest.find(" [OF ") {
+        let name = rest[..idx].trim();
+        let of_part = &rest[idx+5..]; // after " [OF "
+        // Remove trailing ]
+        let of_part = of_part.trim_end_matches(']').trim();
+        let args: Vec<String> = of_part.split_whitespace().map(|s| s.to_string()).collect();
+        (name, args)
+    } else {
+        (rest.trim(), Vec::new())
+    }
+}
+
+/// Apply OF combinator: resolve theorem premises with other theorems.
+/// thm OF [thm1, thm2, ...] — for each premise, either:
+/// - "_": consume premise (resolve with itself via assume_tac)
+/// - named: resolve with the named theorem
+fn apply_of(mut thm: Arc<Thm>, args: Vec<String>, db: &HolTheoremDb) -> Arc<Thm> {
+    for arg in &args {
+        if thm.nprems() == 0 { break; }
+        if arg == "_" {
+            // Consume first premise by assuming it
+            if let Some(prem) = thm.prem(0) {
+                let assume_thm = ThmKernel::assume(CTerm::certify(prem));
+                if let Some(new_thm) = ThmKernel::bicompose(false, &assume_thm, &thm, 0) {
+                    thm = Arc::new(new_thm);
+                }
+            }
+        } else if let Some(arg_thm) = db.by_name.get(arg.as_str()) {
+            if let Some(new_thm) = ThmKernel::bicompose(true, arg_thm, &thm, 0) {
+                thm = Arc::new(new_thm);
+            }
+        }
+    }
+    thm
 }
 
 /// Verify a ParsedLemma: extract premises, execute proof, check result.
