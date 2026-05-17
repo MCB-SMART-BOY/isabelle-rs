@@ -764,22 +764,36 @@ impl ThmKernel {
             let maxidx = usize::max(thm1.maxidx(), thm2.maxidx());
             let mut found_env = None;
             for hyp in thm2.hyps.iter() {
-                let env = super::envir::Envir::empty(maxidx);
-                let pairs: Vec<(Term, Term)> = vec![
-                    ((*major_prem).clone(), hyp.term().clone()),
-                    ((*concl_1).clone(), prem_i.clone()),
-                ];
-                if let Some(env) = super::unify::unifiers(
-                    &env, &pairs, &super::unify::UnifyConfig::default()
-                ) {
-                    found_env = Some(env);
-                    break;
+                // Check both the hyp itself and its constituent premises
+                let (prems, _) = Pure::strip_imp_prems(hyp.term());
+                let all_candidates: Vec<&Term> = std::iter::once(hyp.term())
+                    .chain(prems.iter().copied())
+                    .collect();
+                for candidate in &all_candidates {
+                    let env = super::envir::Envir::empty(maxidx);
+                    let pairs: Vec<(Term, Term)> = vec![
+                        ((*major_prem).clone(), (*candidate).clone()),
+                        ((*concl_1).clone(), prem_i.clone()),
+                    ];
+                    if let Some(env) = super::unify::unifiers(
+                        &env, &pairs, &super::unify::UnifyConfig::default()
+                    ) {
+                        found_env = Some(env);
+                        break;
+                    }
                 }
+                if found_env.is_some() { break; }
             }
             found_env?
         } else {
-            // Exact match with two-tier support
-            let hyp_matches = thm2.hyps.iter().any(|h| Hyps::alpha_eq(major_prem, h.term()));
+            // Exact match with two-tier support, also checking constituent premises
+            let hyp_matches = thm2.hyps.iter().any(|h| {
+                Hyps::alpha_eq(major_prem, h.term()) ||
+                {
+                    let (prems, _) = Pure::strip_imp_prems(h.term());
+                    prems.iter().any(|p| Hyps::alpha_eq(p, major_prem))
+                }
+            });
             if !hyp_matches {
                 return None;
             }

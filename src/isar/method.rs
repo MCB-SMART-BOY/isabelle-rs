@@ -568,13 +568,24 @@ mod tests {
     }
 
     #[test]
-    fn test_auto_sample() {
-        // Quick sample test — full verification is too slow for unit tests
-        let a = CTerm::certify(Term::const_("A", Typ::base("prop")));
-        let goal = ThmKernel::trivial(a).unwrap();
-        // auto on {} ⊢ A==>A should not cheat via assume_tac
-        let result = prove_auto(&goal);
-        // With empty hyps, assume_tac fails; resolution might work if DB has matching theorem
-        let _ = result;
+    fn test_batch_verify() {
+        let hol_thy = include_str!("../../isabelle-source/src/HOL/HOL.thy");
+        let lemmas = crate::hol::hol_loader::parse_lemmas(hol_thy);
+        let with_proof: Vec<_> = lemmas.iter().filter(|l| l.proof_script.is_some()).collect();
+        let total = with_proof.len();
+        let mut verified = 0usize;
+        let mut failed = Vec::new();
+        for lem in &with_proof {
+            if verify_lemma(lem).is_some() {
+                verified += 1;
+            } else if failed.len() < 10 {
+                failed.push(format!("{}: {:?}", lem.name, lem.proof_script));
+            }
+        }
+        eprintln!("Batch: {}/{} verified ({:.1}%)", verified, total,
+            100.0 * verified as f64 / total as f64);
+        for f in &failed {
+            eprintln!("  FAIL: {}", f);
+        }
     }
 }
