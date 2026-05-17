@@ -18,6 +18,7 @@
 //! 5. **Maxidx**: proper tracking for fresh variable generation
 
 use std::fmt;
+use std::sync::Arc;
 
 use super::error::KernelError;
 use super::logic::Pure;
@@ -750,6 +751,7 @@ impl ThmKernel {
         thm1: &Thm,
         thm2: &Thm,
         i: usize,
+        premises: &[Arc<Thm>],
     ) -> Option<Thm> {
         // 1. Get the i-th premise of thm2 and thm1's conclusion
         let prem_i = Pure::nth_premise(thm2.prop.term(), i)?;
@@ -759,30 +761,28 @@ impl ThmKernel {
         let major_prem = prems_1.first()?;
         let _rest_prems = &prems_1[1..];
 
-        // 2. Unify major premise with some hypothesis of thm2
+        // 2. Unify major premise with hyps or premises
         let env = if match_flag {
             let maxidx = usize::max(thm1.maxidx(), thm2.maxidx());
             let mut found_env = None;
-            for hyp in thm2.hyps.iter() {
-                // Check both the hyp itself and its constituent premises
-                let (prems, _) = Pure::strip_imp_prems(hyp.term());
-                let all_candidates: Vec<&Term> = std::iter::once(hyp.term())
-                    .chain(prems.iter().copied())
-                    .collect();
-                for candidate in &all_candidates {
-                    let env = super::envir::Envir::empty(maxidx);
-                    let pairs: Vec<(Term, Term)> = vec![
-                        ((*major_prem).clone(), (*candidate).clone()),
-                        ((*concl_1).clone(), prem_i.clone()),
-                    ];
-                    if let Some(env) = super::unify::unifiers(
-                        &env, &pairs, &super::unify::UnifyConfig::default()
-                    ) {
-                        found_env = Some(env);
-                        break;
-                    }
+            // Collect all candidates: hyps + premises
+            let hyp_terms: Vec<&Term> = thm2.hyps.iter().map(|h| h.term()).collect();
+            let prem_terms: Vec<&Term> = premises.iter().map(|p| p.prop().term()).collect();
+            let all_candidates: Vec<&Term> = hyp_terms.iter().copied()
+                .chain(prem_terms.iter().copied())
+                .collect();
+            for candidate in &all_candidates {
+                let env = super::envir::Envir::empty(maxidx);
+                let pairs: Vec<(Term, Term)> = vec![
+                    ((*major_prem).clone(), (*candidate).clone()),
+                    ((*concl_1).clone(), prem_i.clone()),
+                ];
+                if let Some(env) = super::unify::unifiers(
+                    &env, &pairs, &super::unify::UnifyConfig::default()
+                ) {
+                    found_env = Some(env);
+                    break;
                 }
-                if found_env.is_some() { break; }
             }
             found_env?
         } else {

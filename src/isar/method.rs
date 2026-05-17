@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use crate::core::term::Term;
 use crate::core::thm::{CTerm, Thm, ThmKernel};
+use crate::core::logic::Pure;
 use crate::core::simplifier::Simplifier;
 use crate::core::tactic;
 use crate::hol::hol_loader::HolTheoremDb;
@@ -59,29 +60,26 @@ impl Method {
     /// Create the `rule` method.
     pub fn rule(thms: Vec<Arc<Thm>>) -> Self { Method::Rule(thms) }
 
-    /// Execute the method on a goal state (a `Thm`), returning new goal states.
-    pub fn execute(&self, state: &Thm) -> Vec<Thm> {
-        self.execute_depth(state, 0)
+    /// Execute the method with given premises (Isabelle-style).
+    pub fn execute(&self, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
+        self.execute_depth(state, 0, premises)
     }
 
-    fn execute_depth(&self, state: &Thm, depth: usize) -> Vec<Thm> {
+    fn execute_depth(&self, state: &Thm, depth: usize, premises: &[Arc<Thm>]) -> Vec<Thm> {
         if depth > 20 {
             return vec![state.clone()];
         }
         match self {
             Method::Assumption => {
-                tactic::assume_tac(0).apply(state)
+                tactic::assume_tac(0).apply(state, premises)
             }
             Method::Rule(thms) => {
-                tactic::resolve_tac(thms, 0).apply(state)
+                tactic::resolve_tac(thms, 0).apply(state, premises)
             }
             Method::Simp(simp) => {
-                // Simplify the conclusion of the first subgoal
                 if let Some(goal) = state.prem(0) {
                     let simplified = simp.rewrite_all(&goal);
                     if &simplified != &goal {
-                        // Try to rewrite: use reflexive on the goal, then rewrite
-                        // For now, just return the state unchanged
                         return vec![state.clone()];
                     }
                 }
@@ -89,146 +87,131 @@ impl Method {
             }
             Method::Skip => vec![],
             Method::Fail => vec![],
-            Method::Auto => Self::auto_exec(state, depth),
+            Method::Auto => Self::auto_exec(state, depth, premises),
             _ => vec![state.clone()],
         }
     }
 
-    fn auto_exec(state: &Thm, depth: usize) -> Vec<Thm> {
-        if depth > 30 {
-            return vec![state.clone()];
-        }
-        if state.nprems() == 0 {
+    fn auto_exec(state: &Thm, depth: usize, premises: &[Arc<Thm>]) -> Vec<Thm> {
+        if depth > 30 || state.nprems() == 0 {
             return vec![state.clone()];
         }
 
         // 1. Safe: assumption on first subgoal
-        let assume_results = tactic::assume_tac(0).apply(state);
+        let assume_results = tactic::assume_tac(0).apply(state, premises);
         for r in &assume_results {
-            if r.nprems() == 0 {
-                return assume_results;
-            }
+            if r.nprems() == 0 { return assume_results; }
         }
 
-        // 2. Safe: simp on first subgoal (uses [simp] theorems)
+        // 2. Safe: simp on first subgoal
         let db = HolTheoremDb::get();
-        let simp_results = tactic::simp_tac(&db.simps, 0).apply(state);
+        let simp_results = tactic::simp_tac(&db.simps, 0).apply(state, premises);
         for r in &simp_results {
             if r.nprems() != state.nprems() {
-                // simp changed something — recurse
-                let sub = Self::auto_exec(r, depth + 1);
+                let sub = Self::auto_exec(r, depth + 1, premises);
                 for s in &sub {
-                    if s.nprems() == 0 {
-                        return sub;
-                    }
+                    if s.nprems() == 0 { return sub; }
                 }
             }
         }
 
-        // 3. Safe: resolve with intro/elim theorems on first subgoal
-        let resolve_results = tactic::resolve_tac(&db.intros, 0).apply(state);
-        let eresolve_results = tactic::eresolve_tac(&db.elims, 0).apply(state);
+        // 3. Safe: resolve/eresolve with DB theorems
+        let resolve_results = tactic::resolve_tac(&db.intros, 0).apply(state, premises);
+        let eresolve_results = tactic::eresolve_tac(&db.elims, 0).apply(state, premises);
 
         let mut all_solved = Vec::new();
-        for r in &resolve_results {
+        for r in resolve_results.iter().chain(eresolve_results.iter()) {
             if r.nprems() == 0 {
                 all_solved.push(r.clone());
             } else if r.nprems() < state.nprems() + 5 {
-                let sub = Self::auto_exec(r, depth + 1);
+                let sub = Self::auto_exec(r, depth + 1, premises);
                 for s in &sub {
-                    if s.nprems() == 0 {
-                        all_solved.push(s.clone());
-                    }
+                    if s.nprems() == 0 { all_solved.push(s.clone()); }
                 }
             }
         }
-        for r in &eresolve_results {
-            if r.nprems() == 0 {
-                all_solved.push(r.clone());
-            } else if r.nprems() < state.nprems() + 5 {
-                let sub = Self::auto_exec(r, depth + 1);
-                for s in &sub {
-                    if s.nprems() == 0 {
-                        all_solved.push(s.clone());
-                    }
-                }
-            }
-        }
+        if !all_solved.is_empty() { return all_solved; }
 
-        if !all_solved.is_empty() {
-            return all_solved;
-        }
-
-        // 4. Recurse on partial assumption results
+        // 4. Recurse on partial results
         for r in &assume_results {
             if r.nprems() != 0 {
-                let sub = Self::auto_exec(r, depth + 1);
+                let sub = Self::auto_exec(r, depth + 1, premises);
                 for s in &sub {
-                    if s.nprems() == 0 {
-                        all_solved.push(s.clone());
-                    }
+                    if s.nprems() == 0 { all_solved.push(s.clone()); }
                 }
             }
         }
+        if !all_solved.is_empty() { return all_solved; }
 
-        if !all_solved.is_empty() {
-            return all_solved;
-        }
-
-        // 5. Nothing worked — return original state
         vec![state.clone()]
     }
 
-    fn auto_resolve(state: &Thm) -> Option<Vec<Thm>> {
+    fn auto_resolve(state: &Thm, premises: &[Arc<Thm>]) -> Option<Vec<Thm>> {
         let db = HolTheoremDb::get();
-        let outcomes = crate::core::tactic::resolve_tac(&db.all, 0).apply(state);
-        if outcomes.is_empty() {
-            None
-        } else {
-            Some(outcomes)
-        }
+        let outcomes = crate::core::tactic::resolve_tac(&db.all, 0).apply(state, premises);
+        if outcomes.is_empty() { None } else { Some(outcomes) }
     }
 }
 
 /// Try to prove a goal using the auto method.
-/// Returns the first solution found, or `None` if auto fails.
-pub fn prove_auto(goal: &Thm) -> Option<Thm> {
-    let results = Method::Auto.execute(goal);
+pub fn prove_auto(goal: &Thm, premises: &[Arc<Thm>]) -> Option<Thm> {
+    let results = Method::Auto.execute(goal, premises);
     results.into_iter().find(|r| r.nprems() == 0)
 }
 
-/// Execute a proof script on a goal, returning the proven theorem.
-///
-/// Supported scripts:
-/// - `by auto` → uses Method::Auto
-/// - `by simp` → uses Method::Simp with [simp] theorems
-/// - `by (rule name)` → looks up `name` in HolTheoremDb and uses Method::Rule
-/// - `by assumption` or `by .` → uses Method::Assumption
-/// - `by m1 m2` → chained: apply m1, then m2 to all remaining subgoals
-pub fn exec_proof(state: &Thm, proof_script: &str) -> Option<Thm> {
+/// Execute a proof script on a goal with premises.
+pub fn exec_proof(state: &Thm, proof_script: &str, premises: &[Arc<Thm>]) -> Option<Thm> {
     let script = proof_script.trim();
-
-    // Handle "by " prefix
     let rest = script.strip_prefix("by ")?;
-
-    // Split into chained methods: "(erule subst) (rule refl)"
     let methods = split_chained_methods(rest);
-
     let mut current_states = vec![state.clone()];
-
     for method_str in &methods {
         let mut next_states = Vec::new();
         for s in &current_states {
-            let results = exec_single_method(s, method_str);
+            let results = exec_single_method(s, method_str, premises);
             next_states.extend(results);
         }
-        if next_states.is_empty() {
-            return None;
-        }
+        if next_states.is_empty() { return None; }
         current_states = next_states;
     }
-
     current_states.into_iter().find(|r| r.nprems() == 0)
+}
+
+/// Execute a single method with premises.
+fn exec_single_method(state: &Thm, method_str: &str, premises: &[Arc<Thm>]) -> Vec<Thm> {
+    let inner = if method_str.starts_with('(') && method_str.ends_with(')') {
+        method_str[1..method_str.len()-1].trim()
+    } else { method_str };
+
+    if inner == "auto" { return Method::Auto.execute(state, premises); }
+    if inner == "simp" || inner.starts_with("simp ") {
+        let db = HolTheoremDb::get();
+        return crate::core::tactic::simp_tac(&db.simps, 0).apply(state, premises);
+    }
+    if inner == "assumption" || inner == "." {
+        return Method::Assumption.execute(state, premises);
+    }
+    if inner == "this" { return Method::Skip.execute(state, premises); }
+
+    if let Some(name) = inner.strip_prefix("rule ") {
+        let db = HolTheoremDb::get();
+        if let Some(thm) = db.by_name.get(name.trim()) {
+            return crate::core::tactic::resolve_tac(&[Arc::clone(thm)], 0).apply(state, premises);
+        }
+    }
+    if let Some(name) = inner.strip_prefix("erule ") {
+        let db = HolTheoremDb::get();
+        if let Some(thm) = db.by_name.get(name.trim()) {
+            return crate::core::tactic::eresolve_tac(&[Arc::clone(thm)], 0).apply(state, premises);
+        }
+    }
+    if let Some(name) = inner.strip_prefix("drule ") {
+        let db = HolTheoremDb::get();
+        if let Some(thm) = db.by_name.get(name.trim()) {
+            return crate::core::tactic::dresolve_tac(&[Arc::clone(thm)], 0).apply(state, premises);
+        }
+    }
+    vec![]
 }
 
 /// Split "(erule subst) (rule refl)" into ["(erule subst)", "(rule refl)"]
@@ -242,75 +225,26 @@ fn split_chained_methods(rest: &str) -> Vec<String> {
         else if ch == ')' { depth -= 1; }
         else if depth == 0 && ch == ' ' && i > start {
             let m = rest[start..i].trim().to_string();
-            if !m.is_empty() {
-                methods.push(m);
-            }
+            if !m.is_empty() { methods.push(m); }
             start = i + 1;
         }
     }
     let last = rest[start..].trim().to_string();
-    if !last.is_empty() {
-        methods.push(last);
-    }
+    if !last.is_empty() { methods.push(last); }
     methods
 }
 
-/// Execute a single method string like "(erule subst)" or "auto"
-fn exec_single_method(state: &Thm, method_str: &str) -> Vec<Thm> {
-    let method_str = method_str.trim();
-
-    // Remove outer parentheses if present: "(erule subst)" → "erule subst"
-    let inner = if method_str.starts_with('(') && method_str.ends_with(')') {
-        method_str[1..method_str.len()-1].trim()
-    } else {
-        method_str
-    };
-
-    if inner == "auto" {
-        return Method::Auto.execute(state);
-    }
-    if inner == "simp" || inner.starts_with("simp ") {
-        let db = HolTheoremDb::get();
-        return crate::core::tactic::simp_tac(&db.simps, 0).apply(state);
-    }
-    if inner == "assumption" || inner == "." {
-        return Method::Assumption.execute(state);
-    }
-    if inner == "this" {
-        return Method::Skip.execute(state);
-    }
-
-    // (rule name)
-    if let Some(name) = inner.strip_prefix("rule ") {
-        let db = HolTheoremDb::get();
-        if let Some(thm) = db.by_name.get(name.trim()) {
-            return crate::core::tactic::resolve_tac(&[Arc::clone(thm)], 0).apply(state);
-        }
-    }
-    // (erule name)
-    if let Some(name) = inner.strip_prefix("erule ") {
-        let db = HolTheoremDb::get();
-        if let Some(thm) = db.by_name.get(name.trim()) {
-            return crate::core::tactic::eresolve_tac(&[Arc::clone(thm)], 0).apply(state);
-        }
-    }
-    // (drule name)
-    if let Some(name) = inner.strip_prefix("drule ") {
-        let db = HolTheoremDb::get();
-        if let Some(thm) = db.by_name.get(name.trim()) {
-            return crate::core::tactic::dresolve_tac(&[Arc::clone(thm)], 0).apply(state);
-        }
-    }
-
-    vec![]
-}
-
-/// Verify a ParsedLemma by executing its proof script.
-/// Returns the proven theorem (may have hypotheses from premises).
+/// Verify a ParsedLemma: extract premises, execute proof, check result.
 pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
     let proof = lem.proof_script.as_ref()?;
+    // Create premises as independent assume(premise) Thms
+    let (prems, _concl) = Pure::strip_imp_prems(lem.theorem.prop().term());
+    let premises: Vec<Arc<Thm>> = prems.iter()
+        .map(|p| Arc::new(ThmKernel::assume(CTerm::certify((*p).clone()))))
+        .collect();
+    // Create goal state: assume(lemma) → hyps={lemma}, nprems=n
     let goal = ThmKernel::assume(CTerm::certify(lem.theorem.prop().term().clone()));
-    exec_proof(&goal, proof)
+    exec_proof(&goal, proof, &premises)
 }
 
 // =========================================================================
@@ -318,10 +252,10 @@ pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
 // =========================================================================
 
 /// Combine two methods in sequence: apply m1, then m2 to all results.
-pub fn method_then(m1: &Method, m2: &Method, state: &Thm) -> Vec<Thm> {
-    m1.execute(state)
+pub fn method_then(m1: &Method, m2: &Method, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
+    m1.execute(state, premises)
         .into_iter()
-        .flat_map(|s| m2.execute(&s))
+        .flat_map(|s| m2.execute(&s, premises))
         .collect()
 }
 
@@ -330,9 +264,9 @@ pub fn method_then(m1: &Method, m2: &Method, state: &Thm) -> Vec<Thm> {
 // =========================================================================
 
 /// Try m1; if it yields nothing, try m2.
-pub fn method_orelse(m1: &Method, m2: &Method, state: &Thm) -> Vec<Thm> {
-    let r = m1.execute(state);
-    if r.is_empty() { m2.execute(state) } else { r }
+pub fn method_orelse(m1: &Method, m2: &Method, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
+    let r = m1.execute(state, premises);
+    if r.is_empty() { m2.execute(state, premises) } else { r }
 }
 
 // =========================================================================

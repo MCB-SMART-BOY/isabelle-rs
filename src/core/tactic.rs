@@ -65,92 +65,71 @@ pub enum Tactic {
 }
 
 impl Tactic {
-    /// Apply this tactic to a goal state (a `Thm`).
-    /// Returns zero or more new goal states.
-    pub fn apply(&self, state: &Thm) -> Vec<Thm> {
+    /// Apply this tactic with given premises.
+    pub fn apply(&self, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
         match self {
             Tactic::All => vec![state.clone()],
             Tactic::No => vec![],
-            Tactic::Assume(i) => Self::apply_assume(*i, state),
+            Tactic::Assume(i) => Self::apply_assume(*i, state, premises),
             Tactic::Resolve(thms, i) => Self::apply_resolve(thms, *i, state),
             Tactic::Then(t1, t2) => {
-                t1.apply(state)
+                t1.apply(state, premises)
                     .into_iter()
-                    .flat_map(|s| t2.apply(&s))
+                    .flat_map(|s| t2.apply(&s, premises))
                     .collect()
             }
             Tactic::OrElse(t1, t2) => {
-                let r = t1.apply(state);
-                if r.is_empty() { t2.apply(state) } else { r }
+                let r = t1.apply(state, premises);
+                if r.is_empty() { t2.apply(state, premises) } else { r }
             }
-            Tactic::Repeat(t) => Self::apply_repeat(t, state),
+            Tactic::Repeat(t) => Self::apply_repeat(t, state, premises),
             Tactic::Every(ts) => {
                 ts.iter()
-                    .fold(Tactic::All, |a, t| {
-                        Tactic::Then(Box::new(a), Box::new(t.clone()))
-                    })
-                    .apply(state)
+                    .fold(Tactic::All, |a, t| Tactic::Then(Box::new(a), Box::new(t.clone())))
+                    .apply(state, premises)
             }
             Tactic::First(ts) => {
                 for t in ts {
-                    let r = t.apply(state);
-                    if !r.is_empty() {
-                        return r;
-                    }
+                    let r = t.apply(state, premises);
+                    if !r.is_empty() { return r; }
                 }
                 vec![]
             }
             Tactic::Trace(name, t) => {
                 tracing::debug!(tactic = %name, nprems = state.nprems(), "apply");
-                let r = t.apply(state);
+                let r = t.apply(state, premises);
                 tracing::debug!(tactic = %name, outcomes = r.len(), "done");
                 r
             }
             Tactic::DepthLimit(max, t) => {
-                if state.nprems() > *max {
-                    return vec![];
-                }
-                t.apply(state)
+                if state.nprems() > *max { return vec![]; }
+                t.apply(state, premises)
             }
             Tactic::Simp(simp, i) => Self::apply_simp(simp, *i, state),
-            Tactic::Eresolve(thms, i) => Self::apply_eresolve(thms, *i, state),
+            Tactic::Eresolve(thms, i) => Self::apply_eresolve(thms, *i, state, premises),
         }
     }
 
-    /// Solve subgoal `i` by assumption.
-    /// Checks if the subgoal matches a hypothesis or a premise of any hypothesis.
-    fn apply_assume(i: usize, state: &Thm) -> Vec<Thm> {
+    /// Solve subgoal `i` by checking against premises.
+    fn apply_assume(i: usize, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
         let prem_i = match state.prem(i) {
             Some(p) => p,
             None => return vec![],
         };
-        // Check: is prem_i directly in hyps?
-        let ct = CTerm::certify(prem_i.clone());
-        if state.hyps().contains(&ct) {
-            let assume_thm = ThmKernel::assume(CTerm::certify(prem_i));
-            return ThmKernel::bicompose(false, &assume_thm, state, i)
-                .map(|t| vec![t])
-                .unwrap_or_default();
-        }
-        // Check: is prem_i a constituent premise of any hyp?
-        for hyp in state.hyps().iter() {
-            let (prems, _) = Pure::strip_imp_prems(hyp.term());
+        // Check premises (Isabelle-style: independent Thm list)
+        let matches = premises.iter().any(|p| {
             let ct = CTerm::certify(prem_i.clone());
-            let matches = prems.iter().any(|p| {
-                // Compare via Hyps::alpha_eq indirectly through contains
-                let p_ct = CTerm::certify((*p).clone());
-                let mut tmp = Hyps::empty();
-                tmp.insert(ct.clone());
-                tmp.contains(&p_ct)
-            });
-            if matches {
-                let assume_thm = ThmKernel::assume(CTerm::certify(prem_i));
-                return ThmKernel::bicompose(false, &assume_thm, state, i)
-                    .map(|t| vec![t])
-                    .unwrap_or_default();
-            }
+            let mut tmp = Hyps::empty();
+            tmp.insert(ct);
+            tmp.contains(&CTerm::certify(p.prop().term().clone()))
+        });
+        if !matches {
+            return vec![];
         }
-        vec![]
+        let assume_thm = ThmKernel::assume(CTerm::certify(prem_i));
+        ThmKernel::bicompose(false, &assume_thm, state, i)
+            .map(|t| vec![t])
+            .unwrap_or_default()
     }
 
     /// Resolve subgoal `i` using one of the given theorems.
@@ -164,11 +143,11 @@ impl Tactic {
         results
     }
 
-    /// Elim-resolution: like resolve, but also consumes a matching hypothesis.
-    fn apply_eresolve(thms: &[Arc<Thm>], i: usize, state: &Thm) -> Vec<Thm> {
+    /// Elim-resolution: like resolve, also consumes matching premise.
+    fn apply_eresolve(thms: &[Arc<Thm>], i: usize, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
         let mut results = Vec::new();
         for thm in thms {
-            if let Some(new_state) = ThmKernel::bicompose_eresolve(true, thm, state, i) {
+            if let Some(new_state) = ThmKernel::bicompose_eresolve(true, thm, state, i, premises) {
                 results.push(new_state);
             }
         }
@@ -194,14 +173,14 @@ impl Tactic {
     }
 
     /// Repeat a tactic until no progress is made.
-    fn apply_repeat(t: &Tactic, state: &Thm) -> Vec<Thm> {
+    fn apply_repeat(t: &Tactic, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
         let mut current = vec![state.clone()];
         let mut changed = true;
         while changed {
             changed = false;
             let mut next = Vec::new();
             for s in &current {
-                let r = t.apply(s);
+                let r = t.apply(s, premises);
                 if r.is_empty() {
                     next.push(s.clone());
                 } else {
