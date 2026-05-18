@@ -5,3 +5,4 @@
 //! HOL is the most-used object logic in Isabelle.
 //! It defines `bool`, connectives, quantifiers, and equality.
 pub mod hol_loader;
+pub mod theory_graph;

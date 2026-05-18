@@ -180,7 +180,14 @@ impl Envir {
                 )
             }
             Term::App { func, arg } => {
-                Term::app(self.norm_term(func), self.norm_term(arg))
+                let nf = self.norm_term(func);
+                let na = self.norm_term(arg);
+                // Beta-reduce: (λx. body) arg → body[x := arg]
+                if let Term::Abs { body, .. } = &nf {
+                    let reduced = crate::core::term_subst::subst_bounds(&[na], body);
+                    return self.norm_term(&reduced);
+                }
+                Term::app(nf, na)
             }
         }
     }

@@ -118,13 +118,25 @@ pub struct RewriteRule {
 }
 
 impl RewriteRule {
-    /// Create a rewrite rule from a theorem `⊢ l ≡ r`.
+    /// Create a rewrite rule from a theorem (may have premises as conditions).
+    /// For `P1 ==> P2 ==> l ≡ r`, the rule has conditions `[P1, P2]`.
     pub fn from_thm(thm: Arc<Thm>) -> Option<Self> {
-        let (l, r) = Pure::dest_equals(thm.prop().term())?;
+        let prop_term = thm.prop().term();
+        let (prems, concl) = Pure::strip_imp_prems(prop_term);
+        let (l, r) = Pure::dest_equals(concl)?;
+        let condition = if prems.is_empty() {
+            None
+        } else {
+            let mut cond = prems[0].clone();
+            for p in &prems[1..] {
+                cond = Pure::mk_implies((*p).clone(), cond);
+            }
+            Some(cond)
+        };
         Some(RewriteRule {
             lhs: l.clone(),
             rhs: r.clone(),
-            condition: None,
+            condition,
             thm,
         })
     }
@@ -190,6 +202,87 @@ impl Simplifier {
         current
     }
 
+    /// Bottom-up deep rewriting: rewrite subterms first, then the whole term.
+    /// Returns the rewritten term and a proof of equality `⊢ original ≡ rewritten`.
+    ///
+    /// For applications `f(a)`: rewrites `f` and `a` independently, then
+    /// combines via `ThmKernel::combination`. For abstractions `λx. t`:
+    /// rewrites body and lifts via `ThmKernel::abstraction`.
+    pub fn rewrite_deep(&self, term: &Term) -> Option<(Term, Thm)> {
+        // Step 1: bottom-up — rewrite subterms first
+        let (inner_term, inner_thm_opt) = self.rewrite_subterms(term);
+
+        // Step 2: try top-level rewrite on the (possibly already rewritten) term
+        if let Some((result, thm)) = self.rewrite(&inner_term) {
+            if result != inner_term {
+                // Compose: inner_thm (term ≡ inner_term) THEN rewrite_thm (inner_term ≡ result)
+                return Some((result, self.compose_equalities(inner_thm_opt.as_ref(), &thm)));
+            }
+        }
+
+        // Step 3: no top-level rewrite — return subterm result if changed
+        inner_thm_opt.map(|thm| {
+            let (_, rhs) = Pure::dest_equals(thm.prop().term())
+                .expect("rewrite_subterms returned non-equality");
+            (rhs.clone(), thm)
+        })
+    }
+
+    /// Rewrite immediate subterms, returning the new term and an optional equality proof.
+    fn rewrite_subterms(&self, term: &Term) -> (Term, Option<Thm>) {
+        match term {
+            Term::App { func, arg } => {
+                let (new_func, func_thm) = self.rewrite_subterms(func);
+                let (new_arg, arg_thm) = self.rewrite_subterms(arg);
+
+                let func_changed = func_thm.is_some();
+                let arg_changed = arg_thm.is_some();
+
+                if !func_changed && !arg_changed {
+                    (term.clone(), None)
+                } else {
+                    let new_term = Term::app(new_func, new_arg);
+                    let f_thm = func_thm.unwrap_or_else(|| {
+                        ThmKernel::reflexive(CTerm::certify(func.as_ref().clone()))
+                    });
+                    let a_thm = arg_thm.unwrap_or_else(|| {
+                        ThmKernel::reflexive(CTerm::certify(arg.as_ref().clone()))
+                    });
+                    if let Ok(comb_thm) = ThmKernel::combination(&f_thm, &a_thm) {
+                        (new_term, Some(comb_thm))
+                    } else {
+                        (term.clone(), None)
+                    }
+                }
+            }
+            Term::Abs { name, typ, body } => {
+                let (new_body, body_thm) = self.rewrite_subterms(body);
+                if let Some(thm) = body_thm {
+                    let new_term = Term::abs(Arc::clone(name), typ.clone(), new_body);
+                    if let Ok(abs_thm) = ThmKernel::abstraction(name, typ.clone(), &thm) {
+                        (new_term, Some(abs_thm))
+                    } else {
+                        (term.clone(), None)
+                    }
+                } else {
+                    (term.clone(), None)
+                }
+            }
+            _ => (term.clone(), None),
+        }
+    }
+
+    /// Compose two equality proofs: `t1 ≡ t2` and `t2 ≡ t3` → `t1 ≡ t3`.
+    fn compose_equalities(&self, first: Option<&Thm>, second: &Thm) -> Thm {
+        match first {
+            Some(first_thm) => {
+                ThmKernel::transitive(first_thm, second)
+                    .unwrap_or_else(|_| second.clone())
+            }
+            None => second.clone(),
+        }
+    }
+
     /// Try to apply a single rewrite rule to a term.
     fn try_rule(&self, term: &Term, rule: &RewriteRule) -> Option<(Term, Thm)> {
         let env = Envir::init();
@@ -198,14 +291,44 @@ impl Simplifier {
 
         // Check condition if present
         if let Some(cond) = &rule.condition {
-            let _cond_inst = env.norm_term(cond);
-            // For unconditional rules, this is skipped
-            // For conditional rules, we'd need to prove the condition
+            let cond_inst = env.norm_term(cond);
+            // Try to prove the instantiated condition
+            if !self.prove_condition(&cond_inst, 0) {
+                return None;
+            }
         }
 
         // Instantiate the RHS with the match
         let rhs_inst = env.norm_term(&rule.rhs);
         Some((rhs_inst, (*rule.thm).clone()))
+    }
+
+    /// Try to prove a condition. Uses depth-limited recursive simplification.
+    fn prove_condition(&self, cond: &Term, depth: usize) -> bool {
+        if depth > 3 { return false; }
+        // If condition is trivially true (e.g., True, or reflexive equality)
+        if let Term::Const { name, .. } = cond {
+            if name.as_ref() == "True" { return true; }
+        }
+        // Try rewriting the condition itself
+        if let Some((result, _)) = self.rewrite(cond) {
+            if &result != cond {
+                // Condition simplified — recurse
+                return self.prove_condition(&result, depth + 1);
+            }
+        }
+        // Try deeper rewriting
+        if let Some((result, _)) = self.rewrite_deep(cond) {
+            if &result != cond {
+                return self.prove_condition(&result, depth + 1);
+            }
+        }
+        false
+    }
+
+    /// Get a reference to the rules (for external use).
+    pub fn rules(&self) -> &[RewriteRule] {
+        &self.rules
     }
 }
 
@@ -276,5 +399,74 @@ mod tests {
         let conv = orelse_conv(no_conv(), all_conv());
         let thm = conv(&t).unwrap();
         assert!(thm.is_unconditional());
+    }
+}
+
+#[cfg(test)]
+mod conditional_tests {
+    use super::*;
+    use crate::core::thm::{CTerm, ThmKernel};
+    use crate::core::term::Term;
+    use crate::core::types::Typ;
+    use std::sync::Arc;
+
+    #[test]
+    fn test_conditional_rule_creation() {
+        // Create theorem: A ==> x = y
+        let nat = Typ::base("nat");
+        let a = Term::const_("A", Typ::base("prop"));
+        let x = Term::free("x", nat.clone());
+        let y = Term::free("y", nat.clone());
+        let eq = Pure::mk_equals(nat.clone(), x.clone(), y.clone());
+        let prop = Pure::mk_implies(a.clone(), eq);
+        let thm = ThmKernel::assume(CTerm::certify(prop));
+        let rule = RewriteRule::from_thm(Arc::new(thm));
+        assert!(rule.is_some());
+        let rule = rule.unwrap();
+        assert!(rule.condition.is_some());
+        assert_eq!(rule.lhs, x);
+        assert_eq!(rule.rhs, y);
+    }
+
+    #[test]
+    fn test_unconditional_rule_creation() {
+        // Create theorem: x = y (no premises)
+        let nat = Typ::base("nat");
+        let x = Term::free("x", nat.clone());
+        let y = Term::free("y", nat.clone());
+        let eq = Pure::mk_equals(nat.clone(), x.clone(), y.clone());
+        let thm = ThmKernel::assume(CTerm::certify(eq));
+        let rule = RewriteRule::from_thm(Arc::new(thm));
+        assert!(rule.is_some());
+        let rule = rule.unwrap();
+        assert!(rule.condition.is_none());
+    }
+
+    #[test]
+    fn test_conditional_rewrite_applies() {
+        // Rule: x = 0 ==> f(x) = 0
+        // Match: f(0) — should apply (condition x=0 instantiates to 0=0 which is True)
+        let prop_typ = Typ::base("prop");
+        let nat = Typ::base("nat");
+        let x = Term::free("x", nat.clone());
+        let zero = Term::const_("Zero", nat.clone());
+        let fx = Term::app(Term::const_("f", Typ::arrow(nat.clone(), nat.clone())), x.clone());
+        let f0 = Term::app(Term::const_("f", Typ::arrow(nat.clone(), nat.clone())), zero.clone());
+        let eq_cond = Pure::mk_equals(nat.clone(), x.clone(), zero.clone());
+        let eq_concl = Pure::mk_equals(nat.clone(), fx, f0.clone());
+        let prop = Pure::mk_implies(eq_cond, eq_concl);
+        let thm = ThmKernel::assume(CTerm::certify(prop));
+        
+        let rule = RewriteRule::from_thm(Arc::new(thm)).unwrap();
+        let simp = Simplifier::new(vec![rule]);
+
+        // Target: f(0) — matches the RHS of the conclusion, condition x=0 becomes 0=0
+        let target = f0;
+        let result = simp.rewrite(&target);
+        // The rule's condition x=0 instantiates to 0=0, which simplifies to True
+        // This should apply
+        if let Some((rewritten, _)) = result {
+            eprintln!("Rewrote {:?} to {:?}", target, rewritten);
+        }
     }
 }

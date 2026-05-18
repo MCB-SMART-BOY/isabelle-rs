@@ -54,6 +54,15 @@ pub fn parse_term(input: &str) -> Option<Term> {
 }
 
 fn parse_trm(s: &mut P) -> Option<Term> {
+    parse_trm_flag(s, false)
+}
+
+/// Parse a term that stops at implication (=, &, | bind tighter than ==>) 
+fn parse_trm_no_imp(s: &mut P) -> Option<Term> {
+    parse_trm_flag(s, true)
+}
+
+fn parse_trm_flag(s: &mut P, stop_at_imp: bool) -> Option<Term> {
     // Quantifiers: ALL x. P / EX x. P / !!x. P (Pure.all)
     if s.is_kw("ALL") || s.is_sym("!") { s.adv(); return parse_quant(s, "HOL.All"); }
     if s.is_kw("EX") || s.is_sym("?") { s.adv(); return parse_quant(s, "HOL.Ex"); }
@@ -138,6 +147,10 @@ fn parse_trm(s: &mut P) -> Option<Term> {
     }
     let mut head = parse_atom(s)?;
     loop {
+        // Stop at implication if requested (for RHS of =, &, |)
+        if stop_at_imp && (s.is_sym("==>") || s.is_sym("-->") || s.is_sym("\u{27f6}")) {
+            break;
+        }
         // Function application: f (x)
         if s.is_sym("(") {
             s.adv();
@@ -344,11 +357,11 @@ fn parse_trm(s: &mut P) -> Option<Term> {
         // Equality (with graceful degradation)
         if s.is_sym("=") {
             s.adv();
-            if let Some(rhs) = parse_trm(s) {
+            // Parse RHS without implication
+            if let Some(rhs) = parse_trm_no_imp(s) {
                 head = make_binary("HOL.eq", head.clone(), rhs);
             }
-            // If RHS fails, just return LHS (partial parse, but lemma still loads)
-            return Some(head);
+            continue;
         }
         // Append
         if s.is_sym("@") {

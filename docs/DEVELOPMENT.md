@@ -8,125 +8,176 @@
 ## 构建与测试
 
 ```bash
-# 构建库和二进制
+# 构建
 cargo build
 
-# 运行全部测试（170 个）
+# 运行测试 (210+ 个)
 cargo test
 
-# 仅运行文档测试
-cargo test --doc
-
 # 运行特定测试
-cargo test --lib -- test_load_real_hol --nocapture
+cargo test --lib test_induct_rule_application -- --nocapture
+
+# 查看基准验证率
+cargo test test_verify_all_core_files -- --nocapture
+
+# 查看单个文件验证率
+cargo test test_verify_list_thy_sample -- --nocapture
+
+# 查看数据类解析
+cargo test datatype_tests -- --nocapture
 ```
 
 ## 项目结构
 
 ```
 src/
-├── core/           # LCF 可信内核（最小化，不可侵犯）
-│   ├── thm.rs      # Thm 抽象类型 + ThmKernel（11 条原语）
-│   ├── drule.rs    # 派生规则（compose, implies_intr_list 等）
-│   ├── bires.rs    # Bi-resolution（桩代码，需重写为 bicompose）
-│   ├── tactic.rs   # Tactic 枚举（需重写：Goal → Thm）
-│   └── ...
-├── hol/            # HOL 理论加载器 + 定理数据库
-├── isar/           # Isabelle/Isar 解析（tokenizer, term parser, proof, method）
-├── kernel/         # 派生规则 + 数据管理
-├── document/       # Snapshot-based 文档模型
-├── fleche/         # Flèche 风格增量检查引擎
-├── server/         # LSP 3.17 服务器
-├── session/        # 会话管理 (Actor 模型)
-├── syntax/         # Rowan CST 解析器
-├── theory/         # SQLite 缓存 + CLI 构建工具
-├── wasm/           # WASM 运行时 + 插件 SDK
-├── lib.rs          # Crate 入口
-└── main.rs         # 二进制入口
+├── core/              # LCF 可信内核
+│   ├── thm.rs         # Thm + ThmKernel (15 操作)
+│   ├── unify.rs       # 高阶统一 + HO 模式匹配
+│   ├── simplifier.rs  # 重写引擎 (rewrite_deep, 条件验证)
+│   ├── tactic.rs      # Tactic AST + 解释器
+│   ├── envir.rs       # 变量环境 (β-归约)
+│   ├── logic.rs       # Pure 逻辑常量
+│   ├── term.rs        # Term (lambda calculus)
+│   ├── types.rs       # Sort, Typ
+│   ├── theory.rs      # Theory, ProofContext
+│   └── ... (26 files)
+├── isar/              # Isar 证明引擎
+│   ├── method.rs      # Method 引擎 (15 方法 + subst/fact/arith)
+│   ├── term_parser.rs # Term 解析器 (优先级修复)
+│   ├── token.rs       # Isabelle tokenizer
+│   ├── proof_state.rs # ProofState + Isar 解释器
+│   └── ... (9 files)
+├── hol/               # HOL 理论加载
+│   ├── hol_loader.rs  # .thy 解析 + datatype/primrec/class 合成
+│   ├── theory_graph.rs # TheoryGraph DAG + 进度加载
+│   └── ... (6 files)
+├── kernel/            # 派生规则 + 数据管理
+├── server/            # LSP 服务器
+├── lsp/               # LSP 路由 + handlers
+├── session/           # 会话管理 (Actor)
+├── syntax/            # Rowan CST 解析器
+├── theory/            # SQLite 缓存
+├── wasm/              # WASM 运行时
+├── lib.rs             # Crate 入口
+└── main.rs            # 二进制入口 (demo + LSP)
 ```
 
-## 核心架构理解
+## 核心架构
 
-### 证明引擎的根因断层
+### 内核 → Tactic → Method 数据流
 
-当前 `core/tactic.rs` 的 `Tactic::apply` 返回 `Vec<Vec<Goal>>`，不调用 LCF 内核原语，
-无法产生 `Thm`。这是因为缺少两个关键内核操作：
+```
+.thy 源文件
+    ↓ parse_lemmas()
+    │   ├─ parse_datatypes()     → induct/inject/distinct/exhaust/case
+    │   ├─ parse_primrecs()      → simp 规则
+    │   ├─ parse_classes()       → 类型类常量
+    │   └─ parse_lemmas_cmd()    → 别名解析
+ParsedLemma { name, theorem, proof_script }
+    ↓ verify_lemma()
+    │   ├─ [Isar] interpret_proof_script()
+    │   │     ├─ fix / assume → 上下文扩展
+    │   │     ├─ have / show  → exec_proof + 事实累积
+    │   │     ├─ case / next  → 子目标导航
+    │   │     └─ then/hence/thus → 链式推理
+    │   └─ [Simple] exec_proof() → exec_single_method()
+    ↓
+Method::execute(state, premises): Vec<Thm>
+    ├─ auto_exec (assume→simp→resolve→eresolve→dresolve)
+    ├─ blast_exec (+symmetry +order_antisym +dresolve +term_pruning)
+    ├─ exec_induct (auto→blast→rule lookup→HO match→solve_subgoals)
+    ├─ exec_simp (rewrite_deep + add:/only:/del:)
+    ├─ exec_subst (substitution in goal/assumptions)
+    └─ exec_arith (basic arithmetic)
+    ↓
+ThmKernel (15 operations)
+    ├─ 12 primitives
+    └─ 3 kernel derived (bicompose, bicompose_eresolve, subst_premise)
+```
 
-- **`ThmKernel::instantiate(env, thm) -> Thm`**: 将统一（unification）产生的 `Envir` 应用到定理上，产生实例化后的新定理。当前 `term_subst::instantiate` 只能操作 `Term`，不能产生新 `Thm`。
-- **`ThmKernel::bicompose(thm1, thm2, i) -> Option<Thm>`**: 将定理 `thm1` 注入目标状态 `thm2` 的第 i 个子目标位置。这是所有 tactic（assume_tac, resolve_tac, eresolve_tac）的唯一核心操作。
+### 运算符优先級
 
-没有这两个操作，任何 tactic 都无法通过内核产生证明。
+`parse_trm_no_imp` 用于 `=`/`&`/`|` 的 RHS，停止在 `==>` 前。
 
-### 正确的构建顺序
+```
+s = t ==> t = s  →  Pure.imp(HOL.eq(s, t), HOL.eq(t, s))  ✅
+```
 
-1. ~~`thm.rs`: 添加 `instantiate`, `bicompose`, `nprems()`, `prem(i)`, `concl()`~~ ✅ 已完成
-2. `tactic.rs`: 重写为 `Tactic = Thm -> Vec<Thm>`（对齐 Isabelle 的 `thm -> thm Seq.seq`）
-3. `method.rs`: 重写为 tactic 的命名包装 + HolTheoremDb 查询
-4. `proof.rs`: 更新 Isar 状态机，`Proving` 持有 `Thm`
+### 高阶模式匹配
 
-## 环境要求
-
-## 构建与测试
-
-## 添加新的 Isabelle 符号支持
-
-### 模式 1：ASCII 操作符（简单）
-
-1. `token.rs`：添加字符到 symbol match
-2. `term_parser.rs`：添加二元/前缀操作符 handler
-3. 测试
-
-### 模式 2：`\<...>` 原生符号（推荐）
-
-tokenizer 已原生支持，无需 `convert_syntax`。只需：
-
-1. `term_parser.rs`：添加 `s.is_sym("\\<name>")` handler
-2. 测试
-
-### 模式 3：Cartouche 内容（`\<open>...\<close>`）
-
-`convert_syntax` 中已处理：`\<open>` → `"`, `\<close>` → `"`。
-
-## 引理加载调试
+`collect_bound_args` 接受 `Free`/`Var` 作为模式头。
+`Envir::norm_term` 在 App 处执行 β-归约。
 
 ```rust
-// 查看哪些引理未被加载
-cargo test --lib -- test_per_file_stats --nocapture
-
-// 查看特定引理的解析状态
-cargo test --lib -- test_load_real_hol --nocapture
+// Pattern: P(xs) where P is Free/Var
+// Goal: length xs = 0
+// Result: P → λxs. length xs = 0
 ```
 
-## 常用模式
+### 条件重写
 
-### 优雅降级操作符
+`RewriteRule::from_thm` 从定理前提中提取条件。`try_rule` 用递归 simplifier 验证条件 (深度3)。
 
-所有二元操作符应在 RHS 解析失败时返回部分结果：
+### Isar 引擎
+
+`ProofState::Proving` 包含子目标栈 (`subgoals`, `current_subgoal`) 和链式事实 (`chained_fact`)。`interpret_proof_script` 解析 Isar 命令并驱动状态机。
+
+### 迭代限制
+
+`thread_local!` 计数器 (`AUTO_DEPTH`/`AUTO_LIMIT`) 防止 `auto_exec`/`blast_exec` 无限递归。
+
+### Term 构造 (必须通过 ThmKernel)
 
 ```rust
-if s.is_sym("=") {
-    s.adv();
-    if let Some(rhs) = parse_trm(s) { // 不传播 None
-        head = make_binary(..., head.clone(), rhs);
-    }
-    return Some(head); // 即使 RHS 失败也返回
-}
+use crate::core::thm::{CTerm, Thm, ThmKernel};
+
+let a = CTerm::certify(Term::const_("A", Typ::base("prop")));
+let thm_a = ThmKernel::assume(a.clone());
+
+let t = CTerm::certify(Term::free("t", Typ::dummy()));
+let thm_refl = ThmKernel::reflexive(t);
+
+let result = ThmKernel::implies_elim(&thm_ab, &thm_a).unwrap();
 ```
 
-### 向前看（peek）检测
+## 常用调试命令
 
-使用 `s.tokens.get(s.pos + 1)` 而非消费 token：
+```bash
+# 查看 DB 中的定理数量
+cargo test --lib test_by_name_index_populated -- --nocapture
 
-```rust
-let next_is_range = s.tokens.get(s.pos + 1).map_or(false, |t| {
-    matches!(&t.kind, TokenKind::Symbol(s) if s.as_ref() == ".")
-});
+# 查看归纳规则应用测试
+cargo test --lib test_induct_rule_application -- --nocapture
+
+# 查看 HO 匹配测试
+cargo test --lib test_ho_pattern_induction -- --nocapture
+
+# 查看验证率基准
+cargo test test_verify_all_core_files -- --nocapture
+
+# 查看 datatype 解析
+cargo test datatype_tests -- --nocapture
+
+# 查看 primrec 解析
+cargo test primrec_tests -- --nocapture
+
+# 查看 class 解析
+cargo test class_tests -- --nocapture
+
+# 查看条件重写测试
+cargo test conditional_tests -- --nocapture
+
+# 查看 Isar 引擎测试
+cargo test isar_tests -- --nocapture
 ```
 
-### Term 构造
+## 项目统计
 
-- `Term::free(name, typ)` — 自由变量
-- `Term::const_(name, typ)` — 常量
-- `Term::abs(name, typ, body)` — lambda 抽象
-- `Term::app(func, arg)` — 函数应用
-- `Typ::dummy()` — 占位类型（当前所有 term 使用）
+| 指标 | 数值 |
+|------|------|
+| Rust 代码 | ~20,000 行 |
+| 源文件 | 84 `.rs` |
+| 测试 | 210+ |
+| `.thy` 文件 | 116 (115 HOL + 1 Pure) |
+| 定理总数 | 15,804 |

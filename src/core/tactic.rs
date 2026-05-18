@@ -25,8 +25,6 @@ use super::thm::{CTerm, Thm, ThmKernel, Hyps};
 use super::simplifier::Simplifier;
 use super::term::Term;
 use super::types::Typ;
-use super::drule;
-use super::logic::Pure;
 
 // =========================================================================
 // Tactic AST
@@ -110,23 +108,31 @@ impl Tactic {
         }
     }
 
-    /// Solve subgoal `i` by checking against premises.
+    /// Solve subgoal `i` by checking against premises AND the goal's own hypotheses.
+    /// This mirrors Isabelle's `assume_tac`: the subgoal must match either:
+    /// 1. An external premise (from the Isar proof context), OR
+    /// 2. One of the goal state's own hypotheses.
     fn apply_assume(i: usize, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
         let prem_i = match state.prem(i) {
             Some(p) => p,
             None => return vec![],
         };
-        // Check premises (Isabelle-style: independent Thm list)
-        let matches = premises.iter().any(|p| {
-            let ct = CTerm::certify(prem_i.clone());
+        let prem_i_ct = CTerm::certify(prem_i.clone());
+
+        // Check 1: external premises (Isar proof context facts)
+        let matches_premises = premises.iter().any(|p| {
             let mut tmp = Hyps::empty();
-            tmp.insert(ct);
+            tmp.insert(prem_i_ct.clone());
             tmp.contains(&CTerm::certify(p.prop().term().clone()))
         });
-        if !matches {
+
+        // Check 2: goal's own hypotheses (α-equivalence)
+        let matches_hyps = state.hyps().contains(&prem_i_ct);
+
+        if !matches_premises && !matches_hyps {
             return vec![];
         }
-        let assume_thm = ThmKernel::assume(CTerm::certify(prem_i));
+        let assume_thm = ThmKernel::assume(prem_i_ct);
         ThmKernel::bicompose(false, &assume_thm, state, i)
             .map(|t| vec![t])
             .unwrap_or_default()
@@ -162,7 +168,7 @@ impl Tactic {
                 Some(p) => p,
                 None => return vec![current],
             };
-            match simp.rewrite(&prem_i) {
+            match simp.rewrite_deep(&prem_i) {
                 Some((next, eq_thm)) if next != prem_i => {
                     // Apply this rewrite step via subst_premise
                     if let Some(new_state) = ThmKernel::subst_premise(&eq_thm, &current, i) {

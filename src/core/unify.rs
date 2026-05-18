@@ -266,7 +266,7 @@ fn match_pattern(
     match &pat {
         Term::Var { name, index, typ } => {
             if env.lookup(name, *index).is_some() {
-                return None; // already bound differently
+                return None;
             }
             if occurs_check(name, *index, &obj) {
                 return None;
@@ -274,11 +274,18 @@ fn match_pattern(
             env.update(Arc::clone(name), *index, typ.clone(), obj.clone());
             Some(env)
         }
-        Term::App { func: f1, arg: a1 } => {
+        Term::App { func: f1, arg: _a1 } => {
+            // Higher-order pattern: if head is a Var applied to bound vars,
+            // abstract the bound vars from the object and bind the Var to the abstraction.
+            if let Some(bound_vars) = collect_bound_args(&pat) {
+                let (var_name, var_index, var_typ) = dest_head_var(&pat)?;
+                return match_ho_pattern(env, var_name, var_index, var_typ, &bound_vars, &obj);
+            }
+            // Standard first-order: decompose App
             match &obj {
                 Term::App { func: f2, arg: a2 } => {
                     let env = match_pattern(env, f1, f2)?;
-                    match_pattern(env, a1, a2)
+                    match_pattern(env, _a1, a2)
                 }
                 _ => None,
             }
@@ -289,9 +296,88 @@ fn match_pattern(
                 _ => None,
             }
         }
-        // Const, Free, Bound: must be exactly equal (already checked above)
         _ => None,
     }
+}
+
+/// Check if a term is a pattern `?P(a1,...,an)` where `?P` is a Var
+/// and `a1...an` are all distinct bound/free variables (a "higher-order pattern").
+/// Returns the list of bound variable args if it is a HO pattern.
+fn collect_bound_args(term: &Term) -> Option<Vec<Term>> {
+    match term {
+        Term::Var { .. } | Term::Free { .. } => Some(Vec::new()),
+        Term::App { func, arg } => {
+            let mut args = collect_bound_args(func)?;
+            // Each argument must be a distinct bound/free/schematic variable
+            match arg.as_ref() {
+                Term::Bound(_) | Term::Free { .. } | Term::Var { .. } => {
+                    if args.iter().any(|a| a == arg.as_ref()) {
+                        return None;
+                    }
+                    args.push(arg.as_ref().clone());
+                    Some(args)
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Extract the head variable from a HO pattern like `?P(a1,...,an)`.
+fn dest_head_var(term: &Term) -> Option<(&Symbol, usize, &Typ)> {
+    match term {
+        Term::Var { name, index, typ } => Some((name, *index, typ)),
+        Term::Free { name, typ } => Some((name, 0, typ)),
+        Term::App { func, .. } => dest_head_var(func),
+        _ => None,
+    }
+}
+
+/// Match a higher-order pattern `?P(args)` against `obj`:
+/// bind `?P` to `λargs. obj`, with args abstracted from obj.
+fn match_ho_pattern(
+    mut env: Envir,
+    var_name: &Symbol,
+    var_index: usize,
+    var_typ: &Typ,
+    args: &[Term],
+    obj: &Term,
+) -> Option<Envir> {
+    if env.lookup(var_name, var_index).is_some() {
+        return None;
+    }
+    // Build the abstraction: λa1...an. obj
+    // All args (Bound, Free, Var) are abstracted
+    let mut abstracted = obj.clone();
+    for arg in args.iter().rev() {
+        match arg {
+            Term::Bound(i) => {
+                abstracted = Term::abs(
+                    Arc::from(format!("x{}", i)),
+                    Typ::dummy(),
+                    abstracted,
+                );
+            }
+            Term::Free { name, typ } => {
+                abstracted = Term::abs(Arc::clone(name), typ.clone(), abstracted);
+            }
+            Term::Var { name, typ, .. } => {
+                abstracted = Term::abs(Arc::clone(name), typ.clone(), abstracted);
+            }
+            _ => {}
+        }
+    }
+    if occurs_check(var_name, var_index, &abstracted) {
+        return None;
+    }
+    env.update(
+        Arc::clone(var_name),
+        var_index,
+        var_typ.clone(),
+        abstracted,
+    );
+    Some(env)
 }
 
 // =========================================================================
@@ -366,5 +452,31 @@ mod tests {
             result.expect("matching should succeed").norm_term(&pat),
             obj
         );
+    }
+
+    #[test]
+    fn test_ho_pattern_induction() {
+        // Test HO matching: ?P(xs) against concrete goal `length xs = 0`
+        let env = Envir::init();
+        // Pattern: ?P xs  (like the conclusion of list.induct)
+        let p_var = Term::var("P", 0, Typ::base("prop"));
+        let xs = Term::free("xs", Typ::base("list"));
+        let pat = Term::app(p_var.clone(), xs.clone());
+        // Object: length xs = 0
+        let obj = crate::core::logic::Pure::mk_equals(
+            Typ::base("nat"),
+            Term::app(Term::const_("length", Typ::dummy()), xs.clone()),
+            Term::const_("0", Typ::base("nat")),
+        );
+        let result = matchers(&env, &pat, &obj, &UnifyConfig::default());
+        assert!(result.is_some(), "HO matching should succeed for induction pattern");
+        let env = result.unwrap();
+        // ?P should be bound to λxs. length xs = 0
+        let p_bound = env.norm_term(&p_var);
+        eprintln!("P bound to: {:?}", p_bound);
+        // Apply the bound P to xs, should equal obj
+        let applied = Term::app(p_bound, xs.clone());
+        let normalized = env.norm_term(&applied);
+        eprintln!("P(xs) = {:?}", normalized);
     }
 }

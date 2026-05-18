@@ -19,6 +19,7 @@ pub mod token;
 pub mod parse;
 pub mod proof;
 pub mod method;
+pub mod proof_state;
 pub mod proof_context;
 pub mod toplevel;
 pub mod term_parser;
