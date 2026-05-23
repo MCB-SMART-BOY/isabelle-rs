@@ -1,5 +1,5 @@
 //! Pure meta-logic: the minimal logical framework.
-use super::term::Term;
+use super::term::{Term, lambda};
 use super::types::{Typ, Symbol};
 
 
@@ -21,7 +21,9 @@ impl Pure {
         }
     }
     pub fn mk_all(name: &str, typ: Typ, body: Term) -> Term {
-        Term::app(Term::const_("Pure.all", Typ::arrow(Typ::arrow(typ.clone(), Typ::base("prop")), Typ::base("prop"))), Term::abs(name, typ, body))
+        let v = Term::free(name, typ.clone());
+        let all_const = Term::const_("Pure.all", Typ::arrow(Typ::arrow(typ, Typ::base("prop")), Typ::base("prop")));
+        Term::app(all_const, lambda(&v, &body))
     }
     pub fn dest_all(term: &Term) -> Option<((&Symbol, &Typ), &Term)> {
         match term {
@@ -42,7 +44,9 @@ impl Pure {
         match term {
             Term::App { func, arg } => match func.as_ref() {
                 Term::App { func: inner, arg: t } => match inner.as_ref() {
-                    Term::Const { name, .. } if name.as_ref() == "Pure.eq" => Some((t.as_ref(), arg.as_ref())),
+                    Term::Const { name, .. } if name.as_ref() == "Pure.eq" || name.as_ref() == "HOL.eq" || name.as_ref().ends_with(".eq") => {
+                        Some((t.as_ref(), arg.as_ref()))
+                    }
                     _ => None,
                 },
                 _ => None,

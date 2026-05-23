@@ -19,7 +19,17 @@ pub mod token;
 pub mod parse;
 pub mod proof;
 pub mod method;
+pub mod linarith;
 pub mod proof_state;
 pub mod proof_context;
 pub mod toplevel;
 pub mod term_parser;
+
+#[cfg(test)]
+mod diag;
+
+#[cfg(test)]
+mod debug_tests;
+
+#[cfg(test)]
+mod hol_diag;

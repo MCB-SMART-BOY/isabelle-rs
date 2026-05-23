@@ -145,9 +145,12 @@ fn unify_dpairs(
 
         // ── Rigid-Rigid (App) ── simplify by decomposing
         (Term::App { func: f1, arg: a1 }, Term::App { func: f2, arg: a2 }) => {
-            let mut new_pairs = rest.to_vec();
-            new_pairs.push((rbinder.clone(), f1.as_ref().clone(), f2.as_ref().clone()));
-            new_pairs.push((rbinder.clone(), a1.as_ref().clone(), a2.as_ref().clone()));
+            // Decompose: push sub-pairs BEFORE rest so bindings are available
+            let mut new_pairs = vec![
+                (rbinder.clone(), f1.as_ref().clone(), f2.as_ref().clone()),
+                (rbinder.clone(), a1.as_ref().clone(), a2.as_ref().clone()),
+            ];
+            new_pairs.extend_from_slice(rest);
             unify_dpairs(env, &new_pairs, depth + 1, config)
         }
 
@@ -164,6 +167,30 @@ fn unify_dpairs(
             let mut new_pairs = rest.to_vec();
             new_pairs.push((new_rbinder, b1.as_ref().clone(), b2.as_ref().clone()));
             unify_dpairs(env, &new_pairs, depth + 1, config)
+        }
+
+        // ── Flex-App vs non-App: App(Var, arg) vs obj ── identity case
+        (Term::App { func, arg }, obj) => {
+            if matches!(func.as_ref(), Term::Var { .. }) && term_eq_notypes(arg.as_ref(), obj) {
+                if let Term::Var { name, index, typ } = func.as_ref() {
+                    let mut new_env = env.clone();
+                    new_env.update(name.clone(), *index, typ.clone(),
+                        Term::abs("x", Typ::dummy(), Term::bound(0)));
+                    return unify_dpairs(&new_env, rest, depth + 1, config);
+                }
+            }
+            None
+        }
+        (obj, Term::App { func, arg }) => {
+            if matches!(func.as_ref(), Term::Var { .. }) && term_eq_notypes(arg.as_ref(), obj) {
+                if let Term::Var { name, index, typ } = func.as_ref() {
+                    let mut new_env = env.clone();
+                    new_env.update(name.clone(), *index, typ.clone(),
+                        Term::abs("x", Typ::dummy(), Term::bound(0)));
+                    return unify_dpairs(&new_env, rest, depth + 1, config);
+                }
+            }
+            None
         }
 
         // ── Type mismatch (different heads) ── cannot unify
@@ -383,6 +410,20 @@ fn match_ho_pattern(
 // =========================================================================
 // Tests
 // =========================================================================
+
+/// Structural equality ignoring types.
+fn term_eq_notypes(a: &Term, b: &Term) -> bool {
+    match (a, b) {
+        (Term::Const { name: n1, .. }, Term::Const { name: n2, .. }) => n1 == n2,
+        (Term::Free { name: n1, .. }, Term::Free { name: n2, .. }) => n1 == n2,
+        (Term::Var { name: n1, index: i1, .. }, Term::Var { name: n2, index: i2, .. }) => n1 == n2 && i1 == i2,
+        (Term::Bound(i1), Term::Bound(i2)) => i1 == i2,
+        (Term::Abs { body: b1, .. }, Term::Abs { body: b2, .. }) => term_eq_notypes(b1, b2),
+        (Term::App { func: f1, arg: a1 }, Term::App { func: f2, arg: a2 }) =>
+            term_eq_notypes(f1, f2) && term_eq_notypes(a1, a2),
+        _ => false,
+    }
+}
 
 #[cfg(test)]
 mod tests {

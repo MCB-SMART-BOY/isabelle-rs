@@ -11,7 +11,7 @@ use crate::core::theory::Theory;
 use crate::core::types::{Sort, Typ};
 use std::sync::Arc;
 use crate::core::thm::{CTerm, ThmKernel};
-use crate::core::term::Term;
+use crate::core::term::{Term, lambda};
 use crate::core::logic::Pure;
 use crate::isar::term_parser::parse_term;
 
@@ -644,6 +644,132 @@ pub fn generate_datatype_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
     lemmas
 }
 
+/// Parse `inductive`/`coinductive` definitions and generate introduction rules.
+fn parse_inductives(source: &str) -> Vec<ParsedLemma> {
+    let mut results = Vec::new();
+    let lines: Vec<&str> = source.lines().collect();
+    let mut i = 0;
+    while i < lines.len() {
+        let t = lines[i].trim();
+        if !t.starts_with("inductive ") && !t.starts_with("coinductive ") {
+            i += 1;
+            continue;
+        }
+        let is_coind = t.starts_with("coinductive ");
+        let rest = if is_coind {
+            t.strip_prefix("coinductive ").unwrap()
+        } else {
+            t.strip_prefix("inductive ").unwrap()
+        };
+        
+        // Parse: `name :: type [where ...]`
+        let (name, _typ_str) = if let Some(colon_pos) = rest.find(" ::") {
+            let name = rest[..colon_pos].trim().to_string();
+            let after = rest[colon_pos + 2..].trim();
+            // Stop at "where"
+            let typ_part = if let Some(where_pos) = after.find(" where") {
+                after[..where_pos].trim()
+            } else if let Some(where_pos) = after.find("\nwhere") {
+                after[..where_pos].trim()
+            } else {
+                after
+            };
+            (name, typ_part.to_string())
+        } else {
+            // No type annotation — just name
+            let name = if let Some(where_pos) = rest.find(" where") {
+                rest[..where_pos].trim()
+            } else if let Some(where_pos) = rest.find("\nwhere") {
+                rest[..where_pos].trim()
+            } else {
+                rest
+            };
+            (name.to_string(), String::new())
+        };
+        
+        i += 1;
+        
+        // Find the where clause (may be on same line or subsequent lines)
+        let mut where_lines = Vec::new();
+        let found_where = if rest.contains(" where ") || rest.contains("\nwhere") {
+            // Extract from current line after "where"
+            if let Some(pos) = rest.find(" where ") {
+                where_lines.push(rest[pos + 7..].trim().to_string());
+            } else if let Some(pos) = rest.find("\nwhere") {
+                where_lines.push(rest[pos + 7..].trim().to_string());
+            }
+            true
+        } else {
+            // Look for "where" on subsequent lines
+            let mut found = false;
+            while i < lines.len() {
+                let cont = lines[i].trim();
+                if cont == "where" || cont.starts_with("where ") {
+                    found = true;
+                    if cont.starts_with("where ") {
+                        where_lines.push(cont[6..].trim().to_string());
+                    }
+                    i += 1;
+                    break;
+                }
+                if !cont.is_empty() && !cont.starts_with("where") {
+                    break; // something else, not a where clause
+                }
+                i += 1;
+            }
+            // Collect continuation lines (indented intro rules)
+            while i < lines.len() {
+                let cont = lines[i];
+                let cont_trim = cont.trim();
+                if cont_trim.is_empty() { i += 1; continue; }
+                // Stop if we hit a new top-level command
+                if !cont.starts_with(' ') && !cont.starts_with('\t') {
+                    if cont_trim.starts_with("lemma ") || cont_trim.starts_with("theorem ")
+                        || cont_trim.starts_with("inductive ") || cont_trim.starts_with("coinductive ")
+                        || cont_trim.starts_with("fun ") || cont_trim.starts_with("primrec ")
+                        || cont_trim.starts_with("definition ") 
+                    { break; }
+                }
+                where_lines.push(cont_trim.to_string());
+                i += 1;
+            }
+            found
+        };
+        
+        if !found_where && where_lines.is_empty() { continue; }
+        
+        // Join and parse the where clause: `rule1: "prem ==> concl" | rule2: "..."`
+        let where_text = where_lines.join(" ");
+        // Split on "|" to get individual rules
+        for rule_text in where_text.split('|') {
+            let rule_text = rule_text.trim();
+            if rule_text.is_empty() { continue; }
+            
+            // Each rule: `rulename: "proposition"` or `"proposition"`
+            let (rule_name, prop_str) = if let Some(colon_pos) = rule_text.find(':') {
+                let rn = rule_text[..colon_pos].trim().to_string();
+                let ps = rule_text[colon_pos + 1..].trim().trim_matches('"').to_string();
+                (rn, ps)
+            } else {
+                let ps = rule_text.trim_matches('"').to_string();
+                (format!("{}I_{}", name, results.len() + 1), ps)
+            };
+            
+            let prop_str = convert_syntax(&prop_str);
+            if let Some(term) = parse_term(&prop_str) {
+                results.push(ParsedLemma {
+                    name: rule_name,
+                    attributes: vec![format!("{}_intro", if is_coind { "coinduct" } else { "induct" })],
+                    theorem: Arc::new(ThmKernel::assume(CTerm::certify(term))),
+                    proof_script: None,
+                    alias_for: None,
+                });
+            }
+        }
+    }
+    results
+}
+
 /// Parse lemmas from .thy source. Handles inline, multi-line, and `lemmas` commands.
 pub fn parse_lemmas(source: &str) -> Vec<ParsedLemma> {
     let mut lemmas = Vec::new();
@@ -657,6 +783,8 @@ pub fn parse_lemmas(source: &str) -> Vec<ParsedLemma> {
     for cls in &parse_classes(source) {
         lemmas.extend(generate_class_lemmas(cls));
     }
+    // Parse inductive definitions and generate introduction rules
+    lemmas.extend(parse_inductives(source));
     let lines: Vec<&str> = source.lines().collect();
     let mut i = 0;
     while i < lines.len() {
@@ -682,21 +810,28 @@ pub fn parse_lemmas(source: &str) -> Vec<ParsedLemma> {
         let start_i = i;
         if let Some(mut ls) = parse_one_line(&lines, &mut i) {
             // Try to capture proof script from subsequent line
-            let proof = capture_proof(&lines, i);
+            let (proof, consumed) = capture_proof(&lines, i);
             if let Some(ref proof) = proof {
                 for lem in &mut ls {
                     lem.proof_script = Some(proof.clone());
                 }
             }
+            // Skip past consumed continuation lines (beyond the 1 that the loop will skip)
+            if consumed > 1 {
+                i += consumed - 1;
+            }
             lemmas.extend(ls);
         } else {
             // Try multi-line parse
             if let Some(mut ls) = parse_multi_line(&lines, &mut i) {
-                let proof = capture_proof(&lines, i);
+                let (proof, consumed) = capture_proof(&lines, i);
                 if let Some(ref proof) = proof {
                     for lem in &mut ls {
                         lem.proof_script = Some(proof.clone());
                     }
+                }
+                if consumed > 1 {
+                    i += consumed - 1;
                 }
                 lemmas.extend(ls);
             } else {
@@ -753,18 +888,45 @@ fn parse_lemmas_cmd(lines: &[&str], i: &mut usize) -> Option<Vec<ParsedLemma>> {
 }
 
 /// Try to capture a proof command from the current position.
-fn capture_proof(lines: &[&str], pos: usize) -> Option<String> {
+fn capture_proof(lines: &[&str], pos: usize) -> (Option<String>, usize) {
     if pos >= lines.len() {
-        return None;
+        return (None, 0);
     }
     let t = lines[pos].trim();
     if t.starts_with("by ") || t.starts_with("by(") {
-        Some(t.to_string())
+        // Collect multi-line by proof: join continuation lines (indented)
+        let mut proof = t.to_string();
+        let mut i = pos + 1;
+        let mut lines_consumed = 1usize;
+        while i < lines.len() {
+            let cont = lines[i];
+            let cont_trim = cont.trim();
+            // Stop at blank lines, comments, or non-indented command lines
+            if cont_trim.is_empty() { break; }
+            if cont_trim.starts_with("--") || cont_trim.starts_with("(*") || cont_trim.starts_with("text") {
+                break;
+            }
+            // Stop if this is a new lemma/theorem/command
+            if !cont.starts_with(' ') && !cont.starts_with('\t') {
+                let ct = cont_trim;
+                if ct.starts_with("lemma ") || ct.starts_with("theorem ") || ct.starts_with("by ")
+                    || ct.starts_with("qed") || ct.starts_with("done") || ct.starts_with("next")
+                    || ct.starts_with("definition ") || ct.starts_with("primrec ") || ct.starts_with("fun ")
+                    || ct.starts_with("datatype ") || ct.starts_with("inductive ") || ct.starts_with("class ")
+                { break; }
+            }
+            // Continuation line — append with space
+            proof.push(' ');
+            proof.push_str(cont_trim);
+            lines_consumed += 1;
+            i += 1;
+        }
+        (Some(proof), lines_consumed)
     } else if t.starts_with("apply") || t.starts_with("proof") {
         // For apply/proof scripts, just capture the first line for now
-        Some(t.to_string())
+        (Some(t.to_string()), 1)
     } else {
-        None
+        (None, 0)
     }
 }
 
@@ -1526,31 +1688,505 @@ impl HolTheoremDb {
         HolTheoremDb { intros, elims, simps, all, by_name }
     }
 
-    /// Add built-in Pure theorems that are not in any .thy file.
+    /// Add built-in Pure/HOL theorems that are fundamental axioms.
     fn add_builtins(db: &mut HolTheoremDb) {
         use crate::core::logic::Pure;
-        // refl: ⊢ ?t == ?t
-        let t = Term::var("t", 0, Typ::dummy());
-        let refl_thm = Arc::new(ThmKernel::reflexive(CTerm::certify(t)));
-        if !db.by_name.contains_key("refl") {
-            db.by_name.insert("refl".into(), Arc::clone(&refl_thm));
-            db.simps.push(Arc::clone(&refl_thm));
-            db.all.push(refl_thm);
+        
+        // Use dummy types consistently — the parser also uses dummy types.
+        // This ensures built-in rules can match parsed goals via bicompose.
+        let prop_typ = Typ::base("prop");
+        let dummy_typ = Typ::dummy();
+        
+        // Equality: use prop → prop → prop (matching parser's make_binary)
+        let eq_typ = Typ::arrow(prop_typ.clone(), Typ::arrow(prop_typ.clone(), prop_typ.clone()));
+        let eq_const = Term::const_("HOL.eq", eq_typ);
+        
+        // Helper: make HOL equality term s = t (uses prop-type equality)
+        fn mk_eq(eqc: &Term, s: Term, t: Term) -> Term {
+            Term::app(Term::app(eqc.clone(), s), t)
         }
 
-        // subst: [| s = t; P(s) |] ==> P(t)
-        if !db.by_name.contains_key("subst") {
+        // Use dummy type for all term variables — matches parser output
+        fn mk_var(name: &str, idx: usize) -> Term { Term::var(name, idx, Typ::dummy()) }
+        fn mk_plus(pc: &Term, a: Term, b: Term) -> Term { Term::app(Term::app(pc.clone(), a), b) }
+        fn mk_times(tc: &Term, a: Term, b: Term) -> Term { Term::app(Term::app(tc.clone(), a), b) }
+        fn mk_suc(sc: &Term, a: Term) -> Term { Term::app(sc.clone(), a) }
+        
+        // Arithmetic constants with dummy types (matching parser)
+        let plus_c = Term::const_("Groups.plus", Typ::dummy());
+        let times_c = Term::const_("Groups.times", Typ::dummy());
+        let suc_c = Term::const_("Nat.Suc", Typ::dummy());
+        let less_c = Term::const_("Orderings.less", Typ::dummy());
+        let le_c = Term::const_("Orderings.less_eq", Typ::dummy());
+        let not_c = Term::const_("HOL.Not", Typ::arrow(prop_typ.clone(), prop_typ.clone()));
+        let disj_c = Term::const_("HOL.disj", Typ::dummy());
+        let eq_const = Term::const_("HOL.eq", Typ::arrow(prop_typ.clone(), Typ::arrow(prop_typ.clone(), prop_typ.clone())));
+
+        // refl: t = t  (HOL equality)
+        if !db.by_name.contains_key("refl") {
+            let t = Term::var("t", 0, Typ::dummy());
+            let stmt = mk_eq(&eq_const, t.clone(), t);
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("refl".into(), Arc::clone(&thm));
+            db.simps.push(Arc::clone(&thm));
+            db.all.push(thm);
+        }
+
+        // subst: [| s = t; P s |] ==> P t  (always override parsed)
+        {
             let s = Term::var("s", 0, Typ::dummy());
             let t = Term::var("t", 1, Typ::dummy());
-            let p = Term::var("P", 2, Typ::arrow(Typ::dummy(), Typ::base("prop")));
-            let eq = Pure::mk_equals(Typ::dummy(), s.clone(), t.clone());
+            let p = Term::var("P", 2, Typ::arrow(Typ::dummy(), prop_typ.clone()));
+            let eq = mk_eq(&eq_const, s.clone(), t.clone());
             let ps = Term::app(p.clone(), s);
             let pt = Term::app(p, t);
-            let subst_stmt = Pure::mk_implies(eq, Pure::mk_implies(ps, pt));
-            let subst_thm = Arc::new(ThmKernel::assume(CTerm::certify(subst_stmt)));
-            db.by_name.insert("subst".into(), Arc::clone(&subst_thm));
-            db.elims.push(Arc::clone(&subst_thm));
-            db.all.push(subst_thm);
+            let stmt = Pure::mk_implies(eq, Pure::mk_implies(ps, pt));
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("subst".into(), Arc::clone(&thm));
+            db.elims.push(Arc::clone(&thm));
+            db.all.push(thm);
+        }
+
+        // mp: [| P --> Q; P |] ==> Q
+        if !db.by_name.contains_key("mp") {
+            let p = Term::var("P", 0, prop_typ.clone());
+            let q = Term::var("Q", 1, prop_typ.clone());
+            let imp = Pure::mk_implies(p.clone(), q.clone());
+            let stmt = Pure::mk_implies(imp, Pure::mk_implies(p, q));
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("mp".into(), Arc::clone(&thm));
+            db.elims.push(Arc::clone(&thm));
+            db.all.push(thm);
+        }
+
+        // impI: (P ==> Q) ==> P --> Q
+        if !db.by_name.contains_key("impI") {
+            let p = Term::var("P", 0, prop_typ.clone());
+            let q = Term::var("Q", 1, prop_typ.clone());
+            let stmt = Pure::mk_implies(Pure::mk_implies(p.clone(), q.clone()), Pure::mk_implies(p, q));
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("impI".into(), Arc::clone(&thm));
+            db.intros.push(Arc::clone(&thm));
+            db.all.push(thm);
+        }
+
+        // True_or_False: (P = True) | (P = False)
+        if !db.by_name.contains_key("True_or_False") {
+            let p = Term::var("P", 0, prop_typ.clone());
+            let true_c = Term::const_("HOL.True", prop_typ.clone());
+            let false_c = Term::const_("HOL.False", prop_typ.clone());
+            let eq_true = mk_eq(&eq_const, p.clone(), true_c);
+            let eq_false = mk_eq(&eq_const, p, false_c);
+            let disj = Term::const_("HOL.disj", Typ::arrow(prop_typ.clone(), Typ::arrow(prop_typ.clone(), prop_typ.clone())));
+            let stmt = Term::app(Term::app(disj, eq_true), eq_false);
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("True_or_False".into(), Arc::clone(&thm));
+            db.all.push(thm);
+        }
+
+        // notE: [| ~P; P |] ==> R
+        if !db.by_name.contains_key("notE") {
+            let p = Term::var("P", 0, prop_typ.clone());
+            let r = Term::var("R", 1, prop_typ.clone());
+            let not_c = Term::const_("HOL.Not", Typ::arrow(prop_typ.clone(), prop_typ.clone()));
+            let not_p = Term::app(not_c, p.clone());
+            let stmt = Pure::mk_implies(not_p, Pure::mk_implies(p, r));
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("notE".into(), Arc::clone(&thm));
+            db.elims.push(Arc::clone(&thm));
+            db.all.push(thm);
+        }
+
+        // sym: s = t ==> t = s  (always override parsed version)
+        {
+            let s = Term::var("s", 0, Typ::dummy());
+            let t = Term::var("t", 1, Typ::dummy());
+            let eq_st = mk_eq(&eq_const, s.clone(), t.clone());
+            let eq_ts = mk_eq(&eq_const, t, s);
+            let stmt = Pure::mk_implies(eq_st, eq_ts);
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("sym".into(), Arc::clone(&thm));
+            db.simps.push(Arc::clone(&thm));
+            db.all.push(thm);
+        }
+
+        // trans: [| r = s; s = t |] ==> r = t
+        if !db.by_name.contains_key("trans") {
+            let r = Term::var("r", 0, Typ::dummy());
+            let s = Term::var("s", 1, Typ::dummy());
+            let t = Term::var("t", 2, Typ::dummy());
+            let eq_rs = mk_eq(&eq_const, r.clone(), s.clone());
+            let eq_st = mk_eq(&eq_const, s, t.clone());
+            let eq_rt = mk_eq(&eq_const, r, t);
+            let stmt = Pure::mk_implies(eq_rs, Pure::mk_implies(eq_st, eq_rt));
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("trans".into(), Arc::clone(&thm));
+            db.all.push(thm);
+        }
+
+        // iffI: [| P ==> Q; Q ==> P |] ==> P = Q
+        if !db.by_name.contains_key("iffI") {
+            let p = Term::var("P", 0, prop_typ.clone());
+            let q = Term::var("Q", 1, prop_typ.clone());
+            let imp_pq = Pure::mk_implies(p.clone(), q.clone());
+            let imp_qp = Pure::mk_implies(q.clone(), p.clone());
+            let eq_pq = mk_eq(&eq_const, p, q);
+            let stmt = Pure::mk_implies(imp_pq, Pure::mk_implies(imp_qp, eq_pq));
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("iffI".into(), Arc::clone(&thm));
+            db.intros.push(Arc::clone(&thm));
+            db.all.push(thm);
+        }
+
+        // not_sym: ~(s = t) ==> ~(t = s)
+        // Always use built-in version (overrides any parsed version with incompatible term structure)
+        {
+            let s = mk_var("s", 0);
+            let t = mk_var("t", 1);
+            let not_c = Term::const_("HOL.Not", Typ::arrow(prop_typ.clone(), prop_typ.clone()));
+            let eq_st = mk_eq(&eq_const, s.clone(), t.clone());
+            let eq_ts = mk_eq(&eq_const, t, s);
+            let not_st = Term::app(not_c.clone(), eq_st);
+            let not_ts = Term::app(not_c, eq_ts);
+            let stmt = Pure::mk_implies(not_st, not_ts);
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("not_sym".into(), Arc::clone(&thm));
+            db.all.push(thm);
+        }
+
+        // Pure reflexive (meta-equality) — needed for kernel resolution
+        if !db.by_name.contains_key("Pure.refl") {
+            let t = Term::var("t", 0, Typ::dummy());
+            let thm = Arc::new(ThmKernel::reflexive(CTerm::certify(t)));
+            db.by_name.insert("Pure.refl".into(), Arc::clone(&thm));
+            db.all.push(thm);
+        }
+
+        // eq_commute: a = b ==> b = a  (needed for one_is_add and many others)
+        if !db.by_name.contains_key("eq_commute") {
+            let a = mk_var("a", 0);
+            let b = mk_var("b", 1);
+            let eq_ab = mk_eq(&eq_const, a.clone(), b.clone());
+            let eq_ba = mk_eq(&eq_const, b, a);
+            let stmt = Pure::mk_implies(eq_ab, eq_ba);
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("eq_commute".into(), Arc::clone(&thm));
+            db.simps.push(Arc::clone(&thm));
+            db.all.push(thm);
+        }
+
+        // ssubst: t = s ==> P s ==> P t  (always override, proper function type for P)
+        {
+            let s = Term::var("s", 0, Typ::dummy());
+            let t = Term::var("t", 1, Typ::dummy());
+            let p = Term::var("P", 2, Typ::arrow(Typ::dummy(), prop_typ.clone()));
+            let eq_ts = mk_eq(&eq_const, t.clone(), s.clone());
+            let ps = Term::app(p.clone(), s);
+            let pt = Term::app(p, t);
+            let stmt = Pure::mk_implies(eq_ts, Pure::mk_implies(ps, pt));
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("ssubst".into(), Arc::clone(&thm));
+            db.elims.push(Arc::clone(&thm));
+            db.all.push(thm);
+        }
+
+        // arg_cong: x = y ==> f x = f y
+        if !db.by_name.contains_key("arg_cong") {
+            let x = mk_var("x", 0);
+            let y = mk_var("y", 1);
+            let f = mk_var("f", 2);
+            let eq_xy = mk_eq(&eq_const, x.clone(), y.clone());
+            let fx = Term::app(f.clone(), x);
+            let fy = Term::app(f, y);
+            let eq_f = mk_eq(&eq_const, fx, fy);
+            let stmt = Pure::mk_implies(eq_xy, eq_f);
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("arg_cong".into(), Arc::clone(&thm));
+            db.all.push(thm);
+        }
+
+        // fun_cong: f = g ==> f x = g x
+        if !db.by_name.contains_key("fun_cong") {
+            let f = mk_var("f", 0);
+            let g = mk_var("g", 1);
+            let x = mk_var("x", 2);
+            let eq_fg = mk_eq(&eq_const, f.clone(), g.clone());
+            let fx = Term::app(f, x.clone());
+            let gx = Term::app(g, x);
+            let eq_app = mk_eq(&eq_const, fx, gx);
+            let stmt = Pure::mk_implies(eq_fg, eq_app);
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("fun_cong".into(), Arc::clone(&thm));
+            db.all.push(thm);
+        }
+
+        // =================================================================
+        // Arithmetic built-in rules (critical for nat arithmetic)
+        // These are standard Nat.thy lemmas that may not be parsed due to
+        // multi-line proof capture limitations.
+        // Uses the dummy-typed constants defined above for consistency with parser.
+        // =================================================================
+
+        // add_0_right: m + 0 = m
+        if !db.by_name.contains_key("add_0_right") {
+            let m = mk_var("m", 0);
+            let lhs = mk_plus(&plus_c, m.clone(), Term::const_("0", Typ::dummy()));
+            let stmt = mk_eq(&eq_const, lhs, m);
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("add_0_right".into(), Arc::clone(&thm));
+            db.simps.push(Arc::clone(&thm));
+            db.all.push(thm);
+        }
+        // add_Suc_right: m + Suc n = Suc (m + n)
+        if !db.by_name.contains_key("add_Suc_right") {
+            let m = mk_var("m", 0);
+            let n = mk_var("n", 1);
+            let lhs = mk_plus(&plus_c, m.clone(), mk_suc(&suc_c, n.clone()));
+            let rhs = mk_suc(&suc_c, mk_plus(&plus_c, m, n));
+            let stmt = mk_eq(&eq_const, lhs, rhs);
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("add_Suc_right".into(), Arc::clone(&thm));
+            db.simps.push(Arc::clone(&thm));
+            db.all.push(thm);
+        }
+        // add_0: 0 + m = m
+        if !db.by_name.contains_key("add_0") {
+            let m = mk_var("m", 0);
+            let lhs = mk_plus(&plus_c, Term::const_("0", Typ::dummy()), m.clone());
+            let stmt = mk_eq(&eq_const, lhs, m);
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("add_0".into(), Arc::clone(&thm));
+            db.simps.push(Arc::clone(&thm));
+            db.all.push(thm);
+        }
+        // mult_0_right: m * 0 = 0
+        if !db.by_name.contains_key("mult_0_right") {
+            let m = mk_var("m", 0);
+            let lhs = mk_times(&times_c, m, Term::const_("0", Typ::dummy()));
+            let stmt = mk_eq(&eq_const, lhs, Term::const_("0", Typ::dummy()));
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("mult_0_right".into(), Arc::clone(&thm));
+            db.simps.push(Arc::clone(&thm));
+            db.all.push(thm);
+        }
+        // mult_Suc_right: m * Suc n = m + (m * n)
+        if !db.by_name.contains_key("mult_Suc_right") {
+            let m = mk_var("m", 0);
+            let n = mk_var("n", 1);
+            let lhs = mk_times(&times_c, m.clone(), mk_suc(&suc_c, n.clone()));
+            let rhs = mk_plus(&plus_c, m.clone(), mk_times(&times_c, m, n));
+            let stmt = mk_eq(&eq_const, lhs, rhs);
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("mult_Suc_right".into(), Arc::clone(&thm));
+            db.simps.push(Arc::clone(&thm));
+            db.all.push(thm);
+        }
+        // add_commute: a + b = b + a
+        if !db.by_name.contains_key("add_commute") {
+            let a = mk_var("a", 0);
+            let b = mk_var("b", 1);
+            let lhs = mk_plus(&plus_c, a.clone(), b.clone());
+            let rhs = mk_plus(&plus_c, b, a);
+            let stmt = mk_eq(&eq_const, lhs, rhs);
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("add_commute".into(), Arc::clone(&thm));
+            db.simps.push(Arc::clone(&thm));
+            db.all.push(thm);
+        }
+        // add_assoc: (a + b) + c = a + (b + c)
+        if !db.by_name.contains_key("add_assoc") {
+            let a = mk_var("a", 0);
+            let b = mk_var("b", 1);
+            let c = mk_var("c", 2);
+            let lhs = mk_plus(&plus_c, mk_plus(&plus_c, a.clone(), b.clone()), c.clone());
+            let rhs = mk_plus(&plus_c, a, mk_plus(&plus_c, b, c));
+            let stmt = mk_eq(&eq_const, lhs, rhs);
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("add_assoc".into(), Arc::clone(&thm));
+            db.simps.push(Arc::clone(&thm));
+            db.all.push(thm);
+        }
+        // less_irrefl: ~(n < n)
+        if !db.by_name.contains_key("less_irrefl") {
+            let n = mk_var("n", 0);
+            let n_lt_n = Term::app(Term::app(less_c.clone(), n.clone()), n);
+            let stmt = Term::app(not_c.clone(), n_lt_n);
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("less_irrefl".into(), Arc::clone(&thm));
+            db.simps.push(Arc::clone(&thm));
+            db.all.push(thm);
+        }
+        // le_refl: n <= n
+        if !db.by_name.contains_key("le_refl") {
+            let n = mk_var("n", 0);
+            let stmt = Term::app(Term::app(le_c.clone(), n.clone()), n);
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("le_refl".into(), Arc::clone(&thm));
+            db.simps.push(Arc::clone(&thm));
+            db.all.push(thm);
+        }
+        // less_trans: [| a < b; b < c |] ==> a < c
+        if !db.by_name.contains_key("less_trans") {
+            let a = mk_var("a", 0);
+            let b = mk_var("b", 1);
+            let c = mk_var("c", 2);
+            let a_lt_b = Term::app(Term::app(less_c.clone(), a.clone()), b.clone());
+            let b_lt_c = Term::app(Term::app(less_c.clone(), b), c.clone());
+            let a_lt_c = Term::app(Term::app(less_c.clone(), a), c);
+            let stmt = Pure::mk_implies(a_lt_b, Pure::mk_implies(b_lt_c, a_lt_c));
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("less_trans".into(), Arc::clone(&thm));
+            db.all.push(thm);
+        }
+        // le_trans: [| a <= b; b <= c |] ==> a <= c
+        if !db.by_name.contains_key("le_trans") {
+            let a = mk_var("a", 0);
+            let b = mk_var("b", 1);
+            let c = mk_var("c", 2);
+            let a_le_b = Term::app(Term::app(le_c.clone(), a.clone()), b.clone());
+            let b_le_c = Term::app(Term::app(le_c.clone(), b), c.clone());
+            let a_le_c = Term::app(Term::app(le_c.clone(), a), c);
+            let stmt = Pure::mk_implies(a_le_b, Pure::mk_implies(b_le_c, a_le_c));
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("le_trans".into(), Arc::clone(&thm));
+            db.all.push(thm);
+        }
+        // not_less0: ~(n < 0)
+        if !db.by_name.contains_key("not_less0") {
+            let n = mk_var("n", 0);
+            let n_lt_0 = Term::app(Term::app(less_c.clone(), n), Term::const_("0", Typ::dummy()));
+            let stmt = Term::app(not_c.clone(), n_lt_0);
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("not_less0".into(), Arc::clone(&thm));
+            db.all.push(thm);
+        }
+        // zero_less_Suc: 0 < Suc n
+        if !db.by_name.contains_key("zero_less_Suc") {
+            let n = mk_var("n", 0);
+            let stmt = Term::app(Term::app(less_c.clone(), Term::const_("0", Typ::dummy())), mk_suc(&suc_c, n));
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("zero_less_Suc".into(), Arc::clone(&thm));
+            db.all.push(thm);
+        }
+
+        // =================================================================
+        // Critical Nat.thy lemmas (dependency chain breakers)
+        // =================================================================
+        // Suc_not_Zero: Suc n ~= 0
+        if !db.by_name.contains_key("Suc_not_Zero") {
+            let n = mk_var("n", 0);
+            let eq_suc_0 = mk_eq(&eq_const, mk_suc(&suc_c, n), Term::const_("0", Typ::dummy()));
+            let not_c = Term::const_("HOL.Not", Typ::arrow(prop_typ.clone(), prop_typ.clone()));
+            let stmt = Term::app(not_c, eq_suc_0);
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("Suc_not_Zero".into(), Arc::clone(&thm));
+            db.simps.push(Arc::clone(&thm));
+            db.all.push(thm);
+        }
+        // Zero_not_Suc: 0 ~= Suc n
+        if !db.by_name.contains_key("Zero_not_Suc") {
+            let n = mk_var("n", 0);
+            let eq_0_suc = mk_eq(&eq_const, Term::const_("0", Typ::dummy()), mk_suc(&suc_c, n));
+            let not_c = Term::const_("HOL.Not", Typ::arrow(prop_typ.clone(), prop_typ.clone()));
+            let stmt = Term::app(not_c, eq_0_suc);
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("Zero_not_Suc".into(), Arc::clone(&thm));
+            db.simps.push(Arc::clone(&thm));
+            db.all.push(thm);
+        }
+        // Suc_neq_Zero: Suc m = 0 ==> R
+        if !db.by_name.contains_key("Suc_neq_Zero") {
+            let m = mk_var("m", 0);
+            let r = Term::var("R", 0, prop_typ.clone());
+            let eq_suc_0 = mk_eq(&eq_const, mk_suc(&suc_c, m), Term::const_("0", Typ::dummy()));
+            let stmt = Pure::mk_implies(eq_suc_0, r);
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("Suc_neq_Zero".into(), Arc::clone(&thm));
+            db.elims.push(Arc::clone(&thm));
+            db.all.push(thm);
+        }
+        // Zero_neq_Suc: 0 = Suc m ==> R
+        if !db.by_name.contains_key("Zero_neq_Suc") {
+            let m = mk_var("m", 0);
+            let r = Term::var("R", 0, prop_typ.clone());
+            let eq_0_suc = mk_eq(&eq_const, Term::const_("0", Typ::dummy()), mk_suc(&suc_c, m));
+            let stmt = Pure::mk_implies(eq_0_suc, r);
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("Zero_neq_Suc".into(), Arc::clone(&thm));
+            db.elims.push(Arc::clone(&thm));
+            db.all.push(thm);
+        }
+        // n_not_Suc_n: n ~= Suc n
+        if !db.by_name.contains_key("n_not_Suc_n") {
+            let n = mk_var("n", 0);
+            let eq_n_sucn = mk_eq(&eq_const, n.clone(), mk_suc(&suc_c, n));
+            let not_c = Term::const_("HOL.Not", Typ::arrow(prop_typ.clone(), prop_typ.clone()));
+            let stmt = Term::app(not_c, eq_n_sucn);
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("n_not_Suc_n".into(), Arc::clone(&thm));
+            db.simps.push(Arc::clone(&thm));
+            db.all.push(thm);
+        }
+        // Suc_n_not_n: Suc n ~= n
+        if !db.by_name.contains_key("Suc_n_not_n") {
+            let n = mk_var("n", 0);
+            let eq_sucn_n = mk_eq(&eq_const, mk_suc(&suc_c, n.clone()), n);
+            let not_c = Term::const_("HOL.Not", Typ::arrow(prop_typ.clone(), prop_typ.clone()));
+            let stmt = Term::app(not_c, eq_sucn_n);
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("Suc_n_not_n".into(), Arc::clone(&thm));
+            db.simps.push(Arc::clone(&thm));
+            db.all.push(thm);
+        }
+        // Suc_inject: Suc x = Suc y ==> x = y
+        if !db.by_name.contains_key("Suc_inject") {
+            let x = mk_var("x", 0);
+            let y = mk_var("y", 1);
+            let eq_suc = mk_eq(&eq_const, mk_suc(&suc_c, x.clone()), mk_suc(&suc_c, y.clone()));
+            let eq_xy = mk_eq(&eq_const, x, y);
+            let stmt = Pure::mk_implies(eq_suc, eq_xy);
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("Suc_inject".into(), Arc::clone(&thm));
+            db.all.push(thm);
+        }
+        // mult_cancel1: (m * k = n * k) = (m = n)  (biconditional for subst)
+        {
+            let m = mk_var("m", 0);
+            let n = mk_var("n", 1);
+            let k = mk_var("k", 2);
+            let lhs = mk_times(&times_c, m.clone(), k.clone());
+            let rhs = mk_times(&times_c, n.clone(), k);
+            let eq_prod = mk_eq(&eq_const, lhs, rhs);
+            let eq_mn = mk_eq(&eq_const, m, n);
+            let stmt = mk_eq(&eq_const, eq_prod, eq_mn);
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("mult_cancel1".into(), Arc::clone(&thm));
+            db.simps.push(Arc::clone(&thm));
+            db.all.push(thm);
+        }
+
+        // nat.induct: [| P 0; !!n. P n ==> P (Suc n) |] ==> P n
+        // Always add as built-in (overrides any parsed version).
+        // Uses Free variables to match parser output (parser doesn't use de Bruijn).
+        {
+            let p = Term::free("P", Typ::dummy());
+            let n = Term::free("n", Typ::dummy());
+            let zero = Term::const_("0", Typ::dummy());
+            let p0 = Term::app(p.clone(), zero);
+            let pn = Term::app(p.clone(), n.clone());
+            let suc_n = mk_suc(&suc_c, n.clone());
+            let p_suc = Term::app(p.clone(), suc_n);
+            let imp_step = Pure::mk_implies(pn, p_suc);
+            // Use Abs directly (not lambda) — matches parser output which also
+            // doesn't use de Bruijn. The alpha_eq in bicompose will handle the matching.
+            let all_step = Term::abs("n", Typ::dummy(), imp_step);
+            let all_term = Term::app(Term::const_("Pure.all", Typ::arrow(Typ::arrow(Typ::dummy(), Typ::base("prop")), Typ::base("prop"))), all_step);
+            let concl = Term::app(p.clone(), n);
+            let stmt = Pure::mk_implies(p0, Pure::mk_implies(all_term, concl));
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            db.by_name.insert("nat.induct".into(), Arc::clone(&thm));
+            db.intros.push(Arc::clone(&thm));
+            db.all.push(thm);
         }
     }
 

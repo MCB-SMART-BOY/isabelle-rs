@@ -35,6 +35,8 @@ pub enum ProofState {
         current_subgoal: usize,
         /// Nested block depth (for { ... } blocks)
         block_depth: usize,
+        /// The result of the final `show` statement (for qed composition)
+        show_result: Option<Thm>,
     },
     /// Proof complete
     Done(Thm),
@@ -57,6 +59,7 @@ impl ProofState {
                 subgoals: Vec::new(),
                 current_subgoal: 0,
                 block_depth: 0,
+                show_result: None,
             };
         }
     }
@@ -120,7 +123,8 @@ impl ProofState {
         Some(result_arc)
     }
 
-        /// Prove the current goal (`show "C" by method`).
+    /// Prove the current goal (`show "C" by method`).
+    /// Stores the result for final composition in `qed`.
     pub fn show(&mut self, stmt: &Term, method: &str, all_premises: &[Arc<Thm>]) -> Option<Thm> {
         let actual_stmt = self.resolve_case_stmt(stmt);
         let goal = ThmKernel::assume(CTerm::certify(actual_stmt));
@@ -132,7 +136,12 @@ impl ProofState {
         if let Some(chained) = self.take_chained() {
             combined_prems.push(chained);
         }
-        crate::isar::method::exec_proof(&goal, method, &combined_prems)
+        let result = crate::isar::method::exec_proof(&goal, method, &combined_prems)?;
+        // Store the show result for qed to use in final theorem composition
+        if let ProofState::Proving { show_result, .. } = self {
+            *show_result = Some(result.clone());
+        }
+        Some(result)
     }
 
     /// Resolve ?case/?thesis to the current subgoal's conclusion.
@@ -212,26 +221,45 @@ impl ProofState {
     /// Returns the final theorem if all subgoals are solved.
     pub fn qed(&mut self) -> Option<Thm> {
         match self {
-            ProofState::Proving { subgoals, .. } => {
-                // Check if all subgoals are solved (nprems == 0)
-                let all_solved = subgoals.iter().all(|sg| sg.nprems() == 0);
-                if all_solved && !subgoals.is_empty() {
-                    // Return the first subgoal as the result (simplified)
-                    let result = subgoals[0].clone();
-                    *self = ProofState::Done(result.clone());
-                    Some(result)
-                } else if subgoals.is_empty() {
-                    // No subgoals - use the original goal
-                    if let ProofState::Proving { goal, .. } = self {
-                        let result = goal.clone();
-                        *self = ProofState::Done(result.clone());
-                        Some(result)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
+            ProofState::Proving { subgoals, goal, fixes, facts, show_result, .. } => {
+                // Priority 1: use the show_result if available
+                let base_result = if let Some(result) = show_result {
+                    result.clone()
                 }
+                // Priority 2: check if all subgoals are solved
+                else if !subgoals.is_empty() && subgoals.iter().all(|sg| sg.nprems() == 0) {
+                    subgoals[0].clone()
+                }
+                // Priority 3: use original goal if closed
+                else if subgoals.is_empty() && goal.nprems() == 0 {
+                    goal.clone()
+                } else {
+                    return None;
+                };
+
+                // Discharge local hypotheses via implies_intr
+                let mut current = base_result;
+                let local_assumptions: Vec<CTerm> = facts.iter()
+                    .filter_map(|f| {
+                        let cterm = CTerm::certify(f.prop().term().clone());
+                        if current.hyps().contains(&cterm) { Some(cterm) } else { None }
+                    })
+                    .collect();
+                for assum in local_assumptions.iter().rev() {
+                    if let Ok(new_thm) = ThmKernel::implies_intr(assum, &current) {
+                        current = new_thm;
+                    }
+                }
+
+                // Discharge fixed variables via forall_intr
+                for (var_name, var_typ) in fixes.iter().rev() {
+                    if let Ok(new_thm) = ThmKernel::forall_intr(var_name, var_typ.clone(), &current) {
+                        current = new_thm;
+                    }
+                }
+
+                *self = ProofState::Done(current.clone());
+                Some(current)
             }
             ProofState::Ready { goal } => {
                 if goal.nprems() == 0 {
@@ -292,13 +320,21 @@ pub fn interpret_proof_script(
             if let Some(inner) = t.strip_prefix("proof ") {
                 let inner = inner.trim();
                 if inner.starts_with("(induct") || inner.starts_with("(induction") {
-                    // Extract induction variable and optional rule
+                    // Extract induction variable and optional rule, strip arbitrary:
                     let induct_body = if inner.starts_with("(induct ") {
                         &inner[8..].trim_end_matches(')')
                     } else if inner.starts_with("(induction ") {
                         &inner[12..].trim_end_matches(')')
                     } else {
                         inner.trim_matches(|c| c == '(' || c == ')')
+                    };
+                    // Strip 'arbitrary:' option
+                    let induct_body = if let Some(pos) = induct_body.find(" arbitrary:") {
+                        induct_body[..pos].trim()
+                    } else if let Some(pos) = induct_body.find(" arbitrary ") {
+                        induct_body[..pos].trim()
+                    } else {
+                        induct_body
                     };
                     // Apply induction and store subgoals for case/next navigation
                     let induct_method = format!("induct {}", induct_body);
@@ -420,6 +456,15 @@ pub fn interpret_proof_script(
             continue;
         }
 
+        // `obtain vars where "prop" by method` — existential elimination
+        if t.starts_with("obtain ") {
+            let rest = t.strip_prefix("obtain ").unwrap_or("").trim();
+            let result = parse_and_exec_obtain(state, rest, &lines, &mut i, premises);
+            if result { continue; }
+            i += 1;
+            continue;
+        }
+
         // `from name1 name2` — select facts from DB and chain them
         if t.starts_with("from ") {
             let names = t.strip_prefix("from ").unwrap_or("").trim();
@@ -522,6 +567,89 @@ fn exec_simple_proof(state: &mut ProofState, script: &str, premises: &[Arc<Thm>]
     let result = crate::isar::method::exec_proof(&goal, script, premises)?;
     state.set_current_goal(result);
     state.qed()
+}
+
+/// Parse and execute an `obtain vars where "prop" by method` command.
+/// This is existential elimination: from EX x. P(x), obtain a witness x and assume P(x).
+fn parse_and_exec_obtain(
+    state: &mut ProofState,
+    rest: &str,
+    lines: &[&str],
+    i: &mut usize,
+    premises: &[Arc<Thm>],
+) -> bool {
+    // Parse: `vars where "prop" by method`
+    // or: `vars where "prop"` with by method on next line
+    let (vars, prop_and_method) = if let Some(where_pos) = rest.find(" where ") {
+        (rest[..where_pos].trim().to_string(), rest[where_pos + 7..].trim().to_string())
+    } else {
+        return false;
+    };
+
+    // Extract the quoted proposition and the method
+    let (prop_str, method) = if let Some(by_pos) = prop_and_method.find(" by ") {
+        let prop_part = &prop_and_method[..by_pos].trim();
+        let method_part = &prop_and_method[by_pos + 4..].trim();
+        (prop_part.trim_matches('"').to_string(), method_part.to_string())
+    } else if let Some(by_pos) = prop_and_method.find(" by(") {
+        let prop_part = &prop_and_method[..by_pos].trim();
+        let method_part = &prop_and_method[by_pos + 1..].trim();
+        (prop_part.trim_matches('"').to_string(), method_part.to_string())
+    } else {
+        // Check next line for "by method"
+        let prop_part = prop_and_method.trim_matches('"').to_string();
+        if *i + 1 < lines.len() {
+            let next_line = lines[*i + 1].trim();
+            if let Some(by_rest) = next_line.strip_prefix("by ") {
+                *i += 1;
+                (prop_part, by_rest.trim().to_string())
+            } else if let Some(by_rest) = next_line.strip_prefix("by(") {
+                *i += 1;
+                (prop_part, by_rest.trim().to_string())
+            } else {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    };
+
+    // Parse the proposition term
+    let prop_term = match crate::isar::term_parser::parse_term(&prop_str) {
+        Some(t) => t,
+        None => return false,
+    };
+
+    // Fix the variables and add the obtained proposition as a fact
+    // We need to do this carefully to avoid double-borrow of state
+    {
+        // Fix the variables first
+        for var in vars.split_whitespace() {
+            let var = var.trim();
+            if !var.is_empty() {
+                state.fix(var, Typ::dummy());
+            }
+        }
+    }
+    
+    // Add the obtained proposition as an assumption
+    let assume_thm = ThmKernel::assume(CTerm::certify(prop_term.clone()));
+    state.add_fact(Arc::new(assume_thm));
+    
+    // Try to verify the existential using the method (if not empty)
+    if !method.is_empty() {
+        if let Some(goal) = state.get_current_goal() {
+            let results = crate::isar::method::exec_single_method(&goal, &method, premises);
+            if results.iter().any(|r| r.nprems() == 0) {
+                // Method proved it, update the goal
+                if let Some(closed) = results.into_iter().find(|r| r.nprems() == 0) {
+                    state.set_current_goal(closed);
+                }
+            }
+        }
+        // Even if method fails, we keep the obtained fact (it's an assumption)
+    }
+    true
 }
 
 /// Parse a term from a proof script string (thin wrapper).

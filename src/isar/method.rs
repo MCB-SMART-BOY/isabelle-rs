@@ -430,6 +430,23 @@ pub fn prove_auto(goal: &Thm, premises: &[Arc<Thm>]) -> Option<Thm> {
     results.into_iter().find(|r| r.nprems() == 0)
 }
 
+/// Try to solve all subgoals by matching against premises.
+fn solve_by_assumption(state: &Thm, premises: &[Arc<Thm>]) -> Option<Thm> {
+    let mut current = state.clone();
+    while current.nprems() > 0 {
+        let mut any = false;
+        for prem in premises {
+            if let Some(ns) = ThmKernel::bicompose(false, prem, &current, 0) {
+                if ns.nprems() < current.nprems() {
+                    current = ns; any = true; break;
+                }
+            }
+        }
+        if !any { break; }
+    }
+    if current.nprems() == 0 { Some(current) } else { None }
+}
+
 /// Execute a proof script on a goal with premises.
 pub fn exec_proof(state: &Thm, proof_script: &str, premises: &[Arc<Thm>]) -> Option<Thm> {
     AUTO_DEPTH.with(|c| c.set(0));
@@ -461,8 +478,11 @@ pub fn exec_proof(state: &Thm, proof_script: &str, premises: &[Arc<Thm>]) -> Opt
         if let Some(r) = best.as_ref().and_then(|s| if s.nprems() == 0 { Some(s.clone()) } else { None }) {
             return Some(r);
         }
-        // Fallback chain: try auto→blast on the best partial result
+        // Fallback chain: solve_by_assumption → auto → blast
         if let Some(best) = best {
+            if let Some(solved) = solve_by_assumption(&best, premises) {
+                return Some(solved);
+            }
             for r in Method::Auto.execute(&best, premises) {
                 if r.nprems() == 0 { return Some(r); }
             }
@@ -476,7 +496,24 @@ pub fn exec_proof(state: &Thm, proof_script: &str, premises: &[Arc<Thm>]) -> Opt
     // Handle `using thms by method` or `unfolding defs by method`
     if script.starts_with("using ") || script.starts_with("unfolding ") {
         let results = exec_single_method(state, script, premises);
-        return results.into_iter().find(|r| r.nprems() == 0);
+        if let Some(r) = results.iter().find(|r| r.nprems() == 0) {
+            return Some(r.clone());
+        }
+        // Fallback: try auto/blast/solve_by_assumption on partial results
+        for r in &results {
+            if r.nprems() > 0 {
+                if let Some(solved) = solve_by_assumption(r, premises) {
+                    return Some(solved);
+                }
+                for ar in Method::Auto.execute(r, premises) {
+                    if ar.nprems() == 0 { return Some(ar); }
+                }
+                for br in Method::Blast.execute(r, premises) {
+                    if br.nprems() == 0 { return Some(br); }
+                }
+            }
+        }
+        return None;
     }
 
     // Handle `proof <method>` or `apply <method>` scripts
@@ -566,6 +603,30 @@ pub fn exec_single_method(state: &Thm, method_str: &str, premises: &[Arc<Thm>]) 
         method_str[1..method_str.len()-1].trim()
     } else { method_str };
 
+    // Handle comma-separated sub-methods
+    if let Some(comma) = inner.find(',') {
+        let mut depth = 0;
+        let mut valid = false;
+        for (i, ch) in inner.char_indices() {
+            if ch == '(' || ch == '[' { depth += 1; }
+            else if ch == ')' || ch == ']' { depth -= 1; }
+            else if ch == ',' && depth == 0 && i == comma { valid = true; break; }
+        }
+        if valid || depth == 0 {
+            let subs = split_comma_methods(inner);
+            let mut states = vec![state.clone()];
+            for sub in &subs {
+                let mut next = Vec::new();
+                for s in &states {
+                    next.extend(exec_single_method(s, sub, premises));
+                }
+                if next.is_empty() { return vec![]; }
+                states = next;
+            }
+            return states;
+        }
+    }
+
     if inner == "auto" || inner.starts_with("auto ") || inner.starts_with("auto(") {
         let results = Method::Auto.execute(state, premises);
         if results.iter().any(|r| r.nprems() == 0) { return results; }
@@ -587,6 +648,11 @@ pub fn exec_single_method(state: &Thm, method_str: &str, premises: &[Arc<Thm>]) 
         if blast_results.iter().any(|r| r.nprems() == 0) { return blast_results; }
         return Method::Auto.execute(state, premises);
     }
+    if inner == "simp_all" || inner.starts_with("simp_all ") || inner.starts_with("simp_all:") {
+        let results = exec_simp_all(state, premises);
+        if results.iter().any(|r| r.nprems() == 0) { return results; }
+        return Method::Auto.execute(state, premises);
+    }
     if inner == "blast" || inner.starts_with("blast ") || inner.starts_with("blast(") {
         let results = Method::Blast.execute(state, premises);
         if results.iter().any(|r| r.nprems() == 0) { return results; }
@@ -604,7 +670,17 @@ pub fn exec_single_method(state: &Thm, method_str: &str, premises: &[Arc<Thm>]) 
     }
     if inner == "this" { return Method::Skip.execute(state, premises); }
     if inner == "blast" { return Method::Blast.execute(state, premises); }
-    if inner == "iprover" { return Method::Blast.execute(state, premises); }
+    if inner == "iprover" || inner.starts_with("iprover ") {
+        // Parse intro:/elim:/dest: arguments and apply them
+        if inner.contains("intro:") || inner.contains("elim:") || inner.contains("dest:") {
+            let results = exec_intro_elim(inner, state, premises);
+            if results.iter().any(|r| r.nprems() == 0) { return results; }
+        }
+        // Fallback: try blast then auto
+        let blast = Method::Blast.execute(state, premises);
+        if blast.iter().any(|r| r.nprems() == 0) { return blast; }
+        return Method::Auto.execute(state, premises);
+    }
     if inner == "metis" { return Method::Auto.execute(state, premises); }
     if inner == "fastforce" || inner.starts_with("fastforce ") || inner.starts_with("fastforce(") { return Method::Blast.execute(state, premises); }
     if inner == "force" || inner.starts_with("force ") || inner.starts_with("force(") { return Method::Auto.execute(state, premises); }
@@ -624,50 +700,74 @@ pub fn exec_single_method(state: &Thm, method_str: &str, premises: &[Arc<Thm>]) 
         return vec![];
     }
     if let Some(rest) = inner.strip_prefix("rule ") {
-        let (name, of_args) = parse_of_suffix(rest);
+        let (name, of_args, then_args) = parse_of_and_then_suffix(rest);
         let db = HolTheoremDb::get();
-        // Try multiple name lookups
-        for lookup in &[name.trim().to_string(), name.trim().replace('_', ".")] {
-            if let Some(thm) = db.by_name.get(lookup.as_str()) {
-                let thm = apply_of(Arc::clone(thm), of_args.clone(), db);
-                let results = crate::core::tactic::resolve_tac(&[thm], 0).apply(state, premises);
-                if !results.is_empty() { return results; }
+        if let Some(thm) = resolve_theorem_name(name.trim(), db) {
+            let mut thm = thm;
+            thm = apply_of(thm, of_args, db);
+            thm = apply_then(thm, then_args, db);
+            let results = crate::core::tactic::resolve_tac(&[thm.clone()], 0).apply(state, premises);
+            for r in &results { if r.nprems() == 0 { return results; } }
+            let mut all = if results.is_empty() {
+                crate::core::tactic::eresolve_tac(&[thm], 0).apply(state, premises)
+            } else { results };
+            for r in &all.clone() {
+                if r.nprems() > 0 {
+                    for ar in Method::Auto.execute(r, premises) {
+                        if ar.nprems() == 0 { all.push(ar); }
+                    }
+                }
             }
+            if all.iter().any(|r| r.nprems() == 0) { return all; }
+            if !all.is_empty() { return all; }
         }
+        let auto = Method::Auto.execute(state, premises);
+        if auto.iter().any(|r| r.nprems() == 0) { return auto; }
+        if !auto.is_empty() { return auto; }
         return vec![];
     }
-    // (subst ...) — equational substitution in goal or assumptions
+    // (subst ...)
     if let Some(rest) = inner.strip_prefix("subst ") {
         return exec_subst(rest, state, premises);
     }
-    // (erule name [OF ...])
+    // (erule name [OF ...] [THEN ...])
     if let Some(rest) = inner.strip_prefix("erule ") {
-        let (name, of_args) = parse_of_suffix(rest);
+        let (name, of_args, then_args) = parse_of_and_then_suffix(rest);
         let db = HolTheoremDb::get();
-        if let Some(thm) = db.by_name.get(name.trim()) {
-            let thm = apply_of(Arc::clone(thm), of_args, db);
+        if let Some(thm) = resolve_theorem_name(name.trim(), db) {
+            let mut thm = thm;
+            thm = apply_of(thm, of_args, db);
+            thm = apply_then(thm, then_args, db);
             let results = crate::core::tactic::eresolve_tac(&[thm], 0).apply(state, premises);
-            return results;
+            if !results.is_empty() { return results; }
         }
+        return vec![];
     }
-    // (drule name [OF ...])
+    // (drule name [OF ...] [THEN ...])
     if let Some(rest) = inner.strip_prefix("drule ") {
-        let (name, of_args) = parse_of_suffix(rest);
+        let (name, of_args, then_args) = parse_of_and_then_suffix(rest);
         let db = HolTheoremDb::get();
-        if let Some(thm) = db.by_name.get(name.trim()) {
-            let thm = apply_of(Arc::clone(thm), of_args, db);
+        if let Some(thm) = resolve_theorem_name(name.trim(), db) {
+            let mut thm = thm;
+            thm = apply_of(thm, of_args, db);
+            thm = apply_then(thm, then_args, db);
+            let results = crate::core::tactic::dresolve_tac(&[thm], 0).apply(state, premises);
+            if !results.is_empty() { return results; }
+        }
+        return vec![];
+    }
+    // (frule name [OF ...] [THEN ...])
+    if let Some(rest) = inner.strip_prefix("frule ") {
+        let (name, of_args, then_args) = parse_of_and_then_suffix(rest);
+        let db = HolTheoremDb::get();
+        if let Some(thm) = resolve_theorem_name(name.trim(), db) {
+            let mut thm = thm;
+            thm = apply_of(thm, of_args, db);
+            thm = apply_then(thm, then_args, db);
             let results = crate::core::tactic::dresolve_tac(&[thm], 0).apply(state, premises);
             return results;
         }
-    }
-    // (frule name [OF ...])
-    if let Some(rest) = inner.strip_prefix("frule ") {
-        let (name, of_args) = parse_of_suffix(rest);
-        let db = HolTheoremDb::get();
-        if let Some(thm) = db.by_name.get(name.trim()) {
-            let thm = apply_of(Arc::clone(thm), of_args, db);
-            return Method::Frule(vec![thm]).execute(state, premises);
-        }
+        return vec![];
     }
     // (unfold name [OF ...])
     if let Some(rest) = inner.strip_prefix("unfold ") {
@@ -924,6 +1024,9 @@ fn apply_substitution(state: &Thm, eq_thm: &Thm, in_asm: bool, premises: &[Arc<T
                 }
             }
         }
+        // Fallback: try auto
+        let auto_results = Method::Auto.execute(state, premises);
+        if auto_results.iter().any(|r| r.nprems() == 0) { return auto_results; }
         vec![]
     }
 }
@@ -1311,6 +1414,32 @@ fn exec_simp(method_str: &str, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
     Method::Simp(simp).execute(state, premises)
 }
 
+/// Execute `simp_all` — apply simp to all subgoals repeatedly.
+fn exec_simp_all(state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
+    let db = HolTheoremDb::get();
+    let rules: Vec<RewriteRule> = db.simps.iter()
+        .filter_map(|t| RewriteRule::from_thm(Arc::clone(t)))
+        .collect();
+    let simp = Simplifier::new(rules);
+    let mut current = state.clone();
+    for _ in 0..20 {
+        let mut changed = false;
+        for i in 0..current.nprems() {
+            if let Some(goal) = current.prem(i) {
+                if let Some((simplified, eq)) = simp.rewrite_deep(&goal) {
+                    if simplified != goal {
+                        if let Some(ns) = ThmKernel::subst_premise(&eq, &current, i) {
+                            current = ns; changed = true; break;
+                        }
+                    }
+                }
+            }
+        }
+        if !changed { break; }
+    }
+    if current.nprems() == 0 { vec![current] } else { vec![state.clone()] }
+}
+
 /// Extract space-separated arguments until the next modifier keyword (add:, del:, only:).
 /// Returns (list of names, remaining string after extraction).
 fn extract_modifier_args(s: &str) -> (Vec<&str>, &str) {
@@ -1361,6 +1490,25 @@ fn parse_thm_names(args_str: &str) -> Vec<(String, Vec<String>)> {
         results.push((name.to_string(), of_args));
     }
     results
+}
+
+/// Split comma-separated sub-methods at depth 0.
+fn split_comma_methods(inner: &str) -> Vec<String> {
+    let mut methods = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    for (i, ch) in inner.char_indices() {
+        if ch == '(' || ch == '[' { depth += 1; }
+        else if ch == ')' || ch == ']' { depth -= 1; }
+        else if depth == 0 && ch == ',' && i > start {
+            let m = inner[start..i].trim().to_string();
+            if !m.is_empty() { methods.push(m); }
+            start = i + 1;
+        }
+    }
+    let last = inner[start..].trim().to_string();
+    if !last.is_empty() { methods.push(last); }
+    methods
 }
 
 /// Split "(erule subst) (rule refl)" into ["(erule subst)", "(rule refl)"]
@@ -1422,19 +1570,66 @@ fn apply_of(mut thm: Arc<Thm>, args: Vec<String>, db: &HolTheoremDb) -> Arc<Thm>
     thm
 }
 
+/// Apply THEN combinator: thm [THEN thm2] — compose via bicompose.
+fn apply_then(mut thm: Arc<Thm>, args: Vec<String>, db: &HolTheoremDb) -> Arc<Thm> {
+    for arg in &args {
+        if let Some(arg_thm) = db.by_name.get(arg.as_str()) {
+            if let Some(new_thm) = ThmKernel::bicompose(true, arg_thm, &thm, 0) {
+                thm = Arc::new(new_thm);
+            }
+        }
+    }
+    thm
+}
+
+/// Resolve a theorem name with flexible dot/underscore/qualifier matching.
+fn resolve_theorem_name(name: &str, db: &HolTheoremDb) -> Option<Arc<Thm>> {
+    if let Some(thm) = db.by_name.get(name) { return Some(Arc::clone(thm)); }
+    let dot = name.replace('_', ".");
+    if dot != name { if let Some(thm) = db.by_name.get(&dot) { return Some(Arc::clone(thm)); } }
+    let uscore = name.replace('.', "_");
+    if uscore != name { if let Some(thm) = db.by_name.get(&uscore) { return Some(Arc::clone(thm)); } }
+    if name.contains('.') {
+        for k in 1..name.split('.').count() {
+            let suffix: String = name.split('.').skip(k).collect::<Vec<_>>().join(".");
+            if let Some(thm) = db.by_name.get(&suffix) { return Some(Arc::clone(thm)); }
+        }
+    }
+    if let Some(last) = name.rfind('.') {
+        let base = &name[last+1..];
+        if let Some(thm) = db.by_name.get(base) { return Some(Arc::clone(thm)); }
+    }
+    None
+}
+
+/// Parse `name [OF a b] [THEN c]` suffix. Returns (name, of_args, then_args).
+fn parse_of_and_then_suffix(rest: &str) -> (&str, Vec<String>, Vec<String>) {
+    let then_args = if let Some(idx) = rest.find(" [THEN ") {
+        rest[idx+7..].trim_end_matches(']').split_whitespace().map(|s| s.to_string()).collect()
+    } else { Vec::new() };
+    let (name, of_args) = if let Some(idx) = rest.find(" [OF ") {
+        let name = rest[..idx].trim();
+        let of_part = &rest[idx+5..];
+        let of_part = if let Some(ti) = of_part.find(" [THEN ") { &of_part[..ti] } else { of_part };
+        let args: Vec<String> = of_part.trim_end_matches(']').split_whitespace().map(|s| s.to_string()).collect();
+        (name, args)
+    } else {
+        (rest.trim(), Vec::new())
+    };
+    (name, of_args, then_args)
+}
+
 /// Verify a ParsedLemma: extract premises, execute proof, check result.
 pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
     AUTO_DEPTH.with(|c| c.set(0));
     let proof = lem.proof_script.as_ref()?;
-    // Create premises as independent assume(premise) Thms
-    let (prems, _concl) = Pure::strip_imp_prems(lem.theorem.prop().term());
+    let (prems, concl) = Pure::strip_imp_prems(lem.theorem.prop().term());
     let premises: Vec<Arc<Thm>> = prems.iter()
         .map(|p| Arc::new(ThmKernel::assume(CTerm::certify((*p).clone()))))
         .collect();
-    // Create goal state
     let goal = ThmKernel::assume(CTerm::certify(lem.theorem.prop().term().clone()));
 
-    // Try structured Isar proof first (has fix/assume/have/show/case/qed)
+    // Try structured Isar proof first
     if proof.contains("\n") && (proof.contains("have ") || proof.contains("show ")
         || proof.contains("case ") || proof.contains("fix ") || proof.contains("assume "))
     {
@@ -1444,11 +1639,65 @@ pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
         {
             return Some(result);
         }
-        // Fall through to simple exec_proof if Isar interpreter fails
     }
 
-    // Fallback: simple proof execution
-    exec_proof(&goal, proof, &premises)
+    // For lemmas with premises, try Goal.init-style FIRST (bare conclusion)
+    // This allows rules like subst/nat_induct to match the conclusion directly.
+    if !prems.is_empty() {
+        let alt_goal = ThmKernel::trivial(CTerm::certify(concl.clone())).unwrap();
+        if let Some(r) = exec_proof(&alt_goal, proof, &premises) {
+            let mut final_thm = r;
+            for p in prems.iter().rev() {
+                let cterm = CTerm::certify((*p).clone());
+                if let Ok(thm) = ThmKernel::implies_intr(&cterm, &final_thm) {
+                    final_thm = thm;
+                }
+            }
+            return Some(final_thm);
+        }
+        // Direct resolution for "using assms by (rule X)"
+        if proof.contains("using assms") {
+            let rule_name = proof
+                .strip_prefix("using assms by (rule ")
+                .or_else(|| proof.strip_prefix("by (rule "))
+                .map(|r| r.trim_end_matches(')'));
+            if let Some(rule_name) = rule_name {
+                let db = HolTheoremDb::get();
+                if let Some(rule_thm) = resolve_theorem_name(rule_name, db) {
+                    let resolved = crate::core::tactic::resolve_tac(&[rule_thm.clone()], 0)
+                        .apply(&alt_goal, &premises);
+                    if let Some(mut current) = resolved.into_iter().next() {
+                        for _ in 0..20 {
+                            if current.nprems() == 0 { break; }
+                            let mut closed = false;
+                            for prem in &premises {
+                                if let Some(ns) = ThmKernel::bicompose(false, prem, &current, 0) {
+                                    if ns.nprems() < current.nprems() {
+                                        current = ns; closed = true; break;
+                                    }
+                                }
+                            }
+                            if !closed { break; }
+                        }
+                        if current.nprems() == 0 {
+                            let mut final_thm = current;
+                            for p in prems.iter().rev() {
+                                let cterm = CTerm::certify((*p).clone());
+                                if let Ok(thm) = ThmKernel::implies_intr(&cterm, &final_thm) {
+                                    final_thm = thm;
+                                }
+                            }
+                            return Some(final_thm);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Fall back to standard approach
+    let result = exec_proof(&goal, proof, &premises)?;
+    Some(result)
 }
 
 

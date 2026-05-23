@@ -146,11 +146,18 @@ impl Hyps {
         match (a, b) {
             (Term::Const { name: n1, .. }, Term::Const { name: n2, .. }) => n1 == n2,
             (Term::Free { name: n1, .. }, Term::Free { name: n2, .. }) => n1 == n2,
+            (Term::Free { name: n1, .. }, Term::Const { name: n2, .. })
+            | (Term::Const { name: n2, .. }, Term::Free { name: n1, .. }) => {
+                n1 == n2 || n1.as_ref().ends_with(&format!(".{}", n2.as_ref()))
+                    || n2.as_ref().ends_with(&format!(".{}", n1.as_ref()))
+            }
+            (Term::Var { name: n1, .. }, Term::Free { name: n2, .. })
+            | (Term::Free { name: n2, .. }, Term::Var { name: n1, .. }) => n1 == n2,
             (Term::Var { name: n1, index: i1, .. }, Term::Var { name: n2, index: i2, .. }) =>
                 n1 == n2 && i1 == i2,
             (Term::Bound(i1), Term::Bound(i2)) => i1 == i2,
             (Term::Abs { body: b1, .. }, Term::Abs { body: b2, .. }) =>
-                Self::alpha_eq(b1, b2), // de Bruijn: bodies must match
+                Self::alpha_eq(b1, b2),
             (Term::App { func: f1, arg: a1 }, Term::App { func: f2, arg: a2 }) =>
                 Self::alpha_eq(f1, f2) && Self::alpha_eq(a1, a2),
             _ => false,

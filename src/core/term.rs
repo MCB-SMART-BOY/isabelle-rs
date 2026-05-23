@@ -40,6 +40,68 @@ impl Term {
     pub fn is_atom(&self) -> bool { !matches!(self, Term::App { .. }) }
 }
 
+/// Lambda abstraction: `lambda v t` replaces all occurrences of variable `v`
+/// in `t` with `Bound(0)`, increments existing Bound indices by 1, and wraps
+/// in `Abs(v.name, v.typ, result)`. This matches Isabelle's `lambda` in Pure/logic.ML.
+pub fn lambda(var: &Term, body: &Term) -> Term {
+    // First increment existing bounds (we're adding an outer binder)
+    let body_incr = incr_bound(0, body);
+    // Then replace var with Bound(0)
+    let body_subst = subst_var_bound(0, var, &body_incr);
+    let name = match var {
+        Term::Free { name, .. } | Term::Var { name, .. } => name.clone(),
+        Term::Const { name, .. } => name.clone(),
+        _ => std::sync::Arc::from("x"),
+    };
+    Term::abs(name, Typ::dummy(), body_subst)
+}
+
+/// Substitute all occurrences of `var` with `Bound(depth)`.
+fn subst_var_bound(depth: usize, var: &Term, term: &Term) -> Term {
+    if same_var(var, term) {
+        return Term::Bound(depth);
+    }
+    match term {
+        Term::App { func, arg } => Term::app(
+            subst_var_bound(depth, var, func),
+            subst_var_bound(depth, var, arg),
+        ),
+        Term::Abs { name, typ, body } => Term::abs(
+            name.clone(), typ.clone(),
+            subst_var_bound(depth + 1, var, body),
+        ),
+        _ => term.clone(),
+    }
+}
+
+/// Increment all Bound indices >= `depth` by 1.
+fn incr_bound(depth: usize, term: &Term) -> Term {
+    match term {
+        Term::Bound(i) if *i >= depth => Term::Bound(i + 1),
+        Term::Bound(_) => term.clone(),
+        Term::App { func, arg } => Term::app(
+            incr_bound(depth, func),
+            incr_bound(depth, arg),
+        ),
+        Term::Abs { name, typ, body } => Term::abs(
+            name.clone(), typ.clone(),
+            incr_bound(depth + 1, body),
+        ),
+        _ => term.clone(),
+    }
+}
+
+/// Check if two terms are the same logical variable (Free/Var cross-compatible).
+fn same_var(a: &Term, b: &Term) -> bool {
+    match (a, b) {
+        (Term::Free { name: n1, .. }, Term::Free { name: n2, .. }) => n1 == n2,
+        (Term::Var { name: n1, index: i1, .. }, Term::Var { name: n2, index: i2, .. }) => n1 == n2 && i1 == i2,
+        (Term::Free { name: n1, .. }, Term::Var { name: n2, index, .. }) if *index == 0 => n1 == n2,
+        (Term::Var { name: n1, index, .. }, Term::Free { name: n2, .. }) if *index == 0 => n1 == n2,
+        _ => false,
+    }
+}
+
 impl fmt::Display for Term {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -57,4 +119,15 @@ impl fmt::Display for Term {
 mod tests {
     use super::*;
     #[test] fn test_terms() { let t = Term::const_("True", Typ::base("prop")); assert!(t.is_const()); }
+    #[test] fn test_lambda() {
+        let n = Term::free("n", Typ::dummy());
+        let p = Term::free("P", Typ::dummy());
+        let body = Term::app(p, n.clone());
+        let lam = lambda(&n, &body);
+        eprintln!("lambda n. P n = {:?}", lam);
+        // Should be: Abs("n", dummy, App(Free("P"), Bound(0)))
+        if let Term::Abs { body, .. } = &lam {
+            assert!(matches!(body.as_ref(), Term::App { .. }));
+        }
+    }
 }
