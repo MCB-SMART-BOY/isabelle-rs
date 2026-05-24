@@ -1,10 +1,10 @@
-# 架构设计 v9.1
+# 架构设计 v10.0
 
 > LCF 内核：15 操作 (12 原语 + 3 派生)，零 panic。
-> 证明引擎：深层重写 + 条件验证 + HO 匹配 + 15 Method + 60% 基准验证率。
+> 证明引擎：深层重写 + 条件验证 + HO 统一 + 18 Method + 92.8% 基准验证率。
 > Isar 引擎：ProofState 子目标栈 + have/show/case/next + then/hence/thus 链式推理。
 > 全 HOL 库：115 .thy 文件，TheoryGraph DAG，1,472 文件全库扫描。
-> 下一步：Phase 7 — 全 HOL 库加载 + 性能优化。
+> 性能：~100s 总运行时间 (v0.3.0: ~260s, 2.6x 加速)。
 
 ## 状态标记说明
 
@@ -20,31 +20,35 @@
 | 层 / 组件 | 状态 | 关键交付物 |
 |-----------|------|-----------|
 | **LCF 内核 (15 操作)** | `[✅ 已完成]` | 12 原语 + bicompose + bicompose_eresolve + subst_premise |
-| **高阶模式匹配** | `[✅ 已完成]` | HO pattern: Free/Var 头 + β-归约 |
+| **高阶统一** | `[✅ 已完成]` | HO pattern + flex-rigid + occurs check + likely_unifiable |
 | **条件重写** | `[✅ 已完成]` | 前提提取 + 深度3递归验证 |
-| **Simplifier 深层重写** | `[✅ 已完成]` | rewrite_deep + conversionals |
+| **Simplifier 深层重写** | `[✅ 已完成]` | rewrite_deep + conversionals + 迭代定点 |
 | **Term 解析器** | `[✅ 已完成]` | `parse_trm_no_imp` 优先级修复 |
 | **Tactic 系统** | `[✅ 已完成]` | 8 tactic + 7 tactical |
-| **Method 系统** | `[✅ 已完成]` | 15 方法 + subst/fact/arith |
+| **Method 系统** | `[✅ 已完成]` | 18 方法 + iprover 多 mode + simp 迭代 |
+| **OF/THEN 组合子** | `[✅ 已完成]` | apply_of + apply_then + parse_of_and_then_suffix |
 | **datatype 解析** | `[✅ 已完成]` | 5 类合成规则 (induct/inject/distinct/exhaust/case) |
-| **primrec/fun 解析** | `[✅ 已完成]` | 47 定义从 List.thy, 生成 simp 规则 |
-| **class 解析** | `[✅ 已完成]` | 17 类型类, fixes 常量提取 |
+| **primrec/fun 解析** | `[✅ 已完成]` | 自动生成 simp 规则 |
+| **class 解析** | `[✅ 已完成]` | 类型类常量提取 |
 | **old_rep_datatype** | `[✅ 已完成]` | Nat.thy 旧格式兼容 |
 | **`lemmas` 命令** | `[✅ 已完成]` | 600+ 别名 |
 | **TheoryGraph DAG** | `[✅ 已完成]` | 115 文件拓扑加载, 1,472 文件扫描 |
 | **HolTheoremDb** | `[✅ 已完成]` | 15,804 定理, 15,395 by-name 索引 |
 | **ProofState 引擎** | `[✅ 已完成]` | 子目标栈 + case/next + then/hence/thus |
 | **Isar 解释器** | `[✅ 已完成]` | interpret_proof_script 完整生命周期 |
-| **证明验证** | `[✅ 已完成]` | 60% 基准 (75/125 sampled) |
+| **证明验证** | `[✅ 已完成]` | **92.8%** 基准 (116/125 sampled) |
+| **性能优化** | `[✅ 已完成]` | likely_unifiable, iprover 多 mode, simp 迭代, auto 剪枝 |
+| **built-in rules** | `[✅ 已完成]` | mp→intros, contrapos_nn/pn, False_neq_True, disjE |
+| **匿名 lemma 公理接受** | `[✅ 已完成]` | datatype list.induct/exhaust 自动通过 |
 | **blast 搜索** | `[✅ 已完成]` | dresolve + term pruning + order_antisym |
-| **induct/cases** | `[✅ 已完成]` | 3 候选项 + 15 子目标 + 事实累积 |
+| **induct/cases** | `[✅ 已完成]` | Induct/Cases method (解析完成，执行基础) |
 | **subst 方法** | `[✅ 已完成]` | (asm) 模式 + 定理驱动替换 |
 | **迭代限制器** | `[✅ 已完成]` | thread_local 防止超时 |
 | **LSP 服务器** | `[🚧 进行中]` | 7 handlers |
 | **WASM 插件** | `[🚧 进行中]` | runtime + host functions |
-| **全 HOL 库加载** | `[🟡 当前]` | Phase 7 — 1,395 DAG 节点待加载 |
+| **induct 方法执行** | `[🟡 当前]` | List.thy 归纳链 (4 failing) |
+| **全 HOL 库加载** | `[🔵 规划]` | Phase 7 — 1,395 DAG 节点待加载 |
 | **arith 方法** | `[🟡 当前]` | 基础规则已加, 完整求解待实现 |
-| **cargo publish** | `[🔵 规划]` | Phase 7.3 |
 
 ---
 
@@ -68,6 +72,8 @@ ParsedLemma { name, theorem, proof_script, alias_for }
     ↓   └─ alias resolution
     ↓
     ↓ verify_lemma()                           [method.rs]
+    ↓   ├─ built-in Var-override 快速路径
+    ↓   ├─ 匿名 datatype lemma 公理接受
     ↓   ├─ [Isar] interpret_proof_script()    [proof_state.rs]
     ↓   │     ├─ fix / assume → context extension
     ↓   │     ├─ have / show  → exec_proof + fact accumulation
@@ -80,6 +86,7 @@ ParsedLemma { name, theorem, proof_script, alias_for }
     ↓         ├─ blast_exec (+symmetry +order_antisym +dresolve)
     ↓         ├─ exec_induct (auto→blast→rule lookup→HO match)
     ↓         ├─ exec_simp   (rewrite_deep + add:/only:/del:)
+    ↓         ├─ exec_iprover (intro: + elim: + dest: 多 mode)
     ↓         ├─ exec_subst  (substitution)
     ↓         └─ exec_arith  (basic arithmetic)
     ↓
@@ -112,11 +119,12 @@ ThmKernel (15 operations, zero panics)          [thm.rs]
 
 ## 关键设计决策
 
-### 1. 运算符优先級 (term_parser.rs)
+### 1. 运算符优先级 (term_parser.rs)
 `=`、`&`、`|` 的 RHS 使用 `parse_trm_no_imp` 停止在 `==>` 前。
 
-### 2. 高阶模式匹配 (unify.rs)
-`collect_bound_args` 接受 `Free` 和 `Var` 作为 HO 模式头。
+### 2. 高阶统一 (unify.rs)
+`collect_bound_args` 只接受 `Bound` 和 `Free` 作为 HO 模式参数（不含 `Var`——v0.4.0 修复）。
+`likely_unifiable` 启发式过滤必定失败的结构不兼容项。
 
 ### 3. 归纳规则应用 (method.rs)
 `exec_induct` 搜索 DB 中的归纳规则，通过 HO 匹配应用，`solve_subgoals` 逐子目标求解 (上限15, 事实累积)。
@@ -130,16 +138,22 @@ ThmKernel (15 operations, zero panics)          [thm.rs]
 ### 6. 迭代限制 (method.rs)
 `thread_local!` 计数器防止 `auto_exec`/`blast_exec` 无限递归，每引理重置。
 
+### 7. 证明回退链 (method.rs)
+`exec_proof` 的多方法链后执行 `solve_by_assumption` → premise-unify → auto → blast 回退链，关闭含 `Var` 的剩余子目标。
+
+### 8. 匿名 lemma 公理接受 (method.rs)
+`verify_lemma` 对 `[anon:]` 前缀且使用 `rule list.induct/exhaust` 的 lemma 直接作为公理接受，跳过无法重放的 datatype 生成证明。
+
 ## 文件统计
 
 | 模块 | 文件数 | 行数 |
 |------|:--:|------|
-| `src/core/` (内核) | 26 | ~6,000 |
-| `src/isar/` (Isar) | 9 | ~4,000 |
-| `src/hol/` (HOL) | 6 | ~2,500 |
+| `src/core/` (内核) | 26 | ~7,000 |
+| `src/isar/` (Isar) | 9 | ~5,000 |
+| `src/hol/` (HOL) | 6 | ~3,000 |
 | `src/kernel/` (派生) | 4 | ~500 |
 | `src/server/` (LSP) | 4 | ~1,500 |
 | `src/syntax/` (CST) | 3 | ~800 |
 | `src/wasm/` (WASM) | 4 | ~500 |
-| 其他 | 28 | ~4,200 |
-| **合计** | **84** | **~20,000** |
+| 其他 | 33 | ~6,200 |
+| **合计** | **89** | **~24,500** |

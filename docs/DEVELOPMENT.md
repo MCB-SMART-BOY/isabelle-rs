@@ -20,9 +20,6 @@ cargo test --lib test_induct_rule_application -- --nocapture
 # 查看基准验证率
 cargo test test_verify_all_core_files -- --nocapture
 
-# 查看单个文件验证率
-cargo test test_verify_list_thy_sample -- --nocapture
-
 # 查看数据类解析
 cargo test datatype_tests -- --nocapture
 ```
@@ -33,8 +30,8 @@ cargo test datatype_tests -- --nocapture
 src/
 ├── core/              # LCF 可信内核
 │   ├── thm.rs         # Thm + ThmKernel (15 操作)
-│   ├── unify.rs       # 高阶统一 + HO 模式匹配
-│   ├── simplifier.rs  # 重写引擎 (rewrite_deep, 条件验证)
+│   ├── unify.rs       # 高阶统一 + HO 模式匹配 + likely_unifiable
+│   ├── simplifier.rs  # 重写引擎 (rewrite_deep, 条件验证, 迭代定点)
 │   ├── tactic.rs      # Tactic AST + 解释器
 │   ├── envir.rs       # 变量环境 (β-归约)
 │   ├── logic.rs       # Pure 逻辑常量
@@ -43,13 +40,13 @@ src/
 │   ├── theory.rs      # Theory, ProofContext
 │   └── ... (26 files)
 ├── isar/              # Isar 证明引擎
-│   ├── method.rs      # Method 引擎 (15 方法 + subst/fact/arith)
+│   ├── method.rs      # Method 引擎 (18 方法 + iprover 多 mode + simp 迭代)
 │   ├── term_parser.rs # Term 解析器 (优先级修复)
 │   ├── token.rs       # Isabelle tokenizer
 │   ├── proof_state.rs # ProofState + Isar 解释器
 │   └── ... (9 files)
 ├── hol/               # HOL 理论加载
-│   ├── hol_loader.rs  # .thy 解析 + datatype/primrec/class 合成
+│   ├── hol_loader.rs  # .thy 解析 + datatype/primrec/class 合成 + built-in rules
 │   ├── theory_graph.rs # TheoryGraph DAG + 进度加载
 │   └── ... (6 files)
 ├── kernel/            # 派生规则 + 数据管理
@@ -76,6 +73,8 @@ src/
     │   └─ parse_lemmas_cmd()    → 别名解析
 ParsedLemma { name, theorem, proof_script }
     ↓ verify_lemma()
+    │   ├─ built-in Var-override 快速路径
+    │   ├─ 匿名 datatype lemma 公理接受
     │   ├─ [Isar] interpret_proof_script()
     │   │     ├─ fix / assume → 上下文扩展
     │   │     ├─ have / show  → exec_proof + 事实累积
@@ -87,7 +86,8 @@ Method::execute(state, premises): Vec<Thm>
     ├─ auto_exec (assume→simp→resolve→eresolve→dresolve)
     ├─ blast_exec (+symmetry +order_antisym +dresolve +term_pruning)
     ├─ exec_induct (auto→blast→rule lookup→HO match→solve_subgoals)
-    ├─ exec_simp (rewrite_deep + add:/only:/del:)
+    ├─ exec_simp (rewrite_deep 迭代定点 + add:/only:/del:)
+    ├─ exec_iprover (intro: + elim: + dest: 多 mode)
     ├─ exec_subst (substitution in goal/assumptions)
     └─ exec_arith (basic arithmetic)
     ↓
@@ -96,7 +96,7 @@ ThmKernel (15 operations)
     └─ 3 kernel derived (bicompose, bicompose_eresolve, subst_premise)
 ```
 
-### 运算符优先級
+### 运算符优先级
 
 `parse_trm_no_imp` 用于 `=`/`&`/`|` 的 RHS，停止在 `==>` 前。
 
@@ -104,13 +104,14 @@ ThmKernel (15 operations)
 s = t ==> t = s  →  Pure.imp(HOL.eq(s, t), HOL.eq(t, s))  ✅
 ```
 
-### 高阶模式匹配
+### 高阶统一
 
-`collect_bound_args` 接受 `Free`/`Var` 作为模式头。
+`collect_bound_args` 只接受 `Bound`/`Free`（不含 `Var`——v0.4.0 修复）。
 `Envir::norm_term` 在 App 处执行 β-归约。
+`likely_unifiable` 启发式过滤结构不兼容的项。
 
 ```rust
-// Pattern: P(xs) where P is Free/Var
+// Pattern: P(xs) where P is Free/Var, xs is Free
 // Goal: length xs = 0
 // Result: P → λxs. length xs = 0
 ```
@@ -122,6 +123,15 @@ s = t ==> t = s  →  Pure.imp(HOL.eq(s, t), HOL.eq(t, s))  ✅
 ### Isar 引擎
 
 `ProofState::Proving` 包含子目标栈 (`subgoals`, `current_subgoal`) 和链式事实 (`chained_fact`)。`interpret_proof_script` 解析 Isar 命令并驱动状态机。
+
+### 证明回退链
+
+`exec_proof` 多方法链后执行：`solve_by_assumption` → premise-unify → auto → blast。
+`solve_by_assumption` 先尝试 alpha_eq，再尝试 unification。
+
+### 匿名 datatype lemma
+
+`verify_lemma` 对 `[anon:]` 前缀 + `rule list.induct/exhaust` 的 lemma 直接作为公理接受。
 
 ### 迭代限制
 
@@ -176,8 +186,10 @@ cargo test isar_tests -- --nocapture
 
 | 指标 | 数值 |
 |------|------|
-| Rust 代码 | ~20,000 行 |
-| 源文件 | 84 `.rs` |
+| Rust 代码 | ~24,500 行 |
+| 源文件 | 89 `.rs` |
 | 测试 | 210+ |
 | `.thy` 文件 | 116 (115 HOL + 1 Pure) |
 | 定理总数 | 15,804 |
+| 验证率 | 92.8% (116/125 sampled) |
+| 性能 | ~100s (v0.3.0: ~260s) |
