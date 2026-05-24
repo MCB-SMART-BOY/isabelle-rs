@@ -30,7 +30,9 @@ pub struct TypeScheme {
 }
 
 impl TypeScheme {
-    pub fn new(body: Typ) -> Self { TypeScheme { body } }
+    pub fn new(body: Typ) -> Self {
+        TypeScheme { body }
+    }
 
     /// Check if a concrete type is an instance of this scheme.
     /// E.g., scheme `'a => 'a`, type `nat => nat` → true.
@@ -54,9 +56,13 @@ fn collect_tfrees(typ: &Typ) -> BTreeSet<String> {
 
 fn collect_tfrees_inner(typ: &Typ, set: &mut BTreeSet<String>) {
     match typ {
-        Typ::TFree { name, .. } => { set.insert(name.to_string()); }
+        Typ::TFree { name, .. } => {
+            set.insert(name.to_string());
+        }
         Typ::Type { args, .. } => {
-            for a in args { collect_tfrees_inner(a, set); }
+            for a in args {
+                collect_tfrees_inner(a, set);
+            }
         }
         Typ::TVar { .. } => {}
     }
@@ -67,7 +73,9 @@ fn match_types(scheme: &Typ, concrete: &Typ, mapping: &mut BTreeMap<String, Typ>
         (Typ::TFree { name, .. }, _) => {
             mapping.insert(name.to_string(), concrete.clone());
         }
-        (Typ::Type { name: n1, args: a1 }, Typ::Type { name: n2, args: a2 }) if n1 == n2 && a1.len() == a2.len() => {
+        (Typ::Type { name: n1, args: a1 }, Typ::Type { name: n2, args: a2 })
+            if n1 == n2 && a1.len() == a2.len() =>
+        {
             for (s, c) in a1.iter().zip(a2.iter()) {
                 match_types(s, c, mapping);
             }
@@ -99,14 +107,22 @@ pub struct Consts {
 }
 
 impl Consts {
-    pub fn empty() -> Self { Consts { decls: BTreeMap::new() } }
+    pub fn empty() -> Self {
+        Consts {
+            decls: BTreeMap::new(),
+        }
+    }
 
     /// Declare a new constant.
     pub fn declare(&mut self, name: &str, scheme: TypeScheme) {
         let mono = collect_tfrees(&scheme.body).is_empty();
         self.decls.insert(
             Arc::from(name),
-            ConstDecl { name: Arc::from(name), scheme, monomorphic: mono },
+            ConstDecl {
+                name: Arc::from(name),
+                scheme,
+                monomorphic: mono,
+            },
         );
     }
 
@@ -140,9 +156,10 @@ mod tests {
 
     #[test]
     fn test_is_instance() {
-        let scheme = TypeScheme::new(
-            Typ::arrow(Typ::free("'a", Sort::singleton("type")), Typ::free("'a", Sort::singleton("type")))
-        );
+        let scheme = TypeScheme::new(Typ::arrow(
+            Typ::free("'a", Sort::singleton("type")),
+            Typ::free("'a", Sort::singleton("type")),
+        ));
         assert!(scheme.is_instance(&Typ::arrow(Typ::base("nat"), Typ::base("nat"))));
     }
 

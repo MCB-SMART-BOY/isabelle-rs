@@ -14,46 +14,49 @@ pub type Parser<T> = Box<dyn Fn(&[Token]) -> Option<(T, Vec<Token>)> + Send + Sy
 /// Match a specific keyword.
 pub fn keyword(kw: &str) -> Parser<String> {
     let kw = kw.to_string();
-    Box::new(move |tokens: &[Token]| {
-        match tokens.first() {
-            Some(tok) if tok.is_keyword(&kw) => Some((tok.source.clone(), tokens[1..].to_vec())),
-            _ => None,
-        }
+    Box::new(move |tokens: &[Token]| match tokens.first() {
+        Some(tok) if tok.is_keyword(&kw) => Some((tok.source.clone(), tokens[1..].to_vec())),
+        _ => None,
     })
 }
 
 /// Match an identifier.
 pub fn ident() -> Parser<String> {
-    Box::new(|tokens: &[Token]| {
-        match tokens.first() {
-            Some(tok) if tok.is_ident() => Some((tok.source.clone(), tokens[1..].to_vec())),
-            _ => None,
-        }
+    Box::new(|tokens: &[Token]| match tokens.first() {
+        Some(tok) if tok.is_ident() => Some((tok.source.clone(), tokens[1..].to_vec())),
+        _ => None,
     })
 }
 
 /// Match a string literal (strips quotes).
 pub fn string() -> Parser<String> {
-    Box::new(|tokens: &[Token]| {
-        match tokens.first() {
-            Some(Token { kind: TokenKind::String, source, .. }) => {
-                let inner = if source.len() >= 2 { &source[1..source.len()-1] } else { "" };
-                Some((inner.to_string(), tokens[1..].to_vec()))
-            }
-            _ => None,
+    Box::new(|tokens: &[Token]| match tokens.first() {
+        Some(Token {
+            kind: TokenKind::String,
+            source,
+            ..
+        }) => {
+            let inner = if source.len() >= 2 {
+                &source[1..source.len() - 1]
+            } else {
+                ""
+            };
+            Some((inner.to_string(), tokens[1..].to_vec()))
         }
+        _ => None,
     })
 }
 
 /// Match a specific symbol.
 pub fn symbol(sym: &str) -> Parser<String> {
     let sym = sym.to_string();
-    Box::new(move |tokens: &[Token]| {
-        match tokens.first() {
-            Some(Token { kind: TokenKind::Symbol(s), source, .. }) if s.as_ref() == &sym =>
-                Some((source.clone(), tokens[1..].to_vec())),
-            _ => None,
-        }
+    Box::new(move |tokens: &[Token]| match tokens.first() {
+        Some(Token {
+            kind: TokenKind::Symbol(s),
+            source,
+            ..
+        }) if s.as_ref() == &sym => Some((source.clone(), tokens[1..].to_vec())),
+        _ => None,
     })
 }
 
@@ -74,7 +77,10 @@ pub fn repeat<T: 'static>(p: Parser<T>) -> Parser<Vec<T>> {
     Box::new(move |tokens: &[Token]| {
         let mut results = Vec::new();
         let mut rest = tokens.to_vec();
-        while let Some((v, r)) = p(&rest) { results.push(v); rest = r; }
+        while let Some((v, r)) = p(&rest) {
+            results.push(v);
+            rest = r;
+        }
         Some((results, rest))
     })
 }
@@ -84,7 +90,10 @@ pub fn repeat1<T: 'static>(p: Parser<T>) -> Parser<Vec<T>> {
     Box::new(move |tokens: &[Token]| {
         let (first, mut rest) = p(tokens)?;
         let mut results = vec![first];
-        while let Some((v, r)) = p(&rest) { results.push(v); rest = r; }
+        while let Some((v, r)) = p(&rest) {
+            results.push(v);
+            rest = r;
+        }
         Some((results, rest))
     })
 }
@@ -95,7 +104,10 @@ pub fn repeat1<T: 'static>(p: Parser<T>) -> Parser<Vec<T>> {
 
 /// A parsed theory header.
 #[derive(Debug, Clone)]
-pub struct TheoryHeader { pub name: String, pub imports: Vec<String> }
+pub struct TheoryHeader {
+    pub name: String,
+    pub imports: Vec<String>,
+}
 
 pub fn theory_header() -> Parser<TheoryHeader> {
     Box::new(|tokens: &[Token]| {
@@ -110,7 +122,10 @@ pub fn theory_header() -> Parser<TheoryHeader> {
 
 /// A parsed lemma statement.
 #[derive(Debug, Clone)]
-pub struct LemmaStmt { pub name: String, pub statement: String }
+pub struct LemmaStmt {
+    pub name: String,
+    pub statement: String,
+}
 
 pub fn lemma_stmt() -> Parser<LemmaStmt> {
     Box::new(|tokens: &[Token]| {
@@ -118,7 +133,13 @@ pub fn lemma_stmt() -> Parser<LemmaStmt> {
         let (name, rest) = ident()(&rest)?;
         let (_, rest) = symbol(":")(&rest)?;
         let (stmt, rest) = string()(&rest)?;
-        Some((LemmaStmt { name, statement: stmt }, rest))
+        Some((
+            LemmaStmt {
+                name,
+                statement: stmt,
+            },
+            rest,
+        ))
     })
 }
 
@@ -128,10 +149,12 @@ pub fn lemma_stmt() -> Parser<LemmaStmt> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::token::Lexer;
+    use super::*;
 
-    fn tok(s: &str) -> Vec<Token> { Lexer::new(s).tokenize() }
+    fn tok(s: &str) -> Vec<Token> {
+        Lexer::new(s).tokenize()
+    }
 
     #[test]
     fn test_keyword_parser() {

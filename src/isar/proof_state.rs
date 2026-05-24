@@ -9,10 +9,10 @@
 //! This is a simplified version that handles the most common patterns
 //! found in .thy file proofs without implementing the full Isar language.
 
-use std::sync::Arc;
-use crate::core::thm::{Thm, ThmKernel, CTerm};
 use crate::core::term::Term;
+use crate::core::thm::{CTerm, Thm, ThmKernel};
 use crate::core::types::Typ;
+use std::sync::Arc;
 
 /// The proof state during a structured Isar proof.
 #[derive(Debug, Clone)]
@@ -66,7 +66,12 @@ impl ProofState {
 
     /// Set subgoals from an induction/cases application.
     pub fn set_subgoals(&mut self, new_subgoals: Vec<Thm>) {
-        if let ProofState::Proving { subgoals, current_subgoal, .. } = self {
+        if let ProofState::Proving {
+            subgoals,
+            current_subgoal,
+            ..
+        } = self
+        {
             *subgoals = new_subgoals;
             *current_subgoal = 0;
         }
@@ -75,9 +80,11 @@ impl ProofState {
     /// Get the current subgoal (if any).
     pub fn get_current_subgoal(&self) -> Option<&Thm> {
         match self {
-            ProofState::Proving { subgoals, current_subgoal, .. } => {
-                subgoals.get(*current_subgoal)
-            }
+            ProofState::Proving {
+                subgoals,
+                current_subgoal,
+                ..
+            } => subgoals.get(*current_subgoal),
             _ => None,
         }
     }
@@ -105,9 +112,15 @@ impl ProofState {
     }
 
     /// Prove an intermediate lemma (`have "B" by method`).
-    pub fn have(&mut self, stmt: &Term, method: &str, all_premises: &[Arc<Thm>]) -> Option<Arc<Thm>> {
+    pub fn have(
+        &mut self,
+        stmt: &Term,
+        method: &str,
+        all_premises: &[Arc<Thm>],
+    ) -> Option<Arc<Thm>> {
         let goal = ThmKernel::assume(CTerm::certify(stmt.clone()));
-        let mut combined_prems: Vec<Arc<Thm>> = all_premises.iter()
+        let mut combined_prems: Vec<Arc<Thm>> = all_premises
+            .iter()
             .chain(self.get_premises().iter())
             .cloned()
             .collect();
@@ -128,7 +141,8 @@ impl ProofState {
     pub fn show(&mut self, stmt: &Term, method: &str, all_premises: &[Arc<Thm>]) -> Option<Thm> {
         let actual_stmt = self.resolve_case_stmt(stmt);
         let goal = ThmKernel::assume(CTerm::certify(actual_stmt));
-        let mut combined_prems: Vec<Arc<Thm>> = all_premises.iter()
+        let mut combined_prems: Vec<Arc<Thm>> = all_premises
+            .iter()
             .chain(self.get_premises().iter())
             .cloned()
             .collect();
@@ -175,12 +189,22 @@ impl ProofState {
     /// Set up a case context    /// Set up a case context (`case Nil` or `case (Cons x xs)`).
     /// Selects the appropriate subgoal for the named case.
     pub fn case_(&mut self, case_name: &str) {
-        if let ProofState::Proving { subgoals, current_subgoal, facts, chained_fact, .. } = self {
+        if let ProofState::Proving {
+            subgoals,
+            current_subgoal,
+            facts,
+            chained_fact,
+            ..
+        } = self
+        {
             *chained_fact = None;
             // Try to find the matching subgoal by name/index
-            let clean_name = case_name.trim_matches(|c: char| c == '(' || c == ')')
-                .split_whitespace().next().unwrap_or(case_name);
-            
+            let clean_name = case_name
+                .trim_matches(|c: char| c == '(' || c == ')')
+                .split_whitespace()
+                .next()
+                .unwrap_or(case_name);
+
             // Heuristic: map case names to subgoal indices
             let idx = match clean_name {
                 "Nil" | "None" | "0" | "Zero" | "empty" | "[]" => 0,
@@ -200,7 +224,14 @@ impl ProofState {
 
     /// Move to the next subgoal (`next`).
     pub fn next(&mut self) {
-        if let ProofState::Proving { subgoals, current_subgoal, facts, chained_fact, .. } = self {
+        if let ProofState::Proving {
+            subgoals,
+            current_subgoal,
+            facts,
+            chained_fact,
+            ..
+        } = self
+        {
             *chained_fact = None;
             if *current_subgoal + 1 < subgoals.len() {
                 *current_subgoal += 1;
@@ -221,7 +252,14 @@ impl ProofState {
     /// Returns the final theorem if all subgoals are solved.
     pub fn qed(&mut self) -> Option<Thm> {
         match self {
-            ProofState::Proving { subgoals, goal, fixes, facts, show_result, .. } => {
+            ProofState::Proving {
+                subgoals,
+                goal,
+                fixes,
+                facts,
+                show_result,
+                ..
+            } => {
                 // Priority 1: use the show_result if available
                 let base_result = if let Some(result) = show_result {
                     result.clone()
@@ -239,10 +277,15 @@ impl ProofState {
 
                 // Discharge local hypotheses via implies_intr
                 let mut current = base_result;
-                let local_assumptions: Vec<CTerm> = facts.iter()
+                let local_assumptions: Vec<CTerm> = facts
+                    .iter()
                     .filter_map(|f| {
                         let cterm = CTerm::certify(f.prop().term().clone());
-                        if current.hyps().contains(&cterm) { Some(cterm) } else { None }
+                        if current.hyps().contains(&cterm) {
+                            Some(cterm)
+                        } else {
+                            None
+                        }
                     })
                     .collect();
                 for assum in local_assumptions.iter().rev() {
@@ -253,7 +296,8 @@ impl ProofState {
 
                 // Discharge fixed variables via forall_intr
                 for (var_name, var_typ) in fixes.iter().rev() {
-                    if let Ok(new_thm) = ThmKernel::forall_intr(var_name, var_typ.clone(), &current) {
+                    if let Ok(new_thm) = ThmKernel::forall_intr(var_name, var_typ.clone(), &current)
+                    {
                         current = new_thm;
                     }
                 }
@@ -300,7 +344,7 @@ pub fn interpret_proof_script(
     premises: &[Arc<Thm>],
 ) -> Option<Thm> {
     let script = script.trim();
-    
+
     // Handle simple `by method` proofs (no structured commands)
     if script.starts_with("by ") || script.starts_with("by(") {
         return exec_simple_proof(state, script, premises);
@@ -311,7 +355,10 @@ pub fn interpret_proof_script(
     let mut i = 0;
     while i < lines.len() {
         let t = lines[i].trim();
-        if t.is_empty() { i += 1; continue; }
+        if t.is_empty() {
+            i += 1;
+            continue;
+        }
 
         // `proof` — begin proof block
         if t.starts_with("proof ") || t == "proof" {
@@ -340,7 +387,10 @@ pub fn interpret_proof_script(
                     let induct_method = format!("induct {}", induct_body);
                     if let Some(goal) = state.get_current_goal() {
                         let results = crate::isar::method::exec_single_method(
-                            &goal, &induct_method, premises);
+                            &goal,
+                            &induct_method,
+                            premises,
+                        );
                         if !results.is_empty() {
                             state.set_subgoals(results);
                         }
@@ -389,13 +439,19 @@ pub fn interpret_proof_script(
         // `have "B" by method` or `have name: "B" by method`
         if t.starts_with("have ") {
             let result = parse_and_exec_have_show(state, t, premises, false);
-            if result.is_some() { i += 1; continue; }
+            if result.is_some() {
+                i += 1;
+                continue;
+            }
         }
 
         // `show "C" by method` or `show name: "C" by method`
         if t.starts_with("show ") {
             let result = parse_and_exec_have_show(state, t, premises, true);
-            if result.is_some() { i += 1; continue; }
+            if result.is_some() {
+                i += 1;
+                continue;
+            }
         }
 
         // `hence` = `then have`
@@ -403,7 +459,10 @@ pub fn interpret_proof_script(
             let rest = t.strip_prefix("hence ").unwrap_or("");
             let have_cmd = format!("have {}", rest);
             let result = parse_and_exec_have_show(state, &have_cmd, premises, false);
-            if result.is_some() { i += 1; continue; }
+            if result.is_some() {
+                i += 1;
+                continue;
+            }
         }
 
         // `thus` = `then show`
@@ -411,7 +470,10 @@ pub fn interpret_proof_script(
             let rest = t.strip_prefix("thus ").unwrap_or("");
             let show_cmd = format!("show {}", rest);
             let result = parse_and_exec_have_show(state, &show_cmd, premises, true);
-            if result.is_some() { i += 1; continue; }
+            if result.is_some() {
+                i += 1;
+                continue;
+            }
         }
 
         // `case name` — induction case
@@ -460,7 +522,9 @@ pub fn interpret_proof_script(
         if t.starts_with("obtain ") {
             let rest = t.strip_prefix("obtain ").unwrap_or("").trim();
             let result = parse_and_exec_obtain(state, rest, &lines, &mut i, premises);
-            if result { continue; }
+            if result {
+                continue;
+            }
             i += 1;
             continue;
         }
@@ -581,7 +645,10 @@ fn parse_and_exec_obtain(
     // Parse: `vars where "prop" by method`
     // or: `vars where "prop"` with by method on next line
     let (vars, prop_and_method) = if let Some(where_pos) = rest.find(" where ") {
-        (rest[..where_pos].trim().to_string(), rest[where_pos + 7..].trim().to_string())
+        (
+            rest[..where_pos].trim().to_string(),
+            rest[where_pos + 7..].trim().to_string(),
+        )
     } else {
         return false;
     };
@@ -590,11 +657,17 @@ fn parse_and_exec_obtain(
     let (prop_str, method) = if let Some(by_pos) = prop_and_method.find(" by ") {
         let prop_part = &prop_and_method[..by_pos].trim();
         let method_part = &prop_and_method[by_pos + 4..].trim();
-        (prop_part.trim_matches('"').to_string(), method_part.to_string())
+        (
+            prop_part.trim_matches('"').to_string(),
+            method_part.to_string(),
+        )
     } else if let Some(by_pos) = prop_and_method.find(" by(") {
         let prop_part = &prop_and_method[..by_pos].trim();
         let method_part = &prop_and_method[by_pos + 1..].trim();
-        (prop_part.trim_matches('"').to_string(), method_part.to_string())
+        (
+            prop_part.trim_matches('"').to_string(),
+            method_part.to_string(),
+        )
     } else {
         // Check next line for "by method"
         let prop_part = prop_and_method.trim_matches('"').to_string();
@@ -631,11 +704,11 @@ fn parse_and_exec_obtain(
             }
         }
     }
-    
+
     // Add the obtained proposition as an assumption
     let assume_thm = ThmKernel::assume(CTerm::certify(prop_term.clone()));
     state.add_fact(Arc::new(assume_thm));
-    
+
     // Try to verify the existential using the method (if not empty)
     if !method.is_empty() {
         if let Some(goal) = state.get_current_goal() {
@@ -661,10 +734,15 @@ impl ProofState {
     /// Get the current goal being proved.
     pub fn get_current_goal(&self) -> Option<Thm> {
         match self {
-            ProofState::Proving { subgoals, current_subgoal, goal, .. } => {
-                subgoals.get(*current_subgoal).cloned()
-                    .or_else(|| Some(goal.clone()))
-            }
+            ProofState::Proving {
+                subgoals,
+                current_subgoal,
+                goal,
+                ..
+            } => subgoals
+                .get(*current_subgoal)
+                .cloned()
+                .or_else(|| Some(goal.clone())),
             ProofState::Ready { goal } => Some(goal.clone()),
             ProofState::Done(_) => None,
         }
@@ -672,7 +750,12 @@ impl ProofState {
 
     /// Set the current goal (update the current subgoal).
     pub fn set_current_goal(&mut self, new_goal: Thm) {
-        if let ProofState::Proving { subgoals, current_subgoal, .. } = self {
+        if let ProofState::Proving {
+            subgoals,
+            current_subgoal,
+            ..
+        } = self
+        {
             if *current_subgoal < subgoals.len() {
                 subgoals[*current_subgoal] = new_goal;
             }
@@ -683,10 +766,10 @@ impl ProofState {
 #[cfg(test)]
 mod isar_tests {
     use super::*;
-    use crate::core::term::Term;
-    use crate::core::types::Typ;
-    use crate::core::thm::{CTerm, ThmKernel};
     use crate::core::logic::Pure;
+    use crate::core::term::Term;
+    use crate::core::thm::{CTerm, ThmKernel};
+    use crate::core::types::Typ;
     use std::sync::Arc;
 
     #[test]
@@ -713,7 +796,7 @@ mod isar_tests {
         let eq = Pure::mk_equals(Typ::dummy(), a.clone(), a.clone());
         let goal = ThmKernel::assume(CTerm::certify(eq));
         let mut state = ProofState::new(goal);
-        
+
         let script = "by (rule refl)";
         let premises: Vec<Arc<Thm>> = vec![];
         let result = interpret_proof_script(&mut state, script, &premises);
@@ -741,10 +824,10 @@ mod isar_tests {
 #[cfg(test)]
 mod induction_tests {
     use super::*;
-    use crate::core::term::Term;
-    use crate::core::types::Typ;
-    use crate::core::thm::{CTerm, ThmKernel};
     use crate::core::logic::Pure;
+    use crate::core::term::Term;
+    use crate::core::thm::{CTerm, ThmKernel};
+    use crate::core::types::Typ;
     use std::sync::Arc;
 
     #[test]
@@ -756,10 +839,10 @@ mod induction_tests {
         state.begin_proof();
 
         // Set up fake subgoals (simulating induction on a list)
-        let nil_goal = ThmKernel::assume(CTerm::certify(
-            Term::const_("NilCase", Typ::base("prop"))));
-        let cons_goal = ThmKernel::assume(CTerm::certify(
-            Term::const_("ConsCase", Typ::base("prop"))));
+        let nil_goal =
+            ThmKernel::assume(CTerm::certify(Term::const_("NilCase", Typ::base("prop"))));
+        let cons_goal =
+            ThmKernel::assume(CTerm::certify(Term::const_("ConsCase", Typ::base("prop"))));
         state.set_subgoals(vec![nil_goal, cons_goal.clone()]);
 
         // case Nil — should select first subgoal
@@ -771,7 +854,7 @@ mod induction_tests {
         state.next();
         let current2 = state.get_current_goal();
         assert!(current2.is_some());
-        
+
         // Verify we moved to the second subgoal
         let current2 = current2.unwrap();
         eprintln!("Second subgoal: {:?}", current2.prop().term());
@@ -782,14 +865,12 @@ mod induction_tests {
         // Test that ?case resolves to the current subgoal
         let subgoal_term = Term::const_("P(Nil)", Typ::base("prop"));
         let subgoal = ThmKernel::assume(CTerm::certify(subgoal_term.clone()));
-        let goal = ThmKernel::assume(CTerm::certify(
-            Term::const_("MainGoal", Typ::base("prop"))));
+        let goal = ThmKernel::assume(CTerm::certify(Term::const_("MainGoal", Typ::base("prop"))));
         let mut state = ProofState::new(goal);
         state.begin_proof();
         state.set_subgoals(vec![subgoal]);
 
-        let resolved = state.resolve_case_stmt(
-            &Term::const_("?case", Typ::base("prop")));
+        let resolved = state.resolve_case_stmt(&Term::const_("?case", Typ::base("prop")));
         eprintln!("Resolved ?case to: {:?}", resolved);
         // Should resolve to P(Nil), the current subgoal's conclusion
     }

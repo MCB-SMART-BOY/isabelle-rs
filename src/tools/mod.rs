@@ -19,9 +19,9 @@
 //! Tools use the LCF kernel's inference rules to produce theorems.
 //! They never bypass the kernel — all results are certified.
 
-pub mod simp;
 pub mod auto;
 pub mod blast;
+pub mod simp;
 
 // Future:
 // pub mod argo;

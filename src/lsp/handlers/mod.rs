@@ -76,11 +76,13 @@ impl HandlerContext {
             "uri": uri,
             "diagnostics": diags,
         });
-        let _ = self.tx.send(OutgoingMessage::Notification(JsonRpcNotification {
-            jsonrpc: "2.0".into(),
-            method: notifications::PUBLISH_DIAGNOSTICS.into(),
-            params,
-        }));
+        let _ = self
+            .tx
+            .send(OutgoingMessage::Notification(JsonRpcNotification {
+                jsonrpc: "2.0".into(),
+                method: notifications::PUBLISH_DIAGNOSTICS.into(),
+                params,
+            }));
     }
 }
 
@@ -103,9 +105,9 @@ pub type NotificationHandler = fn(ctx: &mut HandlerContext, notif: JsonRpcNotifi
 // Sub-modules
 // =========================================================================
 
-pub mod lifecycle;
-pub mod document;
-pub mod hover;
 pub mod completion;
 pub mod definition;
+pub mod document;
+pub mod hover;
+pub mod lifecycle;
 pub mod proof_goals;

@@ -70,7 +70,9 @@ impl Envir {
     // Accessors
     // =================================================================
 
-    pub fn maxidx(&self) -> usize { self.maxidx }
+    pub fn maxidx(&self) -> usize {
+        self.maxidx
+    }
 
     pub fn is_empty(&self) -> bool {
         self.tenv.is_empty() && self.tyenv.is_empty()
@@ -98,7 +100,10 @@ impl Envir {
 
     /// Generate multiple fresh variables from a list of types.
     pub fn genvars(&mut self, name: &str, types: &[Typ]) -> Vec<Term> {
-        types.iter().map(|typ| self.genvar(name, typ.clone())).collect()
+        types
+            .iter()
+            .map(|typ| self.genvar(name, typ.clone()))
+            .collect()
     }
 
     // =================================================================
@@ -122,13 +127,21 @@ impl Envir {
 
     /// Bind a term variable. Panics if the index exceeds maxidx.
     pub fn update(&mut self, name: Symbol, index: usize, typ: Typ, term: Term) {
-        assert!(index <= self.maxidx, "Envir.update: index {index} > maxidx {}", self.maxidx);
+        assert!(
+            index <= self.maxidx,
+            "Envir.update: index {index} > maxidx {}",
+            self.maxidx
+        );
         self.tenv.insert((name, index), (typ, term));
     }
 
     /// Bind a type variable.
     pub fn update_type(&mut self, name: Symbol, index: usize, sort: Sort, typ: Typ) {
-        assert!(index <= self.maxidx, "Envir.update_type: index {index} > maxidx {}", self.maxidx);
+        assert!(
+            index <= self.maxidx,
+            "Envir.update_type: index {index} > maxidx {}",
+            self.maxidx
+        );
         self.tyenv.insert((name, index), (sort, typ));
     }
 
@@ -139,16 +152,21 @@ impl Envir {
     /// Normalize a type: replace all bound TVars with their assignments.
     pub fn norm_type(&self, typ: &Typ) -> Typ {
         match typ {
-            Typ::TVar { name, index, sort: _ } => {
+            Typ::TVar {
+                name,
+                index,
+                sort: _,
+            } => {
                 if let Some((_, assigned)) = self.tyenv.get(&(Arc::clone(name), *index)) {
                     self.norm_type(assigned) // recursive — assigned type may contain TVars
                 } else {
                     typ.clone()
                 }
             }
-            Typ::Type { name, args } => {
-                Typ::apply(Arc::clone(name), args.iter().map(|a| self.norm_type(a)).collect())
-            }
+            Typ::Type { name, args } => Typ::apply(
+                Arc::clone(name),
+                args.iter().map(|a| self.norm_type(a)).collect(),
+            ),
             Typ::TFree { .. } => typ.clone(),
         }
     }
@@ -165,19 +183,11 @@ impl Envir {
                     Term::var(Arc::clone(name), *index, norm_typ)
                 }
             }
-            Term::Const { name, typ } => {
-                Term::const_(Arc::clone(name), self.norm_type(typ))
-            }
-            Term::Free { name, typ } => {
-                Term::free(Arc::clone(name), self.norm_type(typ))
-            }
+            Term::Const { name, typ } => Term::const_(Arc::clone(name), self.norm_type(typ)),
+            Term::Free { name, typ } => Term::free(Arc::clone(name), self.norm_type(typ)),
             Term::Bound(i) => Term::bound(*i),
             Term::Abs { name, typ, body } => {
-                Term::abs(
-                    Arc::clone(name),
-                    self.norm_type(typ),
-                    self.norm_term(body),
-                )
+                Term::abs(Arc::clone(name), self.norm_type(typ), self.norm_term(body))
             }
             Term::App { func, arg } => {
                 let nf = self.norm_term(func);

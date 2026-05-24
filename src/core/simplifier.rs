@@ -49,54 +49,46 @@ pub fn orelse_conv(conv1: Conv, conv2: Conv) -> Conv {
 
 /// Apply `conv` to the i-th argument of an application.
 pub fn arg_conv(i: usize, conv: Conv) -> Conv {
-    Box::new(move |t| {
-        match t {
-            Term::App { func, arg } => {
-                if i == 0 {
-                    conv(arg).and_then(|thm| {
-                        let (_, _rhs) = Pure::dest_equals(thm.prop().term())?;
-                        ThmKernel::combination(
-                            &ThmKernel::reflexive(CTerm::certify(func.as_ref().clone())),
-                            &thm,
-                        ).ok()
-                    })
-                } else {
-                    None
-                }
+    Box::new(move |t| match t {
+        Term::App { func, arg } => {
+            if i == 0 {
+                conv(arg).and_then(|thm| {
+                    let (_, _rhs) = Pure::dest_equals(thm.prop().term())?;
+                    ThmKernel::combination(
+                        &ThmKernel::reflexive(CTerm::certify(func.as_ref().clone())),
+                        &thm,
+                    )
+                    .ok()
+                })
+            } else {
+                None
             }
-            _ => None,
         }
+        _ => None,
     })
 }
 
 /// Apply `conv` under an abstraction: `λx. t` → `λx. u` if `conv` rewrites `t` to `u`.
 pub fn abs_conv(conv: Conv) -> Conv {
-    Box::new(move |t| {
-        match t {
-            Term::Abs { name, typ, body } => {
-                conv(body).and_then(|thm| {
-                    ThmKernel::abstraction(name.as_ref(), typ.clone(), &thm).ok()
-                })
-            }
-            _ => None,
+    Box::new(move |t| match t {
+        Term::Abs { name, typ, body } => {
+            conv(body).and_then(|thm| ThmKernel::abstraction(name.as_ref(), typ.clone(), &thm).ok())
         }
+        _ => None,
     })
 }
 
 /// Apply `conv` to the function part of an application.
 pub fn fun_conv(conv: Conv) -> Conv {
-    Box::new(move |t| {
-        match t {
-            Term::App { func, arg: _ } => {
-                conv(func).and_then(|thm| {
-                    ThmKernel::combination(
-                        &thm,
-                        &ThmKernel::reflexive(CTerm::certify(func.as_ref().clone())),
-                    ).ok()
-                })
-            }
-            _ => None,
-        }
+    Box::new(move |t| match t {
+        Term::App { func, arg: _ } => conv(func).and_then(|thm| {
+            ThmKernel::combination(
+                &thm,
+                &ThmKernel::reflexive(CTerm::certify(func.as_ref().clone())),
+            )
+            .ok()
+        }),
+        _ => None,
     })
 }
 
@@ -174,7 +166,8 @@ impl Simplifier {
         // Try conversions first
         for conv in &self.conversions {
             if let Some(thm) = conv(term) {
-                let (_, rhs) = Pure::dest_equals(thm.prop().term()).expect("Rewrite rule is not an equality");
+                let (_, rhs) =
+                    Pure::dest_equals(thm.prop().term()).expect("Rewrite rule is not an equality");
                 return Some((rhs.clone(), thm));
             }
         }
@@ -216,7 +209,10 @@ impl Simplifier {
         if let Some((result, thm)) = self.rewrite(&inner_term) {
             if result != inner_term {
                 // Compose: inner_thm (term ≡ inner_term) THEN rewrite_thm (inner_term ≡ result)
-                return Some((result, self.compose_equalities(inner_thm_opt.as_ref(), &thm)));
+                return Some((
+                    result,
+                    self.compose_equalities(inner_thm_opt.as_ref(), &thm),
+                ));
             }
         }
 
@@ -276,8 +272,7 @@ impl Simplifier {
     fn compose_equalities(&self, first: Option<&Thm>, second: &Thm) -> Thm {
         match first {
             Some(first_thm) => {
-                ThmKernel::transitive(first_thm, second)
-                    .unwrap_or_else(|_| second.clone())
+                ThmKernel::transitive(first_thm, second).unwrap_or_else(|_| second.clone())
             }
             None => second.clone(),
         }
@@ -305,10 +300,14 @@ impl Simplifier {
 
     /// Try to prove a condition. Uses depth-limited recursive simplification.
     fn prove_condition(&self, cond: &Term, depth: usize) -> bool {
-        if depth > 3 { return false; }
+        if depth > 3 {
+            return false;
+        }
         // If condition is trivially true (e.g., True, or reflexive equality)
         if let Term::Const { name, .. } = cond {
-            if name.as_ref() == "True" { return true; }
+            if name.as_ref() == "True" {
+                return true;
+            }
         }
         // Try rewriting the condition itself
         if let Some((result, _)) = self.rewrite(cond) {
@@ -405,8 +404,8 @@ mod tests {
 #[cfg(test)]
 mod conditional_tests {
     use super::*;
-    use crate::core::thm::{CTerm, ThmKernel};
     use crate::core::term::Term;
+    use crate::core::thm::{CTerm, ThmKernel};
     use crate::core::types::Typ;
     use std::sync::Arc;
 
@@ -450,13 +449,19 @@ mod conditional_tests {
         let nat = Typ::base("nat");
         let x = Term::free("x", nat.clone());
         let zero = Term::const_("Zero", nat.clone());
-        let fx = Term::app(Term::const_("f", Typ::arrow(nat.clone(), nat.clone())), x.clone());
-        let f0 = Term::app(Term::const_("f", Typ::arrow(nat.clone(), nat.clone())), zero.clone());
+        let fx = Term::app(
+            Term::const_("f", Typ::arrow(nat.clone(), nat.clone())),
+            x.clone(),
+        );
+        let f0 = Term::app(
+            Term::const_("f", Typ::arrow(nat.clone(), nat.clone())),
+            zero.clone(),
+        );
         let eq_cond = Pure::mk_equals(nat.clone(), x.clone(), zero.clone());
         let eq_concl = Pure::mk_equals(nat.clone(), fx, f0.clone());
         let prop = Pure::mk_implies(eq_cond, eq_concl);
         let thm = ThmKernel::assume(CTerm::certify(prop));
-        
+
         let rule = RewriteRule::from_thm(Arc::new(thm)).unwrap();
         let simp = Simplifier::new(vec![rule]);
 

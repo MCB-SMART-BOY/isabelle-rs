@@ -19,8 +19,8 @@
 //! - `$/isabelle/*` — server-to-client notifications (pushed)
 //! - `isabelle/*` — client-to-server requests (pulled)
 
-use serde::{Deserialize, Serialize};
 use super::lsp_types::*;
+use serde::{Deserialize, Serialize};
 
 // =========================================================================
 // Extension method names
@@ -159,7 +159,9 @@ pub struct ProofStepParams {
     pub count: usize,
 }
 
-fn default_step() -> usize { 1 }
+fn default_step() -> usize {
+    1
+}
 
 // =========================================================================
 // Search Request
@@ -178,7 +180,9 @@ pub struct SearchParams {
     pub limit: usize,
 }
 
-fn default_limit() -> usize { 50 }
+fn default_limit() -> usize {
+    50
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]

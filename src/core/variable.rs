@@ -27,7 +27,9 @@ pub struct NameContext {
 
 impl NameContext {
     pub fn new() -> Self {
-        NameContext { used: BTreeSet::new() }
+        NameContext {
+            used: BTreeSet::new(),
+        }
     }
 
     /// Declare a name as used.
@@ -92,7 +94,9 @@ pub fn free_vars(term: &Term) -> BTreeSet<String> {
 
 fn collect_frees(term: &Term, frees: &mut BTreeSet<String>) {
     match term {
-        Term::Free { name, .. } => { frees.insert(name.to_string()); }
+        Term::Free { name, .. } => {
+            frees.insert(name.to_string());
+        }
         Term::Abs { body, .. } => collect_frees(body, frees),
         Term::App { func, arg } => {
             collect_frees(func, frees);
@@ -111,7 +115,9 @@ pub fn schematic_vars(term: &Term) -> BTreeSet<(String, usize)> {
 
 fn collect_svars(term: &Term, vars: &mut BTreeSet<(String, usize)>) {
     match term {
-        Term::Var { name, index, .. } => { vars.insert((name.to_string(), *index)); }
+        Term::Var { name, index, .. } => {
+            vars.insert((name.to_string(), *index));
+        }
         Term::Abs { body, .. } => collect_svars(body, vars),
         Term::App { func, arg } => {
             collect_svars(func, vars);
@@ -211,7 +217,11 @@ pub fn focus_goal(goal: &Term) -> (Vec<Term>, Term) {
     let mut prems = Vec::new();
     let mut body = goal;
     while let Term::App { func, arg } = body {
-        if let Term::App { func: inner, arg: a } = func.as_ref() {
+        if let Term::App {
+            func: inner,
+            arg: a,
+        } = func.as_ref()
+        {
             if let Term::Const { name, .. } = inner.as_ref() {
                 if name.as_ref() == "Pure.imp" {
                     prems.push(a.as_ref().clone());
@@ -247,15 +257,15 @@ fn replace_free_with_var(term: &Term, free_name: &str, var_idx: usize) -> Term {
         Term::Free { name, typ } if name.as_ref() == free_name => {
             Term::var(Arc::clone(name), var_idx, typ.clone())
         }
-        Term::Abs { name, typ, body } => {
-            Term::abs(Arc::clone(name), typ.clone(), replace_free_with_var(body, free_name, var_idx))
-        }
-        Term::App { func, arg } => {
-            Term::app(
-                replace_free_with_var(func, free_name, var_idx),
-                replace_free_with_var(arg, free_name, var_idx),
-            )
-        }
+        Term::Abs { name, typ, body } => Term::abs(
+            Arc::clone(name),
+            typ.clone(),
+            replace_free_with_var(body, free_name, var_idx),
+        ),
+        Term::App { func, arg } => Term::app(
+            replace_free_with_var(func, free_name, var_idx),
+            replace_free_with_var(arg, free_name, var_idx),
+        ),
         _ => term.clone(),
     }
 }

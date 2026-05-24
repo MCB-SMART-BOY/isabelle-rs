@@ -57,5 +57,5 @@
 pub use crate::server::*;
 
 // V3 modules
-pub mod router;
 pub mod handlers;
+pub mod router;

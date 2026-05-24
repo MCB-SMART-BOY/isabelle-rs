@@ -6,9 +6,9 @@
 //! multiple subgoals. Unlike `A /\ B` (HOL conjunction), `&&&` is
 //! at the Pure level and uses the same hypotheses.
 
+use super::logic::Pure;
 use super::term::Term;
 use super::thm::{CTerm, Thm, ThmKernel};
-use super::logic::Pure;
 use super::types::Typ;
 
 /// Build `A &&& B` as a Pure proposition.
@@ -35,7 +35,10 @@ pub fn conj_intr(thm1: &Thm, thm2: &Thm) -> Thm {
 /// Conjunction elimination (left projection): `Γ ⊢ A &&& B` → `Γ ⊢ A`.
 pub fn conj_elim1(thm: &Thm) -> Option<Thm> {
     let (a, _b) = dest_conjunction(thm.prop().term())?;
-    let imp = Pure::mk_implies(a.clone(), Pure::mk_implies(Term::const_("B", Typ::base("prop")), a.clone()));
+    let imp = Pure::mk_implies(
+        a.clone(),
+        Pure::mk_implies(Term::const_("B", Typ::base("prop")), a.clone()),
+    );
     let ct = CTerm::certify(imp);
     Some(ThmKernel::assume(ct))
 }

@@ -16,11 +16,10 @@
 //! | `implies_elim_list` | Chain implies_elim over a list |
 //! | `zero_var_indexes` | Reset schematic variable indices |
 
-
-use super::thm::{CTerm, Thm, ThmKernel};
 use super::error::KernelError;
-use super::types::Typ;
 use super::logic::Pure;
+use super::thm::{CTerm, Thm, ThmKernel};
+use super::types::Typ;
 
 // =========================================================================
 // forall_intr: (!!x. P(x)) introduction
@@ -46,7 +45,7 @@ pub fn forall_intr(_x_name: &str, _x_typ: Typ, _thm: &Thm) -> Thm {
 /// `Γ ∪ {A1, ..., An} ⊢ B` → `Γ ⊢ A1 ==> ... ==> An ==> B`.
 pub fn implies_intr_list(assumptions: &[CTerm], thm: &Thm) -> Result<Thm, KernelError> {
     let mut result = thm.clone();
-    for a in assumptions.iter().rev() {
+    for a in assumptions.iter() {
         result = ThmKernel::implies_intr(a, &result)?;
     }
     Ok(result)

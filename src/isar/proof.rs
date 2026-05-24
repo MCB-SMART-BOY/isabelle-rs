@@ -66,21 +66,12 @@ pub enum ProofState {
     Idle,
     /// A lemma/theorem has been stated, waiting for proof.
     /// Contains: name, statement, enclosing theory context.
-    Stated {
-        name: String,
-        statement: Term,
-    },
+    Stated { name: String, statement: Term },
     /// Inside a proof block, working on subgoals.
     /// Contains: the proof tree built so far.
-    Proving {
-        root: ProofNode,
-        current_goal: Term,
-    },
+    Proving { root: ProofNode, current_goal: Term },
     /// Proof completed successfully.
-    Done {
-        name: String,
-        theorem: Arc<Thm>,
-    },
+    Done { name: String, theorem: Arc<Thm> },
 }
 
 impl ProofState {
@@ -139,12 +130,14 @@ impl ProofState {
     /// Finish the proof (`qed` / `done`).
     pub fn finish(&self, theorem: Arc<Thm>) -> Option<Self> {
         match self {
-            ProofState::Stated { name, .. } => {
-                Some(ProofState::Done { name: name.clone(), theorem })
-            }
-            ProofState::Proving { .. } => {
-                Some(ProofState::Done { name: "unnamed".into(), theorem })
-            }
+            ProofState::Stated { name, .. } => Some(ProofState::Done {
+                name: name.clone(),
+                theorem,
+            }),
+            ProofState::Proving { .. } => Some(ProofState::Done {
+                name: "unnamed".into(),
+                theorem,
+            }),
             _ => None,
         }
     }
@@ -161,7 +154,9 @@ pub struct ProofManager {
 
 impl ProofManager {
     pub fn new() -> Self {
-        ProofManager { state: ProofState::Idle }
+        ProofManager {
+            state: ProofState::Idle,
+        }
     }
 
     /// Start a new lemma.
@@ -216,7 +211,7 @@ impl Default for ProofManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::thm::{ThmKernel, CTerm};
+    use crate::core::thm::{CTerm, ThmKernel};
 
     #[test]
     fn test_proof_lifecycle() {
@@ -245,18 +240,31 @@ mod tests {
 impl ProofManager {
     pub fn fix_vars(&mut self, vars: Vec<&str>) {
         if let ProofState::Proving { root, .. } = &mut self.state {
-            for v in vars { root.fixes.push((v.to_string(), crate::core::types::Typ::dummy())); }
+            for v in vars {
+                root.fixes
+                    .push((v.to_string(), crate::core::types::Typ::dummy()));
+            }
         }
     }
     pub fn assume_term(&mut self, term: Term) {
-        if let ProofState::Proving { root, .. } = &mut self.state { root.assumes.push(term); }
+        if let ProofState::Proving { root, .. } = &mut self.state {
+            root.assumes.push(term);
+        }
     }
     pub fn set_goal(&mut self, goal: Term) {
-        if let ProofState::Proving { current_goal, .. } = &mut self.state { *current_goal = goal; }
+        if let ProofState::Proving { current_goal, .. } = &mut self.state {
+            *current_goal = goal;
+        }
     }
     pub fn add_have(&mut self, stmt: Term) {
         if let ProofState::Proving { root, .. } = &mut self.state {
-            root.children.push(ProofNode { fixes: vec![], assumes: vec![], statement: stmt, method: None, children: vec![] });
+            root.children.push(ProofNode {
+                fixes: vec![],
+                assumes: vec![],
+                statement: stmt,
+                method: None,
+                children: vec![],
+            });
         }
     }
 }

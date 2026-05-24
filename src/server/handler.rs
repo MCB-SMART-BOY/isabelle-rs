@@ -39,7 +39,10 @@ impl IsabelleServer {
         tracing::info!(" LSP server started, waiting for client...");
 
         while self.lifecycle != ServerLifecycle::Shutdown {
-            let transport = self.transport.as_mut().expect("transport required for sync mode");
+            let transport = self
+                .transport
+                .as_mut()
+                .expect("transport required for sync mode");
             match transport.recv() {
                 Some(msg) => self.handle_message(msg),
                 None => {
@@ -54,7 +57,11 @@ impl IsabelleServer {
 
     /// Create an async server instance.
     pub fn new_async(fleche: Arc<Fleche>, _tx: mpsc::Sender<OutgoingMessage>) -> Self {
-        IsabelleServer { transport: None, fleche, lifecycle: ServerLifecycle::Created }
+        IsabelleServer {
+            transport: None,
+            fleche,
+            lifecycle: ServerLifecycle::Created,
+        }
     }
 
     /// Run the async event loop.
@@ -63,7 +70,10 @@ impl IsabelleServer {
         while self.lifecycle != ServerLifecycle::Shutdown {
             match rx.recv().await {
                 Some(msg) => self.handle_message(msg),
-                None => { tracing::info!("Transport closed"); break; }
+                None => {
+                    tracing::info!("Transport closed");
+                    break;
+                }
             }
         }
     }
@@ -88,10 +98,7 @@ impl IsabelleServer {
             && req.method != requests::INITIALIZE
             && req.method != requests::SHUTDOWN
         {
-            self.send_error(
-                req.id,
-                JsonRpcError::new(-32002, "Server not initialized"),
-            );
+            self.send_error(req.id, JsonRpcError::new(-32002, "Server not initialized"));
             return;
         }
 
@@ -173,7 +180,10 @@ impl IsabelleServer {
             },
         };
 
-        self.send_result(req.id, serde_json::to_value(result).expect("Serialization failed"));
+        self.send_result(
+            req.id,
+            serde_json::to_value(result).expect("Serialization failed"),
+        );
         self.lifecycle = ServerLifecycle::Initialized;
 
         tracing::info!(" Initialized — ready for requests!");
@@ -191,14 +201,13 @@ impl IsabelleServer {
     // =================================================================
 
     fn handle_did_open(&mut self, notif: JsonRpcNotification) {
-        let params: DidOpenTextDocumentParams =
-            match serde_json::from_value(notif.params) {
-                Ok(p) => p,
-                Err(e) => {
-                    tracing::info!(" Bad didOpen params: {e}");
-                    return;
-                }
-            };
+        let params: DidOpenTextDocumentParams = match serde_json::from_value(notif.params) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::info!(" Bad didOpen params: {e}");
+                return;
+            }
+        };
 
         let uri = &params.text_document.uri;
         let language_id = &params.text_document.language_id;
@@ -210,14 +219,13 @@ impl IsabelleServer {
     }
 
     fn handle_did_change(&mut self, notif: JsonRpcNotification) {
-        let params: DidChangeTextDocumentParams =
-            match serde_json::from_value(notif.params) {
-                Ok(p) => p,
-                Err(e) => {
-                    tracing::info!(" Bad didChange params: {e}");
-                    return;
-                }
-            };
+        let params: DidChangeTextDocumentParams = match serde_json::from_value(notif.params) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::info!(" Bad didChange params: {e}");
+                return;
+            }
+        };
 
         let uri = &params.text_document.uri;
 
@@ -240,14 +248,13 @@ impl IsabelleServer {
     }
 
     fn handle_did_close(&mut self, notif: JsonRpcNotification) {
-        let params: DidCloseTextDocumentParams =
-            match serde_json::from_value(notif.params) {
-                Ok(p) => p,
-                Err(e) => {
-                    tracing::info!(" Bad didClose params: {e}");
-                    return;
-                }
-            };
+        let params: DidCloseTextDocumentParams = match serde_json::from_value(notif.params) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::info!(" Bad didClose params: {e}");
+                return;
+            }
+        };
 
         tracing::info!(" Closed: {}", params.text_document.uri);
         self.fleche.close_file(&params.text_document.uri);
@@ -263,14 +270,13 @@ impl IsabelleServer {
     // =================================================================
 
     fn handle_hover(&mut self, req: JsonRpcRequest) {
-        let params: TextDocumentPositionParams =
-            match serde_json::from_value(req.params) {
-                Ok(p) => p,
-                Err(e) => {
-                    self.send_error(req.id, JsonRpcError::new(-32602, format!("{e}")));
-                    return;
-                }
-            };
+        let params: TextDocumentPositionParams = match serde_json::from_value(req.params) {
+            Ok(p) => p,
+            Err(e) => {
+                self.send_error(req.id, JsonRpcError::new(-32602, format!("{e}")));
+                return;
+            }
+        };
 
         let hover_text = self.fleche.get_hover(
             &params.text_document.uri,
@@ -287,7 +293,10 @@ impl IsabelleServer {
                     }),
                     range: None,
                 };
-                self.send_result(req.id, serde_json::to_value(hover).expect("Serialization failed"));
+                self.send_result(
+                    req.id,
+                    serde_json::to_value(hover).expect("Serialization failed"),
+                );
             }
             None => {
                 self.send_result(req.id, serde_json::Value::Null);
@@ -301,7 +310,10 @@ impl IsabelleServer {
             is_incomplete: false,
             items: vec![],
         };
-        self.send_result(req.id, serde_json::to_value(result).expect("Serialization failed"));
+        self.send_result(
+            req.id,
+            serde_json::to_value(result).expect("Serialization failed"),
+        );
     }
 
     fn handle_definition(&mut self, req: JsonRpcRequest) {
@@ -310,23 +322,24 @@ impl IsabelleServer {
     }
 
     fn handle_proof_goals(&mut self, req: JsonRpcRequest) {
-        let params: TextDocumentPositionParams =
-            match serde_json::from_value(req.params) {
-                Ok(p) => p,
-                Err(e) => {
-                    self.send_error(req.id, JsonRpcError::new(-32602, format!("{e}")));
-                    return;
-                }
-            };
+        let params: TextDocumentPositionParams = match serde_json::from_value(req.params) {
+            Ok(p) => p,
+            Err(e) => {
+                self.send_error(req.id, JsonRpcError::new(-32602, format!("{e}")));
+                return;
+            }
+        };
 
-        let proof_state = self.fleche.get_proof_state(
-            &params.text_document.uri,
-            params.position.line,
-        );
+        let proof_state = self
+            .fleche
+            .get_proof_state(&params.text_document.uri, params.position.line);
 
         match proof_state {
             Some(ps) => {
-                self.send_result(req.id, serde_json::to_value(ps).expect("Serialization failed"));
+                self.send_result(
+                    req.id,
+                    serde_json::to_value(ps).expect("Serialization failed"),
+                );
             }
             None => {
                 self.send_result(req.id, serde_json::Value::Null);
@@ -340,22 +353,28 @@ impl IsabelleServer {
 
     /// Send a successful response.
     fn send_result(&self, id: RequestId, result: serde_json::Value) {
-        self.transport.as_ref().expect("Transport not initialized").send(OutgoingMessage::Response(JsonRpcResponse {
-            jsonrpc: "2.0".into(),
-            id,
-            result: Some(result),
-            error: None,
-        }));
+        self.transport
+            .as_ref()
+            .expect("Transport not initialized")
+            .send(OutgoingMessage::Response(JsonRpcResponse {
+                jsonrpc: "2.0".into(),
+                id,
+                result: Some(result),
+                error: None,
+            }));
     }
 
     /// Send an error response.
     fn send_error(&self, id: RequestId, error: JsonRpcError) {
-        self.transport.as_ref().expect("Transport not initialized").send(OutgoingMessage::Response(JsonRpcResponse {
-            jsonrpc: "2.0".into(),
-            id,
-            result: None,
-            error: Some(error),
-        }));
+        self.transport
+            .as_ref()
+            .expect("Transport not initialized")
+            .send(OutgoingMessage::Response(JsonRpcResponse {
+                jsonrpc: "2.0".into(),
+                id,
+                result: None,
+                error: Some(error),
+            }));
     }
 
     /// Publish diagnostics for a file.
@@ -365,11 +384,14 @@ impl IsabelleServer {
             "diagnostics": diags,
         });
 
-        self.transport.as_ref().expect("Transport not initialized").send(OutgoingMessage::Notification(JsonRpcNotification {
-            jsonrpc: "2.0".into(),
-            method: notifications::PUBLISH_DIAGNOSTICS.into(),
-            params,
-        }));
+        self.transport
+            .as_ref()
+            .expect("Transport not initialized")
+            .send(OutgoingMessage::Notification(JsonRpcNotification {
+                jsonrpc: "2.0".into(),
+                method: notifications::PUBLISH_DIAGNOSTICS.into(),
+                params,
+            }));
 
         eprintln!(
             "[isabelle-rs] Published {} diagnostics for {}",

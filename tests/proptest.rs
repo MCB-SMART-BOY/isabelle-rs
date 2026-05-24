@@ -3,8 +3,8 @@
 //! Uses `proptest` to verify invariants of the LCF kernel
 //! with randomly generated inputs.
 
-use proptest::prelude::*;
 use isabelle_rs::core::*;
+use proptest::prelude::*;
 
 // =========================================================================
 // Strategies
@@ -12,13 +12,19 @@ use isabelle_rs::core::*;
 
 fn type_name() -> impl Strategy<Value = String> {
     prop::sample::select(vec![
-        "bool".to_string(), "nat".to_string(), "prop".to_string(), "dummy".to_string(),
+        "bool".to_string(),
+        "nat".to_string(),
+        "prop".to_string(),
+        "dummy".to_string(),
     ])
 }
 
 fn prop_name() -> impl Strategy<Value = String> {
     prop::sample::select(vec![
-        "A".to_string(), "B".to_string(), "P".to_string(), "Q".to_string(),
+        "A".to_string(),
+        "B".to_string(),
+        "P".to_string(),
+        "Q".to_string(),
     ])
 }
 

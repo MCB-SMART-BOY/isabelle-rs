@@ -51,7 +51,10 @@ pub enum PluginTerm {
     /// Lambda abstraction.
     Abs { name: String, body: Box<PluginTerm> },
     /// Application.
-    App { func: Box<PluginTerm>, arg: Box<PluginTerm> },
+    App {
+        func: Box<PluginTerm>,
+        arg: Box<PluginTerm>,
+    },
 }
 
 /// Result returned by the plugin.

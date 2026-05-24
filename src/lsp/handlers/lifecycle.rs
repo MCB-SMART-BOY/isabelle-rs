@@ -8,7 +8,10 @@ pub fn handle_initialize(ctx: &HandlerContext, req: JsonRpcRequest) {
     let _params: InitializeParams = match serde_json::from_value(req.params.clone()) {
         Ok(p) => p,
         Err(e) => {
-            ctx.send_error(req.id, JsonRpcError::new(-32602, format!("Invalid params: {e}")));
+            ctx.send_error(
+                req.id,
+                JsonRpcError::new(-32602, format!("Invalid params: {e}")),
+            );
             return;
         }
     };
@@ -31,7 +34,10 @@ pub fn handle_initialize(ctx: &HandlerContext, req: JsonRpcRequest) {
         },
     };
 
-    ctx.send_result(req.id, serde_json::to_value(result).expect("Serialization failed"));
+    ctx.send_result(
+        req.id,
+        serde_json::to_value(result).expect("Serialization failed"),
+    );
 }
 
 /// Handle the `shutdown` request.
@@ -53,9 +59,9 @@ pub fn handle_exit(ctx: &mut HandlerContext, _notif: JsonRpcNotification) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use crate::fleche::engine::{Fleche, RealExecutor};
     use crate::server::transport::OutgoingMessage;
+    use std::sync::Arc;
     use std::sync::mpsc;
 
     fn make_ctx() -> HandlerContext {

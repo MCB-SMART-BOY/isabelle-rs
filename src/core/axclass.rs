@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use super::term::Term;
 use super::types::Symbol;
-use super::types::{Sort, Typ, ClassAlgebra};
+use super::types::{ClassAlgebra, Sort, Typ};
 
 // =========================================================================
 // Class definition
@@ -42,13 +42,17 @@ pub struct AxClass {
 
 impl AxClass {
     pub fn empty() -> Self {
-        AxClass { classes: BTreeMap::new(), algebra: ClassAlgebra::empty() }
+        AxClass {
+            classes: BTreeMap::new(),
+            algebra: ClassAlgebra::empty(),
+        }
     }
 
     /// Define a new class.
     pub fn define_class(&mut self, def: ClassDef) {
         for sup in &def.super_classes {
-            self.algebra.add_classrel(Arc::clone(&def.name), Arc::clone(sup));
+            self.algebra
+                .add_classrel(Arc::clone(&def.name), Arc::clone(sup));
         }
         self.classes.insert(Arc::clone(&def.name), def);
     }
@@ -59,17 +63,16 @@ impl AxClass {
     }
 
     /// Get the class algebra.
-    pub fn algebra(&self) -> &ClassAlgebra { &self.algebra }
+    pub fn algebra(&self) -> &ClassAlgebra {
+        &self.algebra
+    }
 
     /// Check if a type satisfies a sort under this class system.
     pub fn of_sort(&self, typ: &Typ, sort: &Sort) -> bool {
         match typ {
-            Typ::TFree { sort: s, .. } => {
-                sort.iter().all(|c| {
-                    s.iter().any(|sc|
-                        self.algebra.is_subclass(sc, c))
-                })
-            }
+            Typ::TFree { sort: s, .. } => sort
+                .iter()
+                .all(|c| s.iter().any(|sc| self.algebra.is_subclass(sc, c))),
             Typ::Type { name: _, args: _ } => {
                 // Type constructors satisfy sort if declared
                 true // simplified

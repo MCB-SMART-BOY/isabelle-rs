@@ -14,7 +14,7 @@
 //! ```
 
 use rusqlite::{Connection, params};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -44,8 +44,7 @@ pub struct TheoryCache {
 impl TheoryCache {
     /// Open or create the cache database at the given path.
     pub fn open(path: &Path) -> Result<Self, String> {
-        let db = Connection::open(path)
-            .map_err(|e| format!("failed to open cache db: {e}"))?;
+        let db = Connection::open(path).map_err(|e| format!("failed to open cache db: {e}"))?;
 
         db.execute_batch(
             "CREATE TABLE IF NOT EXISTS theory_cache (
@@ -56,8 +55,9 @@ impl TheoryCache {
                 blob        BLOB NOT NULL,
                 PRIMARY KEY (path, source_hash)
             );
-            CREATE INDEX IF NOT EXISTS idx_cache_path ON theory_cache(path);"
-        ).map_err(|e| format!("failed to create schema: {e}"))?;
+            CREATE INDEX IF NOT EXISTS idx_cache_path ON theory_cache(path);",
+        )
+        .map_err(|e| format!("failed to create schema: {e}"))?;
 
         Ok(TheoryCache { db })
     }
@@ -75,8 +75,9 @@ impl TheoryCache {
                 theorems    TEXT NOT NULL,
                 blob        BLOB NOT NULL,
                 PRIMARY KEY (path, source_hash)
-            );"
-        ).map_err(|e| format!("failed to create schema: {e}"))?;
+            );",
+        )
+        .map_err(|e| format!("failed to create schema: {e}"))?;
 
         Ok(TheoryCache { db })
     }
@@ -90,26 +91,29 @@ impl TheoryCache {
 
     /// Look up a cached theory by path + hash.
     pub fn lookup(&self, path: &str, hash: &str) -> Option<CacheEntry> {
-        self.db.query_row(
-            "SELECT path, source_hash, compiled_at, theorems, blob
+        self.db
+            .query_row(
+                "SELECT path, source_hash, compiled_at, theorems, blob
              FROM theory_cache WHERE path = ?1 AND source_hash = ?2",
-            params![path, hash],
-            |row| {
-                Ok(CacheEntry {
-                    path: row.get(0)?,
-                    source_hash: row.get(1)?,
-                    compiled_at: row.get(2)?,
-                    theorems: serde_json::from_str(&row.get::<_, String>(3)?).unwrap_or_default(),
-                    blob: row.get(4)?,
-                })
-            },
-        ).ok()
+                params![path, hash],
+                |row| {
+                    Ok(CacheEntry {
+                        path: row.get(0)?,
+                        source_hash: row.get(1)?,
+                        compiled_at: row.get(2)?,
+                        theorems: serde_json::from_str(&row.get::<_, String>(3)?)
+                            .unwrap_or_default(),
+                        blob: row.get(4)?,
+                    })
+                },
+            )
+            .ok()
     }
 
     /// Store a compiled theory in the cache.
     pub fn store(&self, entry: &CacheEntry) -> Result<(), String> {
-        let theorems_json = serde_json::to_string(&entry.theorems)
-            .map_err(|e| format!("json error: {e}"))?;
+        let theorems_json =
+            serde_json::to_string(&entry.theorems).map_err(|e| format!("json error: {e}"))?;
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -127,19 +131,22 @@ impl TheoryCache {
 
     /// List all cached entries.
     pub fn list(&self) -> Result<Vec<CacheEntry>, String> {
-        let mut stmt = self.db.prepare(
-            "SELECT path, source_hash, compiled_at, theorems, blob FROM theory_cache"
-        ).map_err(|e| format!("prepare failed: {e}"))?;
+        let mut stmt = self
+            .db
+            .prepare("SELECT path, source_hash, compiled_at, theorems, blob FROM theory_cache")
+            .map_err(|e| format!("prepare failed: {e}"))?;
 
-        let entries = stmt.query_map([], |row| {
-            Ok(CacheEntry {
-                path: row.get(0)?,
-                source_hash: row.get(1)?,
-                compiled_at: row.get(2)?,
-                theorems: serde_json::from_str(&row.get::<_, String>(3)?).unwrap_or_default(),
-                blob: row.get(4)?,
+        let entries = stmt
+            .query_map([], |row| {
+                Ok(CacheEntry {
+                    path: row.get(0)?,
+                    source_hash: row.get(1)?,
+                    compiled_at: row.get(2)?,
+                    theorems: serde_json::from_str(&row.get::<_, String>(3)?).unwrap_or_default(),
+                    blob: row.get(4)?,
+                })
             })
-        }).map_err(|e| format!("query failed: {e}"))?;
+            .map_err(|e| format!("query failed: {e}"))?;
 
         let mut result = Vec::new();
         for entry in entries {
@@ -150,10 +157,12 @@ impl TheoryCache {
 
     /// Remove a cached entry.
     pub fn remove(&self, path: &str, hash: &str) -> Result<(), String> {
-        self.db.execute(
-            "DELETE FROM theory_cache WHERE path = ?1 AND source_hash = ?2",
-            params![path, hash],
-        ).map_err(|e| format!("delete failed: {e}"))?;
+        self.db
+            .execute(
+                "DELETE FROM theory_cache WHERE path = ?1 AND source_hash = ?2",
+                params![path, hash],
+            )
+            .map_err(|e| format!("delete failed: {e}"))?;
         Ok(())
     }
 }

@@ -40,7 +40,11 @@ pub fn subst_bounds(args: &[Term], body: &Term) -> Term {
                 Term::bound(*i - args.len()) // shift remaining Bound indices
             }
         }
-        Term::Abs { name, typ, body: inner } => {
+        Term::Abs {
+            name,
+            typ,
+            body: inner,
+        } => {
             // Under a binder: Bound(0) is the new binder, args start at Bound(1)
             let dummy = Term::bound(0);
             let mut new_args: Vec<Term> = vec![dummy];
@@ -48,12 +52,7 @@ pub fn subst_bounds(args: &[Term], body: &Term) -> Term {
             let substituted = subst_bounds(&new_args, inner);
             Term::abs(Arc::clone(name), typ.clone(), substituted)
         }
-        Term::App { func, arg } => {
-            Term::app(
-                subst_bounds(args, func),
-                subst_bounds(args, arg),
-            )
-        }
+        Term::App { func, arg } => Term::app(subst_bounds(args, func), subst_bounds(args, arg)),
         // Const, Free, Var: no Bound vars to substitute
         other => other.clone(),
     }
@@ -70,18 +69,13 @@ fn lift_bound(term: &Term, cutoff: usize, n: usize) -> Term {
                 Term::bound(*i)
             }
         }
-        Term::Abs { name, typ, body } => {
-            Term::abs(
-                Arc::clone(name),
-                typ.clone(),
-                lift_bound(body, cutoff + 1, n),
-            )
-        }
+        Term::Abs { name, typ, body } => Term::abs(
+            Arc::clone(name),
+            typ.clone(),
+            lift_bound(body, cutoff + 1, n),
+        ),
         Term::App { func, arg } => {
-            Term::app(
-                lift_bound(func, cutoff, n),
-                lift_bound(arg, cutoff, n),
-            )
+            Term::app(lift_bound(func, cutoff, n), lift_bound(arg, cutoff, n))
         }
         other => other.clone(),
     }
@@ -107,12 +101,10 @@ pub fn instantiate_type(tyinst: &TypeInst, typ: &Typ) -> Typ {
                 typ.clone()
             }
         }
-        Typ::Type { name, args } => {
-            Typ::apply(
-                Arc::clone(name),
-                args.iter().map(|a| instantiate_type(tyinst, a)).collect(),
-            )
-        }
+        Typ::Type { name, args } => Typ::apply(
+            Arc::clone(name),
+            args.iter().map(|a| instantiate_type(tyinst, a)).collect(),
+        ),
         Typ::TFree { .. } => typ.clone(),
     }
 }
@@ -138,26 +130,18 @@ pub fn instantiate(tyinst: &TypeInst, tminst: &TermInst, term: &Term) -> Term {
                 Term::var(Arc::clone(name), *index, new_typ)
             }
         }
-        Term::Const { name, typ } => {
-            Term::const_(Arc::clone(name), instantiate_type(tyinst, typ))
-        }
-        Term::Free { name, typ } => {
-            Term::free(Arc::clone(name), instantiate_type(tyinst, typ))
-        }
+        Term::Const { name, typ } => Term::const_(Arc::clone(name), instantiate_type(tyinst, typ)),
+        Term::Free { name, typ } => Term::free(Arc::clone(name), instantiate_type(tyinst, typ)),
         Term::Bound(i) => Term::bound(*i),
-        Term::Abs { name, typ, body } => {
-            Term::abs(
-                Arc::clone(name),
-                instantiate_type(tyinst, typ),
-                instantiate(tyinst, tminst, body),
-            )
-        }
-        Term::App { func, arg } => {
-            Term::app(
-                instantiate(tyinst, tminst, func),
-                instantiate(tyinst, tminst, arg),
-            )
-        }
+        Term::Abs { name, typ, body } => Term::abs(
+            Arc::clone(name),
+            instantiate_type(tyinst, typ),
+            instantiate(tyinst, tminst, body),
+        ),
+        Term::App { func, arg } => Term::app(
+            instantiate(tyinst, tminst, func),
+            instantiate(tyinst, tminst, arg),
+        ),
     }
 }
 
@@ -174,11 +158,7 @@ pub fn generalize(frees: &[&str], maxidx: usize, term: &Term) -> Term {
     generalize_inner(&free_set, maxidx, term)
 }
 
-fn generalize_inner(
-    frees: &std::collections::BTreeSet<&str>,
-    idx: usize,
-    term: &Term,
-) -> Term {
+fn generalize_inner(frees: &std::collections::BTreeSet<&str>, idx: usize, term: &Term) -> Term {
     match term {
         Term::Free { name, typ } => {
             if frees.contains(name.as_ref()) {
@@ -188,19 +168,15 @@ fn generalize_inner(
             }
         }
         Term::Const { .. } | Term::Bound(_) | Term::Var { .. } => term.clone(),
-        Term::Abs { name, typ, body } => {
-            Term::abs(
-                Arc::clone(name),
-                typ.clone(),
-                generalize_inner(frees, idx, body),
-            )
-        }
-        Term::App { func, arg } => {
-            Term::app(
-                generalize_inner(frees, idx, func),
-                generalize_inner(frees, idx, arg),
-            )
-        }
+        Term::Abs { name, typ, body } => Term::abs(
+            Arc::clone(name),
+            typ.clone(),
+            generalize_inner(frees, idx, body),
+        ),
+        Term::App { func, arg } => Term::app(
+            generalize_inner(frees, idx, func),
+            generalize_inner(frees, idx, arg),
+        ),
     }
 }
 
@@ -227,9 +203,7 @@ pub fn beta_norm(term: &Term) -> Term {
                 _ => Term::app(func_norm, beta_norm(arg)),
             }
         }
-        Term::Abs { name, typ, body } => {
-            Term::abs(Arc::clone(name), typ.clone(), beta_norm(body))
-        }
+        Term::Abs { name, typ, body } => Term::abs(Arc::clone(name), typ.clone(), beta_norm(body)),
         other => other.clone(),
     }
 }
@@ -287,9 +261,7 @@ fn lower_bound(term: &Term, cutoff: usize) -> Term {
         Term::Abs { name, typ, body } => {
             Term::abs(Arc::clone(name), typ.clone(), lower_bound(body, cutoff + 1))
         }
-        Term::App { func, arg } => {
-            Term::app(lower_bound(func, cutoff), lower_bound(arg, cutoff))
-        }
+        Term::App { func, arg } => Term::app(lower_bound(func, cutoff), lower_bound(arg, cutoff)),
         other => other.clone(),
     }
 }
@@ -301,7 +273,7 @@ fn lower_bound(term: &Term, cutoff: usize) -> Term {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::types::{Symbol, Sort};
+    use crate::core::types::{Sort, Symbol};
 
     #[test]
     fn test_subst_bounds() {
@@ -309,7 +281,10 @@ mod tests {
         let b = Term::free("b", Typ::dummy());
         // subst_bounds([v0,v1,...], Bound(i)) = v_i
         assert_eq!(subst_bounds(&[a.clone()], &Term::bound(0)), a.clone());
-        assert_eq!(subst_bounds(&[a.clone(), b.clone()], &Term::bound(0)), a.clone());
+        assert_eq!(
+            subst_bounds(&[a.clone(), b.clone()], &Term::bound(0)),
+            a.clone()
+        );
         assert_eq!(subst_bounds(&[a.clone(), b.clone()], &Term::bound(1)), b);
     }
 

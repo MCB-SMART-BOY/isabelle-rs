@@ -7,8 +7,8 @@
 
 use std::sync::Arc;
 
-use crate::core::theory::Theory;
 use crate::core::term::Term;
+use crate::core::theory::Theory;
 use crate::core::types::Typ;
 use crate::isar::proof::ProofManager;
 
@@ -19,9 +19,7 @@ use crate::isar::proof::ProofManager;
 /// The toplevel state — either in theory mode or proof mode.
 pub enum ToplevelState {
     /// Processing theory commands (definition, fun, inductive, ...)
-    Theory {
-        theory: Arc<Theory>,
-    },
+    Theory { theory: Arc<Theory> },
     /// Processing proof commands (apply, done, have, show, ...)
     Proof {
         theory: Arc<Theory>,
@@ -59,13 +57,17 @@ pub struct Toplevel {
 impl Toplevel {
     /// Create a new toplevel from a theory.
     pub fn new(theory: Arc<Theory>) -> Self {
-        Toplevel { state: ToplevelState::init(theory) }
+        Toplevel {
+            state: ToplevelState::init(theory),
+        }
     }
 
     /// Execute a single command.
     pub fn exec(&mut self, cmd: &str) -> Result<String, String> {
         let trimmed = cmd.trim();
-        if trimmed.is_empty() { return Ok(String::new()); }
+        if trimmed.is_empty() {
+            return Ok(String::new());
+        }
 
         let first_word = trimmed.split_whitespace().next().unwrap_or("");
 
@@ -104,10 +106,7 @@ impl Toplevel {
                 let theory = Arc::clone(theory);
                 // Extract name and statement
                 let parts: Vec<&str> = cmd.splitn(2, ':').collect();
-                let name = parts[0]
-                    .split_whitespace()
-                    .nth(1)
-                    .unwrap_or("unnamed");
+                let name = parts[0].split_whitespace().nth(1).unwrap_or("unnamed");
                 let stmt = parts.get(1).map(|s| s.trim()).unwrap_or("True");
                 let stmt_str = stmt.trim_matches('"');
 
@@ -118,7 +117,10 @@ impl Toplevel {
                 let mut pm = ProofManager::new();
                 pm.lemma(name.to_string(), parsed);
 
-                self.state = ToplevelState::Proof { theory, proof: Box::new(pm) };
+                self.state = ToplevelState::Proof {
+                    theory,
+                    proof: Box::new(pm),
+                };
                 Ok(format!("lemma {name} stated"))
             }
             _ => Err("not in theory mode".into()),
@@ -156,7 +158,9 @@ impl Toplevel {
                 let thm = if let Some(g) = goal {
                     let ct = crate::core::thm::CTerm::certify(g);
                     Arc::new(crate::core::thm::ThmKernel::assume(ct))
-                } else { return Err("no goal".into()); };
+                } else {
+                    return Err("no goal".into());
+                };
                 proof.qed(Arc::clone(&thm));
                 Ok(format!("by {method_name}"))
             }
@@ -171,7 +175,9 @@ impl Toplevel {
                 let thm = if let Some(g) = goal {
                     let ct = crate::core::thm::CTerm::certify(g);
                     Arc::new(crate::core::thm::ThmKernel::assume(ct))
-                } else { return Err("no goal".into()); };
+                } else {
+                    return Err("no goal".into());
+                };
                 proof.qed(Arc::clone(&thm));
                 let theory = Arc::clone(theory);
                 self.state = ToplevelState::Theory { theory };
@@ -184,8 +190,12 @@ impl Toplevel {
     fn exec_fix(&mut self, cmd: &str) -> Result<String, String> {
         match &mut self.state {
             ToplevelState::Proof { proof, .. } => {
-                let vars: Vec<&str> = cmd.strip_prefix("fix ").unwrap_or(cmd)
-                    .split_whitespace().filter(|s| *s != "::" && !s.is_empty()).collect();
+                let vars: Vec<&str> = cmd
+                    .strip_prefix("fix ")
+                    .unwrap_or(cmd)
+                    .split_whitespace()
+                    .filter(|s| *s != "::" && !s.is_empty())
+                    .collect();
                 proof.fix_vars(vars);
                 Ok("fix: ok".into())
             }
@@ -196,7 +206,11 @@ impl Toplevel {
     fn exec_assume(&mut self, cmd: &str) -> Result<String, String> {
         match &mut self.state {
             ToplevelState::Proof { proof, .. } => {
-                let stmt = cmd.strip_prefix("assume ").unwrap_or(cmd).trim().trim_matches('"');
+                let stmt = cmd
+                    .strip_prefix("assume ")
+                    .unwrap_or(cmd)
+                    .trim()
+                    .trim_matches('"');
                 let term = crate::isar::term_parser::parse_term(stmt)
                     .unwrap_or_else(|| Term::const_(stmt, Typ::base("prop")));
                 proof.assume_term(term);
@@ -211,10 +225,18 @@ impl Toplevel {
             ToplevelState::Proof { proof, .. } => {
                 let first = cmd.split_whitespace().next().unwrap_or("");
                 let is_show = first == "show" || first == "thus";
-                let stmt = cmd.split(':').nth(1).map(|s| s.trim().trim_matches('"')).unwrap_or("True");
+                let stmt = cmd
+                    .split(':')
+                    .nth(1)
+                    .map(|s| s.trim().trim_matches('"'))
+                    .unwrap_or("True");
                 let term = crate::isar::term_parser::parse_term(stmt)
                     .unwrap_or_else(|| Term::const_(stmt, Typ::base("prop")));
-                if is_show { proof.set_goal(term); } else { proof.add_have(term); }
+                if is_show {
+                    proof.set_goal(term);
+                } else {
+                    proof.add_have(term);
+                }
                 Ok(format!("{}: {stmt}", first))
             }
             _ => Err("not in proof mode".into()),
@@ -277,7 +299,8 @@ mod tests {
         let mut top = Toplevel::new(pure);
 
         // (A = B) & (B = C) --> A = C  — uses trans from HOL.thy
-        top.exec("lemma eq_trans: \"(A = B) & (B = C) --> A = C\"").unwrap();
+        top.exec("lemma eq_trans: \"(A = B) & (B = C) --> A = C\"")
+            .unwrap();
         top.exec("proof").unwrap();
         top.exec("apply auto").unwrap();
         top.exec("done").unwrap();

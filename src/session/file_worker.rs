@@ -124,7 +124,11 @@ impl FileWorker {
                     let diags = self.handle_check_file(content);
                     let _ = reply.send(diags);
                 }
-                WorkerCommand::Hover { line, character, reply } => {
+                WorkerCommand::Hover {
+                    line,
+                    character,
+                    reply,
+                } => {
                     let result = self.handle_hover(line, character);
                     let _ = reply.send(result);
                 }
@@ -185,7 +189,9 @@ impl FileWorker {
         }
 
         // Also collect any existing diagnostics from previous snapshots
-        let persisted: Vec<Diagnostic> = node.snapshots.iter()
+        let persisted: Vec<Diagnostic> = node
+            .snapshots
+            .iter()
             .flat_map(|s| s.diagnostics.clone())
             .collect();
 

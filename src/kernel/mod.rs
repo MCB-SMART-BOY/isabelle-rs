@@ -36,5 +36,5 @@ pub use crate::core::*;
 pub mod arena;
 
 // Consolidated modules (Phase 2)
-pub mod derived;  // drule + more_thm + conjunction + bires
-pub mod data;     // facts + consts + net
+pub mod data;
+pub mod derived; // drule + more_thm + conjunction + bires // facts + consts + net

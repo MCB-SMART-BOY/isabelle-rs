@@ -4,10 +4,10 @@
 //!
 //! These are safe derived operations on theorems.
 
-use super::term::Term;
-use super::thm::{CTerm, Thm, ThmKernel};
 use super::error::KernelError;
 use super::logic::Pure;
+use super::term::Term;
+use super::thm::{CTerm, Thm, ThmKernel};
 use std::sync::Arc;
 
 // =========================================================================
@@ -29,10 +29,7 @@ pub fn subst(thm_eq: &Thm, thm: &Thm) -> Option<Thm> {
     // Then combine with thm via implies_elim
     let refl_p = ThmKernel::reflexive(CTerm::certify(new_prop.clone()));
     let ct = CTerm::certify(prop.clone());
-    ThmKernel::transitive(
-        &ThmKernel::reflexive(ct),
-        &refl_p,
-    ).ok()
+    ThmKernel::transitive(&ThmKernel::reflexive(ct), &refl_p).ok()
 }
 
 fn replace_in_term(term: &Term, from: &Term, to: &Term) -> Option<Term> {
@@ -43,7 +40,9 @@ fn replace_in_term(term: &Term, from: &Term, to: &Term) -> Option<Term> {
         Term::App { func, arg } => {
             let f = replace_in_term(func, from, to);
             let a = replace_in_term(arg, from, to);
-            if f.is_none() && a.is_none() { return None; }
+            if f.is_none() && a.is_none() {
+                return None;
+            }
             Some(Term::app(
                 f.unwrap_or_else(|| func.as_ref().clone()),
                 a.unwrap_or_else(|| func.as_ref().clone()),
@@ -88,7 +87,11 @@ pub struct AttributedThm {
 
 impl AttributedThm {
     pub fn new(thm: Thm, name: String) -> Self {
-        AttributedThm { thm, name, attributes: vec![] }
+        AttributedThm {
+            thm,
+            name,
+            attributes: vec![],
+        }
     }
 
     pub fn with_attr(mut self, attr: ThmAttribute) -> Self {
@@ -118,8 +121,8 @@ pub fn rs(thm1: &Thm, thm2: &Thm) -> Option<Result<Thm, KernelError>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::types::Typ;
     use crate::core::term::Term;
+    use crate::core::types::Typ;
 
     fn prop(name: &str) -> CTerm {
         CTerm::certify(Term::const_(name, Typ::base("prop")))

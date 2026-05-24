@@ -22,39 +22,39 @@
 //! 3. **Theories are immutable** — extension creates a new theory
 //! 4. **Pure is the minimal bootstrap** — no axioms, just inference rules
 
-pub mod types;
-pub mod term;
+pub mod bires;
+pub mod conjunction;
+pub mod consts;
+pub mod drule;
+pub mod envir;
+pub mod facts;
+pub mod global_theory;
 pub mod logic;
+pub mod more_thm;
+pub mod net;
+pub mod pattern;
 pub mod sign;
+pub mod simplifier;
+pub mod tactic;
+pub mod term;
+pub mod term_subst;
 pub mod theory;
 pub mod thm;
-pub mod envir;
-pub mod term_subst;
+pub mod types;
 pub mod unify;
-pub mod tactic;
-pub mod drule;
-pub mod simplifier;
 pub mod variable;
-pub mod pattern;
-pub mod more_thm;
-pub mod consts;
-pub mod facts;
-pub mod net;
-pub mod conjunction;
-pub mod bires;
-pub mod global_theory;
 
 // Re-export the most commonly used types
-pub use types::{Sort, Typ, ClassAlgebra};
-pub use term::Term;
+pub use envir::Envir;
+pub use error::{IsabelleError, KernelError, ProofError, Result, TypeError};
 pub use logic::Pure;
 pub use sign::Signature;
-pub use theory::{Theory, ProofContext};
-pub use thm::{CTerm, Thm, ThmKernel, Derivation};
-pub use error::{IsabelleError, KernelError, TypeError, ProofError, Result};
-pub use envir::Envir;
-pub use term_subst::{subst_bounds, instantiate, beta_norm, generalize};
+pub use term::Term;
+pub use term_subst::{beta_norm, generalize, instantiate, subst_bounds};
+pub use theory::{ProofContext, Theory};
+pub use thm::{CTerm, Derivation, Thm, ThmKernel};
+pub use types::{ClassAlgebra, Sort, Typ};
 
 pub mod axclass;
-pub mod proofterm;
 pub mod error;
+pub mod proofterm;

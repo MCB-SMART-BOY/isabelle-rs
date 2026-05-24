@@ -90,7 +90,11 @@ pub struct Token {
 
 impl Token {
     pub fn new(kind: TokenKind, source: String, offset: usize) -> Self {
-        Token { kind, source, offset }
+        Token {
+            kind,
+            source,
+            offset,
+        }
     }
 
     pub fn is_keyword(&self, kw: &str) -> bool {
@@ -112,27 +116,88 @@ impl Token {
 
 /// Isabelle keywords that start commands.
 pub const COMMAND_KEYWORDS: &[&str] = &[
-    "theory", "imports", "begin", "end",
-    "lemma", "theorem", "corollary", "proposition",
-    "definition", "abbreviation", "notation",
-    "fun", "function", "primrec", "datatype", "record",
-    "inductive", "coinductive",
-    "class", "subclass", "instance", "instantiation",
-    "locale", "sublocale", "interpretation", "interpret",
-    "proof", "qed", "done", "by", "apply",
-    "have", "show", "hence", "thus",
-    "fix", "assume", "presume", "define", "obtain",
-    "let", "from", "with", "using", "unfolding",
-    "note", "also", "finally", "moreover", "ultimately",
-    "case", "next",
-    "if", "then", "else", "for",
-    "and", "in", "is", "where", "when", "of",
-    "ML", "ML_prf", "ML_val", "ML_command",
-    "declare", "lemmas", "named_theorems",
-    "hide_class", "hide_type", "hide_const", "hide_fact",
+    "theory",
+    "imports",
+    "begin",
+    "end",
+    "lemma",
+    "theorem",
+    "corollary",
+    "proposition",
+    "definition",
+    "abbreviation",
+    "notation",
+    "fun",
+    "function",
+    "primrec",
+    "datatype",
+    "record",
+    "inductive",
+    "coinductive",
+    "class",
+    "subclass",
+    "instance",
+    "instantiation",
+    "locale",
+    "sublocale",
+    "interpretation",
+    "interpret",
+    "proof",
+    "qed",
+    "done",
+    "by",
+    "apply",
+    "have",
+    "show",
+    "hence",
+    "thus",
+    "fix",
+    "assume",
+    "presume",
+    "define",
+    "obtain",
+    "let",
+    "from",
+    "with",
+    "using",
+    "unfolding",
+    "note",
+    "also",
+    "finally",
+    "moreover",
+    "ultimately",
+    "case",
+    "next",
+    "if",
+    "then",
+    "else",
+    "for",
+    "and",
+    "in",
+    "is",
+    "where",
+    "when",
+    "of",
+    "ML",
+    "ML_prf",
+    "ML_val",
+    "ML_command",
+    "declare",
+    "lemmas",
+    "named_theorems",
+    "hide_class",
+    "hide_type",
+    "hide_const",
+    "hide_fact",
     "schematic_goal",
-    "text", "txt", "chapter", "section", "subsection", "subsubsection",
-    "ALL", "EX",
+    "text",
+    "txt",
+    "chapter",
+    "section",
+    "subsection",
+    "subsubsection",
+    "ALL",
+    "EX",
 ];
 
 /// Is a string an Isabelle keyword?
@@ -168,7 +233,9 @@ impl Lexer {
             let tok = self.next_token();
             let done = tok.kind == TokenKind::EOF;
             tokens.push(tok);
-            if done { break; }
+            if done {
+                break;
+            }
         }
         tokens
     }
@@ -206,9 +273,15 @@ impl Lexer {
                 let inner_start = self.pos;
                 while self.pos < self.input.len() {
                     let c = self.peek();
-                    if c == '>' { break; }
-                    if c == '\n' { break; } // safety: don't cross lines
-                    if !c.is_alphanumeric() && c != '_' && c != '^' { break; }
+                    if c == '>' {
+                        break;
+                    }
+                    if c == '\n' {
+                        break;
+                    } // safety: don't cross lines
+                    if !c.is_alphanumeric() && c != '_' && c != '^' {
+                        break;
+                    }
                     self.advance();
                 }
                 let inner: String = self.input[inner_start..self.pos].iter().collect();
@@ -240,8 +313,14 @@ impl Lexer {
                 self.advance_by(3);
                 Token::new(TokenKind::Symbol(intern("-->")), "-->".into(), start_offset)
             }
-            '-' => { self.advance(); Token::new(TokenKind::Symbol(intern("-")), '-'.into(), start_offset) }
-            '+' => { self.advance(); Token::new(TokenKind::Symbol(intern("+")), '+'.into(), start_offset) }
+            '-' => {
+                self.advance();
+                Token::new(TokenKind::Symbol(intern("-")), '-'.into(), start_offset)
+            }
+            '+' => {
+                self.advance();
+                Token::new(TokenKind::Symbol(intern("+")), '+'.into(), start_offset)
+            }
             '<' if self.peek_n(1) == Some('=') && self.peek_n(2) == Some('>') => {
                 self.advance_by(3);
                 Token::new(TokenKind::Symbol(intern("<=>")), "<=>".into(), start_offset)
@@ -250,7 +329,10 @@ impl Lexer {
                 self.advance_by(3);
                 Token::new(TokenKind::Symbol(intern("<->")), "<->".into(), start_offset)
             }
-            '<' => { self.advance(); Token::new(TokenKind::Symbol(intern("<")), '<'.into(), start_offset) }
+            '<' => {
+                self.advance();
+                Token::new(TokenKind::Symbol(intern("<")), '<'.into(), start_offset)
+            }
 
             // Bracketed assumptions: [| ... |]
             '[' if self.peek_n(1) == Some('|') => {
@@ -274,8 +356,14 @@ impl Lexer {
             // Numbers
             c if c.is_ascii_digit() => self.lex_number(),
 
-            '.' => { self.advance(); Token::new(TokenKind::Symbol(intern(".")), '.'.into(), start_offset) }
-            '%' => { self.advance(); Token::new(TokenKind::Symbol(intern("%")), '%'.into(), start_offset) }
+            '.' => {
+                self.advance();
+                Token::new(TokenKind::Symbol(intern(".")), '.'.into(), start_offset)
+            }
+            '%' => {
+                self.advance();
+                Token::new(TokenKind::Symbol(intern("%")), '%'.into(), start_offset)
+            }
             ':' if self.peek_n(1) == Some(':') => {
                 self.advance_by(2);
                 Token::new(TokenKind::Symbol(intern("::")), "::".into(), start_offset)
@@ -285,20 +373,62 @@ impl Lexer {
                 self.advance();
                 Token::new(TokenKind::Symbol(intern(":")), ":".into(), start_offset)
             }
-            '&' => { self.advance(); Token::new(TokenKind::Symbol(intern("&")), '&'.into(), start_offset) }
-            '|' => { self.advance(); Token::new(TokenKind::Symbol(intern("|")), '|'.into(), start_offset) }
-            '~' => { self.advance(); Token::new(TokenKind::Symbol(intern("~")), '~'.into(), start_offset) }
-            '(' => { self.advance(); Token::new(TokenKind::Symbol(intern("(")), '('.into(), start_offset) }
-            ')' => { self.advance(); Token::new(TokenKind::Symbol(intern(")")), ')'.into(), start_offset) }
-            '[' => { self.advance(); Token::new(TokenKind::Symbol(intern("[")), '['.into(), start_offset) }
-            ']' => { self.advance(); Token::new(TokenKind::Symbol(intern("]")), ']'.into(), start_offset) }
-            '{' => { self.advance(); Token::new(TokenKind::Symbol(intern("{")), '{'.into(), start_offset) }
-            '}' => { self.advance(); Token::new(TokenKind::Symbol(intern("}")), '}'.into(), start_offset) }
-            '=' => { self.advance(); Token::new(TokenKind::Symbol(intern("=")), '='.into(), start_offset) }
-            '#' => { self.advance(); Token::new(TokenKind::Symbol(intern("#")), '#'.into(), start_offset) }
-            '>' => { self.advance(); Token::new(TokenKind::Symbol(intern(">")), '>'.into(), start_offset) }
-            '@' => { self.advance(); Token::new(TokenKind::Symbol(intern("@")), '@'.into(), start_offset) }
-            '`' => { self.advance(); Token::new(TokenKind::Symbol(intern("`")), '`'.into(), start_offset) }
+            '&' => {
+                self.advance();
+                Token::new(TokenKind::Symbol(intern("&")), '&'.into(), start_offset)
+            }
+            '|' => {
+                self.advance();
+                Token::new(TokenKind::Symbol(intern("|")), '|'.into(), start_offset)
+            }
+            '~' => {
+                self.advance();
+                Token::new(TokenKind::Symbol(intern("~")), '~'.into(), start_offset)
+            }
+            '(' => {
+                self.advance();
+                Token::new(TokenKind::Symbol(intern("(")), '('.into(), start_offset)
+            }
+            ')' => {
+                self.advance();
+                Token::new(TokenKind::Symbol(intern(")")), ')'.into(), start_offset)
+            }
+            '[' => {
+                self.advance();
+                Token::new(TokenKind::Symbol(intern("[")), '['.into(), start_offset)
+            }
+            ']' => {
+                self.advance();
+                Token::new(TokenKind::Symbol(intern("]")), ']'.into(), start_offset)
+            }
+            '{' => {
+                self.advance();
+                Token::new(TokenKind::Symbol(intern("{")), '{'.into(), start_offset)
+            }
+            '}' => {
+                self.advance();
+                Token::new(TokenKind::Symbol(intern("}")), '}'.into(), start_offset)
+            }
+            '=' => {
+                self.advance();
+                Token::new(TokenKind::Symbol(intern("=")), '='.into(), start_offset)
+            }
+            '#' => {
+                self.advance();
+                Token::new(TokenKind::Symbol(intern("#")), '#'.into(), start_offset)
+            }
+            '>' => {
+                self.advance();
+                Token::new(TokenKind::Symbol(intern(">")), '>'.into(), start_offset)
+            }
+            '@' => {
+                self.advance();
+                Token::new(TokenKind::Symbol(intern("@")), '@'.into(), start_offset)
+            }
+            '`' => {
+                self.advance();
+                Token::new(TokenKind::Symbol(intern("`")), '`'.into(), start_offset)
+            }
             // Error
             _ => {
                 self.advance();
@@ -405,7 +535,9 @@ impl Lexer {
                     self.advance_by(2);
                     depth -= 1;
                 }
-                _ => { self.advance(); }
+                _ => {
+                    self.advance();
+                }
             }
         }
     }
@@ -459,7 +591,10 @@ mod tests {
     }
 
     fn filter_tokens(tokens: &[Token]) -> Vec<&Token> {
-        tokens.iter().filter(|t| !matches!(t.kind, TokenKind::EOF)).collect()
+        tokens
+            .iter()
+            .filter(|t| !matches!(t.kind, TokenKind::EOF))
+            .collect()
     }
 
     #[test]
@@ -487,10 +622,22 @@ mod tests {
         let toks = tokenize("==> !! == =>");
         let tokens = filter_tokens(&toks);
         assert_eq!(tokens.len(), 4);
-        match &tokens[0].kind { TokenKind::Symbol(s) => assert_eq!(s.as_ref(), "==>"), _ => panic!() }
-        match &tokens[1].kind { TokenKind::Symbol(s) => assert_eq!(s.as_ref(), "!!"), _ => panic!() }
-        match &tokens[2].kind { TokenKind::Symbol(s) => assert_eq!(s.as_ref(), "=="), _ => panic!() }
-        match &tokens[3].kind { TokenKind::Symbol(s) => assert_eq!(s.as_ref(), "=>"), _ => panic!() }
+        match &tokens[0].kind {
+            TokenKind::Symbol(s) => assert_eq!(s.as_ref(), "==>"),
+            _ => panic!(),
+        }
+        match &tokens[1].kind {
+            TokenKind::Symbol(s) => assert_eq!(s.as_ref(), "!!"),
+            _ => panic!(),
+        }
+        match &tokens[2].kind {
+            TokenKind::Symbol(s) => assert_eq!(s.as_ref(), "=="),
+            _ => panic!(),
+        }
+        match &tokens[3].kind {
+            TokenKind::Symbol(s) => assert_eq!(s.as_ref(), "=>"),
+            _ => panic!(),
+        }
     }
 
     #[test]

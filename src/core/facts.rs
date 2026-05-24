@@ -24,11 +24,18 @@ pub struct Facts {
 }
 
 impl Facts {
-    pub fn empty() -> Self { Facts { entries: BTreeMap::new() } }
+    pub fn empty() -> Self {
+        Facts {
+            entries: BTreeMap::new(),
+        }
+    }
 
     /// Add theorems to a named fact.
     pub fn add(&mut self, name: &str, thms: Vec<Arc<Thm>>) {
-        self.entries.entry(name.to_string()).or_default().extend(thms);
+        self.entries
+            .entry(name.to_string())
+            .or_default()
+            .extend(thms);
     }
 
     /// Get the theorems for a named fact.
@@ -78,7 +85,9 @@ pub enum FactRef {
 }
 
 impl FactRef {
-    pub fn named(name: &str) -> Self { FactRef::Named(name.to_string()) }
+    pub fn named(name: &str) -> Self {
+        FactRef::Named(name.to_string())
+    }
 }
 
 impl Facts {
@@ -93,7 +102,9 @@ impl Facts {
                 }
                 FactRef::Select { name, index } => {
                     let thms = self.get(name)?;
-                    if *index >= thms.len() { return None; }
+                    if *index >= thms.len() {
+                        return None;
+                    }
                     result.push(Arc::clone(&thms[*index]));
                 }
             }
@@ -103,7 +114,9 @@ impl Facts {
 }
 
 impl Default for Facts {
-    fn default() -> Self { Facts::empty() }
+    fn default() -> Self {
+        Facts::empty()
+    }
 }
 
 // =========================================================================
@@ -113,9 +126,9 @@ impl Default for Facts {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::term::Term;
     use crate::core::thm::{CTerm, ThmKernel};
     use crate::core::types::Typ;
-    use crate::core::term::Term;
 
     fn dummy_thm() -> Arc<Thm> {
         let a = CTerm::certify(Term::const_("A", Typ::base("prop")));

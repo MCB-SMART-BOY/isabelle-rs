@@ -21,6 +21,6 @@
 //! the current implementation. This module will hold the rowan-based
 //! incremental parser when integrated.
 
-pub mod parser;
 pub mod ast;
+pub mod parser;
 pub mod syntax_phases;

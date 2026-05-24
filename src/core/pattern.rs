@@ -10,7 +10,6 @@
 //! This is sufficient for most Isabelle proof steps and is
 //! significantly more efficient than full higher-order unification.
 
-
 use super::envir::Envir;
 use super::term::Term;
 use super::unify::{self, UnifyConfig};
@@ -95,10 +94,7 @@ mod tests {
     fn test_is_pattern_app() {
         // ?f(Bound(0), Bound(1)) is a pattern
         let f = Term::var("f", 0, Typ::dummy());
-        let t = Term::app(
-            Term::app(f, Term::bound(0)),
-            Term::bound(1),
-        );
+        let t = Term::app(Term::app(f, Term::bound(0)), Term::bound(1));
         assert!(is_pattern(&t));
     }
 
@@ -106,10 +102,7 @@ mod tests {
     fn test_is_pattern_not() {
         // ?f(g(x)) is NOT a pattern (g is not a Bound var)
         let f = Term::var("f", 0, Typ::dummy());
-        let gx = Term::app(
-            Term::free("g", Typ::dummy()),
-            Term::free("x", Typ::dummy()),
-        );
+        let gx = Term::app(Term::free("g", Typ::dummy()), Term::free("x", Typ::dummy()));
         let t = Term::app(f, gx);
         assert!(!is_pattern(&t));
     }
@@ -118,15 +111,9 @@ mod tests {
     fn test_pattern_matches() {
         // Pattern: ?P(0, 1) matches target: f(a, b)
         let p = Term::var("P", 0, Typ::dummy());
-        let _pat = Term::app(
-            Term::app(p, Term::bound(0)),
-            Term::bound(1),
-        );
+        let _pat = Term::app(Term::app(p, Term::bound(0)), Term::bound(1));
         let _obj = Term::app(
-            Term::app(
-                Term::free("f", Typ::dummy()),
-                Term::free("a", Typ::dummy()),
-            ),
+            Term::app(Term::free("f", Typ::dummy()), Term::free("a", Typ::dummy())),
             Term::free("b", Typ::dummy()),
         );
         // This won't match directly because Bound vars need special handling

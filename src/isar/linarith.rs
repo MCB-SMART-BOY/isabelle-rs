@@ -9,14 +9,14 @@
 //! - Simple contradictions: `0 = Suc n`, `Suc n < 0`
 //! - Common arithmetic identities via normalization
 
-use crate::core::term::Term;
-use crate::core::types::Typ;
-use crate::core::thm::{Thm, ThmKernel, CTerm};
 use crate::core::logic::Pure;
 use crate::core::simplifier::{RewriteRule, Simplifier};
+use crate::core::term::Term;
+use crate::core::thm::{CTerm, Thm, ThmKernel};
+use crate::core::types::Typ;
 use crate::hol::hol_loader::HolTheoremDb;
-use std::sync::Arc;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 // =========================================================================
 // Linear Expression over nat
@@ -33,15 +33,24 @@ struct LinExpr {
 
 impl LinExpr {
     fn zero() -> Self {
-        LinExpr { constant: 0, vars: Vec::new() }
+        LinExpr {
+            constant: 0,
+            vars: Vec::new(),
+        }
     }
 
     fn constant(n: i64) -> Self {
-        LinExpr { constant: n, vars: Vec::new() }
+        LinExpr {
+            constant: n,
+            vars: Vec::new(),
+        }
     }
 
     fn var(name: String) -> Self {
-        LinExpr { constant: 0, vars: vec![(name, 1)] }
+        LinExpr {
+            constant: 0,
+            vars: vec![(name, 1)],
+        }
     }
 
     /// Add two linear expressions
@@ -114,7 +123,11 @@ fn term_to_lin_expr(term: &Term) -> Option<LinExpr> {
                 }
             }
             // x + y: nested App(App(plus, x), y)
-            if let Term::App { func: inner_func, arg: lhs } = func.as_ref() {
+            if let Term::App {
+                func: inner_func,
+                arg: lhs,
+            } = func.as_ref()
+            {
                 if is_plus(inner_func) {
                     if let (Some(a), Some(b)) = (term_to_lin_expr(lhs), term_to_lin_expr(arg)) {
                         return Some(a.add(&b));
@@ -130,7 +143,8 @@ fn term_to_lin_expr(term: &Term) -> Option<LinExpr> {
 fn is_plus(term: &Term) -> bool {
     match term {
         Term::Const { name, .. } => {
-            name.as_ref() == "HOL.plus" || name.as_ref() == "Groups.plus"
+            name.as_ref() == "HOL.plus"
+                || name.as_ref() == "Groups.plus"
                 || name.as_ref().ends_with(".plus")
         }
         _ => false,
@@ -139,9 +153,7 @@ fn is_plus(term: &Term) -> bool {
 
 fn is_hol_eq(term: &Term) -> bool {
     match term {
-        Term::Const { name, .. } => {
-            name.as_ref() == "HOL.eq" || name.as_ref().ends_with(".eq")
-        }
+        Term::Const { name, .. } => name.as_ref() == "HOL.eq" || name.as_ref().ends_with(".eq"),
         _ => false,
     }
 }
@@ -149,7 +161,8 @@ fn is_hol_eq(term: &Term) -> bool {
 fn is_less_than(term: &Term) -> bool {
     match term {
         Term::Const { name, .. } => {
-            name.as_ref() == "HOL.less" || name.as_ref() == "Orderings.less"
+            name.as_ref() == "HOL.less"
+                || name.as_ref() == "Orderings.less"
                 || name.as_ref().ends_with(".less")
         }
         _ => false,
@@ -159,7 +172,8 @@ fn is_less_than(term: &Term) -> bool {
 fn is_less_eq(term: &Term) -> bool {
     match term {
         Term::Const { name, .. } => {
-            name.as_ref() == "HOL.less_eq" || name.as_ref() == "Orderings.less_eq"
+            name.as_ref() == "HOL.less_eq"
+                || name.as_ref() == "Orderings.less_eq"
                 || name.as_ref().ends_with(".less_eq")
         }
         _ => false,
@@ -173,7 +187,11 @@ fn is_less_eq(term: &Term) -> bool {
 /// Extract an atomic formula from a term if it's linear.
 fn term_to_atom(term: &Term) -> Option<Atom> {
     if let Term::App { func, arg: rhs } = term {
-        if let Term::App { func: rel_const, arg: lhs } = func.as_ref() {
+        if let Term::App {
+            func: rel_const,
+            arg: lhs,
+        } = func.as_ref()
+        {
             if is_hol_eq(rel_const) {
                 if let (Some(a), Some(b)) = (term_to_lin_expr(lhs), term_to_lin_expr(rhs)) {
                     return Some(Atom::Eq(a, b));
@@ -209,36 +227,71 @@ pub fn arith_tac(state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
     // Build a comprehensive arithmetic simplifier
     let db = HolTheoremDb::get();
     let mut rules: Vec<RewriteRule> = Vec::new();
-    
+
     // Collect all known arithmetic rewrite rules
     for name in &[
         // Basic arithmetic identities
-        "add_0_right", "add_Suc_right", "mult_0_right", "mult_Suc_right",
-        "add_0", "add_Suc", "mult_0", "mult_Suc",
-        "add_assoc", "add_commute", "mult_assoc", "mult_commute",
-        "Suc_eq_add_numeral_1_left", "add_0_left", "add_Suc_shift",
-        "mult_0_left", "mult_1", "mult_1_right",
+        "add_0_right",
+        "add_Suc_right",
+        "mult_0_right",
+        "mult_Suc_right",
+        "add_0",
+        "add_Suc",
+        "mult_0",
+        "mult_Suc",
+        "add_assoc",
+        "add_commute",
+        "mult_assoc",
+        "mult_commute",
+        "Suc_eq_add_numeral_1_left",
+        "add_0_left",
+        "add_Suc_shift",
+        "mult_0_left",
+        "mult_1",
+        "mult_1_right",
         // Inequality rules
-        "add_less_mono1", "add_less_mono1_l", "add_lessD1",
-        "less_Suc_eq", "less_Suc_eq_0_disj", "Suc_less_eq",
-        "less_trans", "le_trans", "less_irrefl", "le_refl",
-        "not_less0", "zero_less_Suc",
+        "add_less_mono1",
+        "add_less_mono1_l",
+        "add_lessD1",
+        "less_Suc_eq",
+        "less_Suc_eq_0_disj",
+        "Suc_less_eq",
+        "less_trans",
+        "le_trans",
+        "less_irrefl",
+        "le_refl",
+        "not_less0",
+        "zero_less_Suc",
         // Subtraction
-        "diff_0_eq_0", "diff_Suc_Suc", "diff_self_eq_0",
-        "diff_add_0", "Nat.diff_add_0",
+        "diff_0_eq_0",
+        "diff_Suc_Suc",
+        "diff_self_eq_0",
+        "diff_add_0",
+        "Nat.diff_add_0",
         // Multiplication (simple cases)
-        "mult_0", "mult_Suc",
+        "mult_0",
+        "mult_Suc",
         // Cancellation
-        "add_left_cancel", "add_right_cancel",
-        "nat_add_left_cancel", "nat_add_right_cancel",
+        "add_left_cancel",
+        "add_right_cancel",
+        "nat_add_left_cancel",
+        "nat_add_right_cancel",
         // Zero/successor
-        "Suc_not_Zero", "Zero_not_Suc", "Suc_neq_Zero", "Zero_neq_Suc",
-        "n_not_Suc_n", "Suc_n_not_n",
+        "Suc_not_Zero",
+        "Zero_not_Suc",
+        "Suc_neq_Zero",
+        "Zero_neq_Suc",
+        "n_not_Suc_n",
+        "Suc_n_not_n",
         // Additional
-        "add_less_same_cancel1", "add_less_same_cancel2",
-        "add_le_same_cancel1", "add_le_same_cancel2",
-        "less_add_same_cancel1", "less_add_same_cancel2",
-        "le_add_same_cancel1", "le_add_same_cancel2",
+        "add_less_same_cancel1",
+        "add_less_same_cancel2",
+        "add_le_same_cancel1",
+        "add_le_same_cancel2",
+        "less_add_same_cancel1",
+        "less_add_same_cancel2",
+        "le_add_same_cancel1",
+        "le_add_same_cancel2",
     ] {
         if let Some(thm) = db.by_name.get(*name) {
             if let Some(rule) = RewriteRule::from_thm(Arc::clone(thm)) {
@@ -246,16 +299,20 @@ pub fn arith_tac(state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
             }
         }
     }
-    
+
     if rules.is_empty() {
         // Fallback chain: simp → auto → blast
         let simp_results = Method::Simp(Simplifier::new(Vec::new())).execute(state, premises);
-        if simp_results.iter().any(|r| r.nprems() == 0) { return simp_results; }
+        if simp_results.iter().any(|r| r.nprems() == 0) {
+            return simp_results;
+        }
         let auto_results = Method::Auto.execute(state, premises);
-        if auto_results.iter().any(|r| r.nprems() == 0) { return auto_results; }
+        if auto_results.iter().any(|r| r.nprems() == 0) {
+            return auto_results;
+        }
         return Method::Blast.execute(state, premises);
     }
-    
+
     // 1. Deep simplification with arithmetic rules
     let simp = Simplifier::new(rules.clone());
     if let Some(goal) = state.prem(0) {
@@ -279,30 +336,42 @@ pub fn arith_tac(state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
                 }
                 // 3. Try auto on the simplified goal
                 let auto_results = Method::Auto.execute(&new_state, premises);
-                if auto_results.iter().any(|r| r.nprems() == 0) { return auto_results; }
-                
+                if auto_results.iter().any(|r| r.nprems() == 0) {
+                    return auto_results;
+                }
+
                 // 4. Try blast
                 let blast_results = Method::Blast.execute(&new_state, premises);
-                if blast_results.iter().any(|r| r.nprems() == 0) { return blast_results; }
-                
+                if blast_results.iter().any(|r| r.nprems() == 0) {
+                    return blast_results;
+                }
+
                 return vec![new_state];
             }
         }
     }
-    
+
     // Direct try with auto
     let auto_results = Method::Auto.execute(state, premises);
-    if auto_results.iter().any(|r| r.nprems() == 0) { return auto_results; }
+    if auto_results.iter().any(|r| r.nprems() == 0) {
+        return auto_results;
+    }
     let blast_results = Method::Blast.execute(state, premises);
-    if blast_results.iter().any(|r| r.nprems() == 0) { return blast_results; }
-    
+    if blast_results.iter().any(|r| r.nprems() == 0) {
+        return blast_results;
+    }
+
     vec![state.clone()]
 }
 
 /// Check if a term is trivially false: `0 = Suc n`, `Suc n = 0`, etc.
 fn is_trivial_false(term: &Term) -> bool {
     if let Term::App { func, arg: rhs } = term {
-        if let Term::App { func: eq_c, arg: lhs } = func.as_ref() {
+        if let Term::App {
+            func: eq_c,
+            arg: lhs,
+        } = func.as_ref()
+        {
             if is_hol_eq(eq_c) {
                 // 0 = Suc ... or Suc ... = 0
                 return (is_zero(lhs) && is_suc(rhs)) || (is_suc(lhs) && is_zero(rhs));
@@ -315,7 +384,11 @@ fn is_trivial_false(term: &Term) -> bool {
 /// Check if a term is trivially true: `n = n`, `0 = 0`, etc.
 fn is_trivial_true(term: &Term) -> bool {
     if let Term::App { func, arg: rhs } = term {
-        if let Term::App { func: eq_c, arg: lhs } = func.as_ref() {
+        if let Term::App {
+            func: eq_c,
+            arg: lhs,
+        } = func.as_ref()
+        {
             if is_hol_eq(eq_c) {
                 return lhs == rhs;
             }
@@ -330,7 +403,9 @@ fn close_trivial_true(state: &Thm, goal: &Term) -> Option<Thm> {
     // The goal is already the conclusion; apply refl to close
     // This is a simplification — in reality we need to use the refl theorem properly
     if let Some(result) = ThmKernel::subst_premise(&refl_thm, state, 0) {
-        if result.nprems() == 0 { return Some(result); }
+        if result.nprems() == 0 {
+            return Some(result);
+        }
     }
     None
 }
@@ -349,7 +424,9 @@ fn is_suc(term: &Term) -> bool {
         Term::App { func, .. } => {
             if let Term::Const { name, .. } = func.as_ref() {
                 name.as_ref() == "HOL.Suc" || name.as_ref() == "Nat.Suc"
-            } else { false }
+            } else {
+                false
+            }
         }
         _ => false,
     }

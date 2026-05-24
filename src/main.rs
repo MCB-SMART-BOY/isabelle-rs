@@ -28,10 +28,10 @@ mod document;
 mod fleche;
 mod server;
 
-mod isar;
 mod hol;
+mod isar;
 
-use core::{Sort, Term, ThmKernel, Typ, CTerm};
+use core::{CTerm, Sort, Term, ThmKernel, Typ};
 use fleche::engine::{Fleche, RealExecutor};
 use server::IsabelleServer;
 use std::sync::Arc;
@@ -155,16 +155,18 @@ fn demo_kernel() {
     println!();
 }
 
-
 fn demo_isabelle() {
-    use core::{Theory, Signature, ProofContext, CTerm, ThmKernel, Term, Typ};
+    use core::{CTerm, ProofContext, Signature, Term, Theory, ThmKernel, Typ};
 
     println!("─── Isabelle: Theory / Signature / Context ───");
 
     // 1. Bootstrap theory Pure
     let pure = Theory::pure();
     println!("Theory: {}", pure.name());
-    println!("  Signature has {} constants:", pure.signature().const_count());
+    println!(
+        "  Signature has {} constants:",
+        pure.signature().const_count()
+    );
     for decl in pure.signature().consts() {
         println!("    {} :: {:?}", decl.name, decl.typ);
     }
@@ -173,16 +175,26 @@ fn demo_isabelle() {
     let mut thy = Theory::begin("MyTheory", vec![pure.clone()]);
     thy.declare_const("MyTheory.zero", Typ::base("nat"));
     println!("\nExtended theory: {}", thy.name());
-    println!("  Inherited Pure.imp: {:?}", thy.const_type("Pure.imp").expect("Pure.imp not found"));
-    println!("  Own MyTheory.zero: {:?}", thy.const_type("MyTheory.zero").expect("MyTheory.zero not found"));
-    assert!(thy.is_declared("Pure.all"));  // inherited
+    println!(
+        "  Inherited Pure.imp: {:?}",
+        thy.const_type("Pure.imp").expect("Pure.imp not found")
+    );
+    println!(
+        "  Own MyTheory.zero: {:?}",
+        thy.const_type("MyTheory.zero")
+            .expect("MyTheory.zero not found")
+    );
+    assert!(thy.is_declared("Pure.all")); // inherited
     assert!(thy.is_declared("MyTheory.zero")); // own
 
     // 3. Prove a theorem and store it
     let a = CTerm::certify(Term::const_("A", Typ::base("prop")));
     let trivial = ThmKernel::trivial(a).unwrap();
     thy.add_theorem("trivial", trivial);
-    println!("\n  Stored theorem 'trivial': {}", thy.lookup_theorem("trivial").is_some());
+    println!(
+        "\n  Stored theorem 'trivial': {}",
+        thy.lookup_theorem("trivial").is_some()
+    );
 
     // 4. Proof context: fix + assume (Isar style)
     let mut ctx = ProofContext::init(&pure);
@@ -190,7 +202,13 @@ fn demo_isabelle() {
     ctx.fix("y", Typ::base("nat"));
     ctx.assume(Term::const_("Px", Typ::base("prop")));
     println!("\nProof context:");
-    println!("  Fixes: {:?}", ctx.fixes().iter().map(|(n, _)| n.as_ref()).collect::<Vec<_>>());
+    println!(
+        "  Fixes: {:?}",
+        ctx.fixes()
+            .iter()
+            .map(|(n, _)| n.as_ref())
+            .collect::<Vec<_>>()
+    );
     println!("  Assumptions: {}", ctx.assumptions().len());
 
     println!("\n✅ Isabelle-style Theory/Signature/Context architecture in place.");

@@ -268,8 +268,14 @@ impl Node {
                 TokenKind::EOF => {
                     if !current.trim().is_empty() {
                         let range = Range {
-                            start: Position { line: offset_to_line(content, start_offset), character: 0 },
-                            end: Position { line: offset_to_line(content, tok.offset), character: 0 },
+                            start: Position {
+                                line: offset_to_line(content, start_offset),
+                                character: 0,
+                            },
+                            end: Position {
+                                line: offset_to_line(content, tok.offset),
+                                character: 0,
+                            },
                         };
                         commands.push(Command::new(current.trim().to_string(), range, id));
                         id += 1;
@@ -279,8 +285,14 @@ impl Node {
                     // Semicolon ends a command
                     if !current.trim().is_empty() {
                         let range = Range {
-                            start: Position { line: offset_to_line(content, start_offset), character: 0 },
-                            end: Position { line: offset_to_line(content, tok.offset + 1), character: 0 },
+                            start: Position {
+                                line: offset_to_line(content, start_offset),
+                                character: 0,
+                            },
+                            end: Position {
+                                line: offset_to_line(content, tok.offset + 1),
+                                character: 0,
+                            },
                         };
                         commands.push(Command::new(current.trim().to_string(), range, id));
                         id += 1;
@@ -291,8 +303,14 @@ impl Node {
                 TokenKind::Keyword(kw) if kw.as_ref() == "theory" && !current.is_empty() => {
                     // New theory command starts — flush previous
                     let range = Range {
-                        start: Position { line: offset_to_line(content, start_offset), character: 0 },
-                        end: Position { line: offset_to_line(content, tok.offset), character: 0 },
+                        start: Position {
+                            line: offset_to_line(content, start_offset),
+                            character: 0,
+                        },
+                        end: Position {
+                            line: offset_to_line(content, tok.offset),
+                            character: 0,
+                        },
                     };
                     if !current.trim().is_empty() {
                         commands.push(Command::new(current.trim().to_string(), range, id));
@@ -457,14 +475,29 @@ mod tests {
 
     #[test]
     fn test_command_classify() {
-        assert_eq!(CommandKind::classify("lemma foo: \"x = x\""), CommandKind::Lemma);
-        assert_eq!(CommandKind::classify("theorem bar: \"P\""), CommandKind::Theorem);
+        assert_eq!(
+            CommandKind::classify("lemma foo: \"x = x\""),
+            CommandKind::Lemma
+        );
+        assert_eq!(
+            CommandKind::classify("theorem bar: \"P\""),
+            CommandKind::Theorem
+        );
         assert_eq!(CommandKind::classify("proof"), CommandKind::Proof);
         assert_eq!(CommandKind::classify("by auto"), CommandKind::By);
         assert_eq!(CommandKind::classify("apply simp"), CommandKind::Apply);
-        assert_eq!(CommandKind::classify("definition x where \"x = 0\""), CommandKind::Definition);
-        assert_eq!(CommandKind::classify("fun f :: \"nat => nat\""), CommandKind::Function);
-        assert_eq!(CommandKind::classify("theory Foo imports Bar begin"), CommandKind::TheoryHeader);
+        assert_eq!(
+            CommandKind::classify("definition x where \"x = 0\""),
+            CommandKind::Definition
+        );
+        assert_eq!(
+            CommandKind::classify("fun f :: \"nat => nat\""),
+            CommandKind::Function
+        );
+        assert_eq!(
+            CommandKind::classify("theory Foo imports Bar begin"),
+            CommandKind::TheoryHeader
+        );
     }
 
     #[test]
@@ -473,12 +506,16 @@ mod tests {
         let uri = "file:///test.thy".to_string();
 
         doc.open_file(uri.clone(), "lemma A: True\n  by auto".into());
-        let node = doc.get_node(&uri).expect("node should exist after open_file");
+        let node = doc
+            .get_node(&uri)
+            .expect("node should exist after open_file");
         assert!(node.commands.len() >= 1);
         assert!(node.version > 0);
 
         // Update: same content, should keep snapshots
-        let result = doc.update_file(&uri, "lemma A: True\n  by auto".into()).expect("update_file should succeed");
+        let result = doc
+            .update_file(&uri, "lemma A: True\n  by auto".into())
+            .expect("update_file should succeed");
         assert!(result.fork_point <= 1);
     }
 
@@ -499,8 +536,14 @@ mod tests {
 
     fn dummy_range(id: u32) -> Range {
         Range {
-            start: Position { line: id, character: 0 },
-            end: Position { line: id, character: 10 },
+            start: Position {
+                line: id,
+                character: 0,
+            },
+            end: Position {
+                line: id,
+                character: 10,
+            },
         }
     }
 }

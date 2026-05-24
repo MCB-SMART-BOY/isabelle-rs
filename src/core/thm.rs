@@ -48,8 +48,12 @@ impl CTerm {
         CTerm { term, maxidx }
     }
 
-    pub fn term(&self) -> &Term { &self.term }
-    pub fn maxidx(&self) -> usize { self.maxidx }
+    pub fn term(&self) -> &Term {
+        &self.term
+    }
+    pub fn maxidx(&self) -> usize {
+        self.maxidx
+    }
 
     fn compute_maxidx(t: &Term) -> usize {
         let mut maxidx = 0;
@@ -94,7 +98,11 @@ pub struct Hyps {
 }
 
 impl Hyps {
-    pub fn empty() -> Self { Hyps { entries: Vec::new() } }
+    pub fn empty() -> Self {
+        Hyps {
+            entries: Vec::new(),
+        }
+    }
 
     pub fn singleton(h: CTerm) -> Self {
         Hyps { entries: vec![h] }
@@ -109,12 +117,20 @@ impl Hyps {
 
     /// Check if a hypothesis is already present (modulo α-equivalence).
     pub fn contains(&self, h: &CTerm) -> bool {
-        self.entries.iter().any(|existing| Self::alpha_eq(existing.term(), h.term()))
+        self.entries
+            .iter()
+            .any(|existing| Self::alpha_eq(existing.term(), h.term()))
     }
 
-    pub fn len(&self) -> usize { self.entries.len() }
-    pub fn is_empty(&self) -> bool { self.entries.is_empty() }
-    pub fn iter(&self) -> impl Iterator<Item = &CTerm> { self.entries.iter() }
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+    pub fn iter(&self) -> impl Iterator<Item = &CTerm> {
+        self.entries.iter()
+    }
 
     /// Union: H1 ∪ H2.
     pub fn union(&self, other: &Hyps) -> Hyps {
@@ -148,18 +164,29 @@ impl Hyps {
             (Term::Free { name: n1, .. }, Term::Free { name: n2, .. }) => n1 == n2,
             (Term::Free { name: n1, .. }, Term::Const { name: n2, .. })
             | (Term::Const { name: n2, .. }, Term::Free { name: n1, .. }) => {
-                n1 == n2 || n1.as_ref().ends_with(&format!(".{}", n2.as_ref()))
+                n1 == n2
+                    || n1.as_ref().ends_with(&format!(".{}", n2.as_ref()))
                     || n2.as_ref().ends_with(&format!(".{}", n1.as_ref()))
             }
             (Term::Var { name: n1, .. }, Term::Free { name: n2, .. })
             | (Term::Free { name: n2, .. }, Term::Var { name: n1, .. }) => n1 == n2,
-            (Term::Var { name: n1, index: i1, .. }, Term::Var { name: n2, index: i2, .. }) =>
-                n1 == n2 && i1 == i2,
+            (
+                Term::Var {
+                    name: n1,
+                    index: i1,
+                    ..
+                },
+                Term::Var {
+                    name: n2,
+                    index: i2,
+                    ..
+                },
+            ) => n1 == n2 && i1 == i2,
             (Term::Bound(i1), Term::Bound(i2)) => i1 == i2,
-            (Term::Abs { body: b1, .. }, Term::Abs { body: b2, .. }) =>
-                Self::alpha_eq(b1, b2),
-            (Term::App { func: f1, arg: a1 }, Term::App { func: f2, arg: a2 }) =>
-                Self::alpha_eq(f1, f2) && Self::alpha_eq(a1, a2),
+            (Term::Abs { body: b1, .. }, Term::Abs { body: b2, .. }) => Self::alpha_eq(b1, b2),
+            (Term::App { func: f1, arg: a1 }, Term::App { func: f2, arg: a2 }) => {
+                Self::alpha_eq(f1, f2) && Self::alpha_eq(a1, a2)
+            }
             _ => false,
         }
     }
@@ -169,7 +196,9 @@ impl fmt::Debug for Hyps {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "[")?;
         for (i, h) in self.entries.iter().enumerate() {
-            if i > 0 { write!(f, ", ")?; }
+            if i > 0 {
+                write!(f, ", ")?;
+            }
             write!(f, "{:?}", h.term())?;
         }
         write!(f, "]")
@@ -190,9 +219,17 @@ impl fmt::Debug for Hyps {
 /// - `Rule`: a primitive inference rule applied to premises
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Derivation {
-    Oracle { name: String, prop: CTerm },
-    Axiom { name: &'static str },
-    Rule { name: &'static str, premises: Vec<ThmDeriv> },
+    Oracle {
+        name: String,
+        prop: CTerm,
+    },
+    Axiom {
+        name: &'static str,
+    },
+    Rule {
+        name: &'static str,
+        premises: Vec<ThmDeriv>,
+    },
 }
 
 /// A reference to a premise theorem's derivation.
@@ -220,12 +257,24 @@ pub struct Thm {
 }
 
 impl Thm {
-    pub fn hyps(&self) -> &Hyps { &self.hyps }
-    pub fn prop(&self) -> &CTerm { &self.prop }
-    pub fn maxidx(&self) -> usize { self.maxidx }
-    pub fn is_unconditional(&self) -> bool { self.hyps.is_empty() }
-    pub fn has_oracles(&self) -> bool { matches!(self.derivation, Derivation::Oracle { .. }) }
-    pub fn serial(&self) -> u64 { self.serial }
+    pub fn hyps(&self) -> &Hyps {
+        &self.hyps
+    }
+    pub fn prop(&self) -> &CTerm {
+        &self.prop
+    }
+    pub fn maxidx(&self) -> usize {
+        self.maxidx
+    }
+    pub fn is_unconditional(&self) -> bool {
+        self.hyps.is_empty()
+    }
+    pub fn has_oracles(&self) -> bool {
+        matches!(self.derivation, Derivation::Oracle { .. })
+    }
+    pub fn serial(&self) -> u64 {
+        self.serial
+    }
 
     /// Number of subgoals (premises in the prop chain).
     pub fn nprems(&self) -> usize {
@@ -245,7 +294,11 @@ impl Thm {
 
 impl fmt::Debug for Thm {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let hyps: Vec<String> = self.hyps.iter().map(|h| format!("{:?}", h.term())).collect();
+        let hyps: Vec<String> = self
+            .hyps
+            .iter()
+            .map(|h| format!("{:?}", h.term()))
+            .collect();
         if hyps.is_empty() {
             write!(f, "⊢ {:?}", self.prop.term())
         } else {
@@ -333,9 +386,7 @@ impl ThmKernel {
         let (t, u) = Pure::dest_equals(thm.prop.term())
             .ok_or_else(|| KernelError::NotEquality(thm.prop.term().clone()))?;
 
-        let new_prop = CTerm::certify(
-            Pure::mk_equals(Typ::dummy(), u.clone(), t.clone())
-        );
+        let new_prop = CTerm::certify(Pure::mk_equals(Typ::dummy(), u.clone(), t.clone()));
 
         Ok(Thm {
             hyps: thm.hyps.clone(),
@@ -343,7 +394,10 @@ impl ThmKernel {
             maxidx: thm.maxidx,
             derivation: Derivation::Rule {
                 name: "symmetric",
-                premises: vec![ThmDeriv { serial: thm.serial, prop: thm.prop.clone() }],
+                premises: vec![ThmDeriv {
+                    serial: thm.serial,
+                    prop: thm.prop.clone(),
+                }],
             },
             serial: new_serial(),
         })
@@ -365,9 +419,7 @@ impl ThmKernel {
             return Err(KernelError::MidTermsNotEquiv);
         }
 
-        let new_prop = CTerm::certify(
-            Pure::mk_equals(Typ::dummy(), t.clone(), v.clone())
-        );
+        let new_prop = CTerm::certify(Pure::mk_equals(Typ::dummy(), t.clone(), v.clone()));
 
         Ok(Thm {
             hyps: thm1.hyps.union(&thm2.hyps),
@@ -376,8 +428,14 @@ impl ThmKernel {
             derivation: Derivation::Rule {
                 name: "transitive",
                 premises: vec![
-                    ThmDeriv { serial: thm1.serial, prop: thm1.prop.clone() },
-                    ThmDeriv { serial: thm2.serial, prop: thm2.prop.clone() },
+                    ThmDeriv {
+                        serial: thm1.serial,
+                        prop: thm1.prop.clone(),
+                    },
+                    ThmDeriv {
+                        serial: thm2.serial,
+                        prop: thm2.prop.clone(),
+                    },
                 ],
             },
             serial: new_serial(),
@@ -395,13 +453,11 @@ impl ThmKernel {
         let (x, y) = Pure::dest_equals(thm_x.prop.term())
             .ok_or_else(|| KernelError::NotEquality(thm_x.prop.term().clone()))?;
 
-        let new_prop = CTerm::certify(
-            Pure::mk_equals(
-                Typ::dummy(),
-                Term::app(f.clone(), x.clone()),
-                Term::app(g.clone(), y.clone()),
-            )
-        );
+        let new_prop = CTerm::certify(Pure::mk_equals(
+            Typ::dummy(),
+            Term::app(f.clone(), x.clone()),
+            Term::app(g.clone(), y.clone()),
+        ));
 
         Ok(Thm {
             hyps: thm_f.hyps.union(&thm_x.hyps),
@@ -410,8 +466,14 @@ impl ThmKernel {
             derivation: Derivation::Rule {
                 name: "combination",
                 premises: vec![
-                    ThmDeriv { serial: thm_f.serial, prop: thm_f.prop.clone() },
-                    ThmDeriv { serial: thm_x.serial, prop: thm_x.prop.clone() },
+                    ThmDeriv {
+                        serial: thm_f.serial,
+                        prop: thm_f.prop.clone(),
+                    },
+                    ThmDeriv {
+                        serial: thm_x.serial,
+                        prop: thm_x.prop.clone(),
+                    },
                 ],
             },
             serial: new_serial(),
@@ -432,17 +494,17 @@ impl ThmKernel {
         // Side condition: x must not be free in the hypotheses
         for hyp in thm.hyps.iter() {
             if free_in(x_name, hyp.term()) {
-                return Err(KernelError::FreeVarInHypotheses { name: x_name.to_string() });
+                return Err(KernelError::FreeVarInHypotheses {
+                    name: x_name.to_string(),
+                });
             }
         }
 
-        let new_prop = CTerm::certify(
-            Pure::mk_equals(
-                Typ::dummy(),
-                Term::abs(x_name, x_typ.clone(), t.clone()),
-                Term::abs(x_name, x_typ, u.clone()),
-            )
-        );
+        let new_prop = CTerm::certify(Pure::mk_equals(
+            Typ::dummy(),
+            Term::abs(x_name, x_typ.clone(), t.clone()),
+            Term::abs(x_name, x_typ, u.clone()),
+        ));
 
         Ok(Thm {
             hyps: thm.hyps.clone(),
@@ -450,7 +512,10 @@ impl ThmKernel {
             maxidx: thm.maxidx,
             derivation: Derivation::Rule {
                 name: "abstraction",
-                premises: vec![ThmDeriv { serial: thm.serial, prop: thm.prop.clone() }],
+                premises: vec![ThmDeriv {
+                    serial: thm.serial,
+                    prop: thm.prop.clone(),
+                }],
             },
             serial: new_serial(),
         })
@@ -473,15 +538,15 @@ impl ThmKernel {
             _ => return Err(KernelError::BetaConversion("not a lambda".into())),
         };
 
-        let new_prop = CTerm::certify(
-            Pure::mk_equals(Typ::dummy(), ct.term().clone(), body)
-        );
+        let new_prop = CTerm::certify(Pure::mk_equals(Typ::dummy(), ct.term().clone(), body));
 
         Ok(Thm {
             hyps: Hyps::empty(),
             prop: new_prop,
             maxidx: ct.maxidx(),
-            derivation: Derivation::Axiom { name: "beta_conversion" },
+            derivation: Derivation::Axiom {
+                name: "beta_conversion",
+            },
             serial: new_serial(),
         })
     }
@@ -497,9 +562,10 @@ impl ThmKernel {
             return Err(KernelError::HypothesisNotFound);
         }
 
-        let new_prop = CTerm::certify(
-            Pure::mk_implies(assumption.term().clone(), thm.prop.term().clone())
-        );
+        let new_prop = CTerm::certify(Pure::mk_implies(
+            assumption.term().clone(),
+            thm.prop.term().clone(),
+        ));
 
         Ok(Thm {
             hyps: thm.hyps.remove(assumption),
@@ -507,7 +573,10 @@ impl ThmKernel {
             maxidx: thm.maxidx,
             derivation: Derivation::Rule {
                 name: "implies_intr",
-                premises: vec![ThmDeriv { serial: thm.serial, prop: thm.prop.clone() }],
+                premises: vec![ThmDeriv {
+                    serial: thm.serial,
+                    prop: thm.prop.clone(),
+                }],
             },
             serial: new_serial(),
         })
@@ -534,8 +603,14 @@ impl ThmKernel {
             derivation: Derivation::Rule {
                 name: "implies_elim",
                 premises: vec![
-                    ThmDeriv { serial: thm_imp.serial, prop: thm_imp.prop.clone() },
-                    ThmDeriv { serial: thm_a.serial, prop: thm_a.prop.clone() },
+                    ThmDeriv {
+                        serial: thm_imp.serial,
+                        prop: thm_imp.prop.clone(),
+                    },
+                    ThmDeriv {
+                        serial: thm_a.serial,
+                        prop: thm_a.prop.clone(),
+                    },
                 ],
             },
             serial: new_serial(),
@@ -549,7 +624,9 @@ impl ThmKernel {
     pub fn forall_intr(x_name: &str, x_typ: Typ, thm: &Thm) -> Result<Thm, KernelError> {
         for hyp in thm.hyps.iter() {
             if free_in(x_name, hyp.term()) {
-                return Err(KernelError::FreeVarInHypotheses { name: x_name.to_string() });
+                return Err(KernelError::FreeVarInHypotheses {
+                    name: x_name.to_string(),
+                });
             }
         }
         let all_term = Pure::mk_all(x_name, x_typ.clone(), thm.prop.term().clone());
@@ -559,7 +636,10 @@ impl ThmKernel {
             maxidx: thm.maxidx,
             derivation: Derivation::Rule {
                 name: "forall_intr",
-                premises: vec![ThmDeriv { serial: thm.serial, prop: thm.prop.clone() }],
+                premises: vec![ThmDeriv {
+                    serial: thm.serial,
+                    prop: thm.prop.clone(),
+                }],
             },
             serial: new_serial(),
         })
@@ -575,7 +655,10 @@ impl ThmKernel {
             maxidx: usize::max(thm.maxidx, ct.maxidx()),
             derivation: Derivation::Rule {
                 name: "forall_elim",
-                premises: vec![ThmDeriv { serial: thm.serial, prop: thm.prop.clone() }],
+                premises: vec![ThmDeriv {
+                    serial: thm.serial,
+                    prop: thm.prop.clone(),
+                }],
             },
             serial: new_serial(),
         })
@@ -624,14 +707,24 @@ impl ThmKernel {
     /// `[| G1;...;Gi-1; H1;...;Hm; Gi+1;...;Gn |]`
     ///   `==> G1 ==> ... ==> Gi-1 ==> H1 ==> ... ==> Hm ==> Gi+1 ==> ... ==> Gn ==> C`
     ///
+    /// Quick check: can two terms possibly unify based on their top-level structure?
+    /// Returns false for obviously incompatible pairs (different head constructors),
+    /// avoiding expensive unification attempts that are guaranteed to fail.
+    fn likely_unifiable(a: &Term, b: &Term) -> bool {
+        match (a, b) {
+            (Term::Var { .. }, _) | (_, Term::Var { .. }) => true,
+            (Term::App { .. }, Term::App { .. }) => true,
+            (Term::Abs { .. }, Term::Abs { .. }) => true,
+            (Term::Const { name: n1, .. }, Term::Const { name: n2, .. }) => n1 == n2,
+            (Term::Free { name: n1, .. }, Term::Free { name: n2, .. }) => n1 == n2,
+            (Term::Bound(i1), Term::Bound(i2)) => i1 == i2,
+            _ => false,
+        }
+    }
+
     /// This is the single core operation behind ALL tactics (assume_tac,
     /// resolve_tac, eresolve_tac, ...).
-    pub fn bicompose(
-        match_flag: bool,
-        thm1: &Thm,
-        thm2: &Thm,
-        i: usize,
-    ) -> Option<Thm> {
+    pub fn bicompose(match_flag: bool, thm1: &Thm, thm2: &Thm, i: usize) -> Option<Thm> {
         // 1. Get the i-th premise of thm2 (0-indexed)
         let prem_i = Pure::nth_premise(thm2.prop.term(), i)?;
 
@@ -642,19 +735,35 @@ impl ThmKernel {
         let (env, full_match) = if match_flag {
             let maxidx = usize::max(thm1.maxidx(), thm2.maxidx());
             let env = super::envir::Envir::empty(maxidx);
-            (super::unify::matchers(
-                &env,
-                concl_1,
-                prem_i,
-                &super::unify::UnifyConfig::default(),
-            )?, false)
+            (
+                super::unify::matchers(
+                    &env,
+                    concl_1,
+                    prem_i,
+                    &super::unify::UnifyConfig::default(),
+                )?,
+                false,
+            )
         } else {
+            // match_flag=false: first try alpha_eq (assume_tac / exact match),
+            // then try full unification (for RS/THEN/COMP composition)
             if Hyps::alpha_eq(thm1.prop.term(), prem_i) {
-                (super::envir::Envir::init(), true)   // full match — assume_tac
+                (super::envir::Envir::init(), true) // full match — assume_tac
             } else if Hyps::alpha_eq(concl_1, prem_i) {
-                (super::envir::Envir::init(), false)  // conclusion match — resolve_tac
+                (super::envir::Envir::init(), false) // conclusion match — resolve_tac
             } else {
-                return None;
+                // Full unification: allows variables on both sides to be bound.
+                // Quick heuristic: skip if terms have incompatible shapes.
+                if !Self::likely_unifiable(concl_1, prem_i) {
+                    return None;
+                }
+                let maxidx = usize::max(thm1.maxidx(), thm2.maxidx());
+                let env = super::envir::Envir::empty(maxidx);
+                let pairs = vec![(concl_1.clone(), prem_i.clone())];
+                (
+                    super::unify::unifiers(&env, &pairs, &super::unify::UnifyConfig::default())?,
+                    false,
+                )
             }
         };
 
@@ -689,8 +798,14 @@ impl ThmKernel {
             derivation: Derivation::Rule {
                 name: "bicompose",
                 premises: vec![
-                    ThmDeriv { serial: thm1.serial, prop: thm1.prop.clone() },
-                    ThmDeriv { serial: thm2.serial, prop: thm2.prop.clone() },
+                    ThmDeriv {
+                        serial: thm1.serial,
+                        prop: thm1.prop.clone(),
+                    },
+                    ThmDeriv {
+                        serial: thm2.serial,
+                        prop: thm2.prop.clone(),
+                    },
                 ],
             },
             serial: new_serial(),
@@ -731,8 +846,14 @@ impl ThmKernel {
             derivation: Derivation::Rule {
                 name: "subst_premise",
                 premises: vec![
-                    ThmDeriv { serial: eq_thm.serial, prop: eq_thm.prop.clone() },
-                    ThmDeriv { serial: state.serial, prop: state.prop.clone() },
+                    ThmDeriv {
+                        serial: eq_thm.serial,
+                        prop: eq_thm.prop.clone(),
+                    },
+                    ThmDeriv {
+                        serial: state.serial,
+                        prop: state.prop.clone(),
+                    },
                 ],
             },
             serial: new_serial(),
@@ -772,21 +893,32 @@ impl ThmKernel {
         let env = if match_flag {
             let maxidx = usize::max(thm1.maxidx(), thm2.maxidx());
             let mut found_env = None;
-            // Collect all candidates: hyps + premises
-            let hyp_terms: Vec<&Term> = thm2.hyps.iter().map(|h| h.term()).collect();
-            let prem_terms: Vec<&Term> = premises.iter().map(|p| p.prop().term()).collect();
-            let all_candidates: Vec<&Term> = hyp_terms.iter().copied()
-                .chain(prem_terms.iter().copied())
-                .collect();
+            // Collect all candidates: hyps (including stripped premises) + premises
+            let mut all_candidates: Vec<Term> = Vec::new();
+            for h in thm2.hyps.iter() {
+                all_candidates.push(h.term().clone());
+                // Also include individual premises stripped from implication chains
+                let (prems, _) = Pure::strip_imp_prems(h.term());
+                for p in prems {
+                    all_candidates.push(p.clone());
+                }
+            }
+            for p in premises.iter() {
+                all_candidates.push(p.prop().term().clone());
+            }
             for candidate in &all_candidates {
+                // Quick heuristic: skip obviously incompatible candidates
+                if !Self::likely_unifiable(major_prem, candidate) {
+                    continue;
+                }
                 let env = super::envir::Envir::empty(maxidx);
                 let pairs: Vec<(Term, Term)> = vec![
-                    ((*major_prem).clone(), (*candidate).clone()),
+                    ((*major_prem).clone(), candidate.clone()),
                     ((*concl_1).clone(), prem_i.clone()),
                 ];
-                if let Some(env) = super::unify::unifiers(
-                    &env, &pairs, &super::unify::UnifyConfig::default()
-                ) {
+                if let Some(env) =
+                    super::unify::unifiers(&env, &pairs, &super::unify::UnifyConfig::default())
+                {
                     found_env = Some(env);
                     break;
                 }
@@ -795,8 +927,7 @@ impl ThmKernel {
         } else {
             // Exact match with two-tier support, also checking constituent premises
             let hyp_matches = thm2.hyps.iter().any(|h| {
-                Hyps::alpha_eq(major_prem, h.term()) ||
-                {
+                Hyps::alpha_eq(major_prem, h.term()) || {
                     let (prems, _) = Pure::strip_imp_prems(h.term());
                     prems.iter().any(|p| Hyps::alpha_eq(p, major_prem))
                 }
@@ -804,8 +935,7 @@ impl ThmKernel {
             if !hyp_matches {
                 return None;
             }
-            if !Hyps::alpha_eq(thm1.prop.term(), prem_i) 
-                && !Hyps::alpha_eq(concl_1, prem_i) {
+            if !Hyps::alpha_eq(thm1.prop.term(), prem_i) && !Hyps::alpha_eq(concl_1, prem_i) {
                 return None;
             }
             super::envir::Envir::init()
@@ -841,8 +971,14 @@ impl ThmKernel {
             derivation: Derivation::Rule {
                 name: "bicompose_eresolve",
                 premises: vec![
-                    ThmDeriv { serial: thm1.serial, prop: thm1.prop.clone() },
-                    ThmDeriv { serial: thm2.serial, prop: thm2.prop.clone() },
+                    ThmDeriv {
+                        serial: thm1.serial,
+                        prop: thm1.prop.clone(),
+                    },
+                    ThmDeriv {
+                        serial: thm2.serial,
+                        prop: thm2.prop.clone(),
+                    },
                 ],
             },
             serial: new_serial(),
@@ -936,8 +1072,8 @@ mod tests {
         let b = prop("B");
         let imp = Pure::mk_implies(a.term().clone(), b.term().clone());
         let thm = ThmKernel::assume(CTerm::certify(imp));
-        assert_eq!(thm.nprems(), 1);  // A is the only premise
-        assert_eq!(thm.concl(), b.term().clone());  // B is the conclusion
+        assert_eq!(thm.nprems(), 1); // A is the only premise
+        assert_eq!(thm.concl(), b.term().clone()); // B is the conclusion
     }
 
     #[test]
@@ -973,12 +1109,14 @@ mod tests {
         let a = prop("A");
         let b = prop("B");
         let c = prop("C");
-        let thm = ThmKernel::assume(CTerm::certify(
-            Pure::mk_implies(b.term().clone(), a.term().clone())
-        ));
-        let state = ThmKernel::assume(CTerm::certify(
-            Pure::mk_implies(a.term().clone(), c.term().clone())
-        ));
+        let thm = ThmKernel::assume(CTerm::certify(Pure::mk_implies(
+            b.term().clone(),
+            a.term().clone(),
+        )));
+        let state = ThmKernel::assume(CTerm::certify(Pure::mk_implies(
+            a.term().clone(),
+            c.term().clone(),
+        )));
         let result = ThmKernel::bicompose(false, &thm, &state, 0);
         assert!(result.is_some());
         let r = result.unwrap();

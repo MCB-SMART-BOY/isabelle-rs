@@ -6,8 +6,8 @@
 use std::sync::{Arc, Mutex};
 
 use crate::core::theory::Theory;
-use crate::isar::toplevel::Toplevel;
 use crate::document::document::*;
+use crate::isar::toplevel::Toplevel;
 use crate::server::lsp_types::*;
 
 // =========================================================================
@@ -24,7 +24,12 @@ pub struct CheckContext {
 
 impl Default for CheckContext {
     fn default() -> Self {
-        CheckContext { proof_state: None, context_hash: 0, in_proof: false, proof_depth: 0 }
+        CheckContext {
+            proof_state: None,
+            context_hash: 0,
+            in_proof: false,
+            proof_depth: 0,
+        }
     }
 }
 
@@ -47,13 +52,17 @@ pub struct RealExecutor {
 
 impl RealExecutor {
     pub fn new() -> Self {
-        RealExecutor { theory: Theory::pure() }
+        RealExecutor {
+            theory: Theory::pure(),
+        }
     }
 }
 
 impl CommandExecutor for RealExecutor {
     fn clone_box(&self) -> Box<dyn CommandExecutor> {
-        Box::new(RealExecutor { theory: Arc::clone(&self.theory) })
+        Box::new(RealExecutor {
+            theory: Arc::clone(&self.theory),
+        })
     }
 
     fn execute(&self, cmd: &Command, ctx: &mut CheckContext) -> Vec<Diagnostic> {
@@ -117,7 +126,10 @@ pub struct Fleche {
 
 impl Fleche {
     pub fn new(executor: Arc<dyn CommandExecutor>) -> Self {
-        Fleche { document: Arc::new(Mutex::new(Document::new())), executor }
+        Fleche {
+            document: Arc::new(Mutex::new(Document::new())),
+            executor,
+        }
     }
 
     pub fn open_file(&self, uri: &str, content: &str) -> Vec<Diagnostic> {
@@ -170,7 +182,10 @@ impl Fleche {
     pub fn get_proof_state(&self, uri: &str, _line: u32) -> Option<ProofState> {
         let doc = self.document.lock().expect("Document lock poisoned");
         let node = doc.get_node(uri)?;
-        node.snapshots.iter().rev().find_map(|s| s.proof_state.clone())
+        node.snapshots
+            .iter()
+            .rev()
+            .find_map(|s| s.proof_state.clone())
     }
 
     pub fn get_hover(&self, _uri: &str, _line: u32, _character: u32) -> Option<String> {
@@ -194,10 +209,20 @@ mod tests {
     #[test]
     fn test_real_executor_lemma() {
         let exec = RealExecutor::new();
-        let cmd = Command::new("lemma foo: \"A\"".into(), Range {
-            start: Position { line: 0, character: 0 },
-            end: Position { line: 0, character: 16 },
-        }, 0);
+        let cmd = Command::new(
+            "lemma foo: \"A\"".into(),
+            Range {
+                start: Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: Position {
+                    line: 0,
+                    character: 16,
+                },
+            },
+            0,
+        );
         let mut ctx = CheckContext::default();
         let _diags = exec.execute(&cmd, &mut ctx);
         assert!(ctx.in_proof);
@@ -206,8 +231,10 @@ mod tests {
     #[test]
     fn test_fleche_with_real_executor() {
         let engine = Fleche::new(Arc::new(RealExecutor::new()));
-        let diags = engine.open_file("file:///test.thy",
-            "theory Test\nlemma foo: \"A\"\nproof\napply rule\ndone");
+        let diags = engine.open_file(
+            "file:///test.thy",
+            "theory Test\nlemma foo: \"A\"\nproof\napply rule\ndone",
+        );
         for d in &diags {
             println!("  diag: {:?}", d.message);
         }

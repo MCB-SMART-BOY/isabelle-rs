@@ -47,7 +47,8 @@ impl Ast {
         match node.kind() {
             SyntaxKind::Root => {
                 // A root is a sequence of commands; collect them
-                let children: Vec<Ast> = node.children()
+                let children: Vec<Ast> = node
+                    .children()
                     .filter_map(|c| Ast::from_syntax(&c))
                     .collect();
                 if children.is_empty() {
@@ -77,22 +78,21 @@ impl Ast {
                 if name.is_empty() {
                     None
                 } else {
-                    Some(Ast::Mixfix("lemma".into(), vec![
-                        Ast::Variable(name),
-                        Ast::String(stmt),
-                    ]))
+                    Some(Ast::Mixfix(
+                        "lemma".into(),
+                        vec![Ast::Variable(name), Ast::String(stmt)],
+                    ))
                 }
             }
             SyntaxKind::TheoryHeader => {
                 // Extract theory name from header
-                let ident = node.children_with_tokens()
+                let ident = node
+                    .children_with_tokens()
                     .find(|c| c.kind() == SyntaxKind::Ident)?
                     .as_token()?
                     .text()
                     .to_string();
-                Some(Ast::Mixfix("theory".into(), vec![
-                    Ast::Variable(ident),
-                ]))
+                Some(Ast::Mixfix("theory".into(), vec![Ast::Variable(ident)]))
             }
             SyntaxKind::Ident | SyntaxKind::LongIdent => {
                 let text = node.first_token()?.text().to_string();
@@ -145,8 +145,7 @@ mod tests {
         // Test that Lemma → Ast conversion works end-to-end
         let (tree, _) = SyntaxTree::parse("lemma my_lemma: \"A ==> B\"");
         let root = tree.root();
-        let lemma_node = root.children()
-            .find(|c| c.kind() == SyntaxKind::Lemma);
+        let lemma_node = root.children().find(|c| c.kind() == SyntaxKind::Lemma);
         assert!(lemma_node.is_some(), "no Lemma node found");
         let lemma_node = lemma_node.expect("Lemma node should exist");
         let ast = Ast::from_syntax(&lemma_node);

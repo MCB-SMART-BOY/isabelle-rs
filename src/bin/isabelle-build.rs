@@ -8,7 +8,7 @@
 use clap::Parser;
 use std::path::PathBuf;
 
-use isabelle_rs::theory::cache::{TheoryCache, CacheEntry};
+use isabelle_rs::theory::cache::{CacheEntry, TheoryCache};
 
 /// Isabelle-rs build tool — compile .thy files with caching.
 #[derive(Parser)]
@@ -71,7 +71,11 @@ fn main() {
 
                 if !cli.force {
                     if let Some(entry) = cache.lookup(&path.to_string_lossy(), &hash) {
-                        println!("✅ {} (cached, {} theorems)", path.display(), entry.theorems.len());
+                        println!(
+                            "✅ {} (cached, {} theorems)",
+                            path.display(),
+                            entry.theorems.len()
+                        );
                         continue;
                     }
                 }
@@ -86,7 +90,11 @@ fn main() {
                 };
 
                 match cache.store(&entry) {
-                    Ok(()) => println!("📦 {} (compiled + cached, hash: {})", path.display(), &hash[..8]),
+                    Ok(()) => println!(
+                        "📦 {} (compiled + cached, hash: {})",
+                        path.display(),
+                        &hash[..8]
+                    ),
                     Err(e) => eprintln!("Error caching {}: {}", path.display(), e),
                 }
             }

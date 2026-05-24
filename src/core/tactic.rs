@@ -21,9 +21,9 @@
 use std::fmt;
 use std::sync::Arc;
 
-use super::thm::{CTerm, Thm, ThmKernel, Hyps};
 use super::simplifier::Simplifier;
 use super::term::Term;
+use super::thm::{CTerm, Hyps, Thm, ThmKernel};
 use super::types::Typ;
 
 // =========================================================================
@@ -70,26 +70,32 @@ impl Tactic {
             Tactic::No => vec![],
             Tactic::Assume(i) => Self::apply_assume(*i, state, premises),
             Tactic::Resolve(thms, i) => Self::apply_resolve(thms, *i, state),
-            Tactic::Then(t1, t2) => {
-                t1.apply(state, premises)
-                    .into_iter()
-                    .flat_map(|s| t2.apply(&s, premises))
-                    .collect()
-            }
+            Tactic::Then(t1, t2) => t1
+                .apply(state, premises)
+                .into_iter()
+                .flat_map(|s| t2.apply(&s, premises))
+                .collect(),
             Tactic::OrElse(t1, t2) => {
                 let r = t1.apply(state, premises);
-                if r.is_empty() { t2.apply(state, premises) } else { r }
+                if r.is_empty() {
+                    t2.apply(state, premises)
+                } else {
+                    r
+                }
             }
             Tactic::Repeat(t) => Self::apply_repeat(t, state, premises),
-            Tactic::Every(ts) => {
-                ts.iter()
-                    .fold(Tactic::All, |a, t| Tactic::Then(Box::new(a), Box::new(t.clone())))
-                    .apply(state, premises)
-            }
+            Tactic::Every(ts) => ts
+                .iter()
+                .fold(Tactic::All, |a, t| {
+                    Tactic::Then(Box::new(a), Box::new(t.clone()))
+                })
+                .apply(state, premises),
             Tactic::First(ts) => {
                 for t in ts {
                     let r = t.apply(state, premises);
-                    if !r.is_empty() { return r; }
+                    if !r.is_empty() {
+                        return r;
+                    }
                 }
                 vec![]
             }
@@ -100,7 +106,9 @@ impl Tactic {
                 r
             }
             Tactic::DepthLimit(max, t) => {
-                if state.nprems() > *max { return vec![]; }
+                if state.nprems() > *max {
+                    return vec![];
+                }
                 t.apply(state, premises)
             }
             Tactic::Simp(simp, i) => Self::apply_simp(simp, *i, state),
@@ -235,11 +243,17 @@ impl fmt::Display for Tactic {
 // Constructor functions
 // =========================================================================
 
-pub fn all_tac() -> Tactic { Tactic::All }
-pub fn no_tac() -> Tactic { Tactic::No }
+pub fn all_tac() -> Tactic {
+    Tactic::All
+}
+pub fn no_tac() -> Tactic {
+    Tactic::No
+}
 
 /// `assume_tac(i)`: solve subgoal `i` (0-indexed) by assumption.
-pub fn assume_tac(i: usize) -> Tactic { Tactic::Assume(i) }
+pub fn assume_tac(i: usize) -> Tactic {
+    Tactic::Assume(i)
+}
 
 /// `resolve_tac(thms, i)`: resolve subgoal `i` with one of the theorems.
 pub fn resolve_tac(thms: &[Arc<Thm>], i: usize) -> Tactic {
@@ -304,7 +318,7 @@ pub fn make_elim(rl: &Thm) -> Option<Thm> {
     // thm1 RS thm2 = bicompose(false, thm1, thm2, 0)
     // Here we want rl RS revcut: bicompose(false, rl, revcut, 0)
     // rl's conclusion matches revcut's first premise
-    ThmKernel::bicompose(true, rl, &revcut, 0)
+    ThmKernel::bicompose(false, rl, &revcut, 0)
 }
 
 /// The reverse cut rule: `[| P; P ==> Q |] ==> Q`
@@ -372,7 +386,10 @@ mod tests {
         // Test that assume_tac fails when subgoal not in hyps
         let state = trivial_goal("A"); // {} ⊢ A==>A, nprems=1, subgoal=A not in hyps
         let outcomes = assume_tac(0).apply(&state, &[]);
-        assert!(outcomes.is_empty(), "assume_tac should fail when subgoal not in hyps");
+        assert!(
+            outcomes.is_empty(),
+            "assume_tac should fail when subgoal not in hyps"
+        );
     }
 
     #[test]
@@ -400,10 +417,7 @@ mod tests {
     fn test_then_orelse() {
         // (all_tac ORELSE no_tac) THEN all_tac on [A]==>A
         let state = trivial_goal("A");
-        let tac = then_tac(
-            orelse_tac(all_tac(), no_tac()),
-            all_tac(),
-        );
+        let tac = then_tac(orelse_tac(all_tac(), no_tac()), all_tac());
         let outcomes = tac.apply(&state, &[]);
         assert!(!outcomes.is_empty());
         assert_eq!(outcomes[0].nprems(), state.nprems());

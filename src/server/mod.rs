@@ -52,10 +52,10 @@
 //! - Lean 4 Server: <https://github.com/leanprover/lean4/tree/master/src/Lean/Server>
 //! - Coq-lsp: <https://github.com/ejgallego/coq-lsp>
 
-pub mod lsp_types;
-pub mod transport;
 pub mod handler;
 pub mod isabelle_ext;
+pub mod lsp_types;
+pub mod transport;
 
 pub use handler::IsabelleServer;
 pub use transport::Transport;

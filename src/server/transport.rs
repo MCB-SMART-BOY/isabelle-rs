@@ -6,8 +6,8 @@
 //!
 //! Reference: <https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#headerPart>
 
-use std::sync::Arc;
 use std::io::{self, BufRead, BufReader, Read, Write};
+use std::sync::Arc;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc,

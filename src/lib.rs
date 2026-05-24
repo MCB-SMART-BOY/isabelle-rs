@@ -13,15 +13,15 @@
 //! - `tools` — Proof automation
 
 pub mod core;
-pub mod kernel;
-pub mod session;
-pub mod isar;
-pub mod lsp;
-pub mod server;
 pub mod document;
 pub mod fleche;
-pub mod syntax;
-pub mod tools;
-pub mod theory;
 pub mod hol;
+pub mod isar;
+pub mod kernel;
+pub mod lsp;
+pub mod server;
+pub mod session;
+pub mod syntax;
+pub mod theory;
+pub mod tools;
 pub mod wasm;

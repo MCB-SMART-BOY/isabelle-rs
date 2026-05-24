@@ -31,11 +31,18 @@ pub struct Facts {
 }
 
 impl Facts {
-    pub fn empty() -> Self { Facts { entries: BTreeMap::new() } }
+    pub fn empty() -> Self {
+        Facts {
+            entries: BTreeMap::new(),
+        }
+    }
 
     /// Add theorems to a named fact.
     pub fn add(&mut self, name: &str, thms: Vec<Arc<Thm>>) {
-        self.entries.entry(name.to_string()).or_default().extend(thms);
+        self.entries
+            .entry(name.to_string())
+            .or_default()
+            .extend(thms);
     }
 
     /// Get the theorems for a named fact.
@@ -85,7 +92,9 @@ pub enum FactRef {
 }
 
 impl FactRef {
-    pub fn named(name: &str) -> Self { FactRef::Named(name.to_string()) }
+    pub fn named(name: &str) -> Self {
+        FactRef::Named(name.to_string())
+    }
 }
 
 impl Facts {
@@ -100,7 +109,9 @@ impl Facts {
                 }
                 FactRef::Select { name, index } => {
                     let thms = self.get(name)?;
-                    if *index >= thms.len() { return None; }
+                    if *index >= thms.len() {
+                        return None;
+                    }
                     result.push(Arc::clone(&thms[*index]));
                 }
             }
@@ -110,7 +121,9 @@ impl Facts {
 }
 
 impl Default for Facts {
-    fn default() -> Self { Facts::empty() }
+    fn default() -> Self {
+        Facts::empty()
+    }
 }
 
 // =========================================================================
@@ -125,7 +138,9 @@ pub struct TypeScheme {
 }
 
 impl TypeScheme {
-    pub fn new(body: Typ) -> Self { TypeScheme { body } }
+    pub fn new(body: Typ) -> Self {
+        TypeScheme { body }
+    }
 
     /// Check if a concrete type is an instance of this scheme.
     /// E.g., scheme `'a => 'a`, type `nat => nat` → true.
@@ -145,9 +160,13 @@ fn collect_tfrees(typ: &Typ) -> BTreeSet<String> {
 
 fn collect_tfrees_inner(typ: &Typ, set: &mut BTreeSet<String>) {
     match typ {
-        Typ::TFree { name, .. } => { set.insert(name.to_string()); }
+        Typ::TFree { name, .. } => {
+            set.insert(name.to_string());
+        }
         Typ::Type { args, .. } => {
-            for a in args { collect_tfrees_inner(a, set); }
+            for a in args {
+                collect_tfrees_inner(a, set);
+            }
         }
         Typ::TVar { .. } => {}
     }
@@ -183,14 +202,22 @@ pub struct Consts {
 }
 
 impl Consts {
-    pub fn empty() -> Self { Consts { decls: BTreeMap::new() } }
+    pub fn empty() -> Self {
+        Consts {
+            decls: BTreeMap::new(),
+        }
+    }
 
     /// Declare a new constant.
     pub fn declare(&mut self, name: &str, scheme: TypeScheme) {
         let mono = collect_tfrees(&scheme.body).is_empty();
         self.decls.insert(
             Arc::from(name),
-            ConstDecl { name: Arc::from(name), scheme, monomorphic: mono },
+            ConstDecl {
+                name: Arc::from(name),
+                scheme,
+                monomorphic: mono,
+            },
         );
     }
 
@@ -227,7 +254,11 @@ struct NetNode<T: Clone> {
 
 impl<T: Clone> NetNode<T> {
     fn new() -> Self {
-        NetNode { items: Vec::new(), children: BTreeMap::new(), var_child: None }
+        NetNode {
+            items: Vec::new(),
+            children: BTreeMap::new(),
+            var_child: None,
+        }
     }
 }
 
@@ -240,7 +271,9 @@ pub struct Net<T: Clone> {
 
 impl<T: Clone> Net<T> {
     pub fn empty() -> Self {
-        Net { root: NetNode::new() }
+        Net {
+            root: NetNode::new(),
+        }
     }
 
     /// Insert an item keyed by a pattern term.
@@ -256,9 +289,7 @@ impl<T: Clone> Net<T> {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.root.items.is_empty()
-            && self.root.children.is_empty()
-            && self.root.var_child.is_none()
+        self.root.items.is_empty() && self.root.children.is_empty() && self.root.var_child.is_none()
     }
 
     /// Merge another net into this one.
@@ -267,11 +298,18 @@ impl<T: Clone> Net<T> {
             self.root.items.push(Arc::clone(item));
         }
         for (key, child) in &other.root.children {
-            let our_child = self.root.children.entry(key.clone()).or_insert_with(NetNode::new);
+            let our_child = self
+                .root
+                .children
+                .entry(key.clone())
+                .or_insert_with(NetNode::new);
             merge_nodes(our_child, child);
         }
         if let Some(var_child) = &other.root.var_child {
-            let our_var = self.root.var_child.get_or_insert_with(|| Box::new(NetNode::new()));
+            let our_var = self
+                .root
+                .var_child
+                .get_or_insert_with(|| Box::new(NetNode::new()));
             merge_nodes(our_var, var_child);
         }
     }
@@ -280,15 +318,23 @@ impl<T: Clone> Net<T> {
 fn insert_into<T: Clone>(node: &mut NetNode<T>, pattern: &Term, item: Arc<T>) {
     match pattern {
         Term::Var { .. } | Term::Bound(_) => {
-            let child = node.var_child.get_or_insert_with(|| Box::new(NetNode::new()));
+            let child = node
+                .var_child
+                .get_or_insert_with(|| Box::new(NetNode::new()));
             child.items.push(item);
         }
         Term::Const { name, .. } => {
-            let child = node.children.entry(name.to_string()).or_insert_with(NetNode::new);
+            let child = node
+                .children
+                .entry(name.to_string())
+                .or_insert_with(NetNode::new);
             child.items.push(item);
         }
         Term::Free { name, .. } => {
-            let child = node.children.entry(format!("FREE:{name}")).or_insert_with(NetNode::new);
+            let child = node
+                .children
+                .entry(format!("FREE:{name}"))
+                .or_insert_with(NetNode::new);
             child.items.push(item);
         }
         Term::App { func, arg: _ } => {
@@ -303,7 +349,10 @@ fn insert_into<T: Clone>(node: &mut NetNode<T>, pattern: &Term, item: Arc<T>) {
 fn insert_into_app<T: Clone>(node: &mut NetNode<T>, func: &Term, item: Arc<T>) {
     match func {
         Term::Const { name, .. } => {
-            let child = node.children.entry(name.to_string()).or_insert_with(NetNode::new);
+            let child = node
+                .children
+                .entry(name.to_string())
+                .or_insert_with(NetNode::new);
             child.items.push(item);
         }
         _ => {
@@ -333,9 +382,10 @@ fn lookup_in<T: Clone>(node: &NetNode<T>, term: &Term, results: &mut Vec<Arc<T>>
         }
         Term::App { func, arg: _ } => {
             if let Term::Const { name, .. } = func.as_ref()
-                && let Some(child) = node.children.get(name.as_ref()) {
-                    lookup_in(child, term, results);
-                }
+                && let Some(child) = node.children.get(name.as_ref())
+            {
+                lookup_in(child, term, results);
+            }
             if let Some(ref var_child) = node.var_child {
                 lookup_in(var_child, term, results);
             }
@@ -347,17 +397,24 @@ fn lookup_in<T: Clone>(node: &NetNode<T>, term: &Term, results: &mut Vec<Arc<T>>
 fn merge_nodes<T: Clone>(target: &mut NetNode<T>, source: &NetNode<T>) {
     target.items.extend(source.items.iter().map(Arc::clone));
     for (key, child) in &source.children {
-        let t = target.children.entry(key.clone()).or_insert_with(NetNode::new);
+        let t = target
+            .children
+            .entry(key.clone())
+            .or_insert_with(NetNode::new);
         merge_nodes(t, child);
     }
     if let Some(ref var_child) = source.var_child {
-        let t = target.var_child.get_or_insert_with(|| Box::new(NetNode::new()));
+        let t = target
+            .var_child
+            .get_or_insert_with(|| Box::new(NetNode::new()));
         merge_nodes(t, var_child);
     }
 }
 
 impl<T: Clone> Default for Net<T> {
-    fn default() -> Self { Net::empty() }
+    fn default() -> Self {
+        Net::empty()
+    }
 }
 
 // =========================================================================
@@ -367,9 +424,9 @@ impl<T: Clone> Default for Net<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::thm::{CTerm, ThmKernel};
     use crate::core::term::Term as Tm;
-    use crate::core::types::{Typ, Sort};
+    use crate::core::thm::{CTerm, ThmKernel};
+    use crate::core::types::{Sort, Typ};
 
     fn dummy_thm() -> Arc<Thm> {
         let a = CTerm::certify(Tm::const_("A", Typ::base("prop")));
@@ -405,9 +462,10 @@ mod tests {
 
     #[test]
     fn test_type_scheme_is_instance() {
-        let scheme = TypeScheme::new(
-            Typ::arrow(Typ::free("'a", Sort::singleton("type")), Typ::free("'a", Sort::singleton("type")))
-        );
+        let scheme = TypeScheme::new(Typ::arrow(
+            Typ::free("'a", Sort::singleton("type")),
+            Typ::free("'a", Sort::singleton("type")),
+        ));
         assert!(scheme.is_instance(&Typ::arrow(Typ::base("nat"), Typ::base("nat"))));
     }
 

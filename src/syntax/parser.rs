@@ -184,7 +184,10 @@ impl CstBuilder {
         while !self.is_eof() {
             if self.at_keyword("theory") {
                 self.parse_theory_header();
-            } else if self.at_keyword("lemma") || self.at_keyword("theorem") || self.at_keyword("corollary") {
+            } else if self.at_keyword("lemma")
+                || self.at_keyword("theorem")
+                || self.at_keyword("corollary")
+            {
                 self.parse_lemma();
             } else {
                 // Skip unknown top-level content
@@ -248,7 +251,10 @@ impl CstBuilder {
     }
 
     fn at_ident(&self) -> bool {
-        matches!(self.current_kind(), Some(TokenKind::Ident | TokenKind::LongIdent))
+        matches!(
+            self.current_kind(),
+            Some(TokenKind::Ident | TokenKind::LongIdent)
+        )
     }
 
     fn at_string(&self) -> bool {
@@ -330,7 +336,13 @@ impl SyntaxTree {
     /// Even with errors, the tree is complete (error recovery).
     pub fn parse(source: &str) -> (Self, Vec<ParseError>) {
         let (green, errors) = CstBuilder::build(source);
-        (SyntaxTree { green, errors: errors.clone() }, errors)
+        (
+            SyntaxTree {
+                green,
+                errors: errors.clone(),
+            },
+            errors,
+        )
     }
 
     /// Get the root syntax node.
@@ -365,7 +377,9 @@ mod tests {
         assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
         let root = tree.root();
         // Should have a TheoryHeader child
-        let header = root.children().find(|c| c.kind() == SyntaxKind::TheoryHeader);
+        let header = root
+            .children()
+            .find(|c| c.kind() == SyntaxKind::TheoryHeader);
         assert!(header.is_some(), "no theory header found");
     }
 
@@ -374,7 +388,10 @@ mod tests {
         let (tree, errors) = SyntaxTree::parse("lemma foo: \"A\"");
         assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
         let root = tree.root();
-        let lemmas: Vec<_> = root.children().filter(|c| c.kind() == SyntaxKind::Lemma).collect();
+        let lemmas: Vec<_> = root
+            .children()
+            .filter(|c| c.kind() == SyntaxKind::Lemma)
+            .collect();
         assert!(!lemmas.is_empty(), "no lemma found");
     }
 

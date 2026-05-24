@@ -15,15 +15,15 @@
 //! └── term_parser.rs — Term/type parser + pretty printer
 //! ```
 
-pub mod token;
+pub mod linarith;
+pub mod method;
 pub mod parse;
 pub mod proof;
-pub mod method;
-pub mod linarith;
-pub mod proof_state;
 pub mod proof_context;
-pub mod toplevel;
+pub mod proof_state;
 pub mod term_parser;
+pub mod token;
+pub mod toplevel;
 
 #[cfg(test)]
 mod diag;

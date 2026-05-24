@@ -13,10 +13,7 @@
 
 use std::sync::Arc;
 
-use wasmtime::{
-    Engine, Store, Module, Linker, Memory,
-    Caller, TypedFunc, Val, ValType, FuncType,
-};
+use wasmtime::{Caller, Engine, FuncType, Linker, Memory, Module, Store, TypedFunc, Val, ValType};
 
 use super::{Plugin, PluginContext};
 use crate::core::thm::Thm;
@@ -63,8 +60,7 @@ impl WasmRuntime {
         let mut config = wasmtime::Config::default();
         config.consume_fuel(true);
 
-        let engine = Engine::new(&config)
-            .map_err(|e| format!("failed to create engine: {e}"))?;
+        let engine = Engine::new(&config).map_err(|e| format!("failed to create engine: {e}"))?;
 
         let module = Module::from_binary(&engine, wasm_bytes)
             .map_err(|e| format!("failed to compile WASM module: {e}"))?;
@@ -78,7 +74,8 @@ impl WasmRuntime {
         );
 
         // Set fuel limit
-        store.set_fuel(Self::DEFAULT_FUEL)
+        store
+            .set_fuel(Self::DEFAULT_FUEL)
             .map_err(|e| format!("failed to set fuel: {e}"))?;
 
         // Create linker and define host functions
@@ -110,40 +107,45 @@ impl WasmRuntime {
     }
 
     /// Define host functions callable from WASM.
-    fn define_host_functions(engine: &Engine, linker: &mut Linker<RuntimeState>) -> Result<(), String> {
+    fn define_host_functions(
+        engine: &Engine,
+        linker: &mut Linker<RuntimeState>,
+    ) -> Result<(), String> {
         // host_lookup: look up a theorem by name
         // Signature: fn(name_ptr: i32, name_len: i32) -> i32
-        let lookup_type = FuncType::new(
-            engine,
-            [ValType::I32, ValType::I32],
-            [ValType::I32],
-        );
+        let lookup_type = FuncType::new(engine, [ValType::I32, ValType::I32], [ValType::I32]);
         linker
-            .func_new("env", "host_lookup", lookup_type, |_caller: Caller<'_, RuntimeState>, _params: &[Val], _results: &mut [Val]| {
-                // TODO: read name from memory, look up in ctx, return thm_id
-                _results[0] = Val::I32(0);
-                Ok(())
-            })
+            .func_new(
+                "env",
+                "host_lookup",
+                lookup_type,
+                |_caller: Caller<'_, RuntimeState>, _params: &[Val], _results: &mut [Val]| {
+                    // TODO: read name from memory, look up in ctx, return thm_id
+                    _results[0] = Val::I32(0);
+                    Ok(())
+                },
+            )
             .map_err(|e| format!("failed to define host_lookup: {e}"))?;
 
         // host_debug: print a debug message
-        let debug_type = FuncType::new(
-            engine,
-            [ValType::I32, ValType::I32],
-            [],
-        );
+        let debug_type = FuncType::new(engine, [ValType::I32, ValType::I32], []);
         linker
-            .func_new("env", "host_debug", debug_type, |caller: Caller<'_, RuntimeState>, params: &[Val], _results: &mut [Val]| {
-                let ptr = params[0].unwrap_i32() as usize;
-                let len = params[1].unwrap_i32() as usize;
-                if let Some(mem) = &caller.data().memory {
-                    let mut buf = vec![0u8; len.min(4096)];
-                    let _ = mem.read(&caller, ptr, &mut buf);
-                    let msg = String::from_utf8_lossy(&buf);
-                    tracing::debug!("[wasm plugin] {msg}");
-                }
-                Ok(())
-            })
+            .func_new(
+                "env",
+                "host_debug",
+                debug_type,
+                |caller: Caller<'_, RuntimeState>, params: &[Val], _results: &mut [Val]| {
+                    let ptr = params[0].unwrap_i32() as usize;
+                    let len = params[1].unwrap_i32() as usize;
+                    if let Some(mem) = &caller.data().memory {
+                        let mut buf = vec![0u8; len.min(4096)];
+                        let _ = mem.read(&caller, ptr, &mut buf);
+                        let msg = String::from_utf8_lossy(&buf);
+                        tracing::debug!("[wasm plugin] {msg}");
+                    }
+                    Ok(())
+                },
+            )
             .map_err(|e| format!("failed to define host_debug: {e}"))?;
 
         Ok(())

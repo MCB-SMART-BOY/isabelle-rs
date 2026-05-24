@@ -62,7 +62,7 @@ impl Default for UnifyConfig {
     fn default() -> Self {
         UnifyConfig {
             search_bound: 60,
-            max_unifiers: 1,  // most callers only need the first unifier
+            max_unifiers: 1, // most callers only need the first unifier
         }
     }
 }
@@ -75,11 +75,7 @@ impl Default for UnifyConfig {
 /// where `env` contains the variable bindings that make all pairs equal.
 ///
 /// This is the main entry point — it unifies types and terms simultaneously.
-pub fn unifiers(
-    env: &Envir,
-    pairs: &[(Term, Term)],
-    config: &UnifyConfig,
-) -> Option<Envir> {
+pub fn unifiers(env: &Envir, pairs: &[(Term, Term)], config: &UnifyConfig) -> Option<Envir> {
     let dpairs: Vec<DPair> = pairs
         .iter()
         .map(|(t, u)| (vec![], t.clone(), u.clone()))
@@ -136,9 +132,7 @@ fn unify_dpairs(
             // Same constant — no arguments to unify
             unify_dpairs(env, rest, depth, config)
         }
-        (Term::Bound(i1), Term::Bound(i2)) if i1 == i2 => {
-            unify_dpairs(env, rest, depth, config)
-        }
+        (Term::Bound(i1), Term::Bound(i2)) if i1 == i2 => unify_dpairs(env, rest, depth, config),
         (Term::Free { name: n1, .. }, Term::Free { name: n2, .. }) if n1 == n2 => {
             unify_dpairs(env, rest, depth, config)
         }
@@ -155,8 +149,16 @@ fn unify_dpairs(
         }
 
         // ── Rigid-Rigid (Abs) ── simplify by going under binder
-        (Term::Abs { name: _, typ: ty1, body: b1 },
-         Term::Abs { typ: ty2, body: b2, .. }) => {
+        (
+            Term::Abs {
+                name: _,
+                typ: ty1,
+                body: b1,
+            },
+            Term::Abs {
+                typ: ty2, body: b2, ..
+            },
+        ) => {
             // Add new binder to rbinder
             let mut new_rbinder = rbinder.clone();
             new_rbinder.push((Arc::from("x"), ty1.clone()));
@@ -174,8 +176,12 @@ fn unify_dpairs(
             if matches!(func.as_ref(), Term::Var { .. }) && term_eq_notypes(arg.as_ref(), obj) {
                 if let Term::Var { name, index, typ } = func.as_ref() {
                     let mut new_env = env.clone();
-                    new_env.update(name.clone(), *index, typ.clone(),
-                        Term::abs("x", Typ::dummy(), Term::bound(0)));
+                    new_env.update(
+                        name.clone(),
+                        *index,
+                        typ.clone(),
+                        Term::abs("x", Typ::dummy(), Term::bound(0)),
+                    );
                     return unify_dpairs(&new_env, rest, depth + 1, config);
                 }
             }
@@ -185,8 +191,12 @@ fn unify_dpairs(
             if matches!(func.as_ref(), Term::Var { .. }) && term_eq_notypes(arg.as_ref(), obj) {
                 if let Term::Var { name, index, typ } = func.as_ref() {
                     let mut new_env = env.clone();
-                    new_env.update(name.clone(), *index, typ.clone(),
-                        Term::abs("x", Typ::dummy(), Term::bound(0)));
+                    new_env.update(
+                        name.clone(),
+                        *index,
+                        typ.clone(),
+                        Term::abs("x", Typ::dummy(), Term::bound(0)),
+                    );
                     return unify_dpairs(&new_env, rest, depth + 1, config);
                 }
             }
@@ -250,9 +260,9 @@ fn flex_rigid(
 /// This prevents cyclic bindings like `?x := f(?x)`.
 fn occurs_check(name: &Symbol, index: usize, term: &Term) -> bool {
     match term {
-        Term::Var { name: n, index: i, .. } => {
-            n == name && *i == index
-        }
+        Term::Var {
+            name: n, index: i, ..
+        } => n == name && *i == index,
         Term::Abs { body, .. } => occurs_check(name, index, body),
         Term::App { func, arg } => {
             occurs_check(name, index, func) || occurs_check(name, index, arg)
@@ -268,21 +278,12 @@ fn occurs_check(name: &Symbol, index: usize, term: &Term) -> bool {
 /// Match a pattern against an object: find an environment `env` such that
 /// `instantiate(env, pattern) = object`. Unlike unification, matching is
 /// directional — only variables in the pattern can be instantiated.
-pub fn matchers(
-    env: &Envir,
-    pat: &Term,
-    obj: &Term,
-    _config: &UnifyConfig,
-) -> Option<Envir> {
+pub fn matchers(env: &Envir, pat: &Term, obj: &Term, _config: &UnifyConfig) -> Option<Envir> {
     let env = env.clone();
     match_pattern(env, pat, obj)
 }
 
-fn match_pattern(
-    mut env: Envir,
-    pat: &Term,
-    obj: &Term,
-) -> Option<Envir> {
+fn match_pattern(mut env: Envir, pat: &Term, obj: &Term) -> Option<Envir> {
     let pat = env.norm_term(pat);
     let obj = env.norm_term(&obj);
 
@@ -317,12 +318,10 @@ fn match_pattern(
                 _ => None,
             }
         }
-        Term::Abs { body: b1, .. } => {
-            match &obj {
-                Term::Abs { body: b2, .. } => match_pattern(env, b1, b2),
-                _ => None,
-            }
-        }
+        Term::Abs { body: b1, .. } => match &obj {
+            Term::Abs { body: b2, .. } => match_pattern(env, b1, b2),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -335,9 +334,11 @@ fn collect_bound_args(term: &Term) -> Option<Vec<Term>> {
         Term::Var { .. } | Term::Free { .. } => Some(Vec::new()),
         Term::App { func, arg } => {
             let mut args = collect_bound_args(func)?;
-            // Each argument must be a distinct bound/free/schematic variable
+            // Each argument must be a distinct bound/free variable.
+            // NOTE: Var (schematic variables) are NOT treated as bound args —
+            // they represent unknowns that should be decomposed directly.
             match arg.as_ref() {
-                Term::Bound(_) | Term::Free { .. } | Term::Var { .. } => {
+                Term::Bound(_) | Term::Free { .. } => {
                     if args.iter().any(|a| a == arg.as_ref()) {
                         return None;
                     }
@@ -380,11 +381,7 @@ fn match_ho_pattern(
     for arg in args.iter().rev() {
         match arg {
             Term::Bound(i) => {
-                abstracted = Term::abs(
-                    Arc::from(format!("x{}", i)),
-                    Typ::dummy(),
-                    abstracted,
-                );
+                abstracted = Term::abs(Arc::from(format!("x{}", i)), Typ::dummy(), abstracted);
             }
             Term::Free { name, typ } => {
                 abstracted = Term::abs(Arc::clone(name), typ.clone(), abstracted);
@@ -398,12 +395,7 @@ fn match_ho_pattern(
     if occurs_check(var_name, var_index, &abstracted) {
         return None;
     }
-    env.update(
-        Arc::clone(var_name),
-        var_index,
-        var_typ.clone(),
-        abstracted,
-    );
+    env.update(Arc::clone(var_name), var_index, var_typ.clone(), abstracted);
     Some(env)
 }
 
@@ -416,11 +408,23 @@ fn term_eq_notypes(a: &Term, b: &Term) -> bool {
     match (a, b) {
         (Term::Const { name: n1, .. }, Term::Const { name: n2, .. }) => n1 == n2,
         (Term::Free { name: n1, .. }, Term::Free { name: n2, .. }) => n1 == n2,
-        (Term::Var { name: n1, index: i1, .. }, Term::Var { name: n2, index: i2, .. }) => n1 == n2 && i1 == i2,
+        (
+            Term::Var {
+                name: n1,
+                index: i1,
+                ..
+            },
+            Term::Var {
+                name: n2,
+                index: i2,
+                ..
+            },
+        ) => n1 == n2 && i1 == i2,
         (Term::Bound(i1), Term::Bound(i2)) => i1 == i2,
         (Term::Abs { body: b1, .. }, Term::Abs { body: b2, .. }) => term_eq_notypes(b1, b2),
-        (Term::App { func: f1, arg: a1 }, Term::App { func: f2, arg: a2 }) =>
-            term_eq_notypes(f1, f2) && term_eq_notypes(a1, a2),
+        (Term::App { func: f1, arg: a1 }, Term::App { func: f2, arg: a2 }) => {
+            term_eq_notypes(f1, f2) && term_eq_notypes(a1, a2)
+        }
         _ => false,
     }
 }
@@ -510,7 +514,10 @@ mod tests {
             Term::const_("0", Typ::base("nat")),
         );
         let result = matchers(&env, &pat, &obj, &UnifyConfig::default());
-        assert!(result.is_some(), "HO matching should succeed for induction pattern");
+        assert!(
+            result.is_some(),
+            "HO matching should succeed for induction pattern"
+        );
         let env = result.unwrap();
         // ?P should be bound to λxs. length xs = 0
         let p_bound = env.norm_term(&p_var);

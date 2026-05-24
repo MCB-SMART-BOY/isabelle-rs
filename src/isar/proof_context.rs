@@ -12,10 +12,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::core::term::Term;
+use crate::core::theory::{ProofContext as CoreProofContext, Theory};
 use crate::core::thm::Thm;
 use crate::core::types::Symbol;
 use crate::core::types::Typ;
-use crate::core::theory::{Theory, ProofContext as CoreProofContext};
 
 // =========================================================================
 // Case — a proof case from case analysis
@@ -45,7 +45,11 @@ pub struct LocalFacts {
 }
 
 impl LocalFacts {
-    pub fn new() -> Self { LocalFacts { facts: HashMap::new() } }
+    pub fn new() -> Self {
+        LocalFacts {
+            facts: HashMap::new(),
+        }
+    }
 
     pub fn add(&mut self, name: &str, thms: Vec<Arc<Thm>>) {
         self.facts.insert(name.to_string(), thms);
@@ -162,7 +166,6 @@ impl IsarContext {
         self.core.assumptions()
     }
 }
-
 
 // =========================================================================
 // Tests

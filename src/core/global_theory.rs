@@ -28,9 +28,15 @@ pub fn name_thm(_name: &str, thm: &Thm) -> Thm {
 
 /// Collect all named theorems from a theory and its ancestors.
 pub fn all_named_thms(theory: &Theory) -> Vec<(String, Arc<Thm>)> {
-    theory.all_theorem_names().iter().filter_map(|name| {
-        theory.lookup_theorem(name).map(|thm| ((*name).to_string(), Arc::clone(thm)))
-    }).collect()
+    theory
+        .all_theorem_names()
+        .iter()
+        .filter_map(|name| {
+            theory
+                .lookup_theorem(name)
+                .map(|thm| ((*name).to_string(), Arc::clone(thm)))
+        })
+        .collect()
 }
 
 // =========================================================================
@@ -40,8 +46,8 @@ pub fn all_named_thms(theory: &Theory) -> Vec<(String, Arc<Thm>)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::thm::{CTerm, ThmKernel};
     use crate::core::term::Term;
+    use crate::core::thm::{CTerm, ThmKernel};
     use crate::core::types::Typ;
 
     #[test]

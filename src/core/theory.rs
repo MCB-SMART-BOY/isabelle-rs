@@ -26,9 +26,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::sign::Signature;
-use super::types::Symbol;
 use super::term::Term;
 use super::thm::Thm;
+use super::types::Symbol;
 use super::types::Typ;
 
 // =========================================================================
@@ -84,10 +84,7 @@ impl Theory {
     /// Create a new theory extending existing theories.
     ///
     /// The new theory inherits all declarations and theorems from its parents.
-    pub fn begin(
-        name: impl Into<Symbol>,
-        parents: Vec<Arc<Theory>>,
-    ) -> Theory {
+    pub fn begin(name: impl Into<Symbol>, parents: Vec<Arc<Theory>>) -> Theory {
         // Build the extended signature by inheriting from parents
         let sig = if let Some(first) = parents.first() {
             first.signature.extend()
@@ -112,9 +109,15 @@ impl Theory {
     // Accessors
     // =================================================================
 
-    pub fn name(&self) -> &str { &self.name }
-    pub fn signature(&self) -> &Signature { &self.signature }
-    pub fn parents(&self) -> &[Arc<Theory>] { &self.parents }
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    pub fn signature(&self) -> &Signature {
+        &self.signature
+    }
+    pub fn parents(&self) -> &[Arc<Theory>] {
+        &self.parents
+    }
 
     /// Look up a constant's type in this theory (including ancestor theories).
     pub fn const_type(&self, name: &str) -> Option<&Typ> {
@@ -131,8 +134,7 @@ impl Theory {
 
     /// Check if a constant is declared in this theory.
     pub fn is_declared(&self, name: &str) -> bool {
-        self.signature.is_declared(name)
-            || self.parents.iter().any(|p| p.is_declared(name))
+        self.signature.is_declared(name) || self.parents.iter().any(|p| p.is_declared(name))
     }
 
     // =================================================================
@@ -160,7 +162,10 @@ impl Theory {
     /// The theorem must be unconditional (no hypotheses) and its propositions
     /// must be built from constants declared in this theory.
     pub fn add_theorem(&mut self, name: impl Into<Symbol>, thm: Thm) {
-        assert!(thm.is_unconditional(), "stored theorems must be unconditional");
+        assert!(
+            thm.is_unconditional(),
+            "stored theorems must be unconditional"
+        );
         self.theorems.insert(name.into(), Arc::new(thm));
     }
 
@@ -251,19 +256,22 @@ impl ProofContext {
         self.assumptions.push(prop);
     }
 
-    pub fn fixes(&self) -> &[(Symbol, Typ)] { &self.fixes }
-    pub fn assumptions(&self) -> &[Term] { &self.assumptions }
+    pub fn fixes(&self) -> &[(Symbol, Typ)] {
+        &self.fixes
+    }
+    pub fn assumptions(&self) -> &[Term] {
+        &self.assumptions
+    }
 }
 
 // =========================================================================
 // Tests
 // =========================================================================
 
-
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::thm::{CTerm, ThmKernel};
+    use super::*;
 
     #[test]
     fn test_pure_theory() {

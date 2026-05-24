@@ -1,6 +1,6 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::cell::RefCell;
 
 thread_local! {
     static TLS_SYMBOLS: RefCell<SymbolTable> = RefCell::new(SymbolTable::new());
@@ -13,11 +13,18 @@ pub fn intern(s: &str) -> Symbol {
 pub fn lookup_str(sym: Symbol) -> Option<Arc<str>> {
     TLS_SYMBOLS.with(|syms| {
         let syms = syms.borrow();
-        if (sym.0 as usize) < syms.len() { Some(Arc::clone(syms.lookup(sym))) } else { None }
+        if (sym.0 as usize) < syms.len() {
+            Some(Arc::clone(syms.lookup(sym)))
+        } else {
+            None
+        }
     })
 }
 
-pub fn with_symbols<F, R>(f: F) -> R where F: FnOnce(&SymbolTable) -> R {
+pub fn with_symbols<F, R>(f: F) -> R
+where
+    F: FnOnce(&SymbolTable) -> R,
+{
     TLS_SYMBOLS.with(|syms| f(&syms.borrow()))
 }
 
@@ -61,7 +68,10 @@ impl Default for SymbolTable {
 
 impl SymbolTable {
     pub fn new() -> Self {
-        SymbolTable { strings: Vec::new(), map: HashMap::new() }
+        SymbolTable {
+            strings: Vec::new(),
+            map: HashMap::new(),
+        }
     }
 
     /// Intern a string: returns existing Symbol or creates new one.
@@ -82,11 +92,16 @@ impl SymbolTable {
     }
 
     /// Number of interned strings.
-    pub fn len(&self) -> usize { self.strings.len() }
+    pub fn len(&self) -> usize {
+        self.strings.len()
+    }
 
     /// Get a reference to the string (for Debug/Display).
     pub fn get(&self, sym: Symbol) -> &str {
-        self.strings.get(sym.0 as usize).map(|s| { s.as_ref() }).unwrap_or("?")
+        self.strings
+            .get(sym.0 as usize)
+            .map(|s| s.as_ref())
+            .unwrap_or("?")
     }
 }
 
@@ -132,7 +147,9 @@ impl Default for TypeArena {
 }
 
 impl TypeArena {
-    pub fn new() -> Self { TypeArena { nodes: Vec::new() } }
+    pub fn new() -> Self {
+        TypeArena { nodes: Vec::new() }
+    }
 
     pub fn alloc(&mut self, node: TypeNode) -> TypeId {
         let id = TypeId(self.nodes.len() as u32);
@@ -144,7 +161,9 @@ impl TypeArena {
         &self.nodes[id.0 as usize]
     }
 
-    pub fn len(&self) -> usize { self.nodes.len() }
+    pub fn len(&self) -> usize {
+        self.nodes.len()
+    }
 }
 
 // =========================================================================
@@ -160,12 +179,29 @@ pub struct TermArena {
 
 #[derive(Debug, Clone)]
 pub enum TermNode {
-    Const { name: Symbol, typ: TypeId },
-    Free  { name: Symbol, typ: TypeId },
-    Var   { name: Symbol, index: u32, typ: TypeId },
+    Const {
+        name: Symbol,
+        typ: TypeId,
+    },
+    Free {
+        name: Symbol,
+        typ: TypeId,
+    },
+    Var {
+        name: Symbol,
+        index: u32,
+        typ: TypeId,
+    },
     Bound(u32),
-    Abs   { name: Symbol, typ: TypeId, body: TermId },
-    App   { func: TermId, arg: TermId },
+    Abs {
+        name: Symbol,
+        typ: TypeId,
+        body: TermId,
+    },
+    App {
+        func: TermId,
+        arg: TermId,
+    },
 }
 
 impl Default for TermArena {
@@ -175,7 +211,9 @@ impl Default for TermArena {
 }
 
 impl TermArena {
-    pub fn new() -> Self { TermArena { nodes: Vec::new() } }
+    pub fn new() -> Self {
+        TermArena { nodes: Vec::new() }
+    }
 
     pub fn alloc(&mut self, node: TermNode) -> TermId {
         let id = TermId(self.nodes.len() as u32);
@@ -188,29 +226,56 @@ impl TermArena {
     }
 
     pub fn eq(&self, a: TermId, b: TermId) -> bool {
-        if a == b { return true; }
+        if a == b {
+            return true;
+        }
         // Full structural equality (fallback when IDs differ)
         self.structural_eq(a, b)
     }
 
     fn structural_eq(&self, a: TermId, b: TermId) -> bool {
         match (self.get(a), self.get(b)) {
-            (TermNode::Const { name: n1, typ: t1 }, TermNode::Const { name: n2, typ: t2 }) =>
-                n1 == n2 && t1 == t2,
-            (TermNode::Free { name: n1, typ: t1 }, TermNode::Free { name: n2, typ: t2 }) =>
-                n1 == n2 && t1 == t2,
-            (TermNode::Var { name: n1, index: i1, typ: t1 }, TermNode::Var { name: n2, index: i2, typ: t2 }) =>
-                n1 == n2 && i1 == i2 && t1 == t2,
+            (TermNode::Const { name: n1, typ: t1 }, TermNode::Const { name: n2, typ: t2 }) => {
+                n1 == n2 && t1 == t2
+            }
+            (TermNode::Free { name: n1, typ: t1 }, TermNode::Free { name: n2, typ: t2 }) => {
+                n1 == n2 && t1 == t2
+            }
+            (
+                TermNode::Var {
+                    name: n1,
+                    index: i1,
+                    typ: t1,
+                },
+                TermNode::Var {
+                    name: n2,
+                    index: i2,
+                    typ: t2,
+                },
+            ) => n1 == n2 && i1 == i2 && t1 == t2,
             (TermNode::Bound(i1), TermNode::Bound(i2)) => i1 == i2,
-            (TermNode::Abs { name: n1, typ: t1, body: b1 }, TermNode::Abs { name: n2, typ: t2, body: b2 }) =>
-                n1 == n2 && t1 == t2 && self.structural_eq(*b1, *b2),
-            (TermNode::App { func: f1, arg: a1 }, TermNode::App { func: f2, arg: a2 }) =>
-                self.structural_eq(*f1, *f2) && self.structural_eq(*a1, *a2),
+            (
+                TermNode::Abs {
+                    name: n1,
+                    typ: t1,
+                    body: b1,
+                },
+                TermNode::Abs {
+                    name: n2,
+                    typ: t2,
+                    body: b2,
+                },
+            ) => n1 == n2 && t1 == t2 && self.structural_eq(*b1, *b2),
+            (TermNode::App { func: f1, arg: a1 }, TermNode::App { func: f2, arg: a2 }) => {
+                self.structural_eq(*f1, *f2) && self.structural_eq(*a1, *a2)
+            }
             _ => false,
         }
     }
 
-    pub fn len(&self) -> usize { self.nodes.len() }
+    pub fn len(&self) -> usize {
+        self.nodes.len()
+    }
 }
 
 // =========================================================================

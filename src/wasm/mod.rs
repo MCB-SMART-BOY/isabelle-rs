@@ -20,8 +20,8 @@ use std::sync::Arc;
 
 use crate::core::thm::Thm;
 
-pub mod runtime;
 pub mod host;
+pub mod runtime;
 pub mod sdk;
 
 // =========================================================================
@@ -100,11 +100,13 @@ mod tests {
     #[test]
     fn test_plugin_context_lookup() {
         let mut ctx = PluginContext::new();
-        let a_cterm = crate::core::thm::CTerm::certify(
-            crate::core::term::Term::const_("A", crate::core::types::Typ::base("prop")),
-        );
+        let a_cterm = crate::core::thm::CTerm::certify(crate::core::term::Term::const_(
+            "A",
+            crate::core::types::Typ::base("prop"),
+        ));
         let thm = Arc::new(crate::core::thm::ThmKernel::trivial(a_cterm).unwrap());
-        ctx.named_theorems.push(("trivial".into(), Arc::clone(&thm)));
+        ctx.named_theorems
+            .push(("trivial".into(), Arc::clone(&thm)));
         assert!(ctx.lookup("trivial").is_some());
         assert!(ctx.lookup("other").is_none());
     }

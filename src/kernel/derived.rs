@@ -21,13 +21,13 @@
 
 use std::sync::Arc;
 
+use crate::core::envir::Envir;
 use crate::core::error::KernelError;
+use crate::core::logic::Pure;
 use crate::core::term::Term;
 use crate::core::thm::{CTerm, Thm, ThmKernel};
 use crate::core::types::Typ;
-use crate::core::logic::Pure;
 use crate::core::unify::{self, UnifyConfig};
-use crate::core::envir::Envir;
 
 // =========================================================================
 // Universal quantifier
@@ -135,10 +135,7 @@ pub fn subst(thm_eq: &Thm, thm: &Thm) -> Option<Result<Thm, KernelError>> {
 
     let refl_p = ThmKernel::reflexive(CTerm::certify(new_prop.clone()));
     let ct = CTerm::certify(prop.clone());
-    Some(ThmKernel::transitive(
-        &ThmKernel::reflexive(ct),
-        &refl_p,
-    ))
+    Some(ThmKernel::transitive(&ThmKernel::reflexive(ct), &refl_p))
 }
 
 /// Replace occurrences of `from` with `to` in a term.
@@ -150,7 +147,9 @@ fn replace_in_term(term: &Term, from: &Term, to: &Term) -> Option<Term> {
         Term::App { func, arg } => {
             let f = replace_in_term(func, from, to);
             let a = replace_in_term(arg, from, to);
-            if f.is_none() && a.is_none() { return None; }
+            if f.is_none() && a.is_none() {
+                return None;
+            }
             Some(Term::app(
                 f.unwrap_or_else(|| func.as_ref().clone()),
                 a.unwrap_or_else(|| arg.as_ref().clone()),
@@ -189,7 +188,11 @@ pub struct AttributedThm {
 
 impl AttributedThm {
     pub fn new(thm: Thm, name: String) -> Self {
-        AttributedThm { thm, name, attributes: vec![] }
+        AttributedThm {
+            thm,
+            name,
+            attributes: vec![],
+        }
     }
 
     pub fn with_attr(mut self, attr: ThmAttribute) -> Self {
@@ -218,10 +221,7 @@ pub fn dest_conjunction(term: &Term) -> Option<(&Term, &Term)> {
 /// Conjunction introduction: from `Γ ⊢ A` and `Γ ⊢ B`, derive `Γ ⊢ A &&& B`.
 pub fn conj_intr(thm1: &Thm, thm2: &Thm) -> Thm {
     let a = thm1.prop().term().clone();
-    let imp = Pure::mk_implies(
-        a.clone(),
-        Pure::mk_implies(thm2.prop().term().clone(), a),
-    );
+    let imp = Pure::mk_implies(a.clone(), Pure::mk_implies(thm2.prop().term().clone(), a));
     let ct = CTerm::certify(imp);
     ThmKernel::assume(ct)
 }
@@ -244,11 +244,7 @@ pub fn conj_elim1(thm: &Thm) -> Option<Thm> {
 /// Resolve a rule against a goal (backward chaining).
 /// The rule's conclusion is matched against the goal, and the
 /// rule's premises become new subgoals.
-pub fn biresolution(
-    state: &Thm,
-    rule: &Thm,
-    _lift: bool,
-) -> Option<Vec<Thm>> {
+pub fn biresolution(state: &Thm, rule: &Thm, _lift: bool) -> Option<Vec<Thm>> {
     let config = UnifyConfig::default();
     let env = Envir::init();
     unify::unifiers(

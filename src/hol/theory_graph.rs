@@ -13,9 +13,9 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 
-use super::hol_loader::{parse_theory_header, ParsedLemma, HolTheoremDb};
-use std::sync::Arc;
+use super::hol_loader::{HolTheoremDb, ParsedLemma, parse_theory_header};
 use crate::core::thm::Thm;
+use std::sync::Arc;
 
 // =========================================================================
 // TheoryGraph
@@ -149,7 +149,9 @@ impl TheoryGraph {
             // Cycle detected — break cycles by forcing remaining nodes into the order
             // This is safe for theory loading: a cycle usually means a mutual import
             // that doesn't affect the ability to parse lemmas.
-            let mut remaining: Vec<&str> = self.nodes.keys()
+            let mut remaining: Vec<&str> = self
+                .nodes
+                .keys()
                 .filter(|n| !order.contains(&n.to_string()))
                 .map(|s| s.as_str())
                 .collect();
@@ -158,8 +160,11 @@ impl TheoryGraph {
             for name in &remaining {
                 order.push(name.to_string());
             }
-            eprintln!("Warning: broke {} theory import cycle(s) involving {:?}",
-                remaining.len(), remaining.iter().take(5).collect::<Vec<_>>());
+            eprintln!(
+                "Warning: broke {} theory import cycle(s) involving {:?}",
+                remaining.len(),
+                remaining.iter().take(5).collect::<Vec<_>>()
+            );
         }
 
         Ok(order)
@@ -174,7 +179,8 @@ impl TheoryGraph {
     /// Load all theories with progress reporting.
     /// `on_progress` is called with (theory_name, index, total).
     pub fn load_all_with_progress<F>(&mut self, mut on_progress: F) -> Result<HolTheoremDb, String>
-    where F: FnMut(&str, usize, usize)
+    where
+        F: FnMut(&str, usize, usize),
     {
         let order = self.topological_sort()?;
         self.load_order = order.clone();
@@ -254,7 +260,11 @@ mod tests {
         let mut graph = TheoryGraph::new();
         let count = graph.scan(Path::new("theories")).unwrap();
         eprintln!("{}", graph.summary());
-        assert!(count >= 13, "Should find at least 13 theories, found {}", count);
+        assert!(
+            count >= 13,
+            "Should find at least 13 theories, found {}",
+            count
+        );
     }
 
     #[test]
@@ -272,7 +282,11 @@ mod tests {
         let mut graph = TheoryGraph::new();
         graph.scan(Path::new("theories")).unwrap();
         let result = graph.topological_sort();
-        assert!(result.is_ok(), "DAG should have no cycles: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "DAG should have no cycles: {:?}",
+            result.err()
+        );
     }
 }
 
@@ -288,7 +302,7 @@ mod scale_tests {
             let count = graph.scan(hol_dir).unwrap_or(0);
             eprintln!("Scanned {} theories from full HOL", count);
             assert!(count >= 1000, "Expected >= 1000 theories, got {}", count);
-            
+
             // Check DAG validity
             let result = graph.topological_sort();
             match result {
@@ -314,7 +328,7 @@ mod scale_tests {
         if hol_dir.exists() {
             let count = graph.scan(hol_dir).unwrap_or(0);
             eprintln!("Scanned {} theories", count);
-            
+
             let mut loaded = 0;
             let result = graph.load_all_with_progress(|name, idx, total| {
                 if idx % 10 == 0 || idx == total - 1 {
@@ -322,17 +336,24 @@ mod scale_tests {
                 }
                 loaded = idx + 1;
             });
-            
+
             match result {
                 Ok(db) => {
-                    eprintln!("Loaded {} theories, {} theorems in DB", loaded, db.all.len());
+                    eprintln!(
+                        "Loaded {} theories, {} theorems in DB",
+                        loaded,
+                        db.all.len()
+                    );
                     eprintln!("DB by_name keys: {}", db.by_name.len());
                 }
                 Err(e) => {
                     eprintln!("Load error: {}", e);
                 }
             }
-            eprintln!("Errors: {:?}", graph.errors.iter().take(5).collect::<Vec<_>>());
+            eprintln!(
+                "Errors: {:?}",
+                graph.errors.iter().take(5).collect::<Vec<_>>()
+            );
         }
     }
 }

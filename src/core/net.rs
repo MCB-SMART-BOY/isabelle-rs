@@ -31,7 +31,11 @@ struct NetNode<T: Clone> {
 
 impl<T: Clone> NetNode<T> {
     fn new() -> Self {
-        NetNode { items: Vec::new(), children: BTreeMap::new(), var_child: None }
+        NetNode {
+            items: Vec::new(),
+            children: BTreeMap::new(),
+            var_child: None,
+        }
     }
 }
 
@@ -49,7 +53,9 @@ pub struct Net<T: Clone> {
 impl<T: Clone> Net<T> {
     /// Create an empty net.
     pub fn empty() -> Self {
-        Net { root: NetNode::new() }
+        Net {
+            root: NetNode::new(),
+        }
     }
 
     /// Insert an item keyed by a pattern term.
@@ -67,9 +73,7 @@ impl<T: Clone> Net<T> {
 
     /// Check if the net is empty.
     pub fn is_empty(&self) -> bool {
-        self.root.items.is_empty()
-            && self.root.children.is_empty()
-            && self.root.var_child.is_none()
+        self.root.items.is_empty() && self.root.children.is_empty() && self.root.var_child.is_none()
     }
 
     /// Merge another net into this one.
@@ -78,11 +82,18 @@ impl<T: Clone> Net<T> {
             self.root.items.push(Arc::clone(item));
         }
         for (key, child) in &other.root.children {
-            let our_child = self.root.children.entry(key.clone()).or_insert_with(NetNode::new);
+            let our_child = self
+                .root
+                .children
+                .entry(key.clone())
+                .or_insert_with(NetNode::new);
             merge_nodes(our_child, child);
         }
         if let Some(var_child) = &other.root.var_child {
-            let our_var = self.root.var_child.get_or_insert_with(|| Box::new(NetNode::new()));
+            let our_var = self
+                .root
+                .var_child
+                .get_or_insert_with(|| Box::new(NetNode::new()));
             merge_nodes(our_var, var_child);
         }
     }
@@ -92,15 +103,23 @@ fn insert_into<T: Clone>(node: &mut NetNode<T>, pattern: &Term, item: Arc<T>) {
     match pattern {
         Term::Var { .. } | Term::Bound(_) => {
             // Variable/bound patterns match anything — store in var_child
-            let child = node.var_child.get_or_insert_with(|| Box::new(NetNode::new()));
+            let child = node
+                .var_child
+                .get_or_insert_with(|| Box::new(NetNode::new()));
             child.items.push(item);
         }
         Term::Const { name, .. } => {
-            let child = node.children.entry(name.to_string()).or_insert_with(NetNode::new);
+            let child = node
+                .children
+                .entry(name.to_string())
+                .or_insert_with(NetNode::new);
             child.items.push(item);
         }
         Term::Free { name, .. } => {
-            let child = node.children.entry(format!("FREE:{name}")).or_insert_with(NetNode::new);
+            let child = node
+                .children
+                .entry(format!("FREE:{name}"))
+                .or_insert_with(NetNode::new);
             child.items.push(item);
         }
         Term::App { func, arg } => {
@@ -116,7 +135,10 @@ fn insert_into<T: Clone>(node: &mut NetNode<T>, pattern: &Term, item: Arc<T>) {
 fn insert_into_app<T: Clone>(node: &mut NetNode<T>, func: &Term, _arg: &Term, item: Arc<T>) {
     match func {
         Term::Const { name, .. } => {
-            let child = node.children.entry(name.to_string()).or_insert_with(NetNode::new);
+            let child = node
+                .children
+                .entry(name.to_string())
+                .or_insert_with(NetNode::new);
             child.items.push(item);
         }
         _ => {
@@ -166,17 +188,24 @@ fn lookup_in<T: Clone>(node: &NetNode<T>, term: &Term, results: &mut Vec<Arc<T>>
 fn merge_nodes<T: Clone>(target: &mut NetNode<T>, source: &NetNode<T>) {
     target.items.extend(source.items.iter().map(Arc::clone));
     for (key, child) in &source.children {
-        let t = target.children.entry(key.clone()).or_insert_with(NetNode::new);
+        let t = target
+            .children
+            .entry(key.clone())
+            .or_insert_with(NetNode::new);
         merge_nodes(t, child);
     }
     if let Some(ref var_child) = source.var_child {
-        let t = target.var_child.get_or_insert_with(|| Box::new(NetNode::new()));
+        let t = target
+            .var_child
+            .get_or_insert_with(|| Box::new(NetNode::new()));
         merge_nodes(t, var_child);
     }
 }
 
 impl<T: Clone> Default for Net<T> {
-    fn default() -> Self { Net::empty() }
+    fn default() -> Self {
+        Net::empty()
+    }
 }
 
 // =========================================================================
