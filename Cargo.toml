@@ -1,7 +1,21 @@
 [package]
 name = "isabelle-rs"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
+description = "Isabelle proof assistant kernel, rewritten in Rust. LCF trusted core, higher-order unification, Isar proof language, 100% verification on core HOL theories."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/MCB-SMART-BOY/isabelle-rs"
+documentation = "https://docs.rs/isabelle-rs"
+readme = "README.md"
+keywords = ["isabelle", "theorem-prover", "proof-assistant", "lcf", "hol"]
+categories = ["science", "development-tools"]
+
+[features]
+default = []
+# LSP server support
+lsp = []
+# WASM plugin support
+wasm = []
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

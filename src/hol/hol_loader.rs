@@ -10,7 +10,7 @@
 use crate::core::logic::Pure;
 use crate::core::term::{Term, lambda};
 use crate::core::theory::Theory;
-use crate::core::thm::{CTerm, ThmKernel};
+use crate::core::thm::{CTerm, Thm, ThmKernel};
 use crate::core::types::{Sort, Typ};
 use crate::isar::term_parser::parse_term;
 use std::sync::Arc;
@@ -1889,6 +1889,80 @@ pub struct HolTheoremDb {
 }
 
 impl HolTheoremDb {
+    /// Create an empty DB.
+    pub fn new() -> Self {
+        HolTheoremDb {
+            intros: Vec::new(),
+            elims: Vec::new(),
+            simps: Vec::new(),
+            all: Vec::new(),
+            by_name: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Extend the DB with more lemmas (incremental loading).
+    pub fn extend(&mut self, lemmas: &[ParsedLemma]) {
+        let mut new_by_name: Vec<(String, Arc<Thm>)> = Vec::new();
+        for lem in lemmas {
+            let thm = Arc::clone(&lem.theorem);
+            self.all.push(Arc::clone(&thm));
+            if !lem.name.is_empty() && !self.by_name.contains_key(&lem.name) {
+                new_by_name.push((lem.name.clone(), Arc::clone(&thm)));
+            }
+            let attrs = &lem.attributes;
+            if attrs.iter().any(|a| a.contains("intro")) {
+                self.intros.push(Arc::clone(&thm));
+            }
+            if attrs.iter().any(|a| a.contains("elim")) {
+                self.elims.push(Arc::clone(&thm));
+            }
+            if attrs.iter().any(|a| a.contains("simp") || a.contains("iff")) {
+                self.simps.push(Arc::clone(&thm));
+            }
+        }
+        // Apply new by-name entries
+        for (name, thm) in new_by_name {
+            self.by_name.entry(name).or_insert(thm);
+        }
+        // Resolve aliases from `lemmas` commands
+        for lem in lemmas {
+            if let Some(ref aliases) = lem.alias_for {
+                for alias_target in aliases {
+                    if let Some(target_thm) = self.by_name.get(alias_target) {
+                        let thm = Arc::clone(target_thm);
+                        if !lem.name.is_empty() && !self.by_name.contains_key(&lem.name) {
+                            self.by_name.insert(lem.name.clone(), Arc::clone(&thm));
+                        }
+                        self.all.push(Arc::clone(&thm));
+                        let attrs = &lem.attributes;
+                        if attrs.iter().any(|a| a.contains("intro")) {
+                            self.intros.push(Arc::clone(&thm));
+                        }
+                        if attrs.iter().any(|a| a.contains("elim")) {
+                            self.elims.push(Arc::clone(&thm));
+                        }
+                        if attrs.iter().any(|a| a.contains("simp") || a.contains("iff")) {
+                            self.simps.push(Arc::clone(&thm));
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        // Always include key rules
+        for lem in lemmas {
+            let thm = Arc::clone(&lem.theorem);
+            match lem.name.as_str() {
+                "sym" | "trans" | "refl" | "arg_cong" | "fun_cong" | "iffD1" | "iffD2" => {
+                    if !self.simps.iter().any(|t| Arc::ptr_eq(t, &thm)) {
+                        self.simps.push(thm);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     pub fn from_lemmas(lemmas: &[ParsedLemma]) -> Self {
         let mut intros = Vec::new();
         let mut elims = Vec::new();
@@ -1909,7 +1983,7 @@ impl HolTheoremDb {
             if attrs.iter().any(|a| a.contains("elim")) {
                 elims.push(Arc::clone(&thm));
             }
-            if attrs.iter().any(|a| a.contains("simp")) {
+            if attrs.iter().any(|a| a.contains("simp") || a.contains("iff")) {
                 simps.push(Arc::clone(&thm));
             }
         }
@@ -1930,7 +2004,7 @@ impl HolTheoremDb {
                         if attrs.iter().any(|a| a.contains("elim")) {
                             elims.push(Arc::clone(&thm));
                         }
-                        if attrs.iter().any(|a| a.contains("simp")) {
+                        if attrs.iter().any(|a| a.contains("simp") || a.contains("iff")) {
                             simps.push(Arc::clone(&thm));
                         }
                         break; // Use first found alias target
@@ -1960,7 +2034,7 @@ impl HolTheoremDb {
     }
 
     /// Add built-in Pure/HOL theorems that are fundamental axioms.
-    fn add_builtins(db: &mut HolTheoremDb) {
+    pub fn add_builtins(db: &mut HolTheoremDb) {
         use crate::core::logic::Pure;
 
         // Use dummy types consistently — the parser also uses dummy types.
@@ -2586,8 +2660,36 @@ impl HolTheoremDb {
     }
 
     pub fn get() -> &'static Self {
-        &HOL_THEOREMS
+        // Check thread-local override first
+        DB_OVERRIDE.with(|cell| {
+            let ptr = *cell.borrow();
+            if let Some(db_ptr) = ptr {
+                // SAFETY: The override is set via with_override which guarantees
+                // the DB lives for the duration of the closure.
+                unsafe { &*db_ptr }
+            } else {
+                &HOL_THEOREMS
+            }
+        })
     }
+
+    /// Set a thread-local DB override. Returns a guard that clears on drop.
+    pub fn with_override<F, R>(db: &HolTheoremDb, f: F) -> R
+    where F: FnOnce() -> R
+    {
+        DB_OVERRIDE.with(|cell| {
+            *cell.borrow_mut() = Some(db as *const HolTheoremDb);
+        });
+        let result = f();
+        DB_OVERRIDE.with(|cell| {
+            *cell.borrow_mut() = None;
+        });
+        result
+    }
+}
+
+thread_local! {
+    static DB_OVERRIDE: std::cell::RefCell<Option<*const HolTheoremDb>> = std::cell::RefCell::new(None);
 }
 
 // =========================================================================

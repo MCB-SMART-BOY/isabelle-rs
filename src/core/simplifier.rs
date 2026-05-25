@@ -18,6 +18,7 @@ use super::logic::Pure;
 use super::term::Term;
 use super::term_subst;
 use super::thm::{CTerm, Thm, ThmKernel};
+use super::types::Typ;
 use super::unify::{self, UnifyConfig};
 
 // =========================================================================
@@ -282,7 +283,14 @@ impl Simplifier {
     fn try_rule(&self, term: &Term, rule: &RewriteRule) -> Option<(Term, Thm)> {
         let env = Envir::init();
         // Match the LHS pattern against the term
-        let env = unify::matchers(&env, &rule.lhs, term, &self.config)?;
+        let env = unify::matchers(&env, &rule.lhs, term, &self.config);
+        // If Free-based matching fails, try Var-based generalization
+        let env = env.or_else(|| {
+            let gen_lhs = generalize_term_for_match(&rule.lhs);
+            let maxidx = compute_maxidx(&gen_lhs);
+            let env2 = Envir::empty(maxidx);
+            unify::matchers(&env2, &gen_lhs, term, &self.config)
+        })?;
 
         // Check condition if present
         if let Some(cond) = &rule.condition {
@@ -356,6 +364,46 @@ pub fn beta_simp() -> Simplifier {
     let mut simp = Simplifier::new(Vec::new());
     simp.add_conv(beta_conv);
     simp
+}
+
+// ── Term generalization helpers ──
+
+fn compute_maxidx(term: &Term) -> usize {
+    match term {
+        Term::Var { index, .. } => *index,
+        Term::App { func, arg } => compute_maxidx(func).max(compute_maxidx(arg)),
+        Term::Abs { body, .. } => compute_maxidx(body),
+        _ => 0,
+    }
+}
+
+fn generalize_term_for_match(term: &Term) -> Term {
+    let mut frees: Vec<String> = Vec::new();
+    fn collect(term: &Term, out: &mut Vec<String>) {
+        match term {
+            Term::Free { name, .. } => { out.push(name.to_string()); }
+            Term::App { func, arg } => { collect(func, out); collect(arg, out); }
+            Term::Abs { body, .. } => { collect(body, out); }
+            _ => {}
+        }
+    }
+    collect(term, &mut frees);
+    let mut seen = std::collections::HashSet::new();
+    frees.retain(|n| seen.insert(n.clone()));
+    if frees.is_empty() { return term.clone(); }
+    let mut subst: std::collections::HashMap<String, Term> = std::collections::HashMap::new();
+    for (i, name) in frees.iter().enumerate() {
+        subst.insert(name.clone(), Term::var(name.as_str(), i, Typ::dummy()));
+    }
+    fn apply(term: &Term, s: &std::collections::HashMap<String, Term>) -> Term {
+        match term {
+            Term::Free { name, .. } => s.get(name.as_ref()).cloned().unwrap_or_else(|| term.clone()),
+            Term::App { func, arg } => Term::app(apply(func, s), apply(arg, s)),
+            Term::Abs { name, typ, body } => Term::abs(name.clone(), typ.clone(), apply(body, s)),
+            _ => term.clone(),
+        }
+    }
+    apply(term, &subst)
 }
 
 // =========================================================================

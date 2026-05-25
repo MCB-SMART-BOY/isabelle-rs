@@ -881,7 +881,11 @@ fn parse_atom(s: &mut P) -> Option<Term> {
         }
         TokenKind::String => {
             s.adv();
-            Some(Term::const_(&src[1..src.len() - 1], Typ::base("prop")))
+            if src.len() >= 2 {
+                Some(Term::const_(&src[1..src.len() - 1], Typ::base("prop")))
+            } else {
+                Some(Term::const_(src, Typ::base("prop")))
+            }
         }
         TokenKind::Number => {
             s.adv();

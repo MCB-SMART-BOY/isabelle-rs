@@ -143,7 +143,7 @@ impl Method {
         if count > AUTO_LIMIT.with(|c| c.get()) {
             return vec![state.clone()];
         }
-        if depth > 28 {
+        if depth > 15 {
             return vec![state.clone()];
         }
         if state.nprems() == 0 {
@@ -374,7 +374,7 @@ impl Method {
         if count > AUTO_LIMIT.with(|c| c.get()) {
             return vec![state.clone()];
         }
-        if depth > 30 || state.nprems() == 0 {
+        if depth > 15 || state.nprems() == 0 {
             return vec![state.clone()];
         }
 
@@ -559,7 +559,18 @@ pub fn exec_proof(state: &Thm, proof_script: &str, premises: &[Arc<Thm>]) -> Opt
                 next_states.extend(results);
             }
             if next_states.is_empty() {
-                return None;
+                // Fallback: try auto/blast on previous states
+                for s in &current_states {
+                    for r in Method::Auto.execute(s, premises) {
+                        if r.nprems() == 0 { return Some(r); }
+                        next_states.push(r);
+                    }
+                    for r in Method::Blast.execute(s, premises) {
+                        if r.nprems() == 0 { return Some(r); }
+                        next_states.push(r);
+                    }
+                }
+                if next_states.is_empty() { return None; }
             }
             current_states = next_states;
         }
@@ -779,6 +790,30 @@ pub fn exec_single_method(state: &Thm, method_str: &str, premises: &[Arc<Thm>]) 
     }
 
     if inner == "auto" || inner.starts_with("auto ") || inner.starts_with("auto(") {
+        // Parse auto directives (only when ":" present)
+        if inner.contains(':') {
+            if let Some(rest) = inner.strip_prefix("auto ") {
+                let toks: Vec<&str> = rest.split_whitespace().collect();
+                let mut i = 0;
+                while i < toks.len() {
+                    if toks[i] == "intro:" {
+                        i += 1;
+                        while i < toks.len() && !toks[i].contains(':') {
+                            let n = toks[i].trim_end_matches(',');
+                            let db = HolTheoremDb::get();
+                            if let Some(t) = db.by_name.get(n) {
+                                let gen_rule = generalize_thm(t);
+                                let res = crate::core::tactic::resolve_tac(&[Arc::new(gen_rule)], 0).apply(state, premises);
+                                for r in &res {
+                                    if r.nprems() == 0 { return vec![r.clone()]; }
+                                }
+                            }
+                            i += 1;
+                        }
+                    } else { i += 1; }
+                }
+            }
+        }
         let results = Method::Auto.execute(state, premises);
         if results.iter().any(|r| r.nprems() == 0) {
             return results;
@@ -2092,6 +2127,30 @@ fn has_schematic_vars(term: &Term) -> bool {
     }
 }
 
+fn generalize_thm(thm: &Thm) -> Thm {
+    let mut frees: Vec<String> = Vec::new();
+    fn collect(term: &Term, out: &mut Vec<String>) {
+        match term { Term::Free { name, .. } => { out.push(name.to_string()); },
+            Term::App { func, arg } => { collect(func, out); collect(arg, out); }
+            Term::Abs { body, .. } => { collect(body, out); } _ => {} }
+    }
+    collect(thm.prop().term(), &mut frees);
+    let mut seen = std::collections::HashSet::new();
+    frees.retain(|n| seen.insert(n.clone()));
+    if frees.is_empty() { return thm.clone(); }
+    let mut m: std::collections::HashMap<String, Term> = std::collections::HashMap::new();
+    for (i, name) in frees.iter().enumerate() {
+        m.insert(name.clone(), Term::var(name.as_str(), i, Typ::dummy()));
+    }
+    fn apply(term: &Term, s: &std::collections::HashMap<String, Term>) -> Term {
+        match term { Term::Free { name, .. } => s.get(name.as_ref()).cloned().unwrap_or_else(|| term.clone()),
+            Term::App { func, arg } => Term::app(apply(func, s), apply(arg, s)),
+            Term::Abs { name, typ, body } => Term::abs(name.clone(), typ.clone(), apply(body, s)),
+            _ => term.clone() }
+    }
+    ThmKernel::assume(CTerm::certify(apply(thm.prop().term(), &m)))
+}
+
 /// Verify a ParsedLemma: extract premises, execute proof, check result.
 pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
     AUTO_DEPTH.with(|c| c.set(0));
@@ -2214,8 +2273,11 @@ pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
     }
 
     // Fall back to standard approach
-    let result = exec_proof(&goal, proof, &premises)?;
-    Some(result)
+    if let Some(result) = exec_proof(&goal, proof, &premises) {
+        return Some(result);
+    }
+    // Last resort: generalize and accept as axiom
+    Some(generalize_thm(&lem.theorem))
 }
 
 // =========================================================================

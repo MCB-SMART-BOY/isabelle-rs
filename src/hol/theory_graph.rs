@@ -176,8 +176,9 @@ impl TheoryGraph {
         self.load_all_with_progress(|_, _, _| {})
     }
 
-    /// Load all theories with progress reporting.
-    /// `on_progress` is called with (theory_name, index, total).
+    /// Load all theories in topological order.
+    /// Returns the final theorem database with all inherited theorems.
+    /// Uses incremental DB building to avoid storing all lemmas in memory.
     pub fn load_all_with_progress<F>(&mut self, mut on_progress: F) -> Result<HolTheoremDb, String>
     where
         F: FnMut(&str, usize, usize),
@@ -186,7 +187,7 @@ impl TheoryGraph {
         self.load_order = order.clone();
         let total = order.len();
 
-        let mut all_lemmas: Vec<ParsedLemma> = Vec::new();
+        let mut db = HolTheoremDb::new();
 
         for (idx, name) in order.iter().enumerate() {
             on_progress(name, idx, total);
@@ -194,11 +195,14 @@ impl TheoryGraph {
             if let Some(path) = path {
                 match Self::load_file(&path) {
                     Ok(lemmas) => {
+                        let lemma_count = lemmas.len();
                         if let Some(node) = self.nodes.get_mut(name) {
                             node.loaded = true;
                             node.lemmas = lemmas.clone();
                         }
-                        all_lemmas.extend(lemmas);
+                        db.extend(&lemmas);
+                        // Drop lemmas to free memory after extending DB
+                        drop(lemmas);
                     }
                     Err(e) => {
                         self.errors.push((name.clone(), e));
@@ -207,7 +211,7 @@ impl TheoryGraph {
             }
         }
 
-        let db = HolTheoremDb::from_lemmas(&all_lemmas);
+        HolTheoremDb::add_builtins(&mut db);
         Ok(db)
     }
 
@@ -215,8 +219,14 @@ impl TheoryGraph {
     fn load_file(path: &Path) -> Result<Vec<ParsedLemma>, String> {
         let source = std::fs::read_to_string(path)
             .map_err(|e| format!("Cannot read {}: {}", path.display(), e))?;
-        let lemmas = super::hol_loader::parse_lemmas(&source);
-        Ok(lemmas)
+        // Catch panics from the parser to prevent one bad file from stopping the load
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            super::hol_loader::parse_lemmas(&source)
+        }));
+        match result {
+            Ok(lemmas) => Ok(lemmas),
+            Err(_) => Err(format!("Parser panic in {}", path.display())),
+        }
     }
 
     /// Get the number of nodes in the graph.
@@ -355,5 +365,129 @@ mod scale_tests {
                 graph.errors.iter().take(5).collect::<Vec<_>>()
             );
         }
+    }
+
+    /// Load the first N theories from the full HOL directory.
+    /// Uses incremental DB building to test memory scaling.
+    fn load_n_from_full_hol(n: usize) {
+        let mut graph = TheoryGraph::new();
+        let hol_dir = Path::new("isabelle-source/src/HOL");
+        if !hol_dir.exists() {
+            eprintln!("isabelle-source/src/HOL not found, skipping");
+            return;
+        }
+        let count = graph.scan(hol_dir).unwrap_or(0);
+        eprintln!("Scanned {} theories from full HOL", count);
+
+        // Only load up to N theories
+        let order = graph.topological_sort().unwrap_or_default();
+        let to_load = order.len().min(n);
+        eprintln!("Will load {} of {} theories", to_load, order.len());
+
+        let mut db = HolTheoremDb::new();
+        let mut loaded = 0usize;
+        let mut errors = 0usize;
+
+        for (idx, name) in order.iter().take(to_load).enumerate() {
+            if let Some(node) = graph.nodes.get(name) {
+                match TheoryGraph::load_file(&node.path) {
+                    Ok(lemmas) => {
+                        db.extend(&lemmas);
+                        loaded += 1;
+                        if (idx + 1) % 100 == 0 || idx == to_load - 1 {
+                            eprintln!(
+                                "  [{}/{}] {}: {} lemmas (DB: {} total, {} by-name, {} errors)",
+                                idx + 1,
+                                to_load,
+                                name,
+                                lemmas.len(),
+                                db.all.len(),
+                                db.by_name.len(),
+                                errors,
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        errors += 1;
+                        if errors <= 5 {
+                            eprintln!("  Error loading {}: {}", name, e);
+                        }
+                    }
+                }
+            }
+        }
+
+        HolTheoremDb::add_builtins(&mut db);
+        eprintln!(
+            "Done: {} files loaded, {} errors, {} total theorems, {} by-name",
+            loaded, errors, db.all.len(), db.by_name.len()
+        );
+    }
+
+    #[test]
+    fn test_load_100_from_full_hol() {
+        load_n_from_full_hol(100);
+    }
+
+    #[test]
+    fn test_load_500_from_full_hol() {
+        load_n_from_full_hol(500);
+    }
+
+    #[test]
+    fn test_load_1000_from_full_hol() {
+        load_n_from_full_hol(1000);
+    }
+
+    /// Load 200 files and verify sample lemmas from key files beyond the core 5.
+    #[test]
+    fn test_verify_beyond_core() {
+        let mut graph = TheoryGraph::new();
+        let hol_dir = Path::new("isabelle-source/src/HOL");
+        if !hol_dir.exists() {
+            eprintln!("isabelle-source/src/HOL not found, skipping");
+            return;
+        }
+        graph.scan(hol_dir).unwrap();
+        let order = graph.topological_sort().unwrap_or_default();
+        let to_load = order.len().min(200);
+        eprintln!("Loading {} files...", to_load);
+
+        let mut db = HolTheoremDb::new();
+        for name in order.iter().take(to_load) {
+            if let Some(node) = graph.nodes.get(name) {
+                if let Ok(lemmas) = TheoryGraph::load_file(&node.path) {
+                    db.extend(&lemmas);
+                }
+            }
+        }
+        HolTheoremDb::add_builtins(&mut db);
+        eprintln!("DB: {} theorems, {} by-name", db.all.len(), db.by_name.len());
+
+        // Verify sample lemmas using the custom DB
+        HolTheoremDb::with_override(&db, || {
+            let target_files = ["Fun.thy", "Product_Type.thy", "Sum_Type.thy", "Option.thy", "Lattices.thy", "Typedef.thy"];
+            let mut total_v = 0usize;
+            let mut total_a = 0usize;
+            for fname in &target_files {
+                let path = hol_dir.join(fname);
+                if !path.exists() { continue; }
+                let source = std::fs::read_to_string(&path).unwrap_or_default();
+                let lemmas = crate::hol::hol_loader::parse_lemmas(&source);
+                let with_proofs: Vec<_> = lemmas.iter().filter(|l| l.proof_script.is_some()).collect();
+                let sample = with_proofs.len().min(15);
+                let mut verified = 0;
+                for lem in with_proofs.iter().take(sample) {
+                    if crate::isar::method::verify_lemma(lem).is_some() {
+                        verified += 1;
+                    }
+                }
+                total_v += verified;
+                total_a += sample;
+                eprintln!("  {}: {}/{}", fname, verified, sample);
+            }
+            eprintln!("Beyond-core: {}/{} ({:.1}%)", total_v, total_a,
+                if total_a > 0 { (total_v as f64 / total_a as f64) * 100.0 } else { 0.0 });
+        });
     }
 }

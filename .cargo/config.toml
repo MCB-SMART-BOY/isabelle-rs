@@ -1,0 +1,3 @@
+[env]
+# Isabelle-rs requires larger stack for deep recursion in proof search
+RUST_MIN_STACK = "134217728"  # 128MB

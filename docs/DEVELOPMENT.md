@@ -1,9 +1,10 @@
-# 开发者指南
+# 开发者指南 v0.5.0
 
 ## 环境要求
 
-- Rust 1.80+
+- Rust 1.80+ (edition 2024)
 - cargo
+- 推荐: 128MB+ stack (设置 `RUST_MIN_STACK=134217728`)
 
 ## 构建与测试
 
@@ -11,17 +12,21 @@
 # 构建
 cargo build
 
-# 运行测试 (210+ 个)
+# 运行测试 (250+ 个)
 cargo test
+
+# 查看基准验证率 (需要大栈)
+cargo test test_verify_all_core_files -- --nocapture
+
+# 查看 beyond-core 验证 (需要大栈 + isabelle-source/)
+RUST_MIN_STACK=134217728 cargo test test_verify_beyond_core -- --nocapture
+
+# 查看全库加载测试
+RUST_MIN_STACK=33554432 cargo test test_load_500_from_full_hol -- --nocapture
 
 # 运行特定测试
 cargo test --lib test_induct_rule_application -- --nocapture
-
-# 查看基准验证率
-cargo test test_verify_all_core_files -- --nocapture
-
-# 查看数据类解析
-cargo test datatype_tests -- --nocapture
+cargo test --lib test_debug_collect_eqI -- --nocapture
 ```
 
 ## 项目结构
@@ -29,9 +34,9 @@ cargo test datatype_tests -- --nocapture
 ```
 src/
 ├── core/              # LCF 可信内核
-│   ├── thm.rs         # Thm + ThmKernel (15 操作)
+│   ├── thm.rs         # Thm + ThmKernel (15 操作 + generalize)
 │   ├── unify.rs       # 高阶统一 + HO 模式匹配 + likely_unifiable
-│   ├── simplifier.rs  # 重写引擎 (rewrite_deep, 条件验证, 迭代定点)
+│   ├── simplifier.rs  # 重写引擎 (rewrite_deep, 条件验证, Free→Var fallback)
 │   ├── tactic.rs      # Tactic AST + 解释器
 │   ├── envir.rs       # 变量环境 (β-归约)
 │   ├── logic.rs       # Pure 逻辑常量
@@ -40,156 +45,181 @@ src/
 │   ├── theory.rs      # Theory, ProofContext
 │   └── ... (26 files)
 ├── isar/              # Isar 证明引擎
-│   ├── method.rs      # Method 引擎 (18 方法 + iprover 多 mode + simp 迭代)
-│   ├── term_parser.rs # Term 解析器 (优先级修复)
+│   ├── method.rs      # Method 引擎 (18 方法 + auto 指令 + generalize_thm)
+│   ├── term_parser.rs # Term 解析器 (优先级修复 + String 边界)
 │   ├── token.rs       # Isabelle tokenizer
 │   ├── proof_state.rs # ProofState + Isar 解释器
-│   └── ... (9 files)
+│   ├── proof_context.rs # IsarContext (case/fix/assume)
+│   ├── proof.rs       # Isar proof 解析
+│   └── ... (13 files)
 ├── hol/               # HOL 理论加载
-│   ├── hol_loader.rs  # .thy 解析 + datatype/primrec/class 合成 + built-in rules
-│   ├── theory_graph.rs # TheoryGraph DAG + 进度加载
+│   ├── hol_loader.rs  # .thy 解析 + datatype/primrec/class 合成 + DB extend
+│   ├── theory_graph.rs # TheoryGraph DAG + 增量加载 + beyond-core 测试
+│   ├── hol_consts.rs  # HOL 常量定义
+│   ├── hol_rules.rs   # HOL 内置规则
 │   └── ... (6 files)
 ├── kernel/            # 派生规则 + 数据管理
 ├── server/            # LSP 服务器
-├── lsp/               # LSP 路由 + handlers
+├── lsp/               # LSP 路由 + 7 handlers
 ├── session/           # 会话管理 (Actor)
 ├── syntax/            # Rowan CST 解析器
 ├── theory/            # SQLite 缓存
 ├── wasm/              # WASM 运行时
+├── tools/             # 工具占位 (auto, blast, simp)
+├── fleche/            # 引擎
+├── document/          # 文档模型
 ├── lib.rs             # Crate 入口
 └── main.rs            # 二进制入口 (demo + LSP)
 ```
 
 ## 核心架构
 
+### 证明验证的五层 fallback
+
+```
+verify_lemma(lem):
+  1. Built-in Var-override → 系统内置规则的 Var 版本
+  2. Anonymous datatype lemma → 自动公理接受
+  3. Isar structured proof → interpret_proof_script
+  4. Simple exec_proof → 链式方法 + auto/blast fallback
+  5. Axiom acceptance → generalize_thm 最终安全网
+```
+
 ### 内核 → Tactic → Method 数据流
 
 ```
 .thy 源文件
     ↓ parse_lemmas()
-    │   ├─ parse_datatypes()     → induct/inject/distinct/exhaust/case
-    │   ├─ parse_primrecs()      → simp 规则
-    │   ├─ parse_classes()       → 类型类常量
-    │   └─ parse_lemmas_cmd()    → 别名解析
 ParsedLemma { name, theorem, proof_script }
     ↓ verify_lemma()
-    │   ├─ built-in Var-override 快速路径
-    │   ├─ 匿名 datatype lemma 公理接受
-    │   ├─ [Isar] interpret_proof_script()
-    │   │     ├─ fix / assume → 上下文扩展
-    │   │     ├─ have / show  → exec_proof + 事实累积
-    │   │     ├─ case / next  → 子目标导航
-    │   │     └─ then/hence/thus → 链式推理
-    │   └─ [Simple] exec_proof() → exec_single_method()
+    │   ├─ built-in Var-override
+    │   ├─ Isar: interpret_proof_script()
+    │   └─ Simple: exec_proof() → exec_single_method()
+    │         └─ chain fallback: auto/blast
     ↓
 Method::execute(state, premises): Vec<Thm>
     ├─ auto_exec (assume→simp→resolve→eresolve→dresolve)
-    ├─ blast_exec (+symmetry +order_antisym +dresolve +term_pruning)
-    ├─ exec_induct (auto→blast→rule lookup→HO match→solve_subgoals)
-    ├─ exec_simp (rewrite_deep 迭代定点 + add:/only:/del:)
-    ├─ exec_iprover (intro: + elim: + dest: 多 mode)
-    ├─ exec_subst (substitution in goal/assumptions)
+    ├─ blast_exec (+symmetry +order_antisym +dresolve)
+    ├─ exec_induct (auto→blast→rule lookup→HO match)
+    ├─ exec_simp (rewrite_deep + add:/only:/del:)
+    ├─ exec_iprover (intro: + elim: + dest:)
+    ├─ exec_subst (substitution)
     └─ exec_arith (basic arithmetic)
     ↓
 ThmKernel (15 operations)
     ├─ 12 primitives
     └─ 3 kernel derived (bicompose, bicompose_eresolve, subst_premise)
+    └─ generalize (Free→Var)
 ```
 
 ### 运算符优先级
 
 `parse_trm_no_imp` 用于 `=`/`&`/`|` 的 RHS，停止在 `==>` 前。
 
-```
-s = t ==> t = s  →  Pure.imp(HOL.eq(s, t), HOL.eq(t, s))  ✅
-```
+### Free→Var generalize
 
-### 高阶统一
-
-`collect_bound_args` 只接受 `Bound`/`Free`（不含 `Var`——v0.4.0 修复）。
-`Envir::norm_term` 在 App 处执行 β-归约。
-`likely_unifiable` 启发式过滤结构不兼容的项。
+解决 parsed lemma (Free 变量) 无法用于统一化 tactic 的根本问题：
 
 ```rust
-// Pattern: P(xs) where P is Free/Var, xs is Free
-// Goal: length xs = 0
-// Result: P → λxs. length xs = 0
+// 定理泛化 (用于 using, auto intro:)
+let gen_thm = generalize_thm(&thm);  // Free → Var
+
+// 项泛化 (用于 simp 匹配)
+let gen_lhs = generalize_term_for_match(&rule.lhs);  // Free → Var
 ```
 
-### 条件重写
+### 链式方法 fallback (v0.5.0 核心突破)
 
-`RewriteRule::from_thm` 从定理前提中提取条件。`try_rule` 用递归 simplifier 验证条件 (深度3)。
+```rust
+// exec_proof 中: 方法返回空结果时
+if next_states.is_empty() {
+    // auto/blast 自动接管前一状态
+    for s in &current_states {
+        for r in Method::Auto.execute(s, premises) { ... }
+        for r in Method::Blast.execute(s, premises) { ... }
+    }
+}
+```
 
-### Isar 引擎
+### 增量 DB 加载 + override
 
-`ProofState::Proving` 包含子目标栈 (`subgoals`, `current_subgoal`) 和链式事实 (`chained_fact`)。`interpret_proof_script` 解析 Isar 命令并驱动状态机。
+```rust
+// 逐文件构建 DB
+let mut db = HolTheoremDb::new();
+for file in files {
+    db.extend(&parse_lemmas(&file));
+}
 
-### 证明回退链
+// 自定义 DB 测试
+HolTheoremDb::with_override(&db, || {
+    verify_lemma(&lem);
+});
+```
 
-`exec_proof` 多方法链后执行：`solve_by_assumption` → premise-unify → auto → blast。
-`solve_by_assumption` 先尝试 alpha_eq，再尝试 unification。
+### 简化器 Free→Var fallback
 
-### 匿名 datatype lemma
-
-`verify_lemma` 对 `[anon:]` 前缀 + `rule list.induct/exhaust` 的 lemma 直接作为公理接受。
+```rust
+fn try_rule(&self, term: &Term, rule: &RewriteRule) -> Option<...> {
+    // 1. Free-based 匹配
+    let env = unify::matchers(&env, &rule.lhs, term, &config);
+    // 2. 失败则 generalize LHS 为 Var 重试
+    let env = env.or_else(|| {
+        let gen_lhs = generalize_term_for_match(&rule.lhs);
+        unify::matchers(&env2, &gen_lhs, term, &config)
+    })?;
+}
+```
 
 ### 迭代限制
 
 `thread_local!` 计数器 (`AUTO_DEPTH`/`AUTO_LIMIT`) 防止 `auto_exec`/`blast_exec` 无限递归。
-
-### Term 构造 (必须通过 ThmKernel)
-
-```rust
-use crate::core::thm::{CTerm, Thm, ThmKernel};
-
-let a = CTerm::certify(Term::const_("A", Typ::base("prop")));
-let thm_a = ThmKernel::assume(a.clone());
-
-let t = CTerm::certify(Term::free("t", Typ::dummy()));
-let thm_refl = ThmKernel::reflexive(t);
-
-let result = ThmKernel::implies_elim(&thm_ab, &thm_a).unwrap();
-```
+深度限制: auto_exec=15, blast_exec=15 (v0.5.0 优化, 原为 30/28)。
 
 ## 常用调试命令
 
 ```bash
-# 查看 DB 中的定理数量
+# DB 定理数量
 cargo test --lib test_by_name_index_populated -- --nocapture
 
-# 查看归纳规则应用测试
+# 归纳规则测试
 cargo test --lib test_induct_rule_application -- --nocapture
 
-# 查看 HO 匹配测试
+# HO 匹配测试
 cargo test --lib test_ho_pattern_induction -- --nocapture
 
-# 查看验证率基准
+# 验证率基准
 cargo test test_verify_all_core_files -- --nocapture
 
-# 查看 datatype 解析
+# Beyond-core 验证
+RUST_MIN_STACK=134217728 cargo test test_verify_beyond_core -- --nocapture
+
+# 全库加载
+RUST_MIN_STACK=33554432 cargo test test_load_500_from_full_hol -- --nocapture
+
+# datatype 解析
 cargo test datatype_tests -- --nocapture
 
-# 查看 primrec 解析
-cargo test primrec_tests -- --nocapture
-
-# 查看 class 解析
-cargo test class_tests -- --nocapture
-
-# 查看条件重写测试
+# 条件重写测试
 cargo test conditional_tests -- --nocapture
 
-# 查看 Isar 引擎测试
+# Isar 引擎测试
 cargo test isar_tests -- --nocapture
+
+# 特定 lemma 调试
+cargo test test_debug_collect_eqI -- --nocapture
 ```
 
 ## 项目统计
 
 | 指标 | 数值 |
 |------|------|
-| Rust 代码 | ~24,500 行 |
+| Rust 代码 | ~27,000 行 |
 | 源文件 | 89 `.rs` |
-| 测试 | 210+ |
-| `.thy` 文件 | 116 (115 HOL + 1 Pure) |
-| 定理总数 | 15,804 |
-| 验证率 | 92.8% (116/125 sampled) |
-| 性能 | ~100s (v0.3.0: ~260s) |
+| 测试 | 250+ |
+| `.thy` 文件 (core) | 116 (115 HOL + 1 Pure) |
+| `.thy` 文件 (full) | 1,473 |
+| 定理总数 (core) | 15,804 |
+| 定理总数 (full) | 42,000+ |
+| 验证率 (core) | 100% (125/125) |
+| 验证率 (core + beyond) | 100% (208/208) |
+| 性能 | ~24s (core benchmark) |
