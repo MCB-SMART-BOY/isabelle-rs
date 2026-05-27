@@ -364,8 +364,51 @@ impl Method {
         vec![current]
     }
 
+    /// Apply safe intro/elim rules exhaustively using discrimination nets.
+    fn apply_safe_rules(state: &Thm, premises: &[Arc<Thm>]) -> Thm {
+        let db = HolTheoremDb::get();
+        let mut current = state.clone();
+        for _ in 0..8 {
+            if current.nprems() == 0 { break; }
+            let subgoal = match current.prem(0) {
+                Some(p) => p,
+                None => break,
+            };
+            let mut progress = false;
+            // Try safe intro rules via net
+            let intro_cands = db.intro_net().lookup(&subgoal);
+            if !intro_cands.is_empty() {
+                let results = tactic::resolve_tac(&intro_cands, 0).apply(&current, premises);
+                for r in &results {
+                    if r.nprems() == 0 { return r.clone(); }
+                    if r.nprems() < current.nprems() {
+                        current = r.clone();
+                        progress = true;
+                        break;
+                    }
+                }
+                if progress { continue; }
+            }
+            // Try safe elim rules via net
+            let elim_cands = db.elim_net().lookup(&subgoal);
+            if !elim_cands.is_empty() {
+                let results = tactic::eresolve_tac(&elim_cands, 0).apply(&current, premises);
+                for r in &results {
+                    if r.nprems() == 0 { return r.clone(); }
+                    if r.nprems() <= current.nprems() + 2 {
+                        current = r.clone();
+                        progress = true;
+                        break;
+                    }
+                }
+                if progress { continue; }
+            }
+            break; // No progress
+        }
+        current
+    }
+
     fn auto_exec(state: &Thm, depth: usize, premises: &[Arc<Thm>]) -> Vec<Thm> {
-        // Global iteration limit to prevent timeouts
         let count = AUTO_DEPTH.with(|c| {
             let v = c.get() + 1;
             c.set(v);
@@ -378,8 +421,14 @@ impl Method {
             return vec![state.clone()];
         }
 
-        // 1. Safe: assumption on first subgoal
-        let assume_results = tactic::assume_tac(0).apply(state, premises);
+        // 0. Safe rules: apply safe intro/elim rules exhaustively via nets
+        let mut current = Self::apply_safe_rules(state, premises);
+        if current.nprems() == 0 {
+            return vec![current];
+        }
+
+        // 1. Assumption on first subgoal
+        let assume_results = tactic::assume_tac(0).apply(&current, premises);
         for r in &assume_results {
             if r.nprems() == 0 {
                 return assume_results;
@@ -388,9 +437,9 @@ impl Method {
 
         // 2. Safe: simp on first subgoal
         let db = HolTheoremDb::get();
-        let simp_results = tactic::simp_tac(&db.simps, 0).apply(state, premises);
+        let simp_results = tactic::simp_tac(&db.simps, 0).apply(&current, premises);
         for r in &simp_results {
-            if r.nprems() != state.nprems() {
+            if r.nprems() != current.nprems() {
                 let sub = Self::auto_exec(r, depth + 1, premises);
                 for s in &sub {
                     if s.nprems() == 0 {
@@ -401,28 +450,28 @@ impl Method {
         }
 
         // 3. Safe: resolve/eresolve with nets for fast lookup
-        let subgoal = match state.prem(0) {
+        let subgoal = match current.prem(0) {
             Some(p) => p,
-            None => return vec![state.clone()],
+            None => return vec![current.clone()],
         };
         let intro_cands = db.intro_net().lookup(&subgoal);
         let elim_cands = db.elim_net().lookup(&subgoal);
         let resolve_results = if intro_cands.is_empty() {
-            tactic::resolve_tac(&db.intros, 0).apply(state, premises)
+            tactic::resolve_tac(&db.intros, 0).apply(&current, premises)
         } else {
-            tactic::resolve_tac(&intro_cands, 0).apply(state, premises)
+            tactic::resolve_tac(&intro_cands, 0).apply(&current, premises)
         };
         let eresolve_results = if elim_cands.is_empty() {
-            tactic::eresolve_tac(&db.elims, 0).apply(state, premises)
+            tactic::eresolve_tac(&db.elims, 0).apply(&current, premises)
         } else {
-            tactic::eresolve_tac(&elim_cands, 0).apply(state, premises)
+            tactic::eresolve_tac(&elim_cands, 0).apply(&current, premises)
         };
 
         let mut all_solved = Vec::new();
         for r in resolve_results.iter().chain(eresolve_results.iter()) {
             if r.nprems() == 0 {
                 all_solved.push(r.clone());
-            } else if r.nprems() < state.nprems() + 5 {
+            } else if r.nprems() < current.nprems() + 5 {
                 let sub = Self::auto_exec(r, depth + 1, premises);
                 for s in &sub {
                     if s.nprems() == 0 {
@@ -436,11 +485,11 @@ impl Method {
         }
 
         // 4. Try dresolve (forward chaining) with intros
-        let dresolve_results = tactic::dresolve_tac(&db.intros, 0).apply(state, premises);
+        let dresolve_results = tactic::dresolve_tac(&db.intros, 0).apply(&current, premises);
         for r in &dresolve_results {
             if r.nprems() == 0 {
                 all_solved.push(r.clone());
-            } else if r.nprems() < state.nprems() && depth < 20 {
+            } else if r.nprems() < current.nprems() && depth < 20 {
                 let sub = Self::auto_exec(r, depth + 1, premises);
                 for s in &sub {
                     if s.nprems() == 0 {
@@ -457,11 +506,11 @@ impl Method {
         if depth < 5 {
             let all_results =
                 tactic::resolve_tac(&db.all.iter().take(30).cloned().collect::<Vec<_>>(), 0)
-                    .apply(state, premises);
+                    .apply(&current, premises);
             for r in &all_results {
                 if r.nprems() == 0 {
                     all_solved.push(r.clone());
-                } else if r.nprems() < state.nprems() + 3 && depth < 3 {
+                } else if r.nprems() < current.nprems() + 3 && depth < 3 {
                     let sub = Self::auto_exec(r, depth + 2, premises);
                     for s in &sub {
                         if s.nprems() == 0 {
