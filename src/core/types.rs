@@ -213,9 +213,123 @@ impl fmt::Display for Typ {
     }
 }
 
+// =========================================================================
+// TypeEnv — type signature registry
+// =========================================================================
+
+/// Registry of type information for constants and type constructors.
+/// Maps constant names to their type signatures, and type constructor names
+/// to their arities (number of type arguments).
+#[derive(Clone, Debug, Default)]
+pub struct TypeEnv {
+    /// Constant name → type signature (e.g., "HOL.eq" → 'a => 'a => bool)
+    pub consts: HashMap<String, Typ>,
+    /// Type constructor name → arity (e.g., "list" → 1, "fun" → 2)
+    pub types: HashMap<String, usize>,
+    /// Free variable name → declared type
+    pub frees: HashMap<String, Typ>,
+}
+
+impl TypeEnv {
+    pub fn new() -> Self {
+        let mut env = TypeEnv::default();
+        // Built-in: Pure logic types
+        env.types.insert("prop".into(), 0);
+        env.types.insert("fun".into(), 2);
+        env.types.insert("bool".into(), 0);
+        // Built-in: Pure constants
+        env.consts.insert(
+            "Pure.all".into(),
+            Typ::arrow(
+                Typ::arrow(Typ::free("'a", Sort::top()), Typ::base("prop")),
+                Typ::base("prop"),
+            ),
+        );
+        env.consts.insert(
+            "Pure.imp".into(),
+            Typ::arrows(vec![Typ::base("prop"), Typ::base("prop")], Typ::base("prop")),
+        );
+        env.consts.insert(
+            "Pure.eq".into(),
+            Typ::arrows(
+                vec![Typ::free("'a", Sort::top()), Typ::free("'a", Sort::top())],
+                Typ::base("prop"),
+            ),
+        );
+        env
+    }
+
+    /// Declare a type constructor with its arity.
+    pub fn declare_type(&mut self, name: &str, arity: usize) {
+        self.types.insert(name.to_string(), arity);
+    }
+
+    /// Declare a constant with its type signature.
+    pub fn declare_const(&mut self, name: &str, typ: Typ) {
+        self.consts.insert(name.to_string(), typ);
+    }
+
+    /// Declare a free variable with its type.
+    pub fn declare_free(&mut self, name: &str, typ: Typ) {
+        self.frees.insert(name.to_string(), typ);
+    }
+
+    /// Get the type signature of a constant.
+    pub fn const_type(&self, name: &str) -> Option<&Typ> {
+        self.consts.get(name)
+    }
+
+    /// Get the arity of a type constructor.
+    pub fn type_arity(&self, name: &str) -> Option<usize> {
+        self.types.get(name).copied()
+    }
+
+    /// Look up a constant type, with fallback to common names.
+    pub fn lookup_const(&self, name: &str) -> Option<&Typ> {
+        self.consts.get(name).or_else(|| {
+            // Try without prefix (e.g., "eq" → "HOL.eq")
+            if !name.contains('.') {
+                self.consts.get(&format!("HOL.{}", name))
+            } else {
+                None
+            }
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_type_env_builtins() {
+        let env = TypeEnv::new();
+        assert_eq!(env.type_arity("fun"), Some(2));
+        assert_eq!(env.type_arity("bool"), Some(0));
+        assert_eq!(env.type_arity("prop"), Some(0));
+        assert!(env.const_type("Pure.imp").is_some());
+        assert!(env.const_type("Pure.eq").is_some());
+        assert!(env.const_type("Pure.all").is_some());
+    }
+
+    #[test]
+    fn test_type_env_declare() {
+        let mut env = TypeEnv::new();
+        env.declare_type("list", 1);
+        env.declare_type("set", 1);
+        assert_eq!(env.type_arity("list"), Some(1));
+        assert_eq!(env.type_arity("set"), Some(1));
+        assert_eq!(env.type_arity("nonexistent"), None);
+
+        env.declare_const("HOL.eq", Typ::arrows(
+            vec![Typ::free("'a", Sort::top()), Typ::free("'a", Sort::top())],
+            Typ::base("bool"),
+        ));
+        assert!(env.const_type("HOL.eq").is_some());
+        assert!(env.lookup_const("eq").is_some()); // fallback lookup
+    }
+
+    #[test]
     #[test]
     fn test_sort() {
         let s = Sort::singleton("type");

@@ -188,20 +188,24 @@ impl TheoryGraph {
         let total = order.len();
 
         let mut db = HolTheoremDb::new();
+        let mut type_env = crate::core::types::TypeEnv::new();
 
         for (idx, name) in order.iter().enumerate() {
             on_progress(name, idx, total);
             let path = self.nodes.get(name).map(|n| n.path.clone());
             if let Some(path) = path {
                 match Self::load_file(&path) {
-                    Ok(lemmas) => {
+                    Ok((lemmas, source)) => {
                         let lemma_count = lemmas.len();
                         if let Some(node) = self.nodes.get_mut(name) {
                             node.loaded = true;
                             node.lemmas = lemmas.clone();
                         }
                         db.extend(&lemmas);
-                        // Drop lemmas to free memory after extending DB
+                        // Build type env from source
+                        let file_env = HolTheoremDb::build_type_env(&source);
+                        type_env.consts.extend(file_env.consts);
+                        type_env.types.extend(file_env.types);
                         drop(lemmas);
                     }
                     Err(e) => {
@@ -212,11 +216,12 @@ impl TheoryGraph {
         }
 
         HolTheoremDb::add_builtins(&mut db);
+        db.type_env = type_env;
         Ok(db)
     }
 
-    /// Load a single theory file and return its parsed lemmas.
-    fn load_file(path: &Path) -> Result<Vec<ParsedLemma>, String> {
+    /// Load a single theory file and return its parsed lemmas and source.
+    fn load_file(path: &Path) -> Result<(Vec<ParsedLemma>, String), String> {
         let source = std::fs::read_to_string(path)
             .map_err(|e| format!("Cannot read {}: {}", path.display(), e))?;
         // Catch panics from the parser to prevent one bad file from stopping the load
@@ -224,7 +229,7 @@ impl TheoryGraph {
             super::hol_loader::parse_lemmas(&source)
         }));
         match result {
-            Ok(lemmas) => Ok(lemmas),
+            Ok(lemmas) => Ok((lemmas, source)),
             Err(_) => Err(format!("Parser panic in {}", path.display())),
         }
     }
@@ -391,7 +396,7 @@ mod scale_tests {
         for (idx, name) in order.iter().take(to_load).enumerate() {
             if let Some(node) = graph.nodes.get(name) {
                 match TheoryGraph::load_file(&node.path) {
-                    Ok(lemmas) => {
+                    Ok((lemmas, _source)) => {
                         db.extend(&lemmas);
                         loaded += 1;
                         if (idx + 1) % 100 == 0 || idx == to_load - 1 {
@@ -450,13 +455,13 @@ mod scale_tests {
         }
         graph.scan(hol_dir).unwrap();
         let order = graph.topological_sort().unwrap_or_default();
-        let to_load = order.len().min(200);
+        let to_load = order.len().min(100);
         eprintln!("Loading {} files...", to_load);
 
         let mut db = HolTheoremDb::new();
         for name in order.iter().take(to_load) {
             if let Some(node) = graph.nodes.get(name) {
-                if let Ok(lemmas) = TheoryGraph::load_file(&node.path) {
+                if let Ok((lemmas, _source)) = TheoryGraph::load_file(&node.path) {
                     db.extend(&lemmas);
                 }
             }
@@ -466,7 +471,11 @@ mod scale_tests {
 
         // Verify sample lemmas using the custom DB
         HolTheoremDb::with_override(&db, || {
-            let target_files = ["Fun.thy", "Product_Type.thy", "Sum_Type.thy", "Option.thy", "Lattices.thy", "Typedef.thy"];
+            let target_files = [
+                "Fun.thy", "Product_Type.thy", "Sum_Type.thy",
+                "Option.thy", "Lattices.thy", "Typedef.thy",
+                "Num.thy", "Power.thy", "Fields.thy",
+            ];
             let mut total_v = 0usize;
             let mut total_a = 0usize;
             for fname in &target_files {

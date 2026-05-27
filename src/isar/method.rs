@@ -400,9 +400,23 @@ impl Method {
             }
         }
 
-        // 3. Safe: resolve/eresolve with DB theorems
-        let resolve_results = tactic::resolve_tac(&db.intros, 0).apply(state, premises);
-        let eresolve_results = tactic::eresolve_tac(&db.elims, 0).apply(state, premises);
+        // 3. Safe: resolve/eresolve with nets for fast lookup
+        let subgoal = match state.prem(0) {
+            Some(p) => p,
+            None => return vec![state.clone()],
+        };
+        let intro_cands = db.intro_net().lookup(&subgoal);
+        let elim_cands = db.elim_net().lookup(&subgoal);
+        let resolve_results = if intro_cands.is_empty() {
+            tactic::resolve_tac(&db.intros, 0).apply(state, premises)
+        } else {
+            tactic::resolve_tac(&intro_cands, 0).apply(state, premises)
+        };
+        let eresolve_results = if elim_cands.is_empty() {
+            tactic::eresolve_tac(&db.elims, 0).apply(state, premises)
+        } else {
+            tactic::eresolve_tac(&elim_cands, 0).apply(state, premises)
+        };
 
         let mut all_solved = Vec::new();
         for r in resolve_results.iter().chain(eresolve_results.iter()) {

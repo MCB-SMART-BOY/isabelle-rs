@@ -31,28 +31,51 @@ use super::types::Typ;
 
 /// A certified term — a term that has been type-checked against a theory
 /// signature. In Isabelle, `cterm` is an abstract type.
-///
-/// For now this is a simple wrapper; the full implementation requires
-/// a `Theory` context for type checking.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct CTerm {
     term: Term,
     maxidx: usize,
+    /// The type of this term (Typ::dummy() if unknown).
+    term_type: Typ,
 }
 
 impl CTerm {
-    /// Create a certified term.
-    /// In the full implementation, this would verify the term against a signature.
+    /// Create a certified term (type will be dummy).
     pub fn certify(term: Term) -> Self {
         let maxidx = Self::compute_maxidx(&term);
-        CTerm { term, maxidx }
+        // Try to infer type from the term structure
+        let term_type = Self::infer_type(&term);
+        CTerm { term, maxidx, term_type }
     }
 
-    pub fn term(&self) -> &Term {
-        &self.term
+    /// Create a certified term with explicit type.
+    pub fn certify_typed(term: Term, typ: Typ) -> Self {
+        let maxidx = Self::compute_maxidx(&term);
+        CTerm { term, maxidx, term_type: typ }
     }
-    pub fn maxidx(&self) -> usize {
-        self.maxidx
+
+    pub fn term(&self) -> &Term { &self.term }
+    pub fn maxidx(&self) -> usize { self.maxidx }
+    pub fn term_type(&self) -> &Typ { &self.term_type }
+
+    /// Infer the type of a term from its structure.
+    /// Returns Typ::dummy() if type cannot be determined.
+    fn infer_type(term: &Term) -> Typ {
+        match term {
+            Term::Const { typ, .. } if !typ.is_dummy() => typ.clone(),
+            Term::Free { typ, .. } if !typ.is_dummy() => typ.clone(),
+            Term::Var { typ, .. } if !typ.is_dummy() => typ.clone(),
+            Term::Abs { typ, .. } if !typ.is_dummy() => typ.clone(),
+            Term::App { func, arg } => {
+                let ft = Self::infer_type(func);
+                if let Some((_, ret)) = ft.dest_fun() {
+                    ret.clone()
+                } else {
+                    Typ::dummy()
+                }
+            }
+            _ => Typ::dummy(),
+        }
     }
 
     fn compute_maxidx(t: &Term) -> usize {
@@ -710,15 +733,44 @@ impl ThmKernel {
     /// Quick check: can two terms possibly unify based on their top-level structure?
     /// Returns false for obviously incompatible pairs (different head constructors),
     /// avoiding expensive unification attempts that are guaranteed to fail.
+    /// Now also checks type compatibility when type info is available.
     fn likely_unifiable(a: &Term, b: &Term) -> bool {
         match (a, b) {
             (Term::Var { .. }, _) | (_, Term::Var { .. }) => true,
             (Term::App { .. }, Term::App { .. }) => true,
             (Term::Abs { .. }, Term::Abs { .. }) => true,
-            (Term::Const { name: n1, .. }, Term::Const { name: n2, .. }) => n1 == n2,
+            (Term::Const { name: n1, typ: t1 }, Term::Const { name: n2, typ: t2 }) => {
+                if n1 != n2 { return false; }
+                // Type-aware: check TypeEnv when embedded types are dummy
+                let t1_eff = if t1.is_dummy() {
+                    use crate::hol::hol_loader::HolTheoremDb;
+                    HolTheoremDb::get().type_env.const_type(n1).unwrap_or(t1)
+                } else { t1 };
+                let t2_eff = if t2.is_dummy() {
+                    use crate::hol::hol_loader::HolTheoremDb;
+                    HolTheoremDb::get().type_env.const_type(n2).unwrap_or(t2)
+                } else { t2 };
+                if !t1_eff.is_dummy() && !t2_eff.is_dummy() {
+                    Self::types_compatible(t1_eff, t2_eff)
+                } else {
+                    true
+                }
+            }
             (Term::Free { name: n1, .. }, Term::Free { name: n2, .. }) => n1 == n2,
             (Term::Bound(i1), Term::Bound(i2)) => i1 == i2,
             _ => false,
+        }
+    }
+
+    /// Check if two types are structurally compatible (can potentially unify).
+    fn types_compatible(t1: &Typ, t2: &Typ) -> bool {
+        match (t1, t2) {
+            (Typ::Type { name: n1, args: a1 }, Typ::Type { name: n2, args: a2 }) => {
+                if n1 != n2 { return false; }
+                if a1.len() != a2.len() { return false; }
+                a1.iter().zip(a2.iter()).all(|(a, b)| Self::types_compatible(a, b))
+            }
+            _ => true, // TFree, TVar, dummy — always potentially compatible
         }
     }
 

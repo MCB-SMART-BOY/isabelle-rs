@@ -378,10 +378,11 @@ fn compute_maxidx(term: &Term) -> usize {
 }
 
 fn generalize_term_for_match(term: &Term) -> Term {
-    let mut frees: Vec<String> = Vec::new();
-    fn collect(term: &Term, out: &mut Vec<String>) {
+    // Collect Free variables with their types
+    let mut frees: Vec<(String, Typ)> = Vec::new();
+    fn collect(term: &Term, out: &mut Vec<(String, Typ)>) {
         match term {
-            Term::Free { name, .. } => { out.push(name.to_string()); }
+            Term::Free { name, typ } => { out.push((name.to_string(), typ.clone())); }
             Term::App { func, arg } => { collect(func, out); collect(arg, out); }
             Term::Abs { body, .. } => { collect(body, out); }
             _ => {}
@@ -389,11 +390,12 @@ fn generalize_term_for_match(term: &Term) -> Term {
     }
     collect(term, &mut frees);
     let mut seen = std::collections::HashSet::new();
-    frees.retain(|n| seen.insert(n.clone()));
+    frees.retain(|(n, _)| seen.insert(n.clone()));
     if frees.is_empty() { return term.clone(); }
     let mut subst: std::collections::HashMap<String, Term> = std::collections::HashMap::new();
-    for (i, name) in frees.iter().enumerate() {
-        subst.insert(name.clone(), Term::var(name.as_str(), i, Typ::dummy()));
+    for (i, (name, typ)) in frees.iter().enumerate() {
+        let var_type = if typ.is_dummy() { Typ::dummy() } else { typ.clone() };
+        subst.insert(name.clone(), Term::var(name.as_str(), i, var_type));
     }
     fn apply(term: &Term, s: &std::collections::HashMap<String, Term>) -> Term {
         match term {

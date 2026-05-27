@@ -44,25 +44,72 @@ pub fn parse_type(input: &str) -> Option<Typ> {
     parse_typ(&mut s)
 }
 
+/// Extended parse with TypeEnv for arity checking.
+pub fn parse_type_with_env(input: &str, env: &crate::core::types::TypeEnv) -> Option<Typ> {
+    let mut s = P::new(Lexer::new(input).tokenize());
+    parse_typ_env(&mut s, env)
+}
+
 fn parse_typ(s: &mut P) -> Option<Typ> {
-    let t1 = parse_typ_atom(s)?;
-    if s.is_sym("=>") {
-        s.adv();
-        let t2 = parse_typ(s)?;
-        return Some(Typ::arrow(t1, t2));
+    parse_typ_env(s, &crate::core::types::TypeEnv::new())
+}
+
+fn parse_typ_env(s: &mut P, env: &crate::core::types::TypeEnv) -> Option<Typ> {
+    let mut t = parse_typ_atom(s)?;
+    // Postfix type application: 'a list  →  Type("list", ['a])
+    // Keep applying while the next token is a type identifier
+    loop {
+        match s.kind() {
+            Some(TokenKind::Ident) | Some(TokenKind::LongIdent) => {
+                let name: Arc<str> = Arc::from(s.src()?.as_str());
+                // Check if this is a known type constructor (has arity > 0)
+                let arity = env.type_arity(&name).unwrap_or(0);
+                if arity > 0 {
+                    s.adv();
+                    // Collect the required number of arguments (already parsed as 't')
+                    // For postfix: 'a list → list('a), so t is the arg
+                    let mut args = vec![t];
+                    // If arity > 1, collect more args from the left side
+                    // (e.g., ('a, 'b) map → map('a, 'b) — not standard but possible)
+                    t = Typ::Type { name, args };
+                } else if arity == 0 {
+                    // Not a type constructor — stop
+                    break;
+                } else {
+                    // Unknown arity — assume 0 and skip
+                    break;
+                }
+            }
+            Some(TokenKind::Symbol(ref x)) if x.as_ref() == "=>" => {
+                s.adv();
+                let t2 = parse_typ_env(s, env)?;
+                return Some(Typ::arrow(t, t2));
+            }
+            _ => break,
+        }
     }
-    Some(t1)
+    Some(t)
 }
 
 fn parse_typ_atom(s: &mut P) -> Option<Typ> {
     match &s.kind()? {
-        TokenKind::TypeVar | TokenKind::SchematicTypeVar => {
-            let name = Arc::from(s.src()?.as_str());
+        TokenKind::TypeVar => {
+            let name: Arc<str> = Arc::from(s.src()?.as_str());
             s.adv();
-            Some(Typ::free(name, Sort::singleton("type")))
+            // 'a → TFree, ?'a → TVar
+            if name.starts_with('?') {
+                Some(Typ::var(name, 0, Sort::singleton("type")))
+            } else {
+                Some(Typ::free(name, Sort::singleton("type")))
+            }
+        }
+        TokenKind::SchematicTypeVar => {
+            let name: Arc<str> = Arc::from(s.src()?.as_str());
+            s.adv();
+            Some(Typ::var(name, 0, Sort::singleton("type")))
         }
         TokenKind::Ident | TokenKind::LongIdent => {
-            let name = Arc::from(s.src()?.as_str());
+            let name: Arc<str> = Arc::from(s.src()?.as_str());
             s.adv();
             Some(Typ::Type { name, args: vec![] })
         }

@@ -11,7 +11,7 @@ use crate::core::logic::Pure;
 use crate::core::term::{Term, lambda};
 use crate::core::theory::Theory;
 use crate::core::thm::{CTerm, Thm, ThmKernel};
-use crate::core::types::{Sort, Typ};
+use crate::core::types::{Sort, Typ, TypeEnv};
 use crate::isar::term_parser::parse_term;
 use std::sync::Arc;
 
@@ -151,6 +151,10 @@ fn parse_definition(decl: &str) -> Option<(&str, &str, &str)> {
 
 /// Simplified HOL type parser — handles `bool`, `'a => bool`, `[bool, bool] => bool`
 fn parse_hol_type(s: &str) -> Option<Typ> {
+    parse_hol_type_with_env(s, &TypeEnv::new())
+}
+
+fn parse_hol_type_with_env(s: &str, _env: &TypeEnv) -> Option<Typ> {
     let s = s.trim();
     // Try function type: T1 => T2
     if let Some(pos) = s.find("=>") {
@@ -1864,6 +1868,14 @@ static HOL_THEOREMS: LazyLock<HolTheoremDb> = LazyLock::new(|| {
             lemmas.extend(parse_lemmas(set_thy));
             lemmas.extend(parse_lemmas(list_thy));
             let mut db = HolTheoremDb::from_lemmas(&lemmas);
+            // Build type env from core files
+            let mut type_env = TypeEnv::new();
+            for src in &[hol_thy, ord_thy, nat_thy, set_thy, list_thy] {
+                let fe = HolTheoremDb::build_type_env(src);
+                type_env.consts.extend(fe.consts);
+                type_env.types.extend(fe.types);
+            }
+            db.type_env = type_env;
             HolTheoremDb::add_builtins(&mut db);
             db
         }
@@ -1886,6 +1898,11 @@ pub struct HolTheoremDb {
     pub all: Vec<Arc<crate::core::thm::Thm>>,
     /// Theorem lookup by name (e.g., "sym", "trans", "refl")
     pub by_name: std::collections::HashMap<String, Arc<crate::core::thm::Thm>>,
+    /// Type environment: constant signatures + type constructor arities
+    pub type_env: crate::core::types::TypeEnv,
+    /// Cached discrimination nets for fast rule lookup (lazy)
+    intro_net: std::sync::OnceLock<crate::core::net::Net<crate::core::thm::Thm>>,
+    elim_net: std::sync::OnceLock<crate::core::net::Net<crate::core::thm::Thm>>,
 }
 
 impl HolTheoremDb {
@@ -1897,6 +1914,9 @@ impl HolTheoremDb {
             simps: Vec::new(),
             all: Vec::new(),
             by_name: std::collections::HashMap::new(),
+            type_env: crate::core::types::TypeEnv::new(),
+            intro_net: std::sync::OnceLock::new(),
+            elim_net: std::sync::OnceLock::new(),
         }
     }
 
@@ -2030,7 +2050,58 @@ impl HolTheoremDb {
             simps,
             all,
             by_name,
+            type_env: TypeEnv::new(),
+            intro_net: std::sync::OnceLock::new(),
+            elim_net: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Build a TypeEnv from .thy source text by extracting type declarations.
+    pub fn build_type_env(source: &str) -> TypeEnv {
+        let mut env = TypeEnv::new();
+        // Parse typedecl declarations
+        for cap in &find_declarations(source, "typedecl") {
+            let name = cap.trim();
+            if !name.is_empty() {
+                env.declare_type(name, 0);
+            }
+        }
+        // Parse datatype declarations to extract type constructor arities
+        for dt in &parse_datatypes(source) {
+            let arity = dt.type_params.len();
+            env.declare_type(&dt.name, arity);
+        }
+        // Parse axiomatization for constant type signatures
+        for block in &find_blocks(source, "axiomatization") {
+            for const_decl in block.split(" and ") {
+                let decl = const_decl.trim();
+                if let Some((name, typ_str)) = parse_const_decl(decl) {
+                    if let Some(typ) = parse_hol_type_with_env(typ_str, &env) {
+                        let full_name = if name.contains('.') {
+                            name.to_string()
+                        } else {
+                            format!("HOL.{}", name)
+                        };
+                        env.declare_const(&full_name, typ);
+                    }
+                }
+            }
+        }
+        // Parse definition blocks for constant type signatures
+        for block in &find_blocks(source, "definition") {
+            let decl = block.trim();
+            if let Some((name, typ_str, _defn)) = parse_definition(decl) {
+                if let Some(typ) = parse_hol_type_with_env(typ_str, &env) {
+                    let full_name = if name.contains('.') {
+                        name.to_string()
+                    } else {
+                        format!("HOL.{}", name)
+                    };
+                    env.declare_const(&full_name, typ);
+                }
+            }
+        }
+        env
     }
 
     /// Add built-in Pure/HOL theorems that are fundamental axioms.
@@ -2670,6 +2741,34 @@ impl HolTheoremDb {
             } else {
                 &HOL_THEOREMS
             }
+        })
+    }
+
+    /// Get (or build) the cached intro discrimination net.
+    pub fn intro_net(&self) -> &crate::core::net::Net<crate::core::thm::Thm> {
+        self.intro_net.get_or_init(|| {
+            let mut net = crate::core::net::Net::empty();
+            for thm in &self.intros {
+                let term = thm.prop().term();
+                let (_, concl) = crate::core::logic::Pure::strip_imp_prems(term);
+                net.insert(&concl, Arc::clone(thm));
+            }
+            net
+        })
+    }
+
+    /// Get (or build) the cached elim discrimination net.
+    pub fn elim_net(&self) -> &crate::core::net::Net<crate::core::thm::Thm> {
+        self.elim_net.get_or_init(|| {
+            let mut net = crate::core::net::Net::empty();
+            for thm in &self.elims {
+                let term = thm.prop().term();
+                let (prems, _) = crate::core::logic::Pure::strip_imp_prems(term);
+                if let Some(first) = prems.first() {
+                    net.insert(first, Arc::clone(thm));
+                }
+            }
+            net
         })
     }
 
