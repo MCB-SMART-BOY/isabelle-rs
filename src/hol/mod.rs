@@ -5,6 +5,7 @@
 //! HOL is the most-used object logic in Isabelle.
 //! It defines `bool`, connectives, quantifiers, and equality.
 pub mod axclass;
+pub mod bnf_lfp;
 pub mod class_system;
 pub mod ctr_sugar;
 pub mod function;
