@@ -58,4 +58,3 @@ pub mod lsp_types;
 pub mod transport;
 
 pub use handler::IsabelleServer;
-pub use transport::Transport;

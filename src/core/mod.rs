@@ -25,18 +25,23 @@
 pub mod bires;
 pub mod conjunction;
 pub mod consts;
+pub mod conv;
 pub mod drule;
 pub mod envir;
 pub mod facts;
 pub mod global_theory;
 pub mod logic;
 pub mod more_thm;
+pub mod morphism;
+pub mod name;
 pub mod net;
 pub mod pattern;
 pub mod sign;
 pub mod simplifier;
+pub mod sorts;
 pub mod tactic;
 pub mod term;
+pub mod term_ord;
 pub mod term_subst;
 pub mod theory;
 pub mod thm;
@@ -45,16 +50,13 @@ pub mod unify;
 pub mod variable;
 
 // Re-export the most commonly used types
-pub use envir::Envir;
-pub use error::{IsabelleError, KernelError, ProofError, Result, TypeError};
-pub use logic::Pure;
-pub use sign::Signature;
 pub use term::Term;
-pub use term_subst::{beta_norm, generalize, instantiate, subst_bounds};
 pub use theory::{ProofContext, Theory};
-pub use thm::{CTerm, Derivation, Thm, ThmKernel};
-pub use types::{ClassAlgebra, Sort, Typ};
+pub use thm::{CTerm, ThmKernel};
+pub use types::{Sort, Typ};
 
 pub mod axclass;
+pub mod context;
 pub mod error;
 pub mod proofterm;
+pub mod type_infer;

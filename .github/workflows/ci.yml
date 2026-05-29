@@ -1,0 +1,198 @@
+# Isabelle-rs CI Pipeline
+#
+# 4-stage pipeline:
+#   1. Quick Checks (fmt, clippy) — < 2 min
+#   2. Unit Tests — < 5 min
+#   3. Integration Tests — < 10 min
+#   4. Extended Checks (audit, doc, release build)
+#
+# Requires nightly Rust (edition 2024).
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:  # manual trigger
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_MIN_STACK: 134217728  # 128MB for deep term processing
+
+jobs:
+  # ==========================================================================
+  # Stage 1: Quick Checks (parallel, < 2 min)
+  # ==========================================================================
+
+  fmt:
+    name: "fmt"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: "clippy"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+
+  # ==========================================================================
+  # Stage 2: Unit Tests (parallel, < 5 min)
+  # ==========================================================================
+
+  test-unit-core:
+    name: "unit / core"
+    needs: [fmt, clippy]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - core::thm
+          - core::unify
+          - core::simplifier
+          - core::logic
+          - core::tactic
+          - core::net
+          - core::types
+          - core::sorts
+          - core::sign
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --lib ${{ matrix.module }}
+
+  test-unit-isar:
+    name: "unit / isar"
+    needs: [fmt, clippy]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - isar::method
+          - isar::proof
+          - isar::proof_state
+          - isar::term_parser
+          - isar::outer_syntax
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --lib ${{ matrix.module }}
+
+  test-unit-hol:
+    name: "unit / hol"
+    needs: [fmt, clippy]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - hol
+          - theory::loader
+          - theory::session_builder
+          - syntax::printer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --lib ${{ matrix.module }}
+
+  # ==========================================================================
+  # Stage 3: Integration Tests (< 10 min)
+  # ==========================================================================
+
+  test-integration:
+    name: "integration"
+    needs: [test-unit-core, test-unit-isar, test-unit-hol]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - name: Core verification benchmark
+        run: cargo test test_verify_all_core_files -- --nocapture
+      - name: Beyond-core verification
+        run: cargo test test_verify_beyond_core --lib -- --nocapture
+      - name: BNF/datatype tests
+        run: cargo test --test bnf_tests
+      - name: Integration tests
+        run: cargo test --test integration_tests
+      - name: Property-based tests
+        run: cargo test --test proptest
+
+  # ==========================================================================
+  # Stage 4: Extended Checks
+  # ==========================================================================
+
+  audit:
+    name: "security audit"
+    needs: [test-integration]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-audit
+      - run: cargo audit
+
+  docs:
+    name: "docs"
+    needs: [test-integration]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo doc --no-deps --document-private-items
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+
+  release-build:
+    name: "release build"
+    needs: [test-integration]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release
+
+  # ==========================================================================
+  # Platform verification (no tests, just compiles)
+  # ==========================================================================
+
+  build-macos:
+    name: "build / macos"
+    needs: [fmt, clippy]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check
+
+  build-windows:
+    name: "build / windows"
+    needs: [fmt, clippy]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check

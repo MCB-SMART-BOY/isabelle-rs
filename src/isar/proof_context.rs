@@ -66,7 +66,7 @@ impl LocalFacts {
 
 /// The Isar proof context extends the core proof context with
 /// Isar-specific features like cases, local facts, and syntax.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct IsarContext {
     /// The underlying core proof context.
     pub core: CoreProofContext,
@@ -123,6 +123,12 @@ impl IsarContext {
     /// Chain facts: `using thms`.
     pub fn using(&mut self, thms: Vec<Arc<Thm>>) {
         self.chained = thms;
+    }
+
+    /// Append theorem facts to the chain (for calculational reasoning).
+    pub fn chain_facts(&mut self, thms: Vec<crate::core::thm::Thm>) {
+        let arcs: Vec<Arc<crate::core::thm::Thm>> = thms.into_iter().map(Arc::new).collect();
+        self.chained.extend(arcs);
     }
 
     /// `with` = `using` + `from` (chain + make available as assumptions)

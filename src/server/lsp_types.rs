@@ -293,6 +293,12 @@ pub struct CompletionOptions {
     pub trigger_characters: Vec<String>,
 }
 
+/// `textDocument/documentSymbol` request params.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentSymbolParams {
+    pub text_document: TextDocumentIdentifier,
+}
+
 /// `textDocument/didOpen` notification params.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DidOpenTextDocumentParams {

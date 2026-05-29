@@ -26,6 +26,11 @@
 //! This module will formalize the process.
 
 pub mod cache;
+pub mod loader;
+pub mod local_theory;
+pub mod registry;
+pub mod session_builder;
+pub mod verify_classifier;
 
 use std::collections::HashMap;
 use std::path::PathBuf;

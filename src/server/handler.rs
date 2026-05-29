@@ -108,6 +108,7 @@ impl IsabelleServer {
             requests::TEXT_DOCUMENT_HOVER => self.handle_hover(req),
             requests::TEXT_DOCUMENT_COMPLETION => self.handle_completion(req),
             requests::TEXT_DOCUMENT_DEFINITION => self.handle_definition(req),
+            requests::TEXT_DOCUMENT_DOCUMENT_SYMBOL => self.handle_document_symbol(req),
             requests::PROOF_GOALS => self.handle_proof_goals(req),
             _ => {
                 self.send_error(req.id, JsonRpcError::method_not_found(&req.method));
@@ -317,8 +318,115 @@ impl IsabelleServer {
     }
 
     fn handle_definition(&mut self, req: JsonRpcRequest) {
-        // TODO: implement go-to-definition
-        self.send_result(req.id, serde_json::Value::Null);
+        let params: TextDocumentPositionParams = match serde_json::from_value(req.params.clone()) {
+            Ok(p) => p,
+            Err(e) => {
+                self.send_error(req.id, JsonRpcError::new(-32602, format!("{e}")));
+                return;
+            }
+        };
+
+        let uri = &params.text_document.uri;
+
+        // Get document text from fleche engine
+        let text = match self.fleche.get_document_text(uri) {
+            Some(t) => t,
+            None => {
+                // Try loading from filesystem
+                let file_path = uri.strip_prefix("file://").unwrap_or(uri);
+                match std::fs::read_to_string(file_path) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        self.send_error(
+                            req.id,
+                            JsonRpcError::new(-32800, format!("Cannot read document: {e}")),
+                        );
+                        return;
+                    }
+                }
+            }
+        };
+
+        // Find word at cursor position
+        let word = match word_at_position(
+            &text,
+            params.position.line as usize,
+            params.position.character as usize,
+        ) {
+            Some(w) => w,
+            None => {
+                self.send_result(req.id, serde_json::Value::Null);
+                return;
+            }
+        };
+
+        // Look up in definition index
+        match crate::hol::hol_loader::HolTheoremDb::get_definition_location(&word) {
+            Some(loc) => {
+                let def_uri = if loc.file == "<unknown>" {
+                    uri.clone()
+                } else if loc.file.starts_with("file://") {
+                    loc.file.clone()
+                } else if loc.file.starts_with('/') {
+                    format!("file://{}", loc.file)
+                } else {
+                    format!("file:///{}", loc.file)
+                };
+
+                let location = Location {
+                    uri: def_uri,
+                    range: Range {
+                        start: Position {
+                            line: (loc.line as u32).saturating_sub(1),
+                            character: 0,
+                        },
+                        end: Position {
+                            line: (loc.line as u32).saturating_sub(1),
+                            character: 0,
+                        },
+                    },
+                };
+
+                self.send_result(
+                    req.id,
+                    serde_json::to_value(&location).expect("Serialization failed"),
+                );
+            }
+            None => {
+                self.send_result(req.id, serde_json::Value::Null);
+            }
+        }
+    }
+
+    fn handle_document_symbol(&mut self, req: JsonRpcRequest) {
+        let params: DocumentSymbolParams = match serde_json::from_value(req.params.clone()) {
+            Ok(p) => p,
+            Err(e) => {
+                self.send_error(req.id, JsonRpcError::new(-32602, format!("{e}")));
+                return;
+            }
+        };
+
+        let uri = &params.text_document.uri;
+        let text = match self.fleche.get_document_text(uri) {
+            Some(t) => t,
+            None => {
+                let file_path = uri.strip_prefix("file://").unwrap_or(uri);
+                match std::fs::read_to_string(file_path) {
+                    Ok(t) => t,
+                    Err(_) => {
+                        self.send_result(req.id, serde_json::Value::Null);
+                        return;
+                    }
+                }
+            }
+        };
+
+        let symbols = crate::lsp::handlers::symbols::parse_document_symbols_for_server(&text);
+        self.send_result(
+            req.id,
+            serde_json::to_value(&symbols).expect("Serialization failed"),
+        );
     }
 
     fn handle_proof_goals(&mut self, req: JsonRpcRequest) {
@@ -399,4 +507,32 @@ impl IsabelleServer {
             uri
         );
     }
+}
+
+// =========================================================================
+// Helper functions
+// =========================================================================
+
+/// Find the word at a given position in text.
+fn word_at_position(text: &str, line: usize, char_pos: usize) -> Option<String> {
+    let target_line = text.lines().nth(line)?;
+    let bytes = target_line.as_bytes();
+    let end = char_pos.min(bytes.len());
+
+    let mut start = end;
+    while start > 0 && is_ident_char(bytes[start - 1]) {
+        start -= 1;
+    }
+    let mut end = end;
+    while end < bytes.len() && is_ident_char(bytes[end]) {
+        end += 1;
+    }
+
+    let word = &target_line[start..end];
+    if word.is_empty() { None } else { Some(word.to_string()) }
+}
+
+/// Check if a byte is a valid identifier character.
+fn is_ident_char(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_' || b == b'.' || b == b'\''
 }

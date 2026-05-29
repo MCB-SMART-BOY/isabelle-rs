@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::core::theory::Theory;
 use crate::document::document::*;
+use crate::hol::hol_loader::parse_lemmas;
 use crate::isar::toplevel::Toplevel;
 use crate::server::lsp_types::*;
 
@@ -67,48 +68,119 @@ impl CommandExecutor for RealExecutor {
 
     fn execute(&self, cmd: &Command, ctx: &mut CheckContext) -> Vec<Diagnostic> {
         let mut diags = Vec::new();
-        let mut top = Toplevel::new(Arc::clone(&self.theory));
 
-        match top.exec(&cmd.source) {
-            Ok(msg) => {
-                if msg.contains("lemma") {
-                    ctx.in_proof = true;
-                    ctx.proof_state = Some(ProofState {
-                        goals: vec![ProofGoal {
-                            hyps: vec![],
-                            conclusion: cmd.source.clone(),
-                            id: Some(format!("goal-{}", cmd.id)),
-                        }],
-                        background_goals: vec![],
-                        has_unsolved: true,
-                    });
-                } else if msg.contains("qed") || msg.contains("theory closed") {
-                    ctx.in_proof = false;
-                    ctx.proof_state = Some(ProofState {
-                        goals: vec![],
-                        background_goals: vec![],
-                        has_unsolved: false,
-                    });
-                } else if msg.contains("unknown") {
+        // Classify the command
+        let trimmed = cmd.source.trim();
+        let first_word = trimmed.split_whitespace().next().unwrap_or("");
+
+        match first_word {
+            "theory" => {
+                // Theory header — always OK
+                ctx.in_proof = false;
+                ctx.proof_state = None;
+                diags.push(Diagnostic {
+                    range: cmd.range.clone(),
+                    severity: Some(DiagnosticSeverity::Information),
+                    code: Some("theory-header".into()),
+                    source: Some("isabelle-rs".into()),
+                    message: format!("Theory {}", trimmed),
+                    related_information: None,
+                });
+            }
+            "lemma" | "theorem" | "corollary" | "proposition" => {
+                // Try to verify this lemma using the HOL theorem database
+                let parsed = parse_lemmas(trimmed);
+                if let Some(lem) = parsed.first() {
+                    match crate::isar::method::verify_lemma(lem) {
+                        Some(_thm) => {
+                            // Success! The lemma is verified.
+                            diags.push(Diagnostic {
+                                range: cmd.range.clone(),
+                                severity: Some(DiagnosticSeverity::Information),
+                                code: Some("lemma-verified".into()),
+                                source: Some("isabelle-rs".into()),
+                                message: format!("✅ Verified: {}", lem.name),
+                                related_information: None,
+                            });
+                            ctx.in_proof = false;
+                            ctx.proof_state = Some(ProofState {
+                                goals: vec![],
+                                background_goals: vec![],
+                                has_unsolved: false,
+                            });
+                        }
+                        None => {
+                            // Verification failed — report as warning with proof state
+                            diags.push(Diagnostic {
+                                range: cmd.range.clone(),
+                                severity: Some(DiagnosticSeverity::Warning),
+                                code: Some("lemma-unverified".into()),
+                                source: Some("isabelle-rs".into()),
+                                message: format!("⚠️ Unverified: {} (proof script may be incomplete or method not supported)", lem.name),
+                                related_information: None,
+                            });
+                            ctx.in_proof = true;
+                            ctx.proof_state = Some(ProofState {
+                                goals: vec![ProofGoal {
+                                    hyps: vec![],
+                                    conclusion: lem.name.clone(),
+                                    id: Some(format!("goal-{}", cmd.id)),
+                                }],
+                                background_goals: vec![],
+                                has_unsolved: true,
+                            });
+                        }
+                    }
+                } else {
+                    // Couldn't parse
                     diags.push(Diagnostic {
                         range: cmd.range.clone(),
-                        severity: Some(DiagnosticSeverity::Warning),
-                        code: Some("unknown-command".into()),
+                        severity: Some(DiagnosticSeverity::Error),
+                        code: Some("parse-error".into()),
                         source: Some("isabelle-rs".into()),
-                        message: msg,
+                        message: format!("Could not parse lemma: {}", trimmed),
                         related_information: None,
                     });
                 }
             }
-            Err(e) => {
+            "definition" | "fun" | "primrec" | "datatype" | "inductive" => {
+                // Definitions are always "accepted" (they're axiomatic in our kernel)
                 diags.push(Diagnostic {
                     range: cmd.range.clone(),
-                    severity: Some(DiagnosticSeverity::Error),
-                    code: Some("exec-error".into()),
+                    severity: Some(DiagnosticSeverity::Information),
+                    code: Some("definition-accepted".into()),
                     source: Some("isabelle-rs".into()),
-                    message: e,
+                    message: format!("📝 {}", trimmed.chars().take(80).collect::<String>()),
                     related_information: None,
                 });
+            }
+            _ => {
+                // Unknown/other commands — try the toplevel executor as fallback
+                let mut top = Toplevel::new(Arc::clone(&self.theory));
+                match top.exec(&cmd.source) {
+                    Ok(msg) => {
+                        if msg.contains("unknown") {
+                            diags.push(Diagnostic {
+                                range: cmd.range.clone(),
+                                severity: Some(DiagnosticSeverity::Warning),
+                                code: Some("unknown-command".into()),
+                                source: Some("isabelle-rs".into()),
+                                message: msg,
+                                related_information: None,
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        diags.push(Diagnostic {
+                            range: cmd.range.clone(),
+                            severity: Some(DiagnosticSeverity::Error),
+                            code: Some("exec-error".into()),
+                            source: Some("isabelle-rs".into()),
+                            message: e,
+                            related_information: None,
+                        });
+                    }
+                }
             }
         }
         diags
@@ -189,7 +261,13 @@ impl Fleche {
     }
 
     pub fn get_hover(&self, _uri: &str, _line: u32, _character: u32) -> Option<String> {
-        Some("hover info".into())
+        None
+    }
+
+    /// Get the full text of a document by URI.
+    pub fn get_document_text(&self, uri: &str) -> Option<String> {
+        let doc = self.document.lock().expect("Document lock poisoned");
+        doc.get_text(uri)
     }
 
     pub fn get_diagnostics(&self, uri: &str) -> Vec<Diagnostic> {

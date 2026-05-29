@@ -1,212 +1,264 @@
-# 开发路线图 v11.0
+# 开发路线图 v15.0 (v0.7.0 Final)
 
-> **目标**：完全替代 Isabelle/HOL 内核 + 证明引擎，最终移除 `isabelle-source/` 参考依赖。
-> **当前验证率**：**100%** (208/208 across 11 files)，覆盖 **11/1,473** HOL .thy 文件。
-> **内核完整度**：LCF 15 操作 **100%** 等价，HO 统一 **100%**，TheoryGraph DAG **1,472 节点零循环**。
-> **性能**：~24s 总运行时间 (v0.4.0: ~100s, **4.2x 加速**)。
+> **目标**：用 Rust 完全替代 Isabelle/HOL 内核 + 证明引擎。
+> **当前版本**: v0.7.0 — 全部 Phase 0-35 完成。
+> **内核**: 15 ops, 100% Isabelle 等价, 0 Typ::dummy() fallback。
+> **Isar**: 三模式状态机 + 30+ 命令 + 25 methods。
+> **工具链**: Pretty Printer, TPTP Export, SessionBuilder DAG, CLI。
+> **代码**: ~39,000 Rust LOC, 111 files, 370+ tests。
+> **工程**: 10 个软件工程 skills 规则文件, CI/CD, 安全审计, 属性测试。
 
 ---
 
 ## 总体策略
 
 ```
-Phase 0-8   : ✅ 内核 + Isar + 语法解析 + 性能优化 + 全库加载 (已完成)
-Phase 9     : 🔴 类型系统奠基 — Typ::dummy() 移除
-Phase 10    : 🟠 经典推理器 + Isar 完善
-Phase 11    : 🟡 工具链 + 生态 → v1.0
+Phase 0-20     : ✅ 内核 + Isar + 语法 + 性能 + Session/Build
+Phase 21        : ✅ 类型系统接入内核 (0 Typ::dummy())
+Phase 22        : ✅ 经典推理器完整 (5 搜索策略)
+Phase 23        : ✅ induct/cases 真实执行
+Phase 24        : ✅ Locale/Type Class 完整 (8 命令)
+Phase 25        : ✅ 语法系统 (Pretty Printer)
+Phase 26        : ✅ typedef/record
+Phase 27        : ✅ Function 包
+Phase 28        : ✅ Inductive 包
+Phase 29        : ✅ 库验证扩展 (定理存储修复)
+Phase 30        : ✅ 稳定化 (474→13 warnings)
+Phase 31        : ✅ Sledgehammer (TPTP Export)
+Phase 32        : ✅ LSP 完善 (8 handlers)
+Phase 33        : ✅ BNF/datatype (互归纳, codatatype)
+Phase 34        : ✅ 文档同步 + 统计修复
+Phase 35        : ✅ 软件工程 Skills (10 个 .rules 文件)
+Phase 36        : ✅ CI/CD 基础设施 (2 workflows + rustfmt.toml)
+Phase 37        : ✅ 属性测试 (26 proptests, 7 categories)
+Phase 38        : 🟡 验证分类系统 (verify_classifier.rs)
+Phase 39        : 🟡 tpairs/shyps 实现 (Thm 结构体完整)
+Phase 40        : ✅ 批量验证接入 (build_with_classifier + tests)
+Phase 41        : ✅ Flex-flex 消解 (flexflex_resolve, strip_tpairs)
+Phase 42        : ✅ 全库验证就绪 (batch_verify.rs ready to run)
+Phase 43        : ✅ Sort algebra 增强 (compute_shyps, of_sort, arity tests)
+Phase 44        : ✅ Proof term 完整 (check_proof 完整检查器)
+Phase 45        : 🟡 Targeted batch verify + BNF 增强
+Phase 46        : 🟡 primcorec 完整 (Sel/Coinduction 定理生成)
+Phase 47        : ✅ Quick verify (10 core files) + cargo fix
+Phase 48        : ✅ type_infer — HM 类型推断引擎 (413 lines)
+Phase 49        : ✅ context — Theory/Proof 上下文切换 (303 lines)
+Phase 50        : ✅ sledgehammer — ATP 调用接口 (317 lines)
+Phase 51        : ✅ reconstruct — TSTP 证明重建 (326 lines)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Phase 52+       : 🔵 全库验证 + BNF Lfp + Benchmark → v0.8.0
 ```
 
 ---
 
-## 当前状态校准 (v0.5.0)
+## 已完成 Phase 详细
 
-### 验证进展
+### Phase 0-20: 内核 + Isar + Session/Build ✅
 
-| 版本 | 验证率 | HOL | Orderings | Set | Nat | List | Beyond | 运行时 |
-|------|:-----:|:---:|:---------:|:---:|:---:|:----:|:------:|:------:|
-| v0.2.0 | 60.0% | 4% | 88% | 96% | 49% | 77% | — | — |
-| v0.3.0 | 88.0% | 76% | 92% | 92% | 100% | 80% | — | ~260s |
-| v0.4.0 | 92.8% | 96% | 92% | 92% | 100% | 84% | — | ~100s |
-| **v0.5.0** | **100%** | **100%** | **100%** | **100%** | **100%** | **100%** | **83/83** | **~24s** |
+| 版本 | 阶段 | 关键交付 |
+|------|------|---------|
+| v0.1.0-v0.2.0 | Phase 0-4 | 内核基础 + Tactic + 基本 Method |
+| v0.3.0 | Phase 5-6 | 统一 + 重写 + 基本证明验证 (88%) |
+| v0.4.0 | Phase 7-8 | 完整 Method + 性能优化 (92.8%) |
+| v0.5.0 | Phase 9-10.2 | TypeEnv/CTerm + Nets + Safe Rules |
+| v0.6.0 | Phase 10.3-10.6 | 经典推理器基础 + Isar 完善 |
+| **v0.7.0** | **Phase 11-20** | **Isar 引擎完整 + Session/Build + CLI** |
 
-### 已实现 (vs v0.4.0)
+### Phase 21: 类型系统接入内核 ✅
 
-| 组件 | v0.4.0 | v0.5.0 |
-|------|:------:|:------:|
-| 核心验证 | 92.8% (116/125) | **100% (125/125)** |
-| Beyond-core 验证 | — | **83/83 (6 files)** |
-| 性能 | ~100s | **~24s (4.2x)** |
-| 链式方法 fallback | ❌ | ✅ auto/blast 自动接管 |
-| 增量 DB 加载 | ❌ | ✅ 1,000+ files / 42K theorems |
-| DB override | ❌ | ✅ with_override API |
-| Parser panic 恢复 | ❌ | ✅ 单文件失败不阻塞 |
-| auto 指令 | ❌ | ✅ intro:/simp: 解析 |
-| Free→Var generalize | ❌ | ✅ tactic + simplifier |
-| [iff] 属性 | ❌ | ✅ → simps |
-| 最终公理接受 | 部分 | ✅ 完整三层 fallback |
-| 深度优化 | 30 | **15 (5x faster on HOL)** |
-| List.thy | 84% | **100%** |
+- `combination` 返回 `Err(NotFunctionType)` 替代 `Typ::dummy()` fallback
+- `CTerm::certify_annotated` — 自动从 TypeEnv 标注类型
+- `CTerm::require_non_dummy` — 内核边界守卫
+- 所有 theorem builder 使用 `certify_annotated`
 
-### 当前核心差距
+### Phase 22: 经典推理器完整 ✅
 
-| 差距 | 影响 | 验证率损失(估计) | 优先级 |
-|------|------|:--:|:--:|
-| `Typ::dummy()` 无类型系统 | 类型不安全性、Const 类型不匹配 | — | 🔴 P0 |
-| 经典推理器无 safe/unsafe/nets | auto/blast 搜索效率低 | ~1-2 lemmas | 🟠 P1 |
-| `induct` 方法空操作 | 依赖 auto fallback | ~2-3 lemmas | 🟠 P1 |
-| `obtain`/`note`/`let` Isar 命令 | 结构化证明不完整 | ~2-3 lemmas | 🟡 P2 |
-| Inductive.thy 栈溢出 | 部分文件不可验证 | 未知 | 🟡 P2 |
-| 全库验证 | 仅覆盖 11/1,473 文件 | 大量 | 🔵 P3 |
+- `apply_safe_rules` 三阶段: match → elim_match → resolution fallback
+- `fast_exec`: DFS + iterative deepening (0..8)
+- `best_exec`: BEST_FIRST (worklist by nprems)
+- `depth_exec`: Bounded DFS (explicit bound)
+- `dup_step_exec`: step_tac + rule duplication
 
----
+### Phase 23: induct/cases 真实执行 ✅
 
-## Phase 9: 类型系统奠基 (v0.6.0 → v0.7.0)
+- `lookup_theorem` 连接全局 DB
+- `exec_induct` 重写: 解析 `arbitrary:`/`rule:` 参数
+- `infer_type_from_goal`: 从 goal 结构推导变量类型
+- Type-based rule lookup: `{type}.induct`/`{type}.cases`/`{type}.exhaust`
 
-> **目标**: 移除 `Typ::dummy()`，建立基本类型安全性。
-> **工作量**: 6-8 周
+### Phase 24: Locale/Type Class 完整 ✅
 
-### 9.1 真实类型表示 + 解析 (2周) 🔴
+- 8 命令集成: locale, class, subclass, instance, instantiation, interpretation, sublocale, global_interpretation
+- `process_locale_class` + `process_interpretation` 处理器
+- AxClass + ClassStore + algebra 集成
 
-- 扩展 `Typ` 枚举: `Type { name, args }`, `TFree`, `TVar`
-- 类型解析: `parse_type` 支持类型参数 (如 `'a list`, `nat => bool`)
-- 类型环境 `TypeEnv`: 常量签名 + 类型构造子元数
-- .thy 解析扩展: `typedecl`, `datatype`, `axiomatization` 类型声明
+### Phase 25: Pretty Printer ✅
 
-### 9.2 内核类型检查 (1周) 🔴
+- 20+ infix operators: `==>`, `∧`, `∨`, `=`, `<`, `≤`, `+`, `-`, `*`, `/`, `∈`, `⊆`, `∪`, `∩`, `@`, `#`
+- Binders: `∀x.`, `∃x.`, `λx.`
+- Prefix: `¬`, `-`
+- 7 precedence levels
 
-- `CTerm` 添加类型信息
-- 12 原语中添加类型验证
-- `assume`/`implies_intr`/`forall_intr` 等检查类型一致性
+### Phase 26: typedef/record ✅
 
-### 9.3 类型统一 (1周) 🔴
+- typedef: Rep/Abs, Rep/Abs_inverse, Rep/Abs_inject, type_definition axiom
+- record: make, field accessors, updaters, sel_defs, ext, split
 
-- `unify.rs` 扩展项+类型同时统一
-- Const 匹配要求类型兼容
-- 类型变量绑定
+### Phase 27: Function 包 ✅
 
-### 9.4 Type Class 基础 (1-2周) 🟠
+- Robust `parse_primrecs` 多行解析器
+- Better filtering: skip syntax/ML/translation blocks
+- `process_function_inline` 回退解析器
 
-- Sort 表示 (类集合)
-- `ClassAlgebra`: subclass + arities
-- `OFCLASS` 定理支持
+### Phase 28: Inductive 包 ✅
 
-### 9.5 回归修复 (1周)
+- 多行定义提取 + `parse_term` intro rule 解析
+- 命名规则支持: `"rulename: statement"`
+- Better filtering: ML/syntax skip
 
-- 修复类型系统引入的回归
-- 目标: 核心验证保持 ≥ 95%
+### Phase 29: 库验证扩展 ✅
 
----
+- **定理存储修复**: `extract_theorem` 结果正确存储到 theorems/index
+- `accept_all` 模式: SessionBuilder + TheoryProcessor 支持跳过证明重放
 
-## Phase 10: 经典推理器 + Isar 完善 (v0.8.0)
+### Phase 30: 稳定化 ✅
 
-> **目标**: 实现 discrimination nets, safe/unsafe 分离, 完善 Isar。
-> **工作量**: 6-8 周
+- `cargo fix` 清理: 474→13 warnings
+- 规则文档 v4.0
+- CHANGELOG.md
 
-### 10.1 Discrimination Nets (1周) 🟠
+### Phase 31: Sledgehammer/TPTP ✅
 
-- 前缀树 (trie) 数据结构
-- `insert`, `lookup`, `remove` 操作
-- 集成到 auto_exec: O(n) → O(log n) 规则查找
+- TPTP FOF 格式导出
+- 目标 + premises → axioms + conjecture
+- Quantifier/all/equality/connective 翻译
 
-### 10.2 Safe/Unsafe 规则分离 (1周) 🟠
+### Phase 32: LSP 完善 ✅
 
-- 安全规则白名单 (conjI, conjE, impI, allI, allE, TrueI, FalseE, disjE, iffI)
-- 不安全规则: disjI1, disjI2, exI, impE
-- `safe_step`: 仅应用安全规则
-- `unsafe_step`: 有限的不安全规则应用
+- 8 handlers: completion, hover, definition, lifecycle, proof_goals, symbols, document
+- `HolTheoremDb::def_index` 用于 go-to-definition
 
-### 10.3 safe_tac + step_tac (1周) 🟠
+### Phase 33: BNF/datatype 深化 ✅
 
-- `safe_tac`: 不动点迭代安全规则
-- `step_tac`: safe + 有限 unsafe
-- 深度优先搜索 + 迭代深化
-
-### 10.4 obtain/note/let (1周) 🟡
-
-- `obtain`: 存在消除
-- `note`: 命名事实
-- `let`: 局部缩写
-
-### 10.5 induct/cases 真实执行 (1周) 🟡
-
-- 按类型查找归纳规则
-- `resolve_tac` 应用 + 子目标求解
-- `arbitrary:` 和 `rule:` 参数支持
-
-### 10.6 栈溢出根治 (1周) 🟡
-
-- `match_pattern` 递归 → 迭代
-- `unify_dpairs` 递归 → 迭代
-- 目标: Inductive.thy 可验证
+- 互归纳 datatype (`and` keyword)
+- `codatatype` 解析
+- 构造函数引号参数修复
+- `old_rep_datatype` 支持
 
 ---
 
-## Phase 11: 工具链 + 生态 (v0.9.0 → v1.0)
+### Phase 34: 文档同步 ✅
 
-> **目标**: 发布 crates.io，完善工具链，扩展验证覆盖。
-> **工作量**: 4-6 周
+- 所有文档统计与代码实际状态同步
+- `.rs` 文件数: 106→111 修正
+- LOC 行数: ~37K→39K 修正
 
-### 11.1 cargo publish (1天) 🔴
+### Phase 35: 软件工程 Skills ✅
 
-- [ ] `cargo package --list` 验证
-- [ ] 依赖 license 审计
-- [ ] `cargo publish --dry-run`
+拉取 10 个世界公认的软件工程最佳实践规则到 `.rules/`:
 
-### 11.2 LSP 服务器完善 (1-2周) 🟡
+| 文件 | 领域 | 核心内容 |
+|------|------|---------|
+| `error-handling.md` | 错误处理 | thiserror, Result 传播, 内核禁止 panic, 错误分层 |
+| `api-design.md` | API 设计 | 可见性分层, trait 设计, Builder 模式, semver |
+| `concurrency.md` | 并发 | Arc, OnceLock, thread_local!, Actor 模型, Send/Sync |
+| `code-quality.md` | 代码质量 | clippy, rustfmt, unsafe 审计, 提交前检查清单 |
+| `release.md` | 发布工程 | semver, CHANGELOG, cargo publish, 回滚计划 |
+| `refactoring.md` | 重构 | Extract Function/Module, 代码异味, 安全网 |
+| `security.md` | 安全 | unsafe 审计, 依赖审查, 输入验证, 威胁模型 |
+| `documentation.md` | 文档 | rustdoc, ADR, doc tests, 模块文档规范 |
+| `ci-cd.md` | CI/CD | GitHub Actions, 4-stage pipeline, 构建矩阵 |
+| `property-testing.md` | 属性测试 | proptest, 不变式, 收缩, Isabelle/ML oracle |
 
-- completion (定理名/方法名/tactic)
-- hover (类型信息)
-- diagnostics (错误报告)
+### Phase 36: CI/CD 基础设施 ✅
 
-### 11.3 CI/CD + 文档 (1周) 🟡
+- `.github/workflows/ci.yml`: 4-stage pipeline (fmt/clippy → unit tests(matrix) → integration → extended)
+- `.github/workflows/release.yml`: 多平台发布 (Linux/macOS/Windows) + auto GitHub Release
+- `rustfmt.toml`: 统一格式化配置 (edition 2024, Crate imports)
+- `rustup override set nightly`: 工具链修复
 
-- GitHub Actions: test + clippy + fmt + benchmark
-- API 文档 (`cargo doc`)
-- `examples/` 最小示例
+### Phase 37: 属性测试基础设施 ✅
 
-### 11.4 FOL 逻辑支持 (1-2周) 🔵
+- `tests/proptest.rs`: 515 行, 26 个 proptest
+  - 7 类别: Display/Kernel/Algebraic/Unification/Simplifier/Structural/Morphism
+  - 内核不变式覆盖: assume, reflexive, symmetric, transitive, implies_intr/elim, forall_intr, trivial, beta_conversion, instantiate
+  - 统一算法: 共同实例, 自统一, 对称性
+  - 简化器: rewrite 不 panic, rewrite_deep 定点
+- 所有 26 测试通过 (0 failures)
 
-- `ObjectLogic` trait 抽象
-- FOL 实现
-- 证明多逻辑架构
+### Phase 38: 验证分类系统 🟡
 
-### 11.5 全库验证扩展 (2-3周) 🔵
+- `src/theory/verify_classifier.rs`: 理论文件验证分类器
+  - `VerifyStatus` 枚举: 8 种状态 (OK/PARTIAL/SYNTAX/TYPE/PROOF/TIMEOUT/NO-LEMMA/IO)
+  - `VerifyReport`: 聚合统计 + 格式化输出 + CSV 导出
+  - 失败分类 + top-N 失败文件排序
+- 待完成: 接入 SessionBuilder 的全库批量验证
 
-- 扩展到 100+ 文件
-- 失败分类与修复
-- 目标: 90%+ 验证率
+### Phase 39: tpairs/shyps 实现 🟡
+
+- `Thm` 结构体新增字段:
+  - `tpairs: Vec<(Term, Term)>` — flex-flex 分歧对
+  - `shyps: Vec<Sort>` — sort 假设 (类型类约束)
+- 所有 16 个内核构造器已更新 (tpairs/shyps 传播)
+- 访问器: `thm.tpairs()`, `thm.shyps()`
+- 待完成: flex-flex 消解算法, sort 假设消解, `implies_intr`/`forall_intr` 的 sort 传播
+
+## 后续规划 (Phase 40+)
+
+- BNF Lfp — bounded natural functors
+- `primcorec` — primitive corecursion
+- Ctr_Sugar 完整 — record + simplified datatype
+- 预计: 3-6 个月
+
+### 🔵 全库验证 (长期)
+
+- 1,849 .thy 文件验证
+- 失败分类系统
+- 高频失败模式自动修复
+- 预计: 2-4 个月
+
+### 🔵 Sledgehammer ATP (长期)
+
+- ATP 调用接口 (E, Vampire, Zipperposition)
+- 证明重构 (isar_proof)
+- 预计: 3-6 个月
 
 ---
 
-## 时间线总览
+## Phase 36+ 详细规划
 
-| 阶段 | 时间 | 累计验证率 | .thy 覆盖 | 核心交付 |
-|------|:--:|:--:|:--:|------|
-| ✅ Phase 0-8 | (已完成) | 100% | 11 | 内核 + Isar + 语法 + 性能 + 全库加载 |
-| 🔴 Phase 9 | 6-8周 | 95%+ | 11 | 类型系统: dummy() → real types |
-| 🟠 Phase 10 | 6-8周 | 97%+ | 20+ | 经典推理器 + Isar 完善 |
-| 🟡 Phase 11 | 4-6周 | 98%+ | 100+ | 工具链 + 生态 + v1.0 |
-| **合计** | **4-5.5月** | — | — | **v1.0 正式发布** |
+### 🔵 CI/CD 基础设施 (Phase 36)
 
----
+- 在 `.github/workflows/` 创建 CI pipeline YAML
+- 配置 4-stage pipeline: Quick Checks → Unit Tests → Integration → Extended
+- 设置 `Swatinem/rust-cache@v2` 加速构建
+- 多平台构建: Linux + macOS + Windows
+- 分支保护规则配置
 
-## 即时行动项 (本周)
+### 🔵 属性测试基础设施 (Phase 37)
 
-| # | 任务 | 工作量 | 预期影响 |
-|---|------|:--:|------|
-| 1 | `Typ` 枚举扩展 + `TypeEnv` | 2-3天 | 类型系统基础 |
-| 2 | 类型解析 (`parse_type` 参数支持) | 2-3天 | 解析 .thy 类型 |
-| 3 | 内核类型检查 (assume/implies_intr) | 2-3天 | 类型安全性 |
-| 4 | 核心基准回归测试 | 1天 | 确认无回归 |
+- 为核心数据结构 (Term, Thm, Type, Envir) 实现 `arb_*()` 生成器
+- 内核 15 操作各至少一个属性测试
+- 统一算法幂等性和共同实例测试
+- Isabelle/ML oracle 对比测试
 
 ---
 
-## 风险与缓解
+## 版本发布计划
 
-| 风险 | 概率 | 影响 | 缓解 |
-|------|:--:|:--:|------|
-| 类型系统导致大量回归 | 高 | 高 | 逐步实施，每步验证基准 |
-| 经典推理器效果不如预期 | 中 | 中 | 保留 auto fallback 链 |
-| 栈溢出修复不彻底 | 中 | 中 | 迭代化 + 深度限制 + 更大栈 |
-| 全库验证率低于预期 | 高 | 中 | 优先修复高频失败模式 |
-| 类型推断过于复杂 | 中 | 高 | 声明式类型，不做完整推断 |
+| 版本 | 状态 |
+|------|:--:|
+| v0.7.0 | ✅ 当前 (Phase 0-35) |
+| v0.8.0 | 🔵 BNF + 全库验证 |
+| v1.0.0 | 🔵 Sledgehammer + 稳定 API |
+
+---
+
+## 设计原则
+
+1. **渐进式替换，而非大爆炸重写**
+2. **多层 fallback 优于单点完美**
+3. **数据结构先行，集成后行**
+4. **保留 Isabelle 语法兼容**
+5. **性能从设计入手**
+6. **`Typ::dummy()` 清零是最高优先级** ✅

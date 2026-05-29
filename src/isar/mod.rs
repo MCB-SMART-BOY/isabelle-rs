@@ -15,8 +15,10 @@
 //! └── term_parser.rs — Term/type parser + pretty printer
 //! ```
 
+pub mod keyword;
 pub mod linarith;
 pub mod method;
+pub mod outer_syntax;
 pub mod parse;
 pub mod proof;
 pub mod proof_context;

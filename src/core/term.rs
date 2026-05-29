@@ -106,6 +106,56 @@ impl Term {
         }
         (binders, body)
     }
+
+    /// Annotate dummy types in this term with known types from the TypeEnv.
+    /// Walks the entire term tree and replaces `Typ::dummy()` in Const and Free
+    /// nodes with the type from the environment.
+    /// Uses iterative traversal to avoid stack overflow on deeply nested terms.
+    /// Returns true if any types were changed.
+    pub fn type_annotate(&mut self, env: &super::types::TypeEnv) -> bool {
+        let mut changed = false;
+        let mut stack: Vec<&mut Term> = vec![self];
+        while let Some(term) = stack.pop() {
+            match term {
+                Term::Const { name, typ } => {
+                    if typ.is_dummy() {
+                        if let Some(known) = env.const_type(name.as_ref()) {
+                            *typ = known.clone();
+                            changed = true;
+                        }
+                    }
+                }
+                Term::Free { name, typ } => {
+                    if typ.is_dummy() {
+                        if let Some(known) = env.const_type(name.as_ref()) {
+                            *typ = known.clone();
+                            changed = true;
+                        } else if let Some(known) = env.frees.get(name.as_ref()) {
+                            *typ = known.clone();
+                            changed = true;
+                        }
+                    }
+                }
+                Term::Var { typ, .. } => {
+                    if typ.is_dummy() {
+                        typ.annotate_from_env(env);
+                    }
+                }
+                Term::Abs { name: _, typ, body } => {
+                    if typ.is_dummy() {
+                        typ.annotate_from_env(env);
+                    }
+                    stack.push(body);
+                }
+                Term::App { func, arg } => {
+                    stack.push(arg);
+                    stack.push(func);
+                }
+                Term::Bound(_) => {}
+            }
+        }
+        changed
+    }
     pub fn is_atom(&self) -> bool {
         !matches!(self, Term::App { .. })
     }
@@ -128,35 +178,92 @@ pub fn lambda(var: &Term, body: &Term) -> Term {
 }
 
 /// Substitute all occurrences of `var` with `Bound(depth)`.
+/// Iterative implementation to avoid stack overflow on deeply nested terms.
 fn subst_var_bound(depth: usize, var: &Term, term: &Term) -> Term {
-    if same_var(var, term) {
-        return Term::Bound(depth);
+    enum Frame {
+        Process(usize, Term),
+        BuildApp,
+        BuildAbs(Symbol, Typ),
     }
-    match term {
-        Term::App { func, arg } => Term::app(
-            subst_var_bound(depth, var, func),
-            subst_var_bound(depth, var, arg),
-        ),
-        Term::Abs { name, typ, body } => Term::abs(
-            name.clone(),
-            typ.clone(),
-            subst_var_bound(depth + 1, var, body),
-        ),
-        _ => term.clone(),
+
+    let var = var.clone();
+    let mut stack: Vec<Frame> = vec![Frame::Process(depth, term.clone())];
+    let mut results: Vec<Term> = Vec::new();
+
+    while let Some(frame) = stack.pop() {
+        match frame {
+            Frame::Process(d, t) => {
+                if same_var(&var, &t) {
+                    results.push(Term::Bound(d));
+                    continue;
+                }
+                match &t {
+                    Term::App { func, arg } => {
+                        stack.push(Frame::BuildApp);
+                        stack.push(Frame::Process(d, arg.as_ref().clone()));
+                        stack.push(Frame::Process(d, func.as_ref().clone()));
+                    }
+                    Term::Abs { name, typ, body } => {
+                        stack.push(Frame::BuildAbs(name.clone(), typ.clone()));
+                        stack.push(Frame::Process(d + 1, body.as_ref().clone()));
+                    }
+                    other => results.push(other.clone()),
+                }
+            }
+            Frame::BuildApp => {
+                let arg = results.pop().unwrap_or_else(|| Term::bound(0));
+                let func = results.pop().unwrap_or_else(|| Term::bound(0));
+                results.push(Term::app(func, arg));
+            }
+            Frame::BuildAbs(name, typ) => {
+                let body = results.pop().unwrap_or_else(|| Term::bound(0));
+                results.push(Term::abs(name, typ, body));
+            }
+        }
     }
+    results.pop().unwrap_or_else(|| term.clone())
 }
 
 /// Increment all Bound indices >= `depth` by 1.
+/// Iterative implementation to avoid stack overflow on deeply nested terms.
 fn incr_bound(depth: usize, term: &Term) -> Term {
-    match term {
-        Term::Bound(i) if *i >= depth => Term::Bound(i + 1),
-        Term::Bound(_) => term.clone(),
-        Term::App { func, arg } => Term::app(incr_bound(depth, func), incr_bound(depth, arg)),
-        Term::Abs { name, typ, body } => {
-            Term::abs(name.clone(), typ.clone(), incr_bound(depth + 1, body))
-        }
-        _ => term.clone(),
+    enum Frame {
+        Process(usize, Term),
+        BuildApp,
+        BuildAbs(Symbol, Typ),
     }
+
+    let mut stack: Vec<Frame> = vec![Frame::Process(depth, term.clone())];
+    let mut results: Vec<Term> = Vec::new();
+
+    while let Some(frame) = stack.pop() {
+        match frame {
+            Frame::Process(d, t) => match &t {
+                Term::Bound(i) if *i >= d => results.push(Term::Bound(i + 1)),
+                Term::Bound(_) => results.push(t.clone()),
+                Term::App { func, arg } => {
+                    stack.push(Frame::BuildApp);
+                    stack.push(Frame::Process(d, arg.as_ref().clone()));
+                    stack.push(Frame::Process(d, func.as_ref().clone()));
+                }
+                Term::Abs { name, typ, body } => {
+                    stack.push(Frame::BuildAbs(name.clone(), typ.clone()));
+                    stack.push(Frame::Process(d + 1, body.as_ref().clone()));
+                }
+                other => results.push(other.clone()),
+            },
+            Frame::BuildApp => {
+                let arg = results.pop().unwrap_or_else(|| Term::bound(0));
+                let func = results.pop().unwrap_or_else(|| Term::bound(0));
+                results.push(Term::app(func, arg));
+            }
+            Frame::BuildAbs(name, typ) => {
+                let body = results.pop().unwrap_or_else(|| Term::bound(0));
+                results.push(Term::abs(name, typ, body));
+            }
+        }
+    }
+    results.pop().unwrap_or_else(|| term.clone())
 }
 
 /// Check if two terms are the same logical variable (Free/Var cross-compatible).

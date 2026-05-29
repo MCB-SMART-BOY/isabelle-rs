@@ -21,6 +21,7 @@ use std::sync::Arc;
 
 use super::term::Term;
 use super::types::Typ;
+use super::types::Symbol;
 
 use super::envir::VarKey;
 
@@ -31,54 +32,96 @@ use super::envir::VarKey;
 /// Substitute bound variables: `Body[Bound(0) := args[0], Bound(1) := args[1], ...]`.
 ///
 /// This is the core of β-reduction: `(λx y. body) a b` → `subst_bounds([a, b], body)`.
+/// Iterative implementation to avoid stack overflow on deeply nested terms.
 pub fn subst_bounds(args: &[Term], body: &Term) -> Term {
-    match body {
-        Term::Bound(i) => {
-            if *i < args.len() {
-                args[*i].clone()
-            } else {
-                Term::bound(*i - args.len()) // shift remaining Bound indices
+    enum Frame {
+        Process(Term, Vec<Term>),
+        BuildAbs(Symbol, Typ),
+        BuildApp,
+    }
+
+    let mut stack: Vec<Frame> = vec![Frame::Process(body.clone(), args.to_vec())];
+    let mut results: Vec<Term> = Vec::new();
+
+    while let Some(frame) = stack.pop() {
+        match frame {
+            Frame::Process(t, args) => match &t {
+                Term::Bound(i) => {
+                    if *i < args.len() {
+                        results.push(lift_bound_iter(&args[*i], 0, 0));
+                    } else {
+                        results.push(Term::bound(*i - args.len()));
+                    }
+                }
+                Term::Abs { name, typ, body: inner } => {
+                    let mut new_args: Vec<Term> = vec![Term::bound(0)];
+                    new_args.extend(args.iter().map(|a| lift_bound_iter(a, 0, 1)));
+                    stack.push(Frame::BuildAbs(Arc::clone(name), typ.clone()));
+                    stack.push(Frame::Process(inner.as_ref().clone(), new_args));
+                }
+                Term::App { func, arg } => {
+                    stack.push(Frame::BuildApp);
+                    stack.push(Frame::Process(arg.as_ref().clone(), args.clone()));
+                    stack.push(Frame::Process(func.as_ref().clone(), args));
+                }
+                other => results.push(other.clone()),
+            },
+            Frame::BuildAbs(name, typ) => {
+                let body = results.pop().unwrap_or_else(|| Term::bound(0));
+                results.push(Term::abs(name, typ, body));
+            }
+            Frame::BuildApp => {
+                let arg = results.pop().unwrap_or_else(|| Term::bound(0));
+                let func = results.pop().unwrap_or_else(|| Term::bound(0));
+                results.push(Term::app(func, arg));
             }
         }
-        Term::Abs {
-            name,
-            typ,
-            body: inner,
-        } => {
-            // Under a binder: Bound(0) is the new binder, args start at Bound(1)
-            let dummy = Term::bound(0);
-            let mut new_args: Vec<Term> = vec![dummy];
-            new_args.extend(args.iter().map(|a| lift_bound(a, 0, 1)));
-            let substituted = subst_bounds(&new_args, inner);
-            Term::abs(Arc::clone(name), typ.clone(), substituted)
-        }
-        Term::App { func, arg } => Term::app(subst_bounds(args, func), subst_bounds(args, arg)),
-        // Const, Free, Var: no Bound vars to substitute
-        other => other.clone(),
     }
+    results.pop().unwrap_or_else(|| body.clone())
 }
 
-/// Lift all `Bound(i)` where `i >= cutoff` by `n` levels.
-/// This is needed when substituting under binders.
-fn lift_bound(term: &Term, cutoff: usize, n: usize) -> Term {
-    match term {
-        Term::Bound(i) => {
-            if *i >= cutoff {
-                Term::bound(*i + n)
-            } else {
-                Term::bound(*i)
+/// Iterative lift_bound: increment Bound indices >= cutoff by n.
+fn lift_bound_iter(term: &Term, cutoff: usize, n: usize) -> Term {
+    enum Frame {
+        Process(Term),
+        BuildAbs(Symbol, Typ),
+        BuildApp,
+    }
+    let mut stack: Vec<Frame> = vec![Frame::Process(term.clone())];
+    let mut results: Vec<Term> = Vec::new();
+    while let Some(frame) = stack.pop() {
+        match frame {
+            Frame::Process(t) => match &t {
+                Term::Bound(i) => {
+                    if *i >= cutoff {
+                        results.push(Term::bound(*i + n));
+                    } else {
+                        results.push(Term::bound(*i));
+                    }
+                }
+                Term::Abs { name, typ, body } => {
+                    stack.push(Frame::BuildAbs(Arc::clone(name), typ.clone()));
+                    stack.push(Frame::Process(body.as_ref().clone()));
+                }
+                Term::App { func, arg } => {
+                    stack.push(Frame::BuildApp);
+                    stack.push(Frame::Process(arg.as_ref().clone()));
+                    stack.push(Frame::Process(func.as_ref().clone()));
+                }
+                other => results.push(other.clone()),
+            },
+            Frame::BuildAbs(name, typ) => {
+                let body = results.pop().unwrap_or_else(|| Term::bound(0));
+                results.push(Term::abs(name, typ, body));
+            }
+            Frame::BuildApp => {
+                let arg = results.pop().unwrap_or_else(|| Term::bound(0));
+                let func = results.pop().unwrap_or_else(|| Term::bound(0));
+                results.push(Term::app(func, arg));
             }
         }
-        Term::Abs { name, typ, body } => Term::abs(
-            Arc::clone(name),
-            typ.clone(),
-            lift_bound(body, cutoff + 1, n),
-        ),
-        Term::App { func, arg } => {
-            Term::app(lift_bound(func, cutoff, n), lift_bound(arg, cutoff, n))
-        }
-        other => other.clone(),
     }
+    results.pop().unwrap_or_else(|| term.clone())
 }
 
 // =========================================================================

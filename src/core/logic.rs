@@ -69,18 +69,25 @@ impl Pure {
         )
     }
     pub fn dest_equals(term: &Term) -> Option<(&Term, &Term)> {
+        Self::dest_equals_with_type(term).map(|(t, u, _)| (t, u))
+    }
+
+    /// Destructure an equality, also extracting the type parameter.
+    /// Returns `(lhs, rhs, type_of_terms)`.
+    pub fn dest_equals_with_type(term: &Term) -> Option<(&Term, &Term, Typ)> {
         match term {
             Term::App { func, arg } => match func.as_ref() {
                 Term::App {
                     func: inner,
                     arg: t,
                 } => match inner.as_ref() {
-                    Term::Const { name, .. }
+                    Term::Const { name, typ }
                         if name.as_ref() == "Pure.eq"
                             || name.as_ref() == "HOL.eq"
                             || name.as_ref().ends_with(".eq") =>
                     {
-                        Some((t.as_ref(), arg.as_ref()))
+                        let eq_typ = Self::extract_eq_type(typ);
+                        Some((t.as_ref(), arg.as_ref(), eq_typ))
                     }
                     _ => None,
                 },
@@ -88,6 +95,15 @@ impl Pure {
             },
             _ => None,
         }
+    }
+
+    /// Extract the type parameter from an equality constant's type.
+    /// `Pure.eq : 'a => 'a => prop` → extract `'a`.
+    pub fn extract_eq_type(eq_const_type: &Typ) -> Typ {
+        eq_const_type
+            .dest_fun()
+            .map(|(dom, _)| dom.clone())
+            .unwrap_or_else(Typ::dummy)
     }
     pub fn strip_imp_prems(term: &Term) -> (Vec<&Term>, &Term) {
         let mut prems = Vec::new();
@@ -129,5 +145,27 @@ mod tests {
         let (x, y) = Pure::dest_equals(&eq).unwrap();
         assert_eq!(x, &t);
         assert_eq!(y, &u);
+    }
+
+    #[test]
+    fn test_equals_with_type() {
+        let t = Term::free("t", Typ::base("nat"));
+        let u = Term::free("u", Typ::base("nat"));
+        let eq = Pure::mk_equals(Typ::base("nat"), t.clone(), u.clone());
+        let (x, y, typ) = Pure::dest_equals_with_type(&eq).unwrap();
+        assert_eq!(x, &t);
+        assert_eq!(y, &u);
+        assert_eq!(typ, Typ::base("nat"));
+    }
+
+    #[test]
+    fn test_equals_dummy_type_fallback() {
+        // When eq const has dummy type, extract_eq_type returns dummy
+        let eq = Term::app(
+            Term::app(Term::const_("Pure.eq", Typ::dummy()), Term::free("a", Typ::dummy())),
+            Term::free("b", Typ::dummy()),
+        );
+        let (x, _y, typ) = Pure::dest_equals_with_type(&eq).unwrap();
+        assert!(typ.is_dummy());
     }
 }

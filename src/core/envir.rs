@@ -173,33 +173,72 @@ impl Envir {
 
     /// Normalize a term: replace all bound Vars with their assignments,
     /// and apply type normalization to all embedded types.
+    /// Iterative implementation using explicit continuation frames to avoid
+    /// stack overflow on deeply nested terms.
     pub fn norm_term(&self, term: &Term) -> Term {
-        match term {
-            Term::Var { name, index, typ } => {
-                let norm_typ = self.norm_type(typ);
-                if let Some((_, assigned)) = self.tenv.get(&(Arc::clone(name), *index)) {
-                    self.norm_term(assigned)
-                } else {
-                    Term::var(Arc::clone(name), *index, norm_typ)
-                }
+        enum StackItem {
+            Process(Term),
+            BuildAbs(Symbol, Typ),
+            BuildApp,
+        }
+
+        let mut stack: Vec<StackItem> = vec![StackItem::Process(term.clone())];
+        let mut results: Vec<Term> = Vec::new();
+        let mut steps = 0usize;
+
+        while let Some(item) = stack.pop() {
+            steps += 1;
+            if steps > 20000 {
+                return term.clone();
             }
-            Term::Const { name, typ } => Term::const_(Arc::clone(name), self.norm_type(typ)),
-            Term::Free { name, typ } => Term::free(Arc::clone(name), self.norm_type(typ)),
-            Term::Bound(i) => Term::bound(*i),
-            Term::Abs { name, typ, body } => {
-                Term::abs(Arc::clone(name), self.norm_type(typ), self.norm_term(body))
-            }
-            Term::App { func, arg } => {
-                let nf = self.norm_term(func);
-                let na = self.norm_term(arg);
-                // Beta-reduce: (λx. body) arg → body[x := arg]
-                if let Term::Abs { body, .. } = &nf {
-                    let reduced = crate::core::term_subst::subst_bounds(&[na], body);
-                    return self.norm_term(&reduced);
+
+            match item {
+                StackItem::Process(t) => match &t {
+                    Term::Var { name, index, typ } => {
+                        let norm_typ = self.norm_type(typ);
+                        if let Some((_, assigned)) = self.tenv.get(&(Arc::clone(name), *index)) {
+                            stack.push(StackItem::Process(assigned.clone()));
+                        } else {
+                            results.push(Term::var(Arc::clone(name), *index, norm_typ));
+                        }
+                    }
+                    Term::Const { name, typ } => {
+                        results.push(Term::const_(Arc::clone(name), self.norm_type(typ)));
+                    }
+                    Term::Free { name, typ } => {
+                        results.push(Term::free(Arc::clone(name), self.norm_type(typ)));
+                    }
+                    Term::Bound(i) => results.push(Term::bound(*i)),
+                    Term::Abs { name, typ, body } => {
+                        let norm_typ = self.norm_type(typ);
+                        stack.push(StackItem::BuildAbs(Arc::clone(name), norm_typ));
+                        stack.push(StackItem::Process(body.as_ref().clone()));
+                    }
+                    Term::App { func, arg } => {
+                        stack.push(StackItem::BuildApp);
+                        stack.push(StackItem::Process(arg.as_ref().clone()));
+                        stack.push(StackItem::Process(func.as_ref().clone()));
+                    }
+                },
+                StackItem::BuildAbs(name, typ) => {
+                    let body = results.pop().unwrap_or_else(|| Term::bound(0));
+                    results.push(Term::abs(name, typ, body));
                 }
-                Term::app(nf, na)
+                StackItem::BuildApp => {
+                    let arg = results.pop().unwrap_or_else(|| Term::bound(0));
+                    let func = results.pop().unwrap_or_else(|| Term::bound(0));
+                    // Beta-reduce: (λx. body) arg → body[x := arg]
+                    if let Term::Abs { body, .. } = &func {
+                        let reduced = crate::core::term_subst::subst_bounds(&[arg], body);
+                        stack.push(StackItem::Process(reduced));
+                    } else {
+                        results.push(Term::app(func, arg));
+                    }
+                }
             }
         }
+
+        results.pop().unwrap_or_else(|| term.clone())
     }
 
     // =================================================================

@@ -8,9 +8,13 @@
 //! - `lsp` — LSP server (tower-based handlers)
 //! - `syntax` — Rowan CST-based incremental parser
 //! - `wasm` — WASM plugin system
-//! - `theory` — Session management + cache
-//! - `hol` — Higher-Order Logic loader
-//! - `tools` — Proof automation
+
+// Allow dead code and unused variables/imports for API surface not yet integrated
+#![allow(dead_code)]
+#![allow(unused_variables)]
+#![allow(unused_imports)]
+#![allow(unreachable_patterns)]
+#![allow(unused_comparisons)]
 
 pub mod core;
 pub mod document;

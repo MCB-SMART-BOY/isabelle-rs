@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 888410cff642cccb8aefbfc84bbf7be4a1a5fcc06bdd49e2c0cc0aed3c574b18 # shrinks to name = "B"
+cc 3753eaed6f2be99fbf65baabf43566ae439f62ef76ad1d28750791730bc30c9c # shrinks to (t1, t2) = (Const { name: "fun", typ: Type { name: "bool", args: [] } }, App { func: Abs { name: "x", typ: Type { name: "bool", args: [] }, body: Const { name: "fun", typ: Type { name: "nat", args: [] } } }, arg: Const { name: "bool", typ: Type { name: "bool", args: [] } } })

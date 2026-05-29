@@ -68,7 +68,7 @@ fn parse_typ_env(s: &mut P, env: &crate::core::types::TypeEnv) -> Option<Typ> {
                     s.adv();
                     // Collect the required number of arguments (already parsed as 't')
                     // For postfix: 'a list → list('a), so t is the arg
-                    let mut args = vec![t];
+                    let args = vec![t];
                     // If arity > 1, collect more args from the left side
                     // (e.g., ('a, 'b) map → map('a, 'b) — not standard but possible)
                     t = Typ::Type { name, args };

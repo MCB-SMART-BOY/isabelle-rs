@@ -9,11 +9,9 @@
 //! - Simple contradictions: `0 = Suc n`, `Suc n < 0`
 //! - Common arithmetic identities via normalization
 
-use crate::core::logic::Pure;
 use crate::core::simplifier::{RewriteRule, Simplifier};
 use crate::core::term::Term;
 use crate::core::thm::{CTerm, Thm, ThmKernel};
-use crate::core::types::Typ;
 use crate::hol::hol_loader::HolTheoremDb;
 use std::collections::HashMap;
 use std::sync::Arc;

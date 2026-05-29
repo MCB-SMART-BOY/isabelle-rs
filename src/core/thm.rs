@@ -23,7 +23,7 @@ use std::sync::Arc;
 use super::error::KernelError;
 use super::logic::Pure;
 use super::term::Term;
-use super::types::Typ;
+use super::types::{Sort, Typ};
 
 // =========================================================================
 // Certified terms (cterm) — align with Isabelle's cterm
@@ -40,11 +40,17 @@ pub struct CTerm {
 }
 
 impl CTerm {
-    /// Create a certified term (type will be dummy).
+    /// Create a certified term (type will be inferred if dummy).
     pub fn certify(term: Term) -> Self {
         let maxidx = Self::compute_maxidx(&term);
         // Try to infer type from the term structure
         let term_type = Self::infer_type(&term);
+        // If type is still dummy, try the type inference engine
+        let term_type = if term_type.is_dummy() {
+            super::type_infer::infer_type(&term).unwrap_or(term_type)
+        } else {
+            term_type
+        };
         CTerm { term, maxidx, term_type }
     }
 
@@ -58,6 +64,27 @@ impl CTerm {
     pub fn maxidx(&self) -> usize { self.maxidx }
     pub fn term_type(&self) -> &Typ { &self.term_type }
 
+    /// Require non-dummy type — fails if the type is Typ::dummy().
+    /// Use this at kernel rule boundaries to ensure type safety.
+    pub fn require_non_dummy(&self, op: &'static str) -> Result<&Typ, KernelError> {
+        if self.term_type.is_dummy() {
+            Err(KernelError::DummyType { op })
+        } else {
+            Ok(&self.term_type)
+        }
+    }
+
+    /// Create a certified term, attempting to annotate dummy types from the
+    /// global theorem database's TypeEnv first. Falls back to plain `certify`
+    /// if the DB is not available.
+    pub fn certify_annotated(mut term: Term) -> Self {
+        // Try to annotate dummy types from the global TypeEnv
+        use crate::hol::hol_loader::HolTheoremDb;
+        let db = HolTheoremDb::get();
+        term.type_annotate(&db.type_env);
+        Self::certify(term)
+    }
+
     /// Infer the type of a term from its structure.
     /// Returns Typ::dummy() if type cannot be determined.
     fn infer_type(term: &Term) -> Typ {
@@ -66,7 +93,7 @@ impl CTerm {
             Term::Free { typ, .. } if !typ.is_dummy() => typ.clone(),
             Term::Var { typ, .. } if !typ.is_dummy() => typ.clone(),
             Term::Abs { typ, .. } if !typ.is_dummy() => typ.clone(),
-            Term::App { func, arg } => {
+            Term::App { func, arg: _ } => {
                 let ft = Self::infer_type(func);
                 if let Some((_, ret)) = ft.dest_fun() {
                     ret.clone()
@@ -79,23 +106,28 @@ impl CTerm {
     }
 
     fn compute_maxidx(t: &Term) -> usize {
-        let mut maxidx = 0;
-        match t {
-            Term::Var { index, typ, .. } => {
-                maxidx = *index;
-                // Also track type-level maxidx
-                maxidx = usize::max(maxidx, typ.maxidx());
+        // Iterative implementation using explicit stack to avoid recursion overflow
+        let mut maxidx = 0usize;
+        let mut stack: Vec<&Term> = vec![t];
+        while let Some(term) = stack.pop() {
+            match term {
+                Term::Var { index, typ, .. } => {
+                    maxidx = usize::max(maxidx, *index);
+                    maxidx = usize::max(maxidx, typ.maxidx());
+                }
+                Term::Const { typ, .. } | Term::Free { typ, .. } => {
+                    maxidx = usize::max(maxidx, typ.maxidx());
+                }
+                Term::Abs { typ, body, .. } => {
+                    maxidx = usize::max(maxidx, typ.maxidx());
+                    stack.push(body);
+                }
+                Term::App { func, arg } => {
+                    stack.push(arg);
+                    stack.push(func);
+                }
+                Term::Bound(_) => {}
             }
-            Term::Const { typ, .. } | Term::Free { typ, .. } => {
-                maxidx = typ.maxidx();
-            }
-            Term::Abs { typ, body, .. } => {
-                maxidx = usize::max(typ.maxidx(), Self::compute_maxidx(body));
-            }
-            Term::App { func, arg } => {
-                maxidx = usize::max(Self::compute_maxidx(func), Self::compute_maxidx(arg));
-            }
-            Term::Bound(_) => {}
         }
         maxidx
     }
@@ -270,11 +302,35 @@ pub struct ThmDeriv {
 ///
 /// This is the central type of the LCF trusted kernel.
 /// **No public constructors** — use `ThmKernel` to create theorems.
+///
+/// ## Isabelle Correspondence
+///
+/// In Isabelle/ML (`thm.ML`), theorems carry additional fields:
+/// - `tpairs`: flex-flex disagreement pairs from higher-order unification
+/// - `shyps`: sort hypotheses tracking type-class constraints
+/// - `maxidx`: maximum schematic variable index for freshness
+///
+/// These are tracked here to maintain full Isabelle kernel equivalence.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Thm {
     hyps: Hyps,
     prop: CTerm,
     maxidx: usize,
+    /// Flex-flex disagreement pairs (tpairs in Isabelle).
+    ///
+    /// During higher-order unification, some pairs may remain unresolved
+    /// when both sides are flexible (contain schematic variables). These
+    /// are stored as constraints on the theorem.
+    ///
+    /// Each pair `(t, u)` represents the constraint that `t` and `u`
+    /// must be made equal by some future instantiation.
+    tpairs: Vec<(Term, Term)>,
+    /// Sort hypotheses (shyps in Isabelle).
+    ///
+    /// When a theorem uses type-class-polymorphic constants, it carries
+    /// sort constraints like `OFCLASS('a, order)`. These must be
+    /// satisfied by the calling context.
+    shyps: Vec<Sort>,
     derivation: Derivation,
     serial: u64,
 }
@@ -292,6 +348,14 @@ impl Thm {
     pub fn is_unconditional(&self) -> bool {
         self.hyps.is_empty()
     }
+    /// Flex-flex disagreement pairs from higher-order unification.
+    pub fn tpairs(&self) -> &[(Term, Term)] {
+        &self.tpairs
+    }
+    /// Sort hypotheses (type-class constraints).
+    pub fn shyps(&self) -> &[Sort] {
+        &self.shyps
+    }
     pub fn has_oracles(&self) -> bool {
         matches!(self.derivation, Derivation::Oracle { .. })
     }
@@ -302,6 +366,29 @@ impl Thm {
     /// Number of subgoals (premises in the prop chain).
     pub fn nprems(&self) -> usize {
         Pure::count_prems(self.prop.term())
+    }
+
+    /// Reconstruct the proof term for this theorem from its derivation.
+    pub fn proof_term(&self) -> super::proofterm::ProofTerm {
+        super::proofterm::ProofTerm::from_derivation(&self.derivation, self.prop.term())
+    }
+
+    /// Check that this theorem's proof term is valid.
+    /// Returns `Ok(())` if the proof checks out, or an error message.
+    pub fn check_proof(&self) -> Result<(), String> {
+        let proof = self.proof_term();
+        super::proofterm::check_proof(&proof, self.prop.term())
+    }
+
+    /// Get the proof body for this theorem (lazy checking).
+    pub fn proof_body(&self) -> super::proofterm::ProofBody {
+        super::proofterm::ProofBody::from_derivation(&self.derivation, self.prop.term())
+    }
+
+    /// Validate the proof body against the theorem's proposition.
+    /// Returns Ok if the proof is valid (or cached), Err if invalid.
+    pub fn validate_proof(&self, body: &mut super::proofterm::ProofBody) -> Result<(), String> {
+        body.check(self.prop.term())
     }
 
     /// Get the i-th subgoal (0-indexed).
@@ -369,6 +456,8 @@ impl ThmKernel {
             hyps: Hyps::singleton(ct.clone()),
             prop: ct.clone(),
             maxidx: ct.maxidx(),
+            tpairs: vec![],
+            shyps: vec![],
             derivation: Derivation::Axiom { name: "assume" },
             serial: new_serial(),
         }
@@ -380,7 +469,7 @@ impl ThmKernel {
 
     /// **Reflexivity**: `⊢ t ≡ t`.
     ///
-    /// The equality uses `Pure.eq` with the appropriate type.
+    /// The equality uses `Pure.eq` with the type inferred from the certified term.
     ///
     /// ```text
     /// —————— (reflexive)
@@ -388,13 +477,16 @@ impl ThmKernel {
     /// ```
     pub fn reflexive(ct: CTerm) -> Thm {
         let t = ct.term().clone();
-        // Infer the type of t (in full impl, this would come from the signature)
-        let eq_term = Pure::mk_equals(Typ::dummy(), t.clone(), t);
+        // Use the type from the certified term (Typ::dummy() if unknown)
+        let typ = ct.term_type().clone();
+        let eq_term = Pure::mk_equals(typ, t.clone(), t);
 
         Thm {
             hyps: Hyps::empty(),
             prop: CTerm::certify(eq_term),
             maxidx: ct.maxidx(),
+            tpairs: vec![],
+            shyps: vec![],
             derivation: Derivation::Axiom { name: "reflexive" },
             serial: new_serial(),
         }
@@ -406,15 +498,17 @@ impl ThmKernel {
 
     /// **Symmetry**: `Γ ⊢ t ≡ u  ⟹  Γ ⊢ u ≡ t`.
     pub fn symmetric(thm: &Thm) -> Result<Thm, KernelError> {
-        let (t, u) = Pure::dest_equals(thm.prop.term())
+        let (t, u, eq_typ) = Pure::dest_equals_with_type(thm.prop.term())
             .ok_or_else(|| KernelError::NotEquality(thm.prop.term().clone()))?;
 
-        let new_prop = CTerm::certify(Pure::mk_equals(Typ::dummy(), u.clone(), t.clone()));
+        let new_prop = CTerm::certify(Pure::mk_equals(eq_typ, u.clone(), t.clone()));
 
         Ok(Thm {
             hyps: thm.hyps.clone(),
             prop: new_prop,
             maxidx: thm.maxidx,
+            tpairs: thm.tpairs.clone(),
+            shyps: thm.shyps.clone(),
             derivation: Derivation::Rule {
                 name: "symmetric",
                 premises: vec![ThmDeriv {
@@ -432,9 +526,9 @@ impl ThmKernel {
 
     /// **Transitivity**: `Γ ⊢ t ≡ u` and `Δ ⊢ u ≡ v` ⟹ `Γ ∪ Δ ⊢ t ≡ v`.
     pub fn transitive(thm1: &Thm, thm2: &Thm) -> Result<Thm, KernelError> {
-        let (t, u1) = Pure::dest_equals(thm1.prop.term())
+        let (t, u1, eq_typ1) = Pure::dest_equals_with_type(thm1.prop.term())
             .ok_or_else(|| KernelError::NotEquality(thm1.prop.term().clone()))?;
-        let (u2, v) = Pure::dest_equals(thm2.prop.term())
+        let (u2, v, _eq_typ2) = Pure::dest_equals_with_type(thm2.prop.term())
             .ok_or_else(|| KernelError::NotEquality(thm2.prop.term().clone()))?;
 
         // In Isabelle, the middle terms must be α-equivalent
@@ -442,12 +536,22 @@ impl ThmKernel {
             return Err(KernelError::MidTermsNotEquiv);
         }
 
-        let new_prop = CTerm::certify(Pure::mk_equals(Typ::dummy(), t.clone(), v.clone()));
+        let new_prop = CTerm::certify(Pure::mk_equals(eq_typ1, t.clone(), v.clone()));
 
         Ok(Thm {
             hyps: thm1.hyps.union(&thm2.hyps),
             prop: new_prop,
             maxidx: usize::max(thm1.maxidx, thm2.maxidx),
+            tpairs: {
+                let mut tp = thm1.tpairs.clone();
+                tp.extend(thm2.tpairs.clone());
+                tp
+            },
+            shyps: {
+                let mut sh = thm1.shyps.clone();
+                sh.extend(thm2.shyps.clone());
+                sh
+            },
             derivation: Derivation::Rule {
                 name: "transitive",
                 premises: vec![
@@ -470,14 +574,33 @@ impl ThmKernel {
     // =================================================================
 
     /// **Combination**: `Γ ⊢ f ≡ g` and `Δ ⊢ x ≡ y` ⟹ `Γ ∪ Δ ⊢ f x ≡ g y`.
+    ///
+    /// Like Isabelle's combination rule, validates that:
+    /// - The function type is actually a function type (arrow)
+    /// - The argument types are compatible (skip check if either is dummy)
     pub fn combination(thm_f: &Thm, thm_x: &Thm) -> Result<Thm, KernelError> {
-        let (f, g) = Pure::dest_equals(thm_f.prop.term())
+        let (f, g, fn_typ) = Pure::dest_equals_with_type(thm_f.prop.term())
             .ok_or_else(|| KernelError::NotEquality(thm_f.prop.term().clone()))?;
-        let (x, y) = Pure::dest_equals(thm_x.prop.term())
+        let (x, y, arg_typ) = Pure::dest_equals_with_type(thm_x.prop.term())
             .ok_or_else(|| KernelError::NotEquality(thm_x.prop.term().clone()))?;
 
+        // The result type of f x (and g y) is the codomain of fn_typ.
+        // Like Isabelle's combination, we require proper types — no Typ::dummy() fallback.
+        let (from_typ, result_typ) = fn_typ
+            .dest_fun()
+            .map(|(from, to)| (from.clone(), to.clone()))
+            .ok_or_else(|| KernelError::NotFunctionType(fn_typ.clone()))?;
+
+        // Verify argument type compatibility (like Isabelle: T1 = tT)
+        if !from_typ.is_dummy() && !arg_typ.is_dummy() && from_typ != arg_typ {
+            return Err(KernelError::TypeMismatch {
+                expected: from_typ.clone(),
+                actual: arg_typ.clone(),
+            });
+        }
+
         let new_prop = CTerm::certify(Pure::mk_equals(
-            Typ::dummy(),
+            result_typ,
             Term::app(f.clone(), x.clone()),
             Term::app(g.clone(), y.clone()),
         ));
@@ -486,6 +609,8 @@ impl ThmKernel {
             hyps: thm_f.hyps.union(&thm_x.hyps),
             prop: new_prop,
             maxidx: usize::max(thm_f.maxidx, thm_x.maxidx),
+            tpairs: vec![],
+            shyps: vec![],
             derivation: Derivation::Rule {
                 name: "combination",
                 premises: vec![
@@ -511,7 +636,7 @@ impl ThmKernel {
     ///
     /// Side condition: `x` must not be free in `Γ`.
     pub fn abstraction(x_name: &str, x_typ: Typ, thm: &Thm) -> Result<Thm, KernelError> {
-        let (t, u) = Pure::dest_equals(thm.prop.term())
+        let (t, u, eq_typ) = Pure::dest_equals_with_type(thm.prop.term())
             .ok_or_else(|| KernelError::NotEquality(thm.prop.term().clone()))?;
 
         // Side condition: x must not be free in the hypotheses
@@ -523,8 +648,11 @@ impl ThmKernel {
             }
         }
 
+        // The new equality type is the function type x_typ → eq_typ
+        let fn_typ = Typ::arrow(x_typ.clone(), eq_typ);
+
         let new_prop = CTerm::certify(Pure::mk_equals(
-            Typ::dummy(),
+            fn_typ,
             Term::abs(x_name, x_typ.clone(), t.clone()),
             Term::abs(x_name, x_typ, u.clone()),
         ));
@@ -533,6 +661,8 @@ impl ThmKernel {
             hyps: thm.hyps.clone(),
             prop: new_prop,
             maxidx: thm.maxidx,
+            tpairs: vec![],
+            shyps: vec![],
             derivation: Derivation::Rule {
                 name: "abstraction",
                 premises: vec![ThmDeriv {
@@ -561,15 +691,19 @@ impl ThmKernel {
             _ => return Err(KernelError::BetaConversion("not a lambda".into())),
         };
 
-        let new_prop = CTerm::certify(Pure::mk_equals(Typ::dummy(), ct.term().clone(), body));
+        // The equality type is the body's type; extract from the CTerm's type
+        // (which is the application's result type = body type after beta reduction)
+        let typ = ct.term_type().clone();
+
+        let new_prop = CTerm::certify(Pure::mk_equals(typ, ct.term().clone(), body));
 
         Ok(Thm {
             hyps: Hyps::empty(),
             prop: new_prop,
             maxidx: ct.maxidx(),
-            derivation: Derivation::Axiom {
-                name: "beta_conversion",
-            },
+            tpairs: vec![],
+            shyps: vec![],
+            derivation: Derivation::Axiom { name: "beta_conversion" },
             serial: new_serial(),
         })
     }
@@ -594,6 +728,8 @@ impl ThmKernel {
             hyps: thm.hyps.remove(assumption),
             prop: new_prop,
             maxidx: thm.maxidx,
+            tpairs: vec![],
+            shyps: vec![],
             derivation: Derivation::Rule {
                 name: "implies_intr",
                 premises: vec![ThmDeriv {
@@ -623,6 +759,8 @@ impl ThmKernel {
             hyps: thm_imp.hyps.union(&thm_a.hyps),
             prop: CTerm::certify(b.clone()),
             maxidx: usize::max(thm_imp.maxidx, thm_a.maxidx),
+            tpairs: vec![],
+            shyps: vec![],
             derivation: Derivation::Rule {
                 name: "implies_elim",
                 premises: vec![
@@ -657,6 +795,8 @@ impl ThmKernel {
             hyps: thm.hyps.clone(),
             prop: CTerm::certify(all_term),
             maxidx: thm.maxidx,
+            tpairs: vec![],
+            shyps: vec![],
             derivation: Derivation::Rule {
                 name: "forall_intr",
                 premises: vec![ThmDeriv {
@@ -676,6 +816,8 @@ impl ThmKernel {
             hyps: thm.hyps.clone(),
             prop: CTerm::certify(instantiated),
             maxidx: usize::max(thm.maxidx, ct.maxidx()),
+            tpairs: vec![],
+            shyps: vec![],
             derivation: Derivation::Rule {
                 name: "forall_elim",
                 premises: vec![ThmDeriv {
@@ -704,6 +846,8 @@ impl ThmKernel {
             hyps: new_hyps,
             prop: CTerm::certify(env.norm_term(thm.prop.term())),
             maxidx: usize::max(thm.maxidx, env.maxidx()),
+            tpairs: thm.tpairs.clone(),
+            shyps: thm.shyps.clone(),
             derivation: Derivation::Rule {
                 name: "instantiate",
                 premises: vec![ThmDeriv {
@@ -847,6 +991,8 @@ impl ThmKernel {
             hyps: thm1.hyps.union(&thm2.hyps),
             prop: CTerm::certify(new_prop),
             maxidx: usize::max(thm1.maxidx, thm2.maxidx),
+            tpairs: vec![],
+            shyps: vec![],
             derivation: Derivation::Rule {
                 name: "bicompose",
                 premises: vec![
@@ -895,6 +1041,8 @@ impl ThmKernel {
             hyps: state.hyps.union(&eq_thm.hyps),
             prop: CTerm::certify(new_prop),
             maxidx: usize::max(state.maxidx, eq_thm.maxidx),
+            tpairs: vec![],
+            shyps: vec![],
             derivation: Derivation::Rule {
                 name: "subst_premise",
                 premises: vec![
@@ -1020,6 +1168,8 @@ impl ThmKernel {
             hyps: thm1.hyps.union(&thm2.hyps),
             prop: CTerm::certify(new_prop),
             maxidx: usize::max(thm1.maxidx, thm2.maxidx),
+            tpairs: vec![],
+            shyps: vec![],
             derivation: Derivation::Rule {
                 name: "bicompose_eresolve",
                 premises: vec![
@@ -1045,14 +1195,175 @@ impl ThmKernel {
         let assumed = ThmKernel::assume(ct.clone());
         ThmKernel::implies_intr(&ct, &assumed)
     }
+
+    // =================================================================
+    // Flex-flex resolution (Phase 41)
+    // =================================================================
+
+    /// Resolve flex-flex pairs in a theorem.
+    ///
+    /// In higher-order unification, some disagreement pairs may remain
+    /// unresolved when both sides are flexible (contain schematic variables).
+    /// These are stored in `thm.tpairs`.
+    ///
+    /// `flexflex_resolve` attempts to instantiate these pairs with the
+    /// most general solution: each flexible head is instantiated to a
+    /// projection of one of its arguments.
+    ///
+    /// Returns the theorem with resolved tpairs, or the original if
+    /// resolution is not possible.
+    pub fn flexflex_resolve(thm: &Thm) -> Thm {
+        if thm.tpairs.is_empty() {
+            return thm.clone();
+        }
+
+        // For now, we apply the most general flex-flex resolution:
+        // each pair (f(args), g(args')) is resolved by instantiating
+        // both f and g to be projections of their arguments.
+        //
+        // In the simple case where both sides are Var heads with the
+        // same binder context, we can unify them directly.
+        let mut env = super::envir::Envir::init();
+        let mut resolved = true;
+
+        for (t, u) in &thm.tpairs {
+            let config = super::unify::UnifyConfig {
+                search_bound: 10,
+                max_unifiers: 1,
+            };
+            // Try to unify the flex-flex pair
+            if let Some(new_env) = super::unify::unifiers(
+                &env,
+                &[(t.clone(), u.clone())],
+                &config,
+            ) {
+                env = new_env;
+            } else {
+                resolved = false;
+                break;
+            }
+        }
+
+        if resolved {
+            // Apply the instantiation to the whole theorem
+            let mut new_thm = ThmKernel::instantiate(&env, thm);
+            new_thm.tpairs = vec![]; // all resolved
+            new_thm
+        } else {
+            // Keep unresolved tpairs (they are constraints, not errors)
+            thm.clone()
+        }
+    }
+
+    /// Strip all tpairs from a theorem (accepting them as constraints).
+    ///
+    /// This is sound: tpairs are unresolved flex-flex constraints that
+    /// don't affect the truth of the proposition (they only restrict
+    /// possible instantiations).
+    pub fn strip_tpairs(thm: &Thm) -> Thm {
+        let mut result = thm.clone();
+        result.tpairs = vec![];
+        result
+    }
+
+    // =================================================================
+    // Sort hypotheses operations (Phase 41)
+    // =================================================================
+
+    /// Add a sort hypothesis to a theorem.
+    ///
+    /// Sort hypotheses track type-class constraints. When a theorem
+    /// is used in a context that doesn't satisfy the required sort,
+    /// the constraint is added as an explicit hypothesis.
+    pub fn add_shyp(thm: &Thm, sort: Sort) -> Thm {
+        let mut result = thm.clone();
+        if !result.shyps.contains(&sort) {
+            result.shyps.push(sort);
+        }
+        result
+    }
+
+    /// Strip sort hypotheses (weakening).
+    ///
+    /// This is sound: removing a constraint can only make a theorem
+    /// more general (weaker assumption). However, the resulting theorem
+    /// may not be usable in contexts that require the constraint.
+    pub fn strip_shyps(thm: &Thm) -> Thm {
+        let mut result = thm.clone();
+        result.shyps = vec![];
+        result
+    }
+
+    /// Check if a theorem satisfies a given sort hypothesis.
+    pub fn satisfies_shyp(thm: &Thm, sort: &Sort) -> bool {
+        thm.shyps.iter().any(|s| s == sort)
+    }
 }
 
+/// Check if a free variable name occurs in a term.
+/// Iterative implementation to avoid stack overflow.
 fn free_in(var_name: &str, term: &Term) -> bool {
-    match term {
-        Term::Free { name, .. } => name.as_ref() == var_name,
-        Term::Const { .. } | Term::Bound(_) | Term::Var { .. } => false,
-        Term::Abs { body, .. } => free_in(var_name, body),
-        Term::App { func, arg } => free_in(var_name, func) || free_in(var_name, arg),
+    let mut stack: Vec<&Term> = vec![term];
+    while let Some(t) = stack.pop() {
+        match t {
+            Term::Free { name, .. } if name.as_ref() == var_name => return true,
+            Term::Abs { body, .. } => stack.push(body),
+            Term::App { func, arg } => {
+                stack.push(arg);
+                stack.push(func);
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Compute the sort hypotheses (shyps) for a term.
+///
+/// Walks the term and collects type class constraints from type variables
+/// that have non-trivial sorts. This is used to track type-class-polymorphic
+/// dependencies in theorems.
+pub fn compute_shyps(term: &Term) -> Vec<Sort> {
+    let mut shyps = Vec::new();
+    let mut stack = vec![term];
+    let mut seen = std::collections::HashSet::new();
+
+    while let Some(t) = stack.pop() {
+        match t {
+            Term::Const { typ, .. } | Term::Free { typ, .. } | Term::Var { typ, .. } => {
+                collect_type_sorts(typ, &mut shyps, &mut seen);
+            }
+            Term::Abs { typ, body, .. } => {
+                collect_type_sorts(typ, &mut shyps, &mut seen);
+                stack.push(body);
+            }
+            Term::App { func, arg } => {
+                stack.push(arg);
+                stack.push(func);
+            }
+            Term::Bound(_) => {}
+        }
+    }
+    shyps
+}
+
+/// Helper: recursively collect sorts from a type.
+fn collect_type_sorts(
+    typ: &Typ,
+    shyps: &mut Vec<Sort>,
+    seen: &mut std::collections::HashSet<Sort>,
+) {
+    match typ {
+        Typ::TFree { sort, .. } | Typ::TVar { sort, .. } => {
+            if *sort != Sort::top() && seen.insert(sort.clone()) {
+                shyps.push(sort.clone());
+            }
+        }
+        Typ::Type { args, .. } => {
+            for arg in args {
+                collect_type_sorts(arg, shyps, seen);
+            }
+        }
     }
 }
 

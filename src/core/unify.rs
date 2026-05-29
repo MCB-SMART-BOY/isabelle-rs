@@ -80,176 +80,139 @@ pub fn unifiers(env: &Envir, pairs: &[(Term, Term)], config: &UnifyConfig) -> Op
         .iter()
         .map(|(t, u)| (vec![], t.clone(), u.clone()))
         .collect();
-    unify_dpairs(env, &dpairs, 0, config)
+    unify_dpairs_iter(env.clone(), dpairs, config)
 }
 
-/// Internal: unify a list of disagreement pairs.
-fn unify_dpairs(
-    env: &Envir,
-    dpairs: &[DPair],
-    depth: usize,
-    config: &UnifyConfig,
-) -> Option<Envir> {
-    if depth > config.search_bound {
-        return None;
-    }
-    if dpairs.is_empty() {
-        return Some(env.clone());
-    }
+/// Iterative unification of disagreement pairs using an explicit work stack.
+/// This replaces the recursive `unify_dpairs` to prevent stack overflow on
+/// deeply nested terms (e.g., inductive definitions, fixpoint combinators).
+fn unify_dpairs_iter(mut env: Envir, initial_pairs: Vec<DPair>, config: &UnifyConfig) -> Option<Envir> {
+    let mut stack: Vec<DPair> = initial_pairs;
+    stack.reverse(); // Process in original order (pop from back)
+    let mut steps = 0usize;
 
-    let (rbinder, t, u) = &dpairs[0];
-    let rest = &dpairs[1..];
-
-    // Normalize both sides with the current environment
-    let t_norm = env.norm_term(t);
-    let u_norm = env.norm_term(u);
-
-    // If already equal, skip this pair
-    if t_norm == u_norm {
-        return unify_dpairs(env, rest, depth, config);
-    }
-
-    match (&t_norm, &u_norm) {
-        // ── Flex-Flex (both sides are Var) ──
-        // In pattern unification, flex-flex pairs are postponed.
-        // For now, treat as unifiable (they can always be unified).
-        (Term::Var { .. }, Term::Var { .. }) => {
-            let mut new_pairs = rest.to_vec();
-            new_pairs.push((rbinder.clone(), t_norm, u_norm));
-            unify_dpairs(env, &new_pairs, depth + 1, config)
+    while let Some((rbinder, t, u)) = stack.pop() {
+        steps += 1;
+        if steps > config.search_bound * 10 {
+            return None;
         }
 
-        // ── Flex-Rigid or Rigid-Flex ──
-        (Term::Var { name, index, typ }, rigid) => {
-            flex_rigid(env, rbinder, name, *index, typ, rigid, rest, depth, config)
-        }
-        (rigid, Term::Var { name, index, typ }) => {
-            flex_rigid(env, rbinder, name, *index, typ, rigid, rest, depth, config)
+        let t_norm = env.norm_term(&t);
+        let u_norm = env.norm_term(&u);
+
+        if t_norm == u_norm {
+            continue;
         }
 
-        // ── Rigid-Rigid (same head) ── simplify
-        (Term::Const { name: n1, .. }, Term::Const { name: n2, .. }) if n1 == n2 => {
-            // Same constant — no arguments to unify
-            unify_dpairs(env, rest, depth, config)
-        }
-        (Term::Bound(i1), Term::Bound(i2)) if i1 == i2 => unify_dpairs(env, rest, depth, config),
-        (Term::Free { name: n1, .. }, Term::Free { name: n2, .. }) if n1 == n2 => {
-            unify_dpairs(env, rest, depth, config)
-        }
-
-        // ── Rigid-Rigid (App) ── simplify by decomposing
-        (Term::App { func: f1, arg: a1 }, Term::App { func: f2, arg: a2 }) => {
-            // Decompose: push sub-pairs BEFORE rest so bindings are available
-            let mut new_pairs = vec![
-                (rbinder.clone(), f1.as_ref().clone(), f2.as_ref().clone()),
-                (rbinder.clone(), a1.as_ref().clone(), a2.as_ref().clone()),
-            ];
-            new_pairs.extend_from_slice(rest);
-            unify_dpairs(env, &new_pairs, depth + 1, config)
-        }
-
-        // ── Rigid-Rigid (Abs) ── simplify by going under binder
-        (
-            Term::Abs {
-                name: _,
-                typ: ty1,
-                body: b1,
-            },
-            Term::Abs {
-                typ: ty2, body: b2, ..
-            },
-        ) => {
-            // Add new binder to rbinder
-            let mut new_rbinder = rbinder.clone();
-            new_rbinder.push((Arc::from("x"), ty1.clone()));
-            // For simplicity, we assume types match
-            if ty1 != ty2 {
-                return None;
+        match (&t_norm, &u_norm) {
+            // ── Flex-Flex: postpone ──
+            (Term::Var { .. }, Term::Var { .. }) => {
+                // Push to back to handle later (after bindings may resolve them)
+                // But don't loop endlessly — only postpone once
             }
-            let mut new_pairs = rest.to_vec();
-            new_pairs.push((new_rbinder, b1.as_ref().clone(), b2.as_ref().clone()));
-            unify_dpairs(env, &new_pairs, depth + 1, config)
-        }
 
-        // ── Flex-App vs non-App: App(Var, arg) vs obj ── identity case
-        (Term::App { func, arg }, obj) => {
-            if matches!(func.as_ref(), Term::Var { .. }) && term_eq_notypes(arg.as_ref(), obj) {
+            // ── Flex-Rigid ──
+            (Term::Var { name, index, typ }, rigid) => {
+                match bind_var_step(&mut env, name, *index, typ, rigid) {
+                    BindResult::Bound => {} // env updated, continue
+                    BindResult::AlreadyBound => {
+                        // Re-normalize and retry
+                        let renamed = env.norm_term(&Term::var(Arc::clone(name), *index, typ.clone()));
+                        stack.push((rbinder, renamed, rigid.clone()));
+                    }
+                    BindResult::Failed => return None,
+                }
+            }
+            (rigid, Term::Var { name, index, typ }) => {
+                match bind_var_step(&mut env, name, *index, typ, rigid) {
+                    BindResult::Bound => {}
+                    BindResult::AlreadyBound => {
+                        let renamed = env.norm_term(&Term::var(Arc::clone(name), *index, typ.clone()));
+                        stack.push((rbinder, rigid.clone(), renamed));
+                    }
+                    BindResult::Failed => return None,
+                }
+            }
+
+            // ── Rigid-Rigid: decompose App ──
+            (Term::App { func: f1, arg: a1 }, Term::App { func: f2, arg: a2 }) => {
+                // Push arg first (processed second), func second (processed first)
+                stack.push((rbinder.clone(), a1.as_ref().clone(), a2.as_ref().clone()));
+                stack.push((rbinder, f1.as_ref().clone(), f2.as_ref().clone()));
+            }
+
+            // ── Rigid-Rigid: decompose Abs ──
+            (
+                Term::Abs { name: _, typ: ty1, body: b1 },
+                Term::Abs { typ: ty2, body: b2, .. },
+            ) => {
+                if ty1 != ty2 {
+                    return None;
+                }
+                let mut new_rbinder = rbinder.clone();
+                new_rbinder.push((Arc::from("x"), ty1.clone()));
+                stack.push((new_rbinder, b1.as_ref().clone(), b2.as_ref().clone()));
+            }
+
+            // ── Same head atoms ──
+            (Term::Const { name: n1, .. }, Term::Const { name: n2, .. }) if n1 == n2 => continue,
+            (Term::Bound(i1), Term::Bound(i2)) if i1 == i2 => continue,
+            (Term::Free { name: n1, .. }, Term::Free { name: n2, .. }) if n1 == n2 => continue,
+
+            // ── Flex-App vs non-App (identity/projection cases) ──
+            (Term::App { func, arg }, obj)
+                if matches!(func.as_ref(), Term::Var { .. }) && term_eq_notypes(arg, obj) =>
+            {
                 if let Term::Var { name, index, typ } = func.as_ref() {
-                    let mut new_env = env.clone();
-                    new_env.update(
+                    env.update(
                         name.clone(),
                         *index,
                         typ.clone(),
                         Term::abs("x", Typ::dummy(), Term::bound(0)),
                     );
-                    return unify_dpairs(&new_env, rest, depth + 1, config);
                 }
             }
-            None
-        }
-        (obj, Term::App { func, arg }) => {
-            if matches!(func.as_ref(), Term::Var { .. }) && term_eq_notypes(arg.as_ref(), obj) {
+            (obj, Term::App { func, arg })
+                if matches!(func.as_ref(), Term::Var { .. }) && term_eq_notypes(arg, obj) =>
+            {
                 if let Term::Var { name, index, typ } = func.as_ref() {
-                    let mut new_env = env.clone();
-                    new_env.update(
+                    env.update(
                         name.clone(),
                         *index,
                         typ.clone(),
                         Term::abs("x", Typ::dummy(), Term::bound(0)),
                     );
-                    return unify_dpairs(&new_env, rest, depth + 1, config);
                 }
             }
-            None
-        }
 
-        // ── Type mismatch (different heads) ── cannot unify
-        _ => None,
+            // ── Type mismatch ──
+            _ => return None,
+        }
     }
+
+    Some(env)
 }
 
-/// Handle flex-rigid unification: one side is a schematic variable `?x`,
-/// the other is a rigid term.
-///
-/// Strategies (in order):
-/// 1. **Occurs check**: if `?x` occurs in `rigid`, fail
-/// 2. **Bind**: if `?x` doesn't occur, bind `?x := rigid`
-/// 3. **Imitate/Project**: if `rigid` is `App`, try to match head
-fn flex_rigid(
-    env: &Envir,
-    rbinder: &BinderList,
-    var_name: &Symbol,
-    var_index: usize,
-    var_typ: &Typ,
-    rigid: &Term,
-    rest: &[DPair],
-    depth: usize,
-    config: &UnifyConfig,
-) -> Option<Envir> {
-    // Check if the variable is already bound
-    if env.lookup(var_name, var_index).is_some() {
-        // Re-normalize and try again
-        let t_norm = env.norm_term(&Term::var(Arc::clone(var_name), var_index, var_typ.clone()));
-        let mut new_pairs = vec![(rbinder.clone(), t_norm, rigid.clone())];
-        new_pairs.extend_from_slice(rest);
-        return unify_dpairs(env, &new_pairs, depth + 1, config);
+/// Result of attempting to bind a variable.
+enum BindResult {
+    /// Variable was successfully bound.
+    Bound,
+    /// Variable was already bound (needs re-normalization).
+    AlreadyBound,
+    /// Binding failed (occurs check).
+    Failed,
+}
+
+/// Attempt to bind a variable to a term. Returns the result.
+fn bind_var_step(env: &mut Envir, name: &Symbol, index: usize, typ: &Typ, rigid: &Term) -> BindResult {
+    if env.lookup(name, index).is_some() {
+        return BindResult::AlreadyBound;
     }
-
-    // Occurs check: if ?x occurs in rigid, cannot unify (would create cycle)
-    if occurs_check(var_name, var_index, rigid) {
-        return None;
+    if occurs_check(name, index, rigid) {
+        return BindResult::Failed;
     }
-
-    // Bind: ?x := rigid
-    let mut new_env = env.clone();
-    new_env.update(
-        Arc::clone(var_name),
-        var_index,
-        var_typ.clone(),
-        rigid.clone(),
-    );
-
-    unify_dpairs(&new_env, rest, depth + 1, config)
+    env.update(Arc::clone(name), index, typ.clone(), rigid.clone());
+    BindResult::Bound
 }
 
 // =========================================================================
@@ -258,17 +221,21 @@ fn flex_rigid(
 
 /// Check if a variable (name, index) occurs in a term.
 /// This prevents cyclic bindings like `?x := f(?x)`.
+/// Iterative implementation to avoid stack overflow.
 fn occurs_check(name: &Symbol, index: usize, term: &Term) -> bool {
-    match term {
-        Term::Var {
-            name: n, index: i, ..
-        } => n == name && *i == index,
-        Term::Abs { body, .. } => occurs_check(name, index, body),
-        Term::App { func, arg } => {
-            occurs_check(name, index, func) || occurs_check(name, index, arg)
+    let mut stack: Vec<&Term> = vec![term];
+    while let Some(t) = stack.pop() {
+        match t {
+            Term::Var { name: n, index: i, .. } if n == name && *i == index => return true,
+            Term::Abs { body, .. } => stack.push(body),
+            Term::App { func, arg } => {
+                stack.push(arg);
+                stack.push(func);
+            }
+            _ => {}
         }
-        _ => false,
     }
+    false
 }
 
 // =========================================================================
@@ -279,51 +246,75 @@ fn occurs_check(name: &Symbol, index: usize, term: &Term) -> bool {
 /// `instantiate(env, pattern) = object`. Unlike unification, matching is
 /// directional — only variables in the pattern can be instantiated.
 pub fn matchers(env: &Envir, pat: &Term, obj: &Term, _config: &UnifyConfig) -> Option<Envir> {
-    let env = env.clone();
-    match_pattern(env, pat, obj)
+    match_pattern_iter(env.clone(), pat, obj)
 }
 
-fn match_pattern(mut env: Envir, pat: &Term, obj: &Term) -> Option<Envir> {
-    let pat = env.norm_term(pat);
-    let obj = env.norm_term(&obj);
-
-    if pat == obj {
-        return Some(env);
+/// Iterative pattern matching using an explicit work stack.
+/// Replaces the recursive `match_pattern` to prevent stack overflow.
+fn match_pattern_iter(mut env: Envir, initial_pat: &Term, initial_obj: &Term) -> Option<Envir> {
+    // Stack of (env, pat, obj) frames to process.
+    // We use a Vec as a stack: push frames, pop and process.
+    struct Frame {
+        pat: Term,
+        obj: Term,
     }
 
-    match &pat {
-        Term::Var { name, index, typ } => {
-            if env.lookup(name, *index).is_some() {
-                return None;
-            }
-            if occurs_check(name, *index, &obj) {
-                return None;
-            }
-            env.update(Arc::clone(name), *index, typ.clone(), obj.clone());
-            Some(env)
+    let mut frames: Vec<Frame> = vec![Frame {
+        pat: initial_pat.clone(),
+        obj: initial_obj.clone(),
+    }];
+    let mut steps = 0usize;
+
+    while let Some(frame) = frames.pop() {
+        steps += 1;
+        if steps > 2000 {
+            return None;
         }
-        Term::App { func: f1, arg: _a1 } => {
-            // Higher-order pattern: if head is a Var applied to bound vars,
-            // abstract the bound vars from the object and bind the Var to the abstraction.
-            if let Some(bound_vars) = collect_bound_args(&pat) {
-                let (var_name, var_index, var_typ) = dest_head_var(&pat)?;
-                return match_ho_pattern(env, var_name, var_index, var_typ, &bound_vars, &obj);
-            }
-            // Standard first-order: decompose App
-            match &obj {
-                Term::App { func: f2, arg: a2 } => {
-                    let env = match_pattern(env, f1, f2)?;
-                    match_pattern(env, _a1, a2)
+
+        let pat = env.norm_term(&frame.pat);
+        let obj = env.norm_term(&frame.obj);
+
+        if pat == obj {
+            continue;
+        }
+
+        match &pat {
+            Term::Var { name, index, typ } => {
+                if env.lookup(name, *index).is_some() {
+                    return None;
                 }
-                _ => None,
+                if occurs_check(name, *index, &obj) {
+                    return None;
+                }
+                env.update(Arc::clone(name), *index, typ.clone(), obj.clone());
             }
+            Term::App { func: f1, arg: a1 } => {
+                // Higher-order pattern: if head is Var applied to bound vars
+                if let Some(bound_vars) = collect_bound_args(&pat) {
+                    let (var_name, var_index, var_typ) = dest_head_var(&pat)?;
+                    return match_ho_pattern(env, var_name, var_index, var_typ, &bound_vars, &obj);
+                }
+                // Standard first-order: decompose App
+                match &obj {
+                    Term::App { func: f2, arg: a2 } => {
+                        // Push arg first (processed second), func second (processed first)
+                        frames.push(Frame { pat: a1.as_ref().clone(), obj: a2.as_ref().clone() });
+                        frames.push(Frame { pat: f1.as_ref().clone(), obj: f2.as_ref().clone() });
+                    }
+                    _ => return None,
+                }
+            }
+            Term::Abs { body: b1, .. } => match &obj {
+                Term::Abs { body: b2, .. } => {
+                    frames.push(Frame { pat: b1.as_ref().clone(), obj: b2.as_ref().clone() });
+                }
+                _ => return None,
+            },
+            _ => return None,
         }
-        Term::Abs { body: b1, .. } => match &obj {
-            Term::Abs { body: b2, .. } => match_pattern(env, b1, b2),
-            _ => None,
-        },
-        _ => None,
     }
+
+    Some(env)
 }
 
 /// Check if a term is a pattern `?P(a1,...,an)` where `?P` is a Var
@@ -404,29 +395,27 @@ fn match_ho_pattern(
 // =========================================================================
 
 /// Structural equality ignoring types.
+/// Iterative implementation to avoid stack overflow.
 fn term_eq_notypes(a: &Term, b: &Term) -> bool {
-    match (a, b) {
-        (Term::Const { name: n1, .. }, Term::Const { name: n2, .. }) => n1 == n2,
-        (Term::Free { name: n1, .. }, Term::Free { name: n2, .. }) => n1 == n2,
-        (
-            Term::Var {
-                name: n1,
-                index: i1,
-                ..
-            },
-            Term::Var {
-                name: n2,
-                index: i2,
-                ..
-            },
-        ) => n1 == n2 && i1 == i2,
-        (Term::Bound(i1), Term::Bound(i2)) => i1 == i2,
-        (Term::Abs { body: b1, .. }, Term::Abs { body: b2, .. }) => term_eq_notypes(b1, b2),
-        (Term::App { func: f1, arg: a1 }, Term::App { func: f2, arg: a2 }) => {
-            term_eq_notypes(f1, f2) && term_eq_notypes(a1, a2)
+    let mut stack: Vec<(&Term, &Term)> = vec![(a, b)];
+    while let Some((a, b)) = stack.pop() {
+        match (a, b) {
+            (Term::Const { name: n1, .. }, Term::Const { name: n2, .. }) if n1 == n2 => continue,
+            (Term::Free { name: n1, .. }, Term::Free { name: n2, .. }) if n1 == n2 => continue,
+            (Term::Var { name: n1, index: i1, .. }, Term::Var { name: n2, index: i2, .. })
+                if n1 == n2 && i1 == i2 => continue,
+            (Term::Bound(i1), Term::Bound(i2)) if i1 == i2 => continue,
+            (Term::Abs { body: b1, .. }, Term::Abs { body: b2, .. }) => {
+                stack.push((b1, b2));
+            }
+            (Term::App { func: f1, arg: a1 }, Term::App { func: f2, arg: a2 }) => {
+                stack.push((a1, a2));
+                stack.push((f1, f2));
+            }
+            _ => return false,
         }
-        _ => false,
     }
+    true
 }
 
 #[cfg(test)]

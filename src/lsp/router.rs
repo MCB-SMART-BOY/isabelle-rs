@@ -47,6 +47,10 @@ impl Router {
             handlers::definition::handle_definition,
         );
         requests.insert(
+            requests::TEXT_DOCUMENT_DOCUMENT_SYMBOL,
+            handlers::symbols::handle_document_symbol,
+        );
+        requests.insert(
             requests::PROOF_GOALS,
             handlers::proof_goals::handle_proof_goals,
         );

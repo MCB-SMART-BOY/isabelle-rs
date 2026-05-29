@@ -42,12 +42,18 @@ powershell -c "iwr https://raw.githubusercontent.com/mcbgaruda/isabelle-rs/main/
 ## After installation
 
 ```bash
-# Run tests
+# Run all tests (250+)
 cargo test
+
+# Run core verification benchmark (~4.1s, 125/125 theorems)
+cargo test test_verify_all_core_files -- --nocapture
+
+# Run beyond-core verification (128/128 theorems, 9 files)
+RUST_MIN_STACK=134217728 cargo test test_verify_beyond_core -- --nocapture
 
 # Start LSP server
 cargo run -- --lsp
 
-# Run verification benchmark
-cargo test test_verify_all_core_files -- --nocapture
+# Load full HOL library (1,000 files, ~2.7s)
+RUST_MIN_STACK=33554432 cargo test test_load_1000_from_full_hol -- --nocapture
 ```

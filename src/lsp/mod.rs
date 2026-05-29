@@ -54,7 +54,6 @@
 //! | `isabelle/waitForChecking` | ❌ |
 
 // Re-export from the existing server/ module
-pub use crate::server::*;
 
 // V3 modules
 pub mod handlers;

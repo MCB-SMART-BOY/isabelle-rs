@@ -69,7 +69,7 @@ impl ClassAlgebra {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Sort {
     classes: BTreeSet<Class>,
 }
@@ -197,6 +197,35 @@ impl Typ {
             _ => 0,
         }
     }
+
+    /// Annotate dummy types with known types from the environment.
+    /// Returns true if any types were replaced.
+    pub fn annotate_from_env(&mut self, env: &TypeEnv) -> bool {
+        match self {
+            Typ::Type { name, args } if name.as_ref() == "dummy" && args.is_empty() => {
+                false // Can't annotate a pure dummy without context
+            }
+            Typ::Type { name: _, args } => {
+                let mut changed = false;
+                for arg in args.iter_mut() {
+                    changed |= arg.annotate_from_env(env);
+                }
+                changed
+            }
+            Typ::TFree { .. } | Typ::TVar { .. } => false,
+        }
+    }
+
+    /// Replace this type if it's dummy with a known type.
+    /// Called from Term::type_annotate when we know the constant's expected type.
+    pub fn replace_dummy(&mut self, known: &Typ) -> bool {
+        if self.is_dummy() {
+            *self = known.clone();
+            true
+        } else {
+            false
+        }
+    }
 }
 
 impl fmt::Display for Typ {
@@ -220,7 +249,7 @@ impl fmt::Display for Typ {
 /// Registry of type information for constants and type constructors.
 /// Maps constant names to their type signatures, and type constructor names
 /// to their arities (number of type arguments).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct TypeEnv {
     /// Constant name → type signature (e.g., "HOL.eq" → 'a => 'a => bool)
     pub consts: HashMap<String, Typ>,
@@ -228,11 +257,18 @@ pub struct TypeEnv {
     pub types: HashMap<String, usize>,
     /// Free variable name → declared type
     pub frees: HashMap<String, Typ>,
+    /// Sort algebra for type class checking
+    pub algebra: super::sorts::Algebra,
 }
 
 impl TypeEnv {
     pub fn new() -> Self {
-        let mut env = TypeEnv::default();
+        let mut env = TypeEnv {
+            consts: HashMap::new(),
+            types: HashMap::new(),
+            frees: HashMap::new(),
+            algebra: super::sorts::Algebra::pure(),
+        };
         // Built-in: Pure logic types
         env.types.insert("prop".into(), 0);
         env.types.insert("fun".into(), 2);
@@ -295,6 +331,21 @@ impl TypeEnv {
             }
         })
     }
+
+    /// Declare a type class with its superclasses.
+    pub fn declare_class(&mut self, class: &str, superclasses: &[Symbol]) {
+        self.algebra.add_class(&Symbol::from(class), superclasses);
+    }
+
+    /// Declare a type class arity.
+    pub fn declare_arity(&mut self, tycon: &str, class: &str, arg_sorts: Vec<Sort>) {
+        self.algebra.add_arity(&Symbol::from(tycon), &Symbol::from(class), arg_sorts);
+    }
+
+    /// Check if a type can have a given sort.
+    pub fn of_sort(&self, typ: &Typ, sort: &Sort) -> bool {
+        self.algebra.of_sort(typ, sort)
+    }
 }
 
 #[cfg(test)]
@@ -330,7 +381,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn test_sort() {
         let s = Sort::singleton("type");
         assert!(s.has("type"));
@@ -339,5 +389,39 @@ mod tests {
     fn test_types() {
         let b = Typ::base("bool");
         assert!(b.is_type());
+    }
+
+    #[test]
+    fn test_sort_algebra_of_sort() {
+        let mut env = TypeEnv::new();
+        // Declare ord as subclass of type
+        let ord = Symbol::from("ord");
+        env.declare_class("ord", &[Symbol::from("type")]);
+        // Declare order subclass of ord
+        env.declare_class("order", &[ord.clone()]);
+
+        // A type variable with sort {order} should satisfy {ord}
+        let tv = Typ::free("'a", Sort::singleton("order"));
+        let ord_sort = Sort::singleton("ord");
+        assert!(env.of_sort(&tv, &ord_sort));
+
+        // But shouldn't satisfy {group} (not declared)
+        let group_sort = Sort::singleton("group");
+        assert!(!env.of_sort(&tv, &group_sort));
+    }
+
+    #[test]
+    fn test_sort_algebra_arity() {
+        let mut env = TypeEnv::new();
+        let ord = Symbol::from("ord");
+        // list :: (type)type — no sort constraint
+        env.declare_arity("list", "type", vec![]);
+        // list :: (ord)ord — 'a list is ord if 'a is ord
+        env.declare_arity("list", "ord", vec![Sort::singleton("ord")]);
+
+        let list_typ = Typ::apply("list", vec![Typ::free("'a", Sort::singleton("ord"))]);
+        let ord_sort = Sort::singleton("ord");
+        // 'a list should satisfy ord if 'a:ord
+        assert!(env.of_sort(&list_typ, &ord_sort));
     }
 }

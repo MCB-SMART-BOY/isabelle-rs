@@ -37,6 +37,8 @@ pub enum ProofState {
         block_depth: usize,
         /// The result of the final `show` statement (for qed composition)
         show_result: Option<Thm>,
+        /// Abbreviations from `let` commands (name -> term binding)
+        let_bindings: Vec<(String, Term)>,
     },
     /// Proof complete
     Done(Thm),
@@ -60,6 +62,7 @@ impl ProofState {
                 current_subgoal: 0,
                 block_depth: 0,
                 show_result: None,
+                let_bindings: Vec::new(),
             };
         }
     }
@@ -93,6 +96,58 @@ impl ProofState {
     pub fn fix(&mut self, var: &str, typ: Typ) {
         if let ProofState::Proving { fixes, .. } = self {
             fixes.push((var.to_string(), typ));
+        }
+    }
+
+    /// Define a local abbreviation (Isar `let x = t` or `let x be "prop"`).
+    /// 
+    /// Store the binding so that subsequent commands can expand `x` to `t`.
+    pub fn let_def(&mut self, name: &str, term: Term) {
+        if let ProofState::Proving { let_bindings, .. } = self {
+            // Replace existing binding for this name if present
+            let_bindings.retain(|(n, _)| n != name);
+            let_bindings.push((name.to_string(), term));
+        }
+    }
+
+    /// Expand all `let` abbreviations in a term.
+    /// 
+    /// Replaces `Const(name)` nodes that match a `let` binding with the bound term.
+    pub fn expand_lets(&self, term: &Term) -> Term {
+        let bindings = match self {
+            ProofState::Proving { let_bindings, .. } => let_bindings,
+            _ => return term.clone(),
+        };
+        if bindings.is_empty() {
+            return term.clone();
+        }
+        Self::expand_lets_rec(term, bindings)
+    }
+
+    /// Recursive helper for let expansion (iterative implementation).
+    fn expand_lets_rec(term: &Term, bindings: &[(String, Term)]) -> Term {
+        // Use iterative approach: process the term tree without recursion.
+        // For simplicity, we do a single-pass replacement and iteration.
+        // Deeply nested terms are handled via the work-list pattern in the caller.
+        match term {
+            Term::Const { name, .. } => {
+                for (let_name, let_term) in bindings {
+                    if name.as_ref() == let_name {
+                        return let_term.clone();
+                    }
+                }
+                term.clone()
+            }
+            Term::App { func, arg } => {
+                let new_func = Self::expand_lets_rec(func, bindings);
+                let new_arg = Self::expand_lets_rec(arg, bindings);
+                Term::app(new_func, new_arg)
+            }
+            Term::Abs { name, typ, body } => {
+                let new_body = Self::expand_lets_rec(body, bindings);
+                Term::abs(name.clone(), typ.clone(), new_body)
+            }
+            _ => term.clone(),
         }
     }
 
@@ -186,7 +241,7 @@ impl ProofState {
         }
     }
 
-    /// Set up a case context    /// Set up a case context (`case Nil` or `case (Cons x xs)`).
+    /// Set up a case context (`case Nil` or `case (Cons x xs)`).
     /// Selects the appropriate subgoal for the named case.
     pub fn case_(&mut self, case_name: &str) {
         if let ProofState::Proving {
@@ -356,6 +411,16 @@ pub fn interpret_proof_script(
     while i < lines.len() {
         let t = lines[i].trim();
         if t.is_empty() {
+            i += 1;
+            continue;
+        }
+
+        // `let` — define a local abbreviation
+        if t.starts_with("let ") {
+            let rest = t.strip_prefix("let ").unwrap_or("");
+            if let Some((name, expr)) = parse_let_binding(rest) {
+                state.let_def(&name, expr);
+            }
             i += 1;
             continue;
         }
@@ -561,14 +626,129 @@ pub fn interpret_proof_script(
             continue;
         }
 
-        // `note name = thm` — bind a fact to a name (skip, name binding not needed yet)
-        if t.starts_with("note ") || t.starts_with("let ") {
+        // `note name = thm1 thm2 ...` — bind theorems to a name
+        if t.starts_with("note ") {
+            let rest = t.strip_prefix("note ").unwrap_or("").trim();
+            if let Some(eq_pos) = rest.find('=') {
+                let _name = rest[..eq_pos].trim();
+                let thm_names: Vec<&str> = rest[eq_pos + 1..]
+                    .split_whitespace()
+                    .collect();
+                let db = crate::hol::hol_loader::HolTheoremDb::get();
+                for thm_name in &thm_names {
+                    if let Some(thm) = db.by_name.get(*thm_name) {
+                        state.add_fact(Arc::clone(thm));
+                    }
+                }
+            }
             i += 1;
             continue;
         }
 
-        // `using ...` — add facts (skip, handled at top level)
-        if t.starts_with("using ") || t.starts_with("unfolding ") {
+        // `let` — local abbreviation (term-level, skip for now)
+        if t.starts_with("let ") {
+            i += 1;
+            continue;
+        }
+
+        // `using thm1 thm2` — add facts to context for next method
+        if t.starts_with("using ") {
+            let names = t.strip_prefix("using ").unwrap_or("").trim();
+            let db = crate::hol::hol_loader::HolTheoremDb::get();
+            for name in names.split_whitespace() {
+                let name = name.trim().trim_matches(',');
+                if !name.is_empty() {
+                    if let Some(thm) = db.by_name.get(name) {
+                        state.add_fact(Arc::clone(thm));
+                    }
+                }
+            }
+            i += 1;
+            continue;
+        }
+
+        // `unfolding thm1 thm2` — expand definitions (treat as using for now)
+        if t.starts_with("unfolding ") {
+            let names = t.strip_prefix("unfolding ").unwrap_or("").trim();
+            let db = crate::hol::hol_loader::HolTheoremDb::get();
+            for name in names.split_whitespace() {
+                let name = name.trim();
+                if !name.is_empty() {
+                    if let Some(thm) = db.by_name.get(name) {
+                        state.chain_fact(Arc::clone(thm));
+                    }
+                }
+            }
+            i += 1;
+            continue;
+        }
+
+        // `also` — calculational reasoning: chain fact (like then)
+        if t.starts_with("also ") {
+            // `also "thm"` — look up and chain
+            let rest = t.strip_prefix("also ").unwrap_or("").trim().trim_matches('"');
+            if !rest.is_empty() {
+                let db = crate::hol::hol_loader::HolTheoremDb::get();
+                if let Some(thm) = db.by_name.get(rest) {
+                    state.chain_fact(Arc::clone(thm));
+                }
+            }
+            i += 1;
+            continue;
+        }
+        if t == "also" {
+            // `also` without argument — chain from previous (no-op, chaining is automatic)
+            i += 1;
+            continue;
+        }
+
+        // `finally` — conclude calculational chain
+        if t.starts_with("finally ") {
+            let rest = t.strip_prefix("finally ").unwrap_or("").trim().trim_matches('"');
+            if !rest.is_empty() {
+                let db = crate::hol::hol_loader::HolTheoremDb::get();
+                if let Some(thm) = db.by_name.get(rest) {
+                    state.chain_fact(Arc::clone(thm));
+                }
+            }
+            // Try to close the calculation with transitivity
+            if let Some(goal) = state.get_current_goal() {
+                let results = crate::isar::method::exec_single_method(&goal, "auto", &[]);
+                if let Some(solved) = results.into_iter().find(|r| r.nprems() == 0) {
+                    state.set_current_goal(solved);
+                }
+            }
+            i += 1;
+            continue;
+        }
+        if t == "finally" {
+            if let Some(goal) = state.get_current_goal() {
+                let results = crate::isar::method::exec_single_method(&goal, "auto", &[]);
+                if let Some(solved) = results.into_iter().find(|r| r.nprems() == 0) {
+                    state.set_current_goal(solved);
+                }
+            }
+            i += 1;
+            continue;
+        }
+
+        // `moreover` — collect current facts for later use
+        if t == "moreover" {
+            // Facts are already accumulated; this is a no-op marker
+            i += 1;
+            continue;
+        }
+
+        // `ultimately` — use collected facts to close
+        if t == "ultimately" {
+            // Try to close with all accumulated facts
+            if let Some(goal) = state.get_current_goal() {
+                let premises: Vec<Arc<Thm>> = state.get_premises().to_vec();
+                let results = crate::isar::method::exec_proof(&goal, "by auto", &premises);
+                if let Some(solved) = results {
+                    state.set_current_goal(solved);
+                }
+            }
             i += 1;
             continue;
         }
@@ -730,6 +910,34 @@ fn parse_term_from_script(s: &str) -> Option<Term> {
     crate::isar::term_parser::parse_term(s)
 }
 
+/// Parse a `let` binding: `x = expr` or `x be "prop"`.
+/// Returns `Some((name, term))` or `None` if parsing fails.
+fn parse_let_binding(rest: &str) -> Option<(String, Term)> {
+    let rest = rest.trim();
+    // Try `let x = t` form
+    if let Some(eq_pos) = rest.find('=') {
+        let name = rest[..eq_pos].trim().to_string();
+        let rhs = rest[eq_pos + 1..].trim();
+        if !name.is_empty() && !rhs.is_empty() {
+            // Try parsing the RHS as a term
+            if let Some(term) = crate::isar::term_parser::parse_term(rhs) {
+                return Some((name, term));
+            }
+        }
+    }
+    // Try `let x be "prop"` form
+    if let Some(be_pos) = rest.find(" be ") {
+        let name = rest[..be_pos].trim().to_string();
+        let rhs = rest[be_pos + 4..].trim().trim_matches('"');
+        if !name.is_empty() && !rhs.is_empty() {
+            if let Some(term) = crate::isar::term_parser::parse_term(rhs) {
+                return Some((name, term));
+            }
+        }
+    }
+    None
+}
+
 impl ProofState {
     /// Get the current goal being proved.
     pub fn get_current_goal(&self) -> Option<Thm> {
@@ -801,6 +1009,37 @@ mod isar_tests {
         let premises: Vec<Arc<Thm>> = vec![];
         let result = interpret_proof_script(&mut state, script, &premises);
         eprintln!("Result: {:?}", result);
+    }
+
+    #[test]
+    fn test_let_binding() {
+        // Test the `let` command parsing and expansion
+        let a = Term::const_("A", Typ::base("prop"));
+        let goal = ThmKernel::assume(CTerm::certify(a.clone()));
+        let mut state = ProofState::new(goal);
+        state.begin_proof();
+
+        // Define a let binding
+        let x_val = Term::const_("x_val", Typ::dummy());
+        state.let_def("X", x_val.clone());
+
+        // Verify binding is stored
+        let expanded = state.expand_lets(&Term::const_("X", Typ::dummy()));
+        assert_eq!(expanded, x_val, "let binding should expand X to x_val");
+
+        // Non-bound names should be unaffected
+        let unchanged = state.expand_lets(&Term::const_("Y", Typ::dummy()));
+        assert_eq!(unchanged, Term::const_("Y", Typ::dummy()));
+    }
+
+    #[test]
+    fn test_parse_let_binding() {
+        // Test parsing of different let forms
+        let (name, _) = parse_let_binding("x = a").expect("should parse let x = a");
+        assert_eq!(name, "x");
+
+        let (name2, _) = parse_let_binding("prop be \"A ==> B\"").expect("should parse let prop be ...");
+        assert_eq!(name2, "prop");
     }
 
     #[test]

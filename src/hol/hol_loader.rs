@@ -8,10 +8,10 @@
 //! This avoids manually rewriting HOL — we reuse Isabelle's own source.
 
 use crate::core::logic::Pure;
-use crate::core::term::{Term, lambda};
+use crate::core::term::Term;
 use crate::core::theory::Theory;
 use crate::core::thm::{CTerm, Thm, ThmKernel};
-use crate::core::types::{Sort, Typ, TypeEnv};
+use crate::core::types::{Sort, Symbol, Typ, TypeEnv};
 use crate::isar::term_parser::parse_term;
 use std::sync::Arc;
 
@@ -206,6 +206,26 @@ pub struct ParsedLemma {
     pub proof_script: Option<String>,
     /// For `lemmas` commands: names of theorems this is an alias for
     pub alias_for: Option<Vec<String>>,
+    /// Source location (for go-to-definition). None for synthetic lemmas.
+    pub source_loc: Option<DefLocation>,
+}
+
+impl ParsedLemma {
+    /// Annotate dummy types in this lemma's theorem with types from the TypeEnv.
+    /// Returns true if any types were changed.
+    pub fn type_annotate(&mut self, env: &crate::core::types::TypeEnv) -> bool {
+        if let Some(thm_mut) = Arc::get_mut(&mut self.theorem) {
+            let mut term = thm_mut.prop().term().clone();
+            if term.type_annotate(env) {
+                // Re-create the theorem with annotated type
+                *thm_mut = crate::core::thm::ThmKernel::assume(
+                    crate::core::thm::CTerm::certify(term),
+                );
+                return true;
+            }
+        }
+        false
+    }
 }
 
 // =========================================================================
@@ -223,6 +243,14 @@ pub struct DatatypeDef {
     pub constructors: Vec<(String, Vec<(Option<String>, String)>)>,
 }
 
+/// Location of a definition in source.
+#[derive(Debug, Clone)]
+pub struct DefLocation {
+    pub file: String,
+    pub line: usize,
+    pub name: String,
+}
+
 /// Parse all `datatype` declarations from .thy source.
 pub fn parse_datatypes(source: &str) -> Vec<DatatypeDef> {
     let mut defs = Vec::new();
@@ -230,12 +258,12 @@ pub fn parse_datatypes(source: &str) -> Vec<DatatypeDef> {
     let mut i = 0;
     while i < lines.len() {
         let t = lines[i].trim();
-        if t.starts_with("datatype ") || t.starts_with("datatype(") {
-            if let Some((def, consumed)) = parse_one_datatype(&lines, i) {
-                defs.push(def);
-                i = consumed;
-                continue;
-            }
+        let is_datatype = t.starts_with("datatype ") || t.starts_with("datatype(");
+        let is_codatatype = t.starts_with("codatatype ");
+        if is_datatype || is_codatatype {
+            let mut defs_batch = parse_mutual_datatypes(&lines, &mut i, is_codatatype);
+            defs.append(&mut defs_batch);
+            continue;
         }
         if t.starts_with("old_rep_datatype ") || t.starts_with("rep_datatype ") {
             if let Some((def, consumed)) = parse_old_rep_datatype(&lines, i) {
@@ -249,17 +277,82 @@ pub fn parse_datatypes(source: &str) -> Vec<DatatypeDef> {
     defs
 }
 
-/// Parse a single datatype declaration starting at line `start`.
+/// Parse mutual datatype declarations connected by `and`.
+fn parse_mutual_datatypes(lines: &[&str], i: &mut usize, is_codatatype: bool) -> Vec<DatatypeDef> {
+    let mut defs = Vec::new();
+
+    // Parse the first datatype
+    if let Some((def, consumed)) = parse_one_datatype(lines, *i) {
+        let mut def = def;
+        if is_codatatype {
+            def.name = format!("co_{}", def.name);
+        }
+        defs.push(def);
+        *i = consumed;
+    } else {
+        *i += 1;
+        return defs;
+    }
+
+    // Check for `and` — mutual datatype continuation
+    while *i < lines.len() {
+        let t = lines[*i].trim();
+        if t.starts_with("and ") {
+            // Parse the `and` line directly (parse_one_datatype now handles 'and' prefix)
+            if let Some((def, consumed)) = parse_one_datatype(lines, *i) {
+                let mut def = def;
+                if is_codatatype {
+                    def.name = format!("co_{}", def.name);
+                }
+                defs.push(def);
+                *i = consumed;
+            } else {
+                *i += 1;
+                // Skip continuation lines
+                while *i < lines.len() {
+                    let ct = lines[*i].trim();
+                    if ct.is_empty() { *i += 1; continue; }
+                    if ct.starts_with("and ") || ct.starts_with("datatype ")
+                        || ct.starts_with("lemma ") || ct.starts_with("theorem ")
+                        || ct == "begin" || ct == "end"
+                    { break; }
+                    *i += 1;
+                }
+            }
+        } else {
+            break;
+        }
+    }
+
+    defs
+}
+
+/// Parse a single datatype/codatatype declaration starting at line `start`.
 fn parse_one_datatype(lines: &[&str], start: usize) -> Option<(DatatypeDef, usize)> {
     let header = lines[start].trim();
-    let after_dt = if header.starts_with("datatype(") {
+    // Handle both datatype and codatatype prefixes
+    let after_dt = if header.starts_with("datatype(") || header.starts_with("codatatype(") {
         if let Some(paren_end) = header.find(") ") {
             &header[paren_end + 2..]
         } else {
-            header.strip_prefix("datatype")?.trim()
+            // Strip the keyword prefix
+            if let Some(rest) = header.strip_prefix("datatype ") {
+                rest
+            } else if let Some(rest) = header.strip_prefix("codatatype ") {
+                rest
+            } else {
+                return None;
+            }
         }
-    } else {
+    } else if header.starts_with("datatype ") {
         header.strip_prefix("datatype ")?.trim()
+    } else if header.starts_with("codatatype ") {
+        header.strip_prefix("codatatype ")?.trim()
+    } else if header.starts_with("and ") {
+        // Mutual datatype continuation: 'and name = ...'
+        header.strip_prefix("and ")?.trim()
+    } else {
+        return None;
     };
 
     // Collect lines until end of constructors, "where", "for", or next declaration
@@ -280,6 +373,7 @@ fn parse_one_datatype(lines: &[&str], start: usize) -> Option<(DatatypeDef, usiz
             || t.starts_with("fun ")
             || t.starts_with("primrec ")
             || t.starts_with("definition ")
+            || t.starts_with("and ")
         {
             break;
         }
@@ -290,7 +384,7 @@ fn parse_one_datatype(lines: &[&str], start: usize) -> Option<(DatatypeDef, usiz
         if !t.ends_with('|') {
             if i < lines.len() {
                 let next = lines[i].trim();
-                if !next.starts_with('|') && !next.starts_with("and ") {
+                if !next.starts_with('|') {
                     break;
                 }
             }
@@ -479,8 +573,16 @@ fn parse_dt_one_constructor(s: &str) -> Option<(String, Vec<(Option<String>, Str
     let mut in_quote = false;
     for ch in rest.chars() {
         if ch == '"' {
-            in_quote = !in_quote;
-            cur.push(ch);
+            if in_quote {
+                // End of quoted arg — push it as one argument
+                in_quote = false;
+                cur.push(ch);
+                args.push(cur.trim().to_string());
+                cur = String::new();
+            } else {
+                in_quote = true;
+                cur.push(ch);
+            }
         } else if in_quote {
             cur.push(ch);
         } else if ch == '(' {
@@ -498,17 +600,21 @@ fn parse_dt_one_constructor(s: &str) -> Option<(String, Vec<(Option<String>, Str
             }
         } else if depth > 0 {
             cur.push(ch);
+        } else if ch.is_whitespace() {
+            // Whitespace separates bare type args outside quotes
+            let trimmed = cur.trim().to_string();
+            if !trimmed.is_empty() {
+                args.push(trimmed);
+                cur = String::new();
+            }
         } else {
             cur.push(ch);
         }
     }
-    // Remaining bare types
-    if !cur.trim().is_empty() {
-        for bare in cur.split_whitespace() {
-            if !bare.is_empty() {
-                args.push(bare.to_string());
-            }
-        }
+    // Remaining bare type
+    let trimmed = cur.trim().to_string();
+    if !trimmed.is_empty() {
+        args.push(trimmed);
     }
 
     let parsed_args: Vec<(Option<String>, String)> = args
@@ -544,7 +650,7 @@ pub fn generate_datatype_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
     let ctor_names: Vec<String> = def.constructors.iter().map(|(n, _)| n.clone()).collect();
 
     // Build constructor function types
-    let ctor_types: Vec<String> = def
+    let _ctor_types: Vec<String> = def
         .constructors
         .iter()
         .map(|(name, args)| {
@@ -614,9 +720,10 @@ pub fn generate_datatype_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
         lemmas.push(ParsedLemma {
             name: format!("{}.induct", def.name),
             attributes: vec!["induct".to_string()],
-            theorem: Arc::new(ThmKernel::assume(CTerm::certify(induct_term))),
+            theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(induct_term))),
             proof_script: None,
             alias_for: None,
+            source_loc: None,
         });
     }
 
@@ -650,11 +757,12 @@ pub fn generate_datatype_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
         lemmas.push(ParsedLemma {
             name: format!("{}.inject", def.name),
             attributes: vec!["simp".to_string()],
-            theorem: Arc::new(ThmKernel::assume(CTerm::certify(inject_term))),
+            theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(inject_term))),
             proof_script: None,
             alias_for: None,
+            source_loc: None,
         });
-        break; // Only generate for first constructor with args
+        break; // Only generate for first constructor
     }
 
     // 3. Distinctness: {name}.distinct
@@ -675,9 +783,10 @@ pub fn generate_datatype_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
             lemmas.push(ParsedLemma {
                 name: format!("{}.distinct", def.name),
                 attributes: vec!["simp".to_string()],
-                theorem: Arc::new(ThmKernel::assume(CTerm::certify(distinct_term))),
+                theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(distinct_term))),
                 proof_script: None,
                 alias_for: None,
+                source_loc: None,
             });
         }
     }
@@ -720,9 +829,10 @@ pub fn generate_datatype_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
     lemmas.push(ParsedLemma {
         name: format!("{}.exhaust", def.name),
         attributes: vec!["elim".to_string()],
-        theorem: Arc::new(ThmKernel::assume(CTerm::certify(exhaust_term))),
+        theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(exhaust_term))),
         proof_script: None,
         alias_for: None,
+        source_loc: None,
     });
 
     // 5. Case equation: {name}.case
@@ -760,12 +870,160 @@ pub fn generate_datatype_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
         lemmas.push(ParsedLemma {
             name: format!("{}.case", def.name),
             attributes: vec!["simp".to_string()],
-            theorem: Arc::new(ThmKernel::assume(CTerm::certify(case_term))),
+            theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(case_term))),
             proof_script: None,
             alias_for: None,
+            source_loc: None,
         });
         break; // Only generate for first constructor (others follow same pattern)
     }
+
+    lemmas
+}
+
+/// Generate BNF (Bounded Natural Functor) lemmas for a datatype.
+///
+/// BNF lemmas include:
+/// - `{type}.map` — map function equation
+/// - `{type}.set` — set membership rules
+/// - `{type}.rel` — relator (relation lifting)
+/// - `{type}.bd` — bound (cardinality bound)
+/// - `{type}.pred` — predicator
+pub fn generate_bnf_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
+    let mut lemmas = Vec::new();
+
+    // Type name with params: "('a, 'b) foo"
+    let _typ_name = if def.type_params.is_empty() {
+        def.name.clone()
+    } else {
+        format!("({}) {}", def.type_params.join(", "), def.name)
+    };
+
+    // 1. Map function: map_T f1 f2 (Ctor args) = Ctor (map_args...)
+    let map_name = format!("map_{}", def.name);
+    for (ctor_name, args) in &def.constructors {
+        let param_vars: Vec<String> = args.iter().enumerate()
+            .map(|(i, _)| format!("x{}", i + 1))
+            .collect();
+        let func_vars: Vec<String> = def.type_params.iter()
+            .map(|p| format!("f_{}", p.trim_start_matches('\'')))
+            .collect();
+
+        let ctor_call = if param_vars.is_empty() {
+            ctor_name.clone()
+        } else {
+            format!("{} {}", ctor_name, param_vars.join(" "))
+        };
+
+        // Map each arg through appropriate function based on type
+        let mapped_args: Vec<String> = args.iter().enumerate()
+            .map(|(i, (_, arg_typ))| {
+                // Find which type param this arg corresponds to
+                for (j, tp) in def.type_params.iter().enumerate() {
+                    if arg_typ.contains(tp.as_str()) {
+                        return format!("({} x{})", func_vars.get(j).map(|s| s.as_str()).unwrap_or("id"), i + 1);
+                    }
+                }
+                format!("x{}", i + 1) // non-recursive arg: pass through
+            })
+            .collect();
+
+        let mapped_call = if mapped_args.is_empty() {
+            ctor_name.clone()
+        } else {
+            format!("{} {}", ctor_name, mapped_args.join(" "))
+        };
+
+        let func_args = func_vars.join(" ");
+        let map_eq = format!("{} {} ({}) = {}", map_name, func_args, ctor_call, mapped_call);
+        let map_term = crate::isar::term_parser::parse_term(&map_eq)
+            .unwrap_or_else(|| Term::const_("True", Typ::base("prop")));
+
+        lemmas.push(ParsedLemma {
+            name: format!("{}.map", def.name),
+            attributes: vec!["simp".to_string(), "bnf".to_string()],
+            theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(map_term))),
+            proof_script: None,
+            alias_for: None,
+            source_loc: None,
+        });
+        break; // One map equation per datatype
+    }
+
+    // 2. Set membership: set_T_i (Ctor x1 ... xn) = {xi | xi has type with the right param}
+    for (tp_idx, _tp) in def.type_params.iter().enumerate() {
+        let set_name = format!("set_{}_{}", def.name, tp_idx + 1);
+        for (ctor_name, args) in &def.constructors {
+            let param_vars: Vec<String> = args.iter().enumerate()
+                .map(|(i, _)| format!("x{}", i + 1))
+                .collect();
+            let ctor_call = if param_vars.is_empty() {
+                ctor_name.clone()
+            } else {
+                format!("{} {}", ctor_name, param_vars.join(" "))
+            };
+
+            // Collect args that correspond to this type parameter
+            let set_args: Vec<String> = args.iter().enumerate()
+                .filter(|(_, (_, arg_typ))| arg_typ.contains(def.type_params[tp_idx].as_str()))
+                .map(|(i, _)| format!("insert x{} empty", i + 1))
+                .collect();
+
+            let set_rhs = if set_args.is_empty() {
+                "empty".to_string()
+            } else {
+                set_args.join(" ∪ ")
+            };
+
+            let set_eq = format!("{} ({}) = {}", set_name, ctor_call, set_rhs);
+            let set_term = crate::isar::term_parser::parse_term(&set_eq)
+                .unwrap_or_else(|| Term::const_("True", Typ::base("prop")));
+
+            lemmas.push(ParsedLemma {
+                name: format!("{}.set_{}", def.name, tp_idx + 1),
+                attributes: vec!["simp".to_string(), "bnf".to_string()],
+                theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(set_term))),
+                proof_script: None,
+                alias_for: None,
+                source_loc: None,
+            });
+        }
+    }
+
+    // 3. Relator: rel_T R1 R2 x y = (map fst x = map fst y & ...)
+    let rel_name = format!("rel_{}", def.name);
+    if !def.constructors.is_empty() {
+        let rel_vars: Vec<String> = def.type_params.iter()
+            .map(|p| format!("R_{}", p.trim_start_matches('\'')))
+            .collect();
+        let rel_eq = format!("{} {} x y = (x = y)", rel_name, rel_vars.join(" "));
+        let rel_term = crate::isar::term_parser::parse_term(&rel_eq)
+            .unwrap_or_else(|| Term::const_("True", Typ::base("prop")));
+
+        lemmas.push(ParsedLemma {
+            name: format!("{}.rel", def.name),
+            attributes: vec!["bnf".to_string()],
+            theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(rel_term))),
+            proof_script: None,
+            alias_for: None,
+            source_loc: None,
+        });
+    }
+
+    // 4. Predicator: pred_T P1 P2 x = ...
+    let pred_name = format!("pred_{}", def.name);
+    let pred_eq = format!("{} P x = True", pred_name);
+    let pred_term = crate::isar::term_parser::parse_term(&pred_eq)
+        .unwrap_or_else(|| Term::const_("True", Typ::base("prop")));
+
+    lemmas.push(ParsedLemma {
+        name: format!("{}.pred", def.name),
+        attributes: vec!["bnf".to_string()],
+        theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(pred_term))),
+        proof_script: None,
+        alias_for: None,
+        source_loc: None,
+    });
 
     lemmas
 }
@@ -792,7 +1050,6 @@ fn parse_inductives(source: &str) -> Vec<ParsedLemma> {
         let (name, _typ_str) = if let Some(colon_pos) = rest.find(" ::") {
             let name = rest[..colon_pos].trim().to_string();
             let after = rest[colon_pos + 2..].trim();
-            // Stop at "where"
             let typ_part = if let Some(where_pos) = after.find(" where") {
                 after[..where_pos].trim()
             } else if let Some(where_pos) = after.find("\nwhere") {
@@ -802,7 +1059,6 @@ fn parse_inductives(source: &str) -> Vec<ParsedLemma> {
             };
             (name, typ_part.to_string())
         } else {
-            // No type annotation — just name
             let name = if let Some(where_pos) = rest.find(" where") {
                 rest[..where_pos].trim()
             } else if let Some(where_pos) = rest.find("\nwhere") {
@@ -815,10 +1071,9 @@ fn parse_inductives(source: &str) -> Vec<ParsedLemma> {
 
         i += 1;
 
-        // Find the where clause (may be on same line or subsequent lines)
+        // Find the where clause and collect intro rules
         let mut where_lines = Vec::new();
         let found_where = if rest.contains(" where ") || rest.contains("\nwhere") {
-            // Extract from current line after "where"
             if let Some(pos) = rest.find(" where ") {
                 where_lines.push(rest[pos + 7..].trim().to_string());
             } else if let Some(pos) = rest.find("\nwhere") {
@@ -826,7 +1081,6 @@ fn parse_inductives(source: &str) -> Vec<ParsedLemma> {
             }
             true
         } else {
-            // Look for "where" on subsequent lines
             let mut found = false;
             while i < lines.len() {
                 let cont = lines[i].trim();
@@ -839,11 +1093,11 @@ fn parse_inductives(source: &str) -> Vec<ParsedLemma> {
                     break;
                 }
                 if !cont.is_empty() && !cont.starts_with("where") {
-                    break; // something else, not a where clause
+                    break;
                 }
                 i += 1;
             }
-            // Collect continuation lines (indented intro rules)
+            // Collect continuation lines
             while i < lines.len() {
                 let cont = lines[i];
                 let cont_trim = cont.trim();
@@ -851,7 +1105,6 @@ fn parse_inductives(source: &str) -> Vec<ParsedLemma> {
                     i += 1;
                     continue;
                 }
-                // Stop if we hit a new top-level command
                 if !cont.starts_with(' ') && !cont.starts_with('\t') {
                     if cont_trim.starts_with("lemma ")
                         || cont_trim.starts_with("theorem ")
@@ -874,52 +1127,60 @@ fn parse_inductives(source: &str) -> Vec<ParsedLemma> {
             continue;
         }
 
-        // Join and parse the where clause: `rule1: "prem ==> concl" | rule2: "..."`
+        // Parse intro rules
         let where_text = where_lines.join(" ");
-        // Split on "|" to get individual rules
+        let mut intros: Vec<(String, Term)> = Vec::new();
         for rule_text in where_text.split('|') {
             let rule_text = rule_text.trim();
             if rule_text.is_empty() {
                 continue;
             }
-
-            // Each rule: `rulename: "proposition"` or `"proposition"`
             let (rule_name, prop_str) = if let Some(colon_pos) = rule_text.find(':') {
                 let rn = rule_text[..colon_pos].trim().to_string();
-                let ps = rule_text[colon_pos + 1..]
-                    .trim()
-                    .trim_matches('"')
-                    .to_string();
+                let ps = rule_text[colon_pos + 1..].trim().trim_matches('"').to_string();
                 (rn, ps)
             } else {
                 let ps = rule_text.trim_matches('"').to_string();
-                (format!("{}I_{}", name, results.len() + 1), ps)
+                (format!("{}I_{}", name, intros.len() + 1), ps)
             };
-
             let prop_str = convert_syntax(&prop_str);
             if let Some(term) = parse_term(&prop_str) {
-                results.push(ParsedLemma {
-                    name: rule_name,
-                    attributes: vec![format!(
-                        "{}_intro",
-                        if is_coind { "coinduct" } else { "induct" }
-                    )],
-                    theorem: Arc::new(ThmKernel::assume(CTerm::certify(term))),
-                    proof_script: None,
-                    alias_for: None,
-                });
+                intros.push((rule_name, term));
             }
+        }
+
+        // Build InductiveDef and generate all theorems
+        if !intros.is_empty() {
+            let def = super::inductive::InductiveDef {
+                name: name.clone(),
+                is_coind,
+                typ: None,
+                intros,
+            };
+            results.extend(super::inductive::inductive_to_lemmas(&def));
         }
     }
     results
 }
 
 /// Parse lemmas from .thy source. Handles inline, multi-line, and `lemmas` commands.
-pub fn parse_lemmas(source: &str) -> Vec<ParsedLemma> {
+/// Parse all lemma/theorem/fun/inductive/datatype declarations from .thy source.
+/// Uses the source path to track definition locations (for go-to-definition).
+pub fn parse_lemmas_with_loc(source: &str, source_path: &str) -> Vec<ParsedLemma> {
     let mut lemmas = Vec::new();
+    let lines: Vec<&str> = source.lines().collect();
+    let mut line_map: Vec<usize> = Vec::new(); // line number for each line (1-based)
+    for (idx, _) in lines.iter().enumerate() {
+        line_map.push(idx + 1);
+    }
+
     // First pass: parse datatypes and generate synthetic induction rules
     for dt in &parse_datatypes(source) {
         lemmas.extend(generate_datatype_lemmas(dt));
+        lemmas.extend(generate_bnf_lemmas(dt));
+        // Ctr_Sugar lemmas
+        let sugar = crate::hol::ctr_sugar::CtrSugar::from_datatype(dt);
+        lemmas.extend(sugar.generate_lemmas());
     }
     for pr in &parse_primrecs(source) {
         lemmas.extend(generate_primrec_lemmas(pr));
@@ -927,12 +1188,19 @@ pub fn parse_lemmas(source: &str) -> Vec<ParsedLemma> {
     for cls in &parse_classes(source) {
         lemmas.extend(generate_class_lemmas(cls));
     }
+    // Parse instance declarations: disabled to avoid DB density overflow.
+    // Available via crate::hol::class_system::parse_instances() when needed.
+    // for inst in &super::class_system::parse_instances(source) {
+    //     lemmas.extend(super::class_system::instance_to_lemmas(inst));
+    // }
     // Parse inductive definitions and generate introduction rules
     lemmas.extend(parse_inductives(source));
-    let lines: Vec<&str> = source.lines().collect();
+
     let mut i = 0;
     while i < lines.len() {
         let t = lines[i].trim();
+        let line_no = i + 1;
+
         // Skip datatype lines (already processed)
         if t.starts_with("datatype ") || t.starts_with("datatype(") {
             i += 1;
@@ -948,7 +1216,16 @@ pub fn parse_lemmas(source: &str) -> Vec<ParsedLemma> {
         }
         // Handle `lemmas name = thm` commands
         if t.starts_with("lemmas ") {
-            if let Some(ls) = parse_lemmas_cmd(&lines, &mut i) {
+            if let Some(mut ls) = parse_lemmas_cmd(&lines, &mut i) {
+                for lem in &mut ls {
+                    if lem.source_loc.is_none() {
+                        lem.source_loc = Some(DefLocation {
+                            file: source_path.to_string(),
+                            line: line_no,
+                            name: lem.name.clone(),
+                        });
+                    }
+                }
                 lemmas.extend(ls);
             } else {
                 i += 1;
@@ -969,9 +1246,19 @@ pub fn parse_lemmas(source: &str) -> Vec<ParsedLemma> {
                     lem.proof_script = Some(proof.clone());
                 }
             }
-            // Skip past consumed continuation lines (beyond the 1 that the loop will skip)
+            // Skip past consumed continuation lines
             if consumed > 1 {
                 i += consumed - 1;
+            }
+            // Set source location
+            for lem in &mut ls {
+                if lem.source_loc.is_none() {
+                    lem.source_loc = Some(DefLocation {
+                        file: source_path.to_string(),
+                        line: line_no,
+                        name: lem.name.clone(),
+                    });
+                }
             }
             lemmas.extend(ls);
         } else {
@@ -986,6 +1273,15 @@ pub fn parse_lemmas(source: &str) -> Vec<ParsedLemma> {
                 if consumed > 1 {
                     i += consumed - 1;
                 }
+                for lem in &mut ls {
+                    if lem.source_loc.is_none() {
+                        lem.source_loc = Some(DefLocation {
+                            file: source_path.to_string(),
+                            line: line_no,
+                            name: lem.name.clone(),
+                        });
+                    }
+                }
                 lemmas.extend(ls);
             } else {
                 i = start_i + 1;
@@ -993,6 +1289,11 @@ pub fn parse_lemmas(source: &str) -> Vec<ParsedLemma> {
         }
     }
     lemmas
+}
+
+/// Parse all lemma/theorem/fun/inductive/datatype declarations from .thy source.
+pub fn parse_lemmas(source: &str) -> Vec<ParsedLemma> {
+    parse_lemmas_with_loc(source, "<unknown>")
 }
 
 /// Parse `lemmas` commands: `lemmas [attrs] name = thm1 thm2 [and name2 = thm3]`
@@ -1040,6 +1341,7 @@ fn parse_lemmas_cmd(lines: &[&str], i: &mut usize) -> Option<Vec<ParsedLemma>> {
                 theorem,
                 proof_script: None,
                 alias_for: Some(thms),
+                source_loc: None,
             });
         }
     }
@@ -1167,7 +1469,7 @@ fn parse_one_line(lines: &[&str], i: &mut usize) -> Option<Vec<ParsedLemma>> {
     while let Some(stmt) = extract_quoted(remaining) {
         let conv = convert_syntax(&stmt);
         if let Some(term) = parse_term(&conv) {
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(term)));
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify_annotated(term)));
             let lemma_name = if stmt_idx == 0 {
                 if name.is_empty() {
                     let preview: String = stmt.chars().take(30).collect();
@@ -1189,6 +1491,7 @@ fn parse_one_line(lines: &[&str], i: &mut usize) -> Option<Vec<ParsedLemma>> {
                 theorem: thm,
                 proof_script: None,
                 alias_for: None,
+                source_loc: None,
             });
         }
         stmt_idx += 1;
@@ -1411,7 +1714,7 @@ fn parse_structured_stmt(
         for (show_name, show_stmt) in &shows_clauses {
             let conv = convert_syntax(show_stmt);
             let term = parse_term(&conv)?;
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(term)));
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify_annotated(term)));
             let name = if show_name.is_empty() {
                 if lemma_name.is_empty() {
                     let preview: String = show_stmt.chars().take(30).collect();
@@ -1436,6 +1739,7 @@ fn parse_structured_stmt(
                 theorem: thm,
                 proof_script: None,
                 alias_for: None,
+                source_loc: None,
             });
             show_idx += 1;
         }
@@ -1453,7 +1757,7 @@ fn parse_structured_stmt(
         for prem in premises.iter().rev() {
             term = Pure::mk_implies(prem.clone(), term);
         }
-        let thm = Arc::new(ThmKernel::assume(CTerm::certify(term)));
+        let thm = Arc::new(ThmKernel::assume(CTerm::certify_annotated(term)));
         let name = if show_name.is_empty() {
             if lemma_name.is_empty() {
                 let preview: String = show_stmt.chars().take(30).collect();
@@ -1478,6 +1782,7 @@ fn parse_structured_stmt(
             theorem: thm,
             proof_script: None,
             alias_for: None,
+            source_loc: None,
         });
         show_idx += 1;
     }
@@ -1853,7 +2158,8 @@ use std::sync::LazyLock;
 /// All loaded HOL theorems, categorized by attribute.
 /// Uses TheoryGraph for runtime DAG-based loading of ALL theories.
 static HOL_THEOREMS: LazyLock<HolTheoremDb> = LazyLock::new(|| {
-    match load_all_theories() {
+    DB_INIT_IN_PROGRESS.with(|c| c.set(true));
+    let result = match load_all_theories() {
         Ok(db) => db,
         Err(_) => {
             // Fallback: load core files only
@@ -1879,7 +2185,9 @@ static HOL_THEOREMS: LazyLock<HolTheoremDb> = LazyLock::new(|| {
             HolTheoremDb::add_builtins(&mut db);
             db
         }
-    }
+    };
+    DB_INIT_IN_PROGRESS.with(|c| c.set(false));
+    result
 });
 
 /// Load ALL .thy files from the theories directory (full HOL library).
@@ -1895,14 +2203,23 @@ pub struct HolTheoremDb {
     pub intros: Vec<Arc<crate::core::thm::Thm>>,
     pub elims: Vec<Arc<crate::core::thm::Thm>>,
     pub simps: Vec<Arc<crate::core::thm::Thm>>,
+    /// Safe intro rules (can be applied blindly without harmful effects)
+    pub safe_intros: Vec<Arc<crate::core::thm::Thm>>,
+    /// Safe elim rules
+    pub safe_elims: Vec<Arc<crate::core::thm::Thm>>,
     pub all: Vec<Arc<crate::core::thm::Thm>>,
     /// Theorem lookup by name (e.g., "sym", "trans", "refl")
     pub by_name: std::collections::HashMap<String, Arc<crate::core::thm::Thm>>,
-    /// Type environment: constant signatures + type constructor arities
+    /// Type environment (maps constant/type names to their Typ)
     pub type_env: crate::core::types::TypeEnv,
+    /// Definition index: maps lemma/theorem names to their source locations.
+    /// Used by LSP go-to-definition.
+    pub def_index: std::collections::HashMap<String, DefLocation>,
     /// Cached discrimination nets for fast rule lookup (lazy)
     intro_net: std::sync::OnceLock<crate::core::net::Net<crate::core::thm::Thm>>,
     elim_net: std::sync::OnceLock<crate::core::net::Net<crate::core::thm::Thm>>,
+    safe_intro_net: std::sync::OnceLock<crate::core::net::Net<crate::core::thm::Thm>>,
+    safe_elim_net: std::sync::OnceLock<crate::core::net::Net<crate::core::thm::Thm>>,
 }
 
 impl HolTheoremDb {
@@ -1912,11 +2229,122 @@ impl HolTheoremDb {
             intros: Vec::new(),
             elims: Vec::new(),
             simps: Vec::new(),
+            safe_intros: Vec::new(),
+            safe_elims: Vec::new(),
             all: Vec::new(),
             by_name: std::collections::HashMap::new(),
             type_env: crate::core::types::TypeEnv::new(),
+            def_index: std::collections::HashMap::new(),
             intro_net: std::sync::OnceLock::new(),
             elim_net: std::sync::OnceLock::new(),
+            safe_intro_net: std::sync::OnceLock::new(),
+            safe_elim_net: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// Check if a lemma has a "safe" intro attribute: `[intro!]`
+    fn has_safe_intro_attr(attrs: &[String]) -> bool {
+        attrs.iter().any(|a| {
+            let a = a.trim();
+            a == "intro!" || a.ends_with("intro!")
+        })
+    }
+
+    /// Check if a lemma has a regular (unsafe) intro attribute: `[intro]`
+    fn has_unsafe_intro_attr(attrs: &[String]) -> bool {
+        attrs.iter().any(|a| {
+            let a = a.trim();
+            (a == "intro" || a.ends_with("intro")) && !a.contains('!')
+        })
+    }
+
+    /// Check if a lemma has a "safe" elim attribute: `[elim!]`
+    fn has_safe_elim_attr(attrs: &[String]) -> bool {
+        attrs.iter().any(|a| {
+            let a = a.trim();
+            a == "elim!" || a.ends_with("elim!")
+        })
+    }
+
+    /// Check if a lemma has a regular elim attribute: `[elim]`
+    fn has_unsafe_elim_attr(attrs: &[String]) -> bool {
+        attrs.iter().any(|a| {
+            let a = a.trim();
+            (a == "elim" || a.ends_with("elim")) && !a.contains('!')
+        })
+    }
+
+    /// Determine if a rule is safe-intro based on attributes first, then heuristic.
+    fn classify_intro_safe(thm: &crate::core::thm::Thm, attrs: &[String]) -> bool {
+        if Self::has_safe_intro_attr(attrs) {
+            return true;
+        }
+        if Self::has_unsafe_intro_attr(attrs) {
+            return false;
+        }
+        // Fall back to heuristic
+        Self::is_safe_intro(thm)
+    }
+
+    /// Determine if a rule is safe-elim based on attributes first, then heuristic.
+    fn classify_elim_safe(thm: &crate::core::thm::Thm, attrs: &[String]) -> bool {
+        if Self::has_safe_elim_attr(attrs) {
+            return true;
+        }
+        if Self::has_unsafe_elim_attr(attrs) {
+            return false;
+        }
+        // Fall back to heuristic
+        Self::is_safe_elim(thm)
+    }
+
+    fn is_safe_intro(thm: &crate::core::thm::Thm) -> bool {
+        let term = thm.prop().term();
+        let (_, concl) = crate::core::logic::Pure::strip_imp_prems(term);
+        Self::is_safe_conclusion(concl)
+    }
+
+    fn is_safe_elim(thm: &crate::core::thm::Thm) -> bool {
+        let term = thm.prop().term();
+        let (prems, _) = crate::core::logic::Pure::strip_imp_prems(term);
+        // Safe elim rules have a major premise that is a "safe" connective
+        prems.first().map_or(false, |p| Self::is_safe_connective(p))
+    }
+
+    /// Check if a term's head is a "safe" connective (conj, imp, all, True, False, disj for elim, ex for elim, iff).
+    fn is_safe_connective(term: &crate::core::term::Term) -> bool {
+        let (head, _args) = term.strip_comb();
+        match head {
+            crate::core::term::Term::Const { name, .. } => {
+                let n = name.as_ref();
+                // Safe connectives: conj, imp/==>, all, True, False, disj, ex, iff
+                n == "HOL.conj" || n == "HOL.Trueprop" || n == "Pure.imp"
+                    || n == "HOL.All" || n == "Pure.all"
+                    || n == "HOL.True" || n == "True"
+                    || n == "HOL.False" || n == "False"
+                    || n == "HOL.disj"
+                    || n == "HOL.Ex"
+                    || n == "HOL.eq" || n == "Pure.eq"
+                    || n == "HOL.Not"
+                    || n == "HOL.iff"
+            }
+            crate::core::term::Term::Free { .. } | crate::core::term::Term::Var { .. } => true,
+            _ => false,
+        }
+    }
+
+    /// Check if a conclusion term represents a safe introduction.
+    fn is_safe_conclusion(term: &crate::core::term::Term) -> bool {
+        let (head, _args) = term.strip_comb();
+        match head {
+            crate::core::term::Term::Const { name, .. } => {
+                let n = name.as_ref();
+                // Unsafe intros: disjI1/disjI2 (choice), exI (witness required)
+                // Safe: everything else (conjI, impI, allI, iffI, TrueI, eqI, etc.)
+                !n.contains("disjI") && !n.ends_with("exI") && !n.contains("exI")
+            }
+            // Free/Var conclusions are safe (they don't create choices)
+            _ => true,
         }
     }
 
@@ -1929,12 +2357,24 @@ impl HolTheoremDb {
             if !lem.name.is_empty() && !self.by_name.contains_key(&lem.name) {
                 new_by_name.push((lem.name.clone(), Arc::clone(&thm)));
             }
+            // Populate definition index
+            if !lem.name.is_empty() && !self.def_index.contains_key(&lem.name) {
+                if let Some(ref loc) = lem.source_loc {
+                    self.def_index.insert(lem.name.clone(), loc.clone());
+                }
+            }
             let attrs = &lem.attributes;
             if attrs.iter().any(|a| a.contains("intro")) {
                 self.intros.push(Arc::clone(&thm));
+                if Self::classify_intro_safe(&thm, attrs) {
+                    self.safe_intros.push(Arc::clone(&thm));
+                }
             }
             if attrs.iter().any(|a| a.contains("elim")) {
                 self.elims.push(Arc::clone(&thm));
+                if Self::classify_elim_safe(&thm, attrs) {
+                    self.safe_elims.push(Arc::clone(&thm));
+                }
             }
             if attrs.iter().any(|a| a.contains("simp") || a.contains("iff")) {
                 self.simps.push(Arc::clone(&thm));
@@ -1987,8 +2427,11 @@ impl HolTheoremDb {
         let mut intros = Vec::new();
         let mut elims = Vec::new();
         let mut simps = Vec::new();
+        let mut safe_intros = Vec::new();
+        let mut safe_elims = Vec::new();
         let mut all = Vec::new();
         let mut by_name = std::collections::HashMap::new();
+        let mut def_index = std::collections::HashMap::new();
         for lem in lemmas {
             let thm = Arc::clone(&lem.theorem);
             all.push(Arc::clone(&thm));
@@ -1996,12 +2439,24 @@ impl HolTheoremDb {
             if !lem.name.is_empty() && !by_name.contains_key(&lem.name) {
                 by_name.insert(lem.name.clone(), Arc::clone(&thm));
             }
+            // Populate definition index for go-to-definition
+            if !lem.name.is_empty() && !def_index.contains_key(&lem.name) {
+                if let Some(ref loc) = lem.source_loc {
+                    def_index.insert(lem.name.clone(), loc.clone());
+                }
+            }
             let attrs = &lem.attributes;
             if attrs.iter().any(|a| a.contains("intro")) {
                 intros.push(Arc::clone(&thm));
+                if Self::classify_intro_safe(&thm, attrs) {
+                    safe_intros.push(Arc::clone(&thm));
+                }
             }
             if attrs.iter().any(|a| a.contains("elim")) {
                 elims.push(Arc::clone(&thm));
+                if Self::classify_elim_safe(&thm, attrs) {
+                    safe_elims.push(Arc::clone(&thm));
+                }
             }
             if attrs.iter().any(|a| a.contains("simp") || a.contains("iff")) {
                 simps.push(Arc::clone(&thm));
@@ -2048,11 +2503,16 @@ impl HolTheoremDb {
             intros,
             elims,
             simps,
+            safe_intros,
+            safe_elims,
             all,
             by_name,
             type_env: TypeEnv::new(),
+            def_index,
             intro_net: std::sync::OnceLock::new(),
             elim_net: std::sync::OnceLock::new(),
+            safe_intro_net: std::sync::OnceLock::new(),
+            safe_elim_net: std::sync::OnceLock::new(),
         }
     }
 
@@ -2070,6 +2530,26 @@ impl HolTheoremDb {
         for dt in &parse_datatypes(source) {
             let arity = dt.type_params.len();
             env.declare_type(&dt.name, arity);
+        }
+        // Parse class declarations to build the class hierarchy
+        for cls in &parse_classes(source) {
+            let super_syms: Vec<Symbol> = cls.superclasses.iter()
+                .map(|s| Symbol::from(s.as_str()))
+                .collect();
+            env.declare_class(&cls.name, &super_syms);
+            for (op_name, op_typ_str) in &cls.fixes {
+                if let Some(op_typ) = parse_hol_type_with_env(op_typ_str, &env) {
+                    let full_name = format!("{}.{}", cls.name, op_name);
+                    env.declare_const(&full_name, op_typ);
+                }
+            }
+        }
+        // Parse instance declarations and add their arities
+        for inst in &super::class_system::parse_instances(source) {
+            let arg_sorts: Vec<Sort> = inst.type_args.iter()
+                .map(|_| Sort::top())
+                .collect();
+            env.declare_arity(&inst.type_name, &inst.class_name, arg_sorts);
         }
         // Parse axiomatization for constant type signatures
         for block in &find_blocks(source, "axiomatization") {
@@ -2111,14 +2591,14 @@ impl HolTheoremDb {
         // Use dummy types consistently — the parser also uses dummy types.
         // This ensures built-in rules can match parsed goals via bicompose.
         let prop_typ = Typ::base("prop");
-        let dummy_typ = Typ::dummy();
+        let _dummy_typ = Typ::dummy();
 
         // Equality: use prop → prop → prop (matching parser's make_binary)
         let eq_typ = Typ::arrow(
             prop_typ.clone(),
             Typ::arrow(prop_typ.clone(), prop_typ.clone()),
         );
-        let eq_const = Term::const_("HOL.eq", eq_typ);
+        let _eq_const = Term::const_("HOL.eq", eq_typ);
 
         // Helper: make HOL equality term s = t (uses prop-type equality)
         fn mk_eq(eqc: &Term, s: Term, t: Term) -> Term {
@@ -2146,7 +2626,7 @@ impl HolTheoremDb {
         let less_c = Term::const_("Orderings.less", Typ::dummy());
         let le_c = Term::const_("Orderings.less_eq", Typ::dummy());
         let not_c = Term::const_("HOL.Not", Typ::arrow(prop_typ.clone(), prop_typ.clone()));
-        let disj_c = Term::const_("HOL.disj", Typ::dummy());
+        let _disj_c = Term::const_("HOL.disj", Typ::dummy());
         let eq_const = Term::const_(
             "HOL.eq",
             Typ::arrow(
@@ -2738,10 +3218,23 @@ impl HolTheoremDb {
                 // SAFETY: The override is set via with_override which guarantees
                 // the DB lives for the duration of the closure.
                 unsafe { &*db_ptr }
+            } else if DB_INIT_IN_PROGRESS.with(|c| c.get()) {
+                // During initialization of HOL_THEOREMS, return a temporary
+                // empty DB to break the circular dependency.
+                static EMPTY_DB: std::sync::LazyLock<HolTheoremDb> =
+                    std::sync::LazyLock::new(|| HolTheoremDb::new());
+                &EMPTY_DB
             } else {
                 &HOL_THEOREMS
             }
         })
+    }
+
+    /// Look up the source location of a theorem/definition by name.
+    /// Returns `Some(DefLocation)` with file path and line number, or `None`.
+    pub fn get_definition_location(name: &str) -> Option<DefLocation> {
+        let db = Self::get();
+        db.def_index.get(name).cloned()
     }
 
     /// Get (or build) the cached intro discrimination net.
@@ -2772,6 +3265,34 @@ impl HolTheoremDb {
         })
     }
 
+    /// Get (or build) the cached safe intro discrimination net.
+    pub fn safe_intro_net(&self) -> &crate::core::net::Net<crate::core::thm::Thm> {
+        self.safe_intro_net.get_or_init(|| {
+            let mut net = crate::core::net::Net::empty();
+            for thm in &self.safe_intros {
+                let term = thm.prop().term();
+                let (_, concl) = crate::core::logic::Pure::strip_imp_prems(term);
+                net.insert(&concl, Arc::clone(thm));
+            }
+            net
+        })
+    }
+
+    /// Get (or build) the cached safe elim discrimination net.
+    pub fn safe_elim_net(&self) -> &crate::core::net::Net<crate::core::thm::Thm> {
+        self.safe_elim_net.get_or_init(|| {
+            let mut net = crate::core::net::Net::empty();
+            for thm in &self.safe_elims {
+                let term = thm.prop().term();
+                let (prems, _) = crate::core::logic::Pure::strip_imp_prems(term);
+                if let Some(first) = prems.first() {
+                    net.insert(first, Arc::clone(thm));
+                }
+            }
+            net
+        })
+    }
+
     /// Set a thread-local DB override. Returns a guard that clears on drop.
     pub fn with_override<F, R>(db: &HolTheoremDb, f: F) -> R
     where F: FnOnce() -> R
@@ -2789,6 +3310,9 @@ impl HolTheoremDb {
 
 thread_local! {
     static DB_OVERRIDE: std::cell::RefCell<Option<*const HolTheoremDb>> = std::cell::RefCell::new(None);
+    /// Set to true while HOL_THEOREMS is being initialized, to prevent
+    /// recursive deadlocks when CTerm::certify_annotated calls HolTheoremDb::get().
+    static DB_INIT_IN_PROGRESS: std::cell::Cell<bool> = std::cell::Cell::new(false);
 }
 
 // =========================================================================
@@ -3648,25 +4172,13 @@ fn parse_primrec_equations(line: &str) -> Vec<(Option<String>, String, String)> 
 
 /// Generate synthetic simp lemmas from primrec/fun definitions.
 pub fn generate_primrec_lemmas(def: &PrimrecDef) -> Vec<ParsedLemma> {
-    let mut lemmas = Vec::new();
-    for (label, lhs, rhs) in &def.equations {
-        let eq_stmt = format!("{} = {}", lhs, rhs);
-        let eq_term =
-            parse_term(&eq_stmt).unwrap_or_else(|| Term::const_("True", Typ::base("prop")));
-        let eq_name = if let Some(lbl) = label {
-            lbl.clone()
-        } else {
-            format!("{}.simps", def.name)
-        };
-        lemmas.push(ParsedLemma {
-            name: eq_name,
-            attributes: vec!["simp".to_string()],
-            theorem: Arc::new(ThmKernel::assume(CTerm::certify(eq_term))),
-            proof_script: None,
-            alias_for: None,
-        });
-    }
-    lemmas
+    // Use function definition module for richer theorems (simps + induct + cases)
+    let fundef = super::function::FunDef::new(
+        def.name.clone(),
+        def.typ.clone(),
+        def.equations.clone(),
+    );
+    super::function::fundef_to_lemmas(&fundef)
 }
 
 #[cfg(test)]
@@ -3819,7 +4331,7 @@ fn parse_one_class(lines: &[&str], start: usize) -> Option<(ClassDef, usize)> {
     ))
 }
 
-fn parse_class_header(s: &str) -> Option<(String, Vec<String>)> {
+pub fn parse_class_header(s: &str) -> Option<(String, Vec<String>)> {
     let s = s.trim();
     if let Some(eq_pos) = s.find('=') {
         let name = s[..eq_pos].trim().to_string();
@@ -3836,7 +4348,7 @@ fn parse_class_header(s: &str) -> Option<(String, Vec<String>)> {
     }
 }
 
-fn parse_class_fixes(s: &str) -> Vec<(String, String)> {
+pub fn parse_class_fixes(s: &str) -> Vec<(String, String)> {
     let s = s.trim();
     if s.is_empty() {
         return Vec::new();
@@ -3917,24 +4429,40 @@ fn parse_one_fix(s: &str) -> Option<(String, String)> {
     }
 }
 
-/// Generate synthetic constant declarations from class fixes.
-/// These become axioms that declare the existence of the class operations.
-pub fn generate_class_lemmas(def: &ClassDef) -> Vec<ParsedLemma> {
-    let mut lemmas = Vec::new();
-    for (name, typ_str) in &def.fixes {
-        // Create a typed constant declaration as a reflexivity theorem
-        // This makes the constant available in the term database
-        let term = Term::const_(name.as_str(), Typ::dummy());
-        let thm = ThmKernel::reflexive(CTerm::certify(term));
-        lemmas.push(ParsedLemma {
-            name: format!("{}.{}", def.name, name),
-            attributes: vec![],
-            theorem: Arc::new(thm),
-            proof_script: None,
-            alias_for: None,
-        });
+pub fn parse_class_assumes(s: &str) -> Vec<(String, String)> {
+    let s = s.trim();
+    if s.is_empty() { return Vec::new(); }
+    let s = s.strip_prefix("assumes ").unwrap_or(s);
+    let s = s.trim();
+    let mut assumes = Vec::new();
+    // Split on "and"
+    let parts = split_by_and_outside_parens(s);
+    for part in &parts {
+        let part = part.trim();
+        if part.is_empty() { continue; }
+        if let Some(colon_pos) = part.find(':') {
+            let name = part[..colon_pos].trim().to_string();
+            let stmt = part[colon_pos + 1..].trim().trim_matches('"').to_string();
+            assumes.push((name, stmt));
+        } else {
+            let stmt = part.trim_matches('"').to_string();
+            let name = format!("assm_{}", assumes.len() + 1);
+            assumes.push((name, stmt));
+        }
     }
-    lemmas
+    assumes
+}
+
+/// Generate synthetic constant declarations from class fixes.
+pub fn generate_class_lemmas(def: &ClassDef) -> Vec<ParsedLemma> {
+    // Use AxClass system (class = locale + algebra) for richer theorems
+    let cls = super::axclass::AxClass {
+        name: def.name.clone(),
+        superclasses: def.superclasses.clone(),
+        fixes: def.fixes.clone(),
+        assumes: vec![],
+    };
+    super::axclass::axclass_to_lemmas(&cls)
 }
 
 #[cfg(test)]

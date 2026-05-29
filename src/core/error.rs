@@ -85,6 +85,14 @@ pub enum KernelError {
     /// Beta conversion applied to non-redex.
     #[error("beta_conversion: {0}")]
     BetaConversion(String),
+
+    /// Not a function type where one was expected.
+    #[error("not a function type: {0:?}")]
+    NotFunctionType(crate::core::types::Typ),
+
+    /// Dummy type found where proper type required.
+    #[error("dummy type found in certified term for operation '{op}'")]
+    DummyType { op: &'static str },
 }
 
 /// Type system errors.

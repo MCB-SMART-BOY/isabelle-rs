@@ -19,7 +19,7 @@ pub mod session;
 pub mod watchdog;
 
 // Re-export document from existing location
-pub use crate::document::Document;
+pub use crate::document::document::Document;
 
 pub use file_worker::FileWorker;
 pub use session::Session;

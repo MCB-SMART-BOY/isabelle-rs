@@ -21,7 +21,10 @@
 
 pub mod auto;
 pub mod blast;
+pub mod reconstruct;
 pub mod simp;
+pub mod sledgehammer;
+pub mod tptp;
 
 // Future:
 // pub mod argo;

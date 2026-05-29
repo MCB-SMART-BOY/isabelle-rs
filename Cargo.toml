@@ -1,14 +1,21 @@
 [package]
 name = "isabelle-rs"
-version = "0.5.0"
+version = "1.2.0"
 edition = "2024"
-description = "Isabelle proof assistant kernel, rewritten in Rust. LCF trusted core, higher-order unification, Isar proof language, 100% verification on core HOL theories."
-license = "MIT OR Apache-2.0"
+description = "Isabelle proof assistant kernel and Isar proof engine, rewritten in Rust. LCF trusted core with type inference, context switching, flex-flex resolution, sort hypotheses, proof terms, BNF map/set/rel support, Sledgehammer ATP interface, and proof reconstruction."
+license = "Apache-2.0"
 repository = "https://github.com/MCB-SMART-BOY/isabelle-rs"
 documentation = "https://docs.rs/isabelle-rs"
 readme = "README.md"
 keywords = ["isabelle", "theorem-prover", "proof-assistant", "lcf", "hol"]
 categories = ["science", "development-tools"]
+exclude = [
+    "isabelle-source/**",
+    "target/**",
+    ".rules/**",
+    ".git/**",
+    "*.bak",
+]
 
 [features]
 default = []
@@ -31,6 +38,13 @@ clap = { version = "4", features = ["derive"] }
 bincode = "1"
 sha2 = "0.10"
 proptest = "1"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "kernel_benchmarks"
+harness = false
 
 [[bin]]
 name = "isabelle-rs"

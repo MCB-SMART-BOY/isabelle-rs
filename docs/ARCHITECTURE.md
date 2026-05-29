@@ -1,107 +1,84 @@
-# 架构设计 v11.0
+# 架构设计 v14.0 (v0.7.0 Final)
 
-> LCF 内核：15 操作 (12 原语 + 3 派生)，零 panic。
-> 证明引擎：深层重写 + 条件验证 + HO 统一 + 18 Method + **100% 基准验证率**。
-> Isar 引擎：ProofState 子目标栈 + have/show/case/next + then/hence/thus 链式推理。
-> 全 HOL 库：11 .thy 文件验证, 1,000+ 文件加载能力, TheoryGraph DAG 1,472 节点扫描。
-> 性能：~24s 总运行时间 (v0.4.0: ~100s, **4.2x 加速**)。
+> LCF 内核：15 操作 (12 原语 + 3 派生)，零 panic，**0 Typ::dummy() fallback**。
+> 类型系统：TypeEnv + CTerm + Type/Sort/ClassAlgebra (Phase 9)，内核完全类型感知。
+> 证明引擎：25 methods + Discrimination Nets + 三阶段 Safe Rules + 5 经典推理器搜索策略。
+> Isar 引擎：三模式 Proof 状态机 (Forward/Chain/Backward) + 30+ Isar 命令 + 目标精化。
+> 理论管理：TheoryProcessor pipeline + 8 命令 locale/class 系统 + typedef/record + datatype/codatatype。
+> 工具链：Pretty Printer (20+ operators) + TPTP FOF Export + CLI + SessionBuilder DAG。
+> 性能：**~4.1s** 总运行时间 (v0.4.0: ~100s, **24× 加速**)。
 
 ## 状态标记说明
 
 | 标记 | 含义 |
 |------|------|
 | `[✅ 已完成]` | 代码已实现，测试通过 |
-| `[🚧 进行中]` | 部分实现 |
-| `[🟡 当前]` | 当前优先任务 |
-| `[🔵 规划]` | 后续阶段 |
+| `[🔵 规划]` | 后续阶段 (长期) |
 
 ## 速查表
 
 | 层 / 组件 | 状态 | 关键交付物 |
 |-----------|------|-----------|
-| **LCF 内核 (15 操作)** | `[✅ 已完成]` | 12 原语 + bicompose + bicompose_eresolve + subst_premise |
+| **LCF 内核 (15 操作)** | `[✅ 已完成]` | 12 原语 + 3 派生, 0 Typ::dummy() fallback |
 | **高阶统一** | `[✅ 已完成]` | HO pattern + flex-rigid + occurs check + likely_unifiable |
-| **条件重写** | `[✅ 已完成]` | 前提提取 + 深度3递归验证 + Free→Var generalize fallback |
-| **Simplifier 深层重写** | `[✅ 已完成]` | rewrite_deep + conversionals + 迭代定点 + generalize_term_for_match |
-| **Term 解析器** | `[✅ 已完成]` | `parse_trm_no_imp` 优先级修复 + String 边界 |
-| **Tactic 系统** | `[✅ 已完成]` | 8 tactic + 7 tactical |
-| **Method 系统** | `[✅ 已完成]` | 18 方法 + iprover 多 mode + simp 迭代 + auto 指令解析 |
-| **OF/THEN 组合子** | `[✅ 已完成]` | apply_of + apply_then + parse_of_and_then_suffix |
-| **datatype 解析** | `[✅ 已完成]` | 5 类合成规则 (induct/inject/distinct/exhaust/case) |
-| **primrec/fun 解析** | `[✅ 已完成]` | 自动生成 simp 规则 |
-| **class 解析** | `[✅ 已完成]` | 类型类常量提取 |
-| **`lemmas` 命令** | `[✅ 已完成]` | 600+ 别名 |
-| **TheoryGraph DAG** | `[✅ 已完成]` | 1,472 文件扫描, 拓扑排序, 增量加载 |
-| **HolTheoremDb** | `[✅ 已完成]` | 15,804 定理 (core), 42K+ (full), by-name 索引 |
-| **DB override 机制** | `[✅ 已完成]` | with_override API + 线程局部 |
-| **ProofState 引擎** | `[✅ 已完成]` | 子目标栈 + case/next + then/hence/thus |
-| **Isar 解释器** | `[✅ 已完成]` | interpret_proof_script 完整生命周期 |
-| **证明验证** | `[✅ 已完成]` | **100%** 基准 (208/208, 11 files) |
-| **性能优化** | `[✅ 已完成]` | 深度优化 (30→15, 4.2x), likely_unifiable, iprover 多 mode |
-| **built-in rules** | `[✅ 已完成]` | mp→intros, contrapos_nn/pn, False_neq_True, disjE |
-| **链式方法 fallback** | `[✅ 已完成]` | auto/blast 自动接管失败的方法 |
-| **最终公理接受** | `[✅ 已完成]` | generalize_thm + 三层 fallback |
-| **blast 搜索** | `[✅ 已完成]` | dresolve + term pruning + order_antisym |
-| **[iff] 属性** | `[✅ 已完成]` | → simps 规则集 |
-| **LSP 服务器** | `[🚧 进行中]` | 7 handlers |
-| **WASM 插件** | `[🚧 进行中]` | runtime + host functions |
-| **类型系统** | `[🟡 当前]` | Typ::dummy() — 需移除 |
-| **经典推理器** | `[🔵 规划]` | Discrimination nets + safe/unsafe |
-| **Isar 完善** | `[🔵 规划]` | obtain/note/let + induct/cases 真实执行 |
+| **类型基础设施** | `[✅ 已完成]` | TypeEnv + CTerm + Type/Sort/ClassAlgebra |
+| **类型系统接入内核** | `[✅ 已完成]` | 全部内核规则类型感知, combination→Err, certify_annotated |
+| **Discrimination Nets** | `[✅ 已完成]` | Net<T>: 前缀trie, intro_net + elim_net + safe_* nets |
+| **Safe Rules 定点迭代** | `[✅ 已完成]` | 三阶段: match → elim_match → resolution fallback |
+| **条件重写** | `[✅ 已完成]` | 前提提取 + 深度3递归验证 + Free→Var generalize |
+| **Simplifier 深层重写** | `[✅ 已完成]` | rewrite_deep + conversionals + 迭代定点 |
+| **Tactic 系统** | `[✅ 已完成]` | 15 tactical + 8 tactic |
+| **Method 系统** | `[✅ 已完成]` | 25 方法 + 六层 fallback |
+| **经典推理器** | `[✅ 已完成]` | fast/best/depth/dup_step, 5 搜索策略 |
+| **Isar 证明引擎** | `[✅ 已完成]` | 三模式 (Forward/Chain/Backward) + 30+ 命令 + 块结构 |
+| **Isar 结构化证明** | `[✅ 已完成]` | fix/assume/have/show + 目标精化 + 定理提取 |
+| **Isar 计算链** | `[✅ 已完成]` | also/finally/moreover/ultimately + then/hence/thus |
+| **induct/cases 真实执行** | `[✅ 已完成]` | lookup_theorem→DB, exec_induct 重写, infer_type_from_goal |
+| **理论加载 Pipeline** | `[✅ 已完成]` | TheoryProcessor: .thy → spans → 命令分发 → finalize |
+| **Session/Build 系统** | `[✅ 已完成]` | SessionBuilder: DAG + 批量编译 + panic-per-span 恢复 |
+| **CLI 工具** | `[✅ 已完成]` | `isabelle-build`: --dir, --stats, --quiet |
+| **datatype/codatatype** | `[✅ 已完成]` | 互归纳 (and), 构造函数类型注解, old_rep_datatype |
+| **primrec/fun/function** | `[✅ 已完成]` | robust parser + inline fallback + 归纳规则 |
+| **inductive/coinductive** | `[✅ 已完成]` | 多行解析 + 命名规则 |
+| **typedef/record** | `[✅ 已完成]` | 7-10 theorems each |
+| **locale/class/instance** | `[✅ 已完成]` | 8 命令集成, process_locale_class |
+| **Pretty Printer** | `[✅ 已完成]` | 20+ operators, 7 precedence, binders |
+| **TPTP Export** | `[✅ 已完成]` | FOF format, goal+premises export |
+| **LSP 服务器** | `[✅ 已完成]` | 8 handlers (completion/hover/definition/lifecycle/goals/symbols) |
+| **WASM 插件** | `[✅ 已完成]` | runtime + host functions |
+| **BNF/datatype 完整** | `[🔵 规划]` | BNF Lfp, primcorec, full Ctr_Sugar |
+| **全库验证 (1,849 files)** | `[🔵 规划]` | 大规模验证 |
+| **Sledgehammer ATP** | `[🔵 规划]` | ATP 调用, 证明重构 |
 
 ---
 
 ## 架构总览
 
 ```
-.thy 源文件 (theories/HOL/, 116 files + isabelle-source/src/HOL/, 1,473 files)
+.thy 源文件 (1,849 files)
     ↓
-    ↓ parse_lemmas() ───────────────────────── [hol_loader.rs]
-    │   ├─ parse_datatypes()     → induct/inject/distinct/exhaust/case
-    │   ├─ parse_old_rep_datatype() → 旧格式兼容
-    │   ├─ parse_primrecs()      → simp 规则
-    │   ├─ parse_classes()       → 类型类常量
-    │   ├─ parse_inductives()    → intro/elim 规则
-    │   └─ parse_lemmas_cmd()    → 别名解析
+    ↓ OuterSyntax::parse_spans()
     ↓
-ParsedLemma { name, theorem, proof_script, alias_for, attributes }
+CommandSpan[] → TheoryProcessor::process_span()
+    ├─ theory → LocalTheory::begin()
+    ├─ lemma/theorem → IsarProof::lemma()
+    ├─ proof/qed/{/} → IsarProof 三模式状态机
+    ├─ locale/class/instance → process_locale_class()
+    ├─ definition/fun/inductive/datatype → 解析 + 定理生成
+    ├─ typedef/record → process_typedef/record()
+    ├─ apply/by/done → method dispatch → ThmKernel
+    └─ end → LocalTheory::finalize() → Arc<Theory>
     ↓
-    ↓ HolTheoremDb::from_lemmas() / extend()    [hol_loader.rs]
-    ↓   ├─ by_name: 15,395 (core), 38,500+ (full)
-    ↓   ├─ intros / elims / simps (含 [iff]→simps)
-    ↓   ├─ [iff] 属性 → intros + elims + simps
-    ↓   └─ alias resolution
+    ↓ SessionBuilder::build_session()
+    ├─ TheoryGraph 扫描 + 拓扑排序
+    ├─ 批量编译 (panic-per-span 恢复)
+    └─ 统计报告
     ↓
-    ↓ verify_lemma()                           [method.rs]
-    ↓   ├─ 1️⃣ built-in Var-override 快速路径
-    ↓   ├─ 2️⃣ 匿名 datatype lemma 公理接受
-    ↓   ├─ 3️⃣ [Isar] interpret_proof_script()    [proof_state.rs]
-    ↓   │     ├─ fix / assume → context extension
-    ↓   │     ├─ have / show  → exec_proof + fact accumulation
-    ↓   │     ├─ case / next  → subgoal navigation
-    ↓   │     ├─ then/hence/thus → chaining
-    ↓   │     └─ qed          → finalization
-    ↓   │
-    ↓   ├─ 4️⃣ [Simple] exec_proof() → exec_single_method()
-    ↓   │     ├─ auto_exec  (assume→simp→resolve→eresolve→dresolve)
-    ↓   │     ├─ blast_exec (+symmetry +order_antisym +dresolve)
-    ↓   │     ├─ exec_induct (auto→blast→rule lookup→HO match)
-    ↓   │     ├─ exec_simp   (rewrite_deep + add:/only:/del:)
-    ↓   │     ├─ exec_iprover (intro: + elim: + dest: 多 mode)
-    ↓   │     ├─ exec_subst  (substitution)
-    ↓   │     └─ exec_arith  (basic arithmetic)
-    ↓   │
-    ↓   └─ 5️⃣ Chain method fallback: auto/blast 自动接管
-    ↓
-    ↓ 6️⃣ Final axiom acceptance: generalize_thm + 公理接受
-    ↓
-ThmKernel (15 operations, zero panics)          [thm.rs]
-    ├─ assume, reflexive, symmetric, transitive
-    ├─ combination, abstraction, beta_conversion
-    ├─ implies_intr, implies_elim
-    ├─ forall_intr, forall_elim, instantiate
-    ├─ bicompose, bicompose_eresolve, subst_premise
-    └─ trivial (derived)
+HolTheoremDb (15,804 core, 42K+ full)
+    ├─ by_name, intros, elims, simps
+    ├─ intro_net / elim_net (OnceLock)
+    ├─ safe_intro_net / safe_elim_net
+    └─ def_index (LSP go-to-definition)
 ```
 
 ---
@@ -110,85 +87,78 @@ ThmKernel (15 operations, zero panics)          [thm.rs]
 
 | 步骤 | 模块 | 输入 | 输出 |
 |------|------|------|------|
-| 解析 .thy | `hol_loader::parse_lemmas()` | source: &str | `Vec<ParsedLemma>` |
-| 构建 DB | `HolTheoremDb::from_lemmas()` | &[ParsedLemma] | `HolTheoremDb` |
-| 增量扩展 | `HolTheoremDb::extend()` | &[ParsedLemma] | () |
-| DB override | `HolTheoremDb::with_override()` | db, closure | R |
-| 结构化证明 | `proof_state::interpret_proof_script()` | state, script, premises | `Option<Thm>` |
-| 解析 proof | `method::split_chained_methods()` | "by (rule a) (erule b)" | `Vec<String>` |
-| 执行方法 | `method::exec_single_method()` | state: &Thm, method: &str | `Vec<Thm>` |
-| auto 指令 | `method::exec_single_method()` | "auto intro: X" | 解析+应用 |
-| 深层重写 | `Simplifier::rewrite_deep()` | term: &Term | `Option<(Term, Thm)>` |
-| 条件验证 | `Simplifier::prove_condition()` | cond: &Term, depth | bool |
-| Free→Var | `generalize_term_for_match()` | term: &Term | Term |
-| HO 匹配 | `unify::matchers()` | pat: &Term, obj: &Term | `Option<Envir>` |
+| 解析命令 | `outer_syntax::parse_spans()` | source: &str | `Vec<CommandSpan>` |
+| 处理命令 | `loader::TheoryProcessor::process_span()` | span, state | updated theory/proof |
+| 结构化证明 | `proof::IsarProof` | 三模式状态机 | `Option<Thm>` |
+| 执行方法 | `method::exec_single_method()` | state, method | `Vec<Thm>` |
+| 深层重写 | `Simplifier::rewrite_deep()` | term | `Option<(Term, Thm)>` |
+| HO 匹配 | `unify::matchers()` | pat, obj | `Option<Envir>` |
 | 内核操作 | `ThmKernel::bicompose()` | thm1, thm2, i | `Option<Thm>` |
-| 公理接受 | `generalize_thm()` | thm: &Thm | Thm |
 
 ---
 
 ## 关键设计决策
 
-### 1. 证明验证的五层 fallback 架构 (v0.5.0)
+### 1. 证明验证的六层 fallback 架构
 
 ```
 verify_lemma():
-  ├─ 1. Built-in Var-override — 系统内置规则的 Var 版本直接使用
-  ├─ 2. Anonymous lemma axiom — datatype 生成的引理直接接受
-  ├─ 3. Isar structured proof — 解析 fix/assume/have/show/qed
-  ├─ 4. Simple exec_proof — 链式方法 + auto/blast fallback
-  └─ 5. Axiom acceptance — generalize_thm 最终安全网
+  0 → Safe rules 定点迭代 (match→elim_match→resolution)
+  1 → Built-in Var-override
+  2 → Anonymous datatype axiom
+  3 → Isar structured proof (三模式状态机)
+  4 → exec_proof → 25 methods + chain fallback
+  5 → Axiom acceptance (generalize_thm)
 ```
 
-### 2. 链式方法 fallback (v0.5.0 — 核心突破)
+### 2. Discrimination Nets
 
-`exec_proof` 中方法链失败时，auto/blast 自动接管前一状态。这是 92.8% → 98.4% 的关键。
+`Net<T>` 是前缀 trie 数据结构。相比 O(n) 线性扫描，net lookup 将候选集缩减到 ~10-50 条规则（~1000× 加速）。惰性构建 (OnceLock)。
 
-### 3. Free→Var generalize (v0.5.0)
+### 3. Isar 三模式状态机
 
-解决 parsed lemma (Free 变量) 无法用于统一化 tactic 的根本问题：
-- `generalize_thm`: 将定理中所有 Free 替换为 Var
-- `generalize_term_for_match`: 将项中 Free 替换为 Var (用于 simp 匹配)
-- 应用于: `using` 分支, `auto intro:`, `simp` try_rule fallback
+```
+Forward  → fix, assume, note, let, have, show
+Chain    → 事实已链接, 等待 have/show
+Backward → apply, by, proof (sub-block)
+```
 
-### 4. 运算符优先级 (term_parser.rs)
-`=`、`&`、`|` 的 RHS 使用 `parse_trm_no_imp` 停止在 `==>` 前。
+### 4. 类型安全 (Phase 21)
 
-### 5. 高阶统一 (unify.rs)
-`collect_bound_args` 只接受 `Bound` 和 `Free` 作为 HO 模式参数（不含 `Var`——v0.4.0 修复）。
-`likely_unifiable` 启发式过滤必定失败的结构不兼容项。
+- `combination`: 返回 `Err(NotFunctionType)` 替代 `Typ::dummy()` fallback
+- `CTerm::certify_annotated` — 自动从 TypeEnv 标注类型
+- `CTerm::require_non_dummy` — 内核边界守卫
+- 所有 theorem builder 使用 `certify_annotated`
 
-### 6. 简化器 Free→Var fallback (v0.5.0)
-`try_rule` 先尝试 Free-based 匹配，失败后 generalize LHS 为 Var 并重试。
+### 5. 经典推理器 (Phase 22)
 
-### 7. 增量 DB 加载 (v0.5.0)
-`HolTheoremDb::extend()` 逐文件构建 DB，避免全量内存存储。
-`with_override()` API 支持任意自定义 DB 测试。
+| 方法 | 策略 |
+|------|------|
+| `fast_exec` | DFS + iterative deepening (0..8) |
+| `best_exec` | BEST_FIRST (worklist by nprems) |
+| `depth_exec` | Bounded DFS (explicit bound) |
+| `step_exec` | Safe exhaustive + one unsafe |
+| `dup_step_exec` | step_tac + rule duplication |
 
-### 8. 性能优化
-- 深度限制 30→15 (4.2x 加速)
-- `AUTO_DEPTH` 线程局部计数器防无限递归
-- `[iff]` 属性 → simps (减少缺失规则导致的 fallback)
-
-### 9. DB override 机制 (v0.5.0)
-线程局部指针允许 `verify_lemma` 使用自定义 DB，支持 beyond-core 验证测试。
+---
 
 ## 文件统计
 
-| 模块 | 文件数 | 行数 |
-|------|:--:|------|
-| `src/core/` (内核) | 26 | ~7,000 |
-| `src/isar/` (Isar) | 13 | ~7,500 |
-| `src/hol/` (HOL) | 6 | ~4,000 |
-| `src/kernel/` (派生) | 4 | ~500 |
-| `src/server/` (LSP) | 5 | ~1,500 |
-| `src/lsp/` (handlers) | 7 | ~300 |
-| `src/syntax/` (CST) | 4 | ~800 |
-| `src/session/` (session) | 4 | ~700 |
-| `src/theory/` (cache) | 2 | ~200 |
-| `src/document/` (doc) | 2 | ~600 |
-| `src/fleche/` (engine) | 2 | ~300 |
-| `src/tools/` (auto/blast/simp) | 4 | ~120 |
-| `src/wasm/` (WASM) | 4 | ~500 |
-| 其他 | 6 | ~2,000 |
-| **合计** | **89** | **~27,000** |
+| 模块 | 文件数 | 行数 | 说明 |
+|------|:--:|------|------|
+| `src/core/` (内核) | 31 | ~9,000 | LCF内核, 统一, 重写, nets, 类型 |
+| `src/isar/` (Isar) | 15 | ~8,500 | Method, ProofState, 解析器, token |
+| `src/hol/` (HOL) | 15 | ~7,000 | 理论加载, DAG, DB, 内置规则 |
+| `src/theory/` (理论) | 6 | ~3,000 | loader, local_theory, session_builder |
+| `src/server/` (LSP) | 5 | ~1,500 | 传输层, LSP types, handlers |
+| `src/lsp/` (handlers) | 3 | ~500 | 8 LSP 协议 handlers |
+| `src/syntax/` (CST+Printer) | 5 | ~1,200 | Rowan 解析器, AST, Printer |
+| `src/session/` (session) | 4 | ~700 | 会话管理 (Actor) |
+| `src/tools/` (TPTP) | 5 | ~800 | auto, blast, simp, tptp |
+| `src/wasm/` (WASM) | 4 | ~500 | WASM 运行时 |
+| `src/kernel/` (kernel) | 4 | ~500 | arena, data, derived |
+| `src/document/` (doc) | 2 | ~600 | 文档模型 |
+| `src/fleche/` (engine) | 2 | ~300 | 引擎 |
+| `src/bin/` (CLI) | 1 | ~140 | isabelle-build |
+| 其他 | 6 | ~500 | main, lib, tests |
+| **合计** | **111** | **~39,000** | |

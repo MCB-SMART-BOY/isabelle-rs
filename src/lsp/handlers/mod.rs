@@ -84,6 +84,11 @@ impl HandlerContext {
                 params,
             }));
     }
+
+    /// Get the full text of a document from the Fleche engine.
+    pub fn get_document_text(&self, uri: &str) -> Option<String> {
+        self.fleche.get_document_text(uri)
+    }
 }
 
 // =========================================================================
@@ -111,3 +116,4 @@ pub mod document;
 pub mod hover;
 pub mod lifecycle;
 pub mod proof_goals;
+pub mod symbols;

@@ -1,6 +1,7 @@
 //! Handler for textDocument/completion.
 
 use super::HandlerContext;
+use crate::hol::hol_loader::HolTheoremDb;
 use crate::server::lsp_types::*;
 
 /// Isabelle keywords for auto-completion.
@@ -44,20 +45,29 @@ const KEYWORDS: &[(&str, &str)] = &[
     ("interpretation", "Interpret locale"),
 ];
 
-/// Isabelle symbols for auto-completion.
-const SYMBOLS: &[(&str, &str)] = &[
-    ("-->", "HOL implication"),
-    ("==>", "Pure implication"),
-    ("&", "HOL conjunction"),
-    ("|", "HOL disjunction"),
-    ("~", "HOL negation"),
-    ("ALL", "Universal quantifier"),
-    ("EX", "Existential quantifier"),
-    ("!!", "Pure universal"),
-    ("==", "Pure equality"),
-    ("=>", "Function type arrow"),
-    ("True", "Truth constant"),
-    ("False", "Falsity constant"),
+/// Method names for auto-completion (after "by " or "apply ").
+const METHODS: &[(&str, &str)] = &[
+    ("auto", "Automatic proof search"),
+    ("blast", "Tableau prover"),
+    ("fast", "DFS + iterative deepening"),
+    ("safe", "Safe rules exhaustively"),
+    ("clarify", "Safe rules (alias)"),
+    ("step", "Safe rules + one unsafe"),
+    ("simp", "Simplification"),
+    ("iprover", "Intuitionistic prover"),
+    ("rule", "Apply introduction rule"),
+    ("erule", "Apply elimination rule"),
+    ("drule", "Apply destruction rule"),
+    ("frule", "Apply forward rule"),
+    ("subst", "Substitution"),
+    ("induct", "Induction"),
+    ("cases", "Case analysis"),
+    ("unfold", "Unfold definitions"),
+    ("fold", "Fold definitions"),
+    ("insert", "Insert facts"),
+    ("arith", "Arithmetic"),
+    ("assumption", "Solve by assumption"),
+    ("metis", "Metis prover (fallback)"),
 ];
 
 pub fn handle_completion(ctx: &HandlerContext, req: JsonRpcRequest) {
@@ -82,19 +92,40 @@ pub fn handle_completion(ctx: &HandlerContext, req: JsonRpcRequest) {
         });
     }
 
-    // Add symbols
-    for (sym, desc) in SYMBOLS {
+    // Add method names
+    for (method, desc) in METHODS {
         items.push(CompletionItem {
-            label: sym.to_string(),
+            label: method.to_string(),
             kind: Some(CompletionItemKind::Function),
             detail: Some(desc.to_string()),
             documentation: None,
-            insert_text: Some(format!("{sym} ")),
+            insert_text: Some(format!("{method} ")),
         });
     }
 
+    // Add theorem names from the loaded DB (top 200 for performance)
+    let db = HolTheoremDb::get();
+    let mut count = 0;
+    for (name, thm) in &db.by_name {
+        if count >= 200 { break; }
+        let nprems = thm.nprems();
+        let detail = if nprems == 0 {
+            "theorem (unconditional)".into()
+        } else {
+            format!("theorem ({nprems} premises)")
+        };
+        items.push(CompletionItem {
+            label: name.clone(),
+            kind: Some(CompletionItemKind::Property),
+            detail: Some(detail),
+            documentation: None,
+            insert_text: Some(name.clone()),
+        });
+        count += 1;
+    }
+
     let result = CompletionList {
-        is_incomplete: false,
+        is_incomplete: count >= 200,
         items,
     };
     ctx.send_result(

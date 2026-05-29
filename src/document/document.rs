@@ -418,6 +418,11 @@ impl Document {
         self.nodes.get_mut(uri)
     }
 
+    /// Get the full text of a document by URI.
+    pub fn get_text(&self, uri: &str) -> Option<String> {
+        self.get_node(uri).map(|n| n.content.clone())
+    }
+
     /// Get all open files.
     pub fn nodes(&self) -> impl Iterator<Item = &Node> {
         self.nodes.values()
