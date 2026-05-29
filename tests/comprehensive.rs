@@ -48,8 +48,6 @@ mod comprehensive {
 
     #[test]
     fn test_full_proof_term_pipeline() {
-        use isabelle_rs::core::proofterm::{ProofTerm, ProofBody, check_proof};
-
         // Create a theorem
         let a = term::Term::const_("A", types::Typ::base("prop"));
         let ct = thm::CTerm::certify(a.clone());

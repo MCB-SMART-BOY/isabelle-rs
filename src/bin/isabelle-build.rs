@@ -30,13 +30,17 @@ struct Cli {
     /// Quiet mode (only show errors).
     #[arg(long)]
     quiet: bool,
+
+    /// Accept all lemmas as axioms (skip proof replay, fast mode).
+    #[arg(long)]
+    accept_all: bool,
 }
 
 fn main() {
     let cli = Cli::parse();
 
     if let Some(dir) = &cli.dir {
-        batch_compile(dir, cli.quiet);
+        batch_compile(dir, cli.quiet, cli.accept_all);
         return;
     }
 
@@ -96,8 +100,9 @@ fn compile_file(path: &PathBuf) -> Result<usize, Vec<String>> {
     }
 }
 
-fn batch_compile(dir: &PathBuf, quiet: bool) {
+fn batch_compile(dir: &PathBuf, quiet: bool, accept_all: bool) {
     let mut builder = SessionBuilder::new();
+    builder.set_accept_all(accept_all);
     match builder.scan(dir) {
         Ok(count) => {
             if !quiet {
