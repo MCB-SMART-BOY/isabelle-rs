@@ -18,4 +18,5 @@ pub mod locale;
 pub mod primcorec;
 pub mod theory_db;
 pub mod theory_graph;
+pub mod transfer;
 pub mod typedef_record;
