@@ -7,6 +7,12 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release'
+        required: true
+        default: 'v1.2.0'
 
 env:
   CARGO_TERM_COLOR: always
@@ -96,7 +102,6 @@ jobs:
             artifacts/isabelle-rs-linux-x86_64.tar.gz
             artifacts/isabelle-rs-macos-x86_64.tar.gz
             artifacts/isabelle-rs-windows-x86_64.zip
-          body_path: CHANGELOG.md
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(github.ref, '-pre') || contains(github.ref, '-rc') }}

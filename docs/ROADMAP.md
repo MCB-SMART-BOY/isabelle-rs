@@ -1,11 +1,9 @@
-# 开发路线图 v15.0 (v0.7.0 Final)
+# 开发路线图 v16.0 (v1.2.0)
 
 > **目标**：用 Rust 完全替代 Isabelle/HOL 内核 + 证明引擎。
-> **当前版本**: v0.7.0 — 全部 Phase 0-35 完成。
-> **内核**: 15 ops, 100% Isabelle 等价, 0 Typ::dummy() fallback。
-> **Isar**: 三模式状态机 + 30+ 命令 + 25 methods。
-> **工具链**: Pretty Printer, TPTP Export, SessionBuilder DAG, CLI。
-> **代码**: ~39,000 Rust LOC, 111 files, 370+ tests。
+> **当前版本**: v1.2.0 — 全部 Phase 0-51 完成。
+> **验证**: 20 HOL files, 428 theorems, 0 errors。
+> **代码**: ~44,500 Rust LOC, 122 files, 450+ tests。
 > **工程**: 10 个软件工程 skills 规则文件, CI/CD, 安全审计, 属性测试。
 
 ---

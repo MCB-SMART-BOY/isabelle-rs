@@ -1,8 +1,8 @@
-# 开发者指南 v0.7.0 Final
+# 开发者指南 v1.2.0
 
 ## 环境要求
 
-- Rust 1.80+ (edition 2024)
+- Rust nightly (edition 2024)
 - cargo
 - 推荐: 128MB+ stack (`RUST_MIN_STACK=134217728`)
 
@@ -131,10 +131,10 @@ CTerm::require_non_dummy(op)    // Err if type is dummy
 
 | 指标 | 数值 |
 |------|------|
-| Rust 代码 | ~39,000 行 |
-| 源文件 | 111 `.rs` |
-| 测试 | 370+ |
+| Rust 代码 | ~44,500 行 |
+| 源文件 | 122 `.rs` |
+| 测试 | 450+ |
 | .thy 文件 (full) | 1,849 |
 | 定理总数 (full) | 42,000+ |
-| 警告 | 13 |
+| 警告 | 0 |
 | 性能 (core) | ~4.1s (24× from v0.4.0) |

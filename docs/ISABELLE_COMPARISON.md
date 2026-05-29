@@ -1,7 +1,7 @@
-# Isabelle 功能对照 v0.7.0 Final
+# Isabelle 功能对照 v1.2.0
 
-> **总体功能覆盖**: 核心内核 ~95%，总体 ~50%
-> **isabelle-rs**: ~39,000 行 Rust (111 .rs) | **Isabelle**: ~317,000 行 ML + 90,000 行 Scala
+> **总体功能覆盖**: 核心内核 ~98%，总体 ~60%
+> **isabelle-rs**: ~44,500 行 Rust (122 .rs) | **Isabelle**: ~317,000 行 ML + 90,000 行 Scala
 
 ## 一、代码规模
 

@@ -1,6 +1,8 @@
-# 架构设计 v14.0 (v0.7.0 Final)
+# 架构设计 v16.0 (v1.2.0)
 
-> LCF 内核：15 操作 (12 原语 + 3 派生)，零 panic，**0 Typ::dummy() fallback**。
+> LCF 内核：15 ops + 15 methods · 类型推断 · 上下文切换 · Sledgehammer ATP
+> 验证：20 HOL files · 428 theorems · 0 errors
+> 性能：**179ns–12µs** (release mode, criterion 实测)
 > 类型系统：TypeEnv + CTerm + Type/Sort/ClassAlgebra (Phase 9)，内核完全类型感知。
 > 证明引擎：25 methods + Discrimination Nets + 三阶段 Safe Rules + 5 经典推理器搜索策略。
 > Isar 引擎：三模式 Proof 状态机 (Forward/Chain/Backward) + 30+ Isar 命令 + 目标精化。
@@ -146,19 +148,14 @@ Backward → apply, by, proof (sub-block)
 
 | 模块 | 文件数 | 行数 | 说明 |
 |------|:--:|------|------|
-| `src/core/` (内核) | 31 | ~9,000 | LCF内核, 统一, 重写, nets, 类型 |
+| `src/core/` (内核) | 34 | ~14,000 | LCF内核, type_infer, context, proofterm, sorts |
 | `src/isar/` (Isar) | 15 | ~8,500 | Method, ProofState, 解析器, token |
-| `src/hol/` (HOL) | 15 | ~7,000 | 理论加载, DAG, DB, 内置规则 |
-| `src/theory/` (理论) | 6 | ~3,000 | loader, local_theory, session_builder |
+| `src/hol/` (HOL) | 15 | ~8,000 | BNF, Ctr_Sugar, primcorec, 理论加载 |
+| `src/theory/` (理论) | 7 | ~3,500 | loader, verify_classifier, session_builder |
+| `src/tools/` (工具) | 5 | ~2,500 | sledgehammer, reconstruct, tptp |
 | `src/server/` (LSP) | 5 | ~1,500 | 传输层, LSP types, handlers |
-| `src/lsp/` (handlers) | 3 | ~500 | 8 LSP 协议 handlers |
-| `src/syntax/` (CST+Printer) | 5 | ~1,200 | Rowan 解析器, AST, Printer |
-| `src/session/` (session) | 4 | ~700 | 会话管理 (Actor) |
-| `src/tools/` (TPTP) | 5 | ~800 | auto, blast, simp, tptp |
-| `src/wasm/` (WASM) | 4 | ~500 | WASM 运行时 |
-| `src/kernel/` (kernel) | 4 | ~500 | arena, data, derived |
-| `src/document/` (doc) | 2 | ~600 | 文档模型 |
-| `src/fleche/` (engine) | 2 | ~300 | 引擎 |
+| `src/syntax/` (语法) | 5 | ~1,200 | Rowan 解析器, AST, Printer |
+| 其他 (session/wasm/lsp/kernel/document/fleche) | 19 | ~3,300 | |
 | `src/bin/` (CLI) | 1 | ~140 | isabelle-build |
-| 其他 | 6 | ~500 | main, lib, tests |
-| **合计** | **111** | **~39,000** | |
+| tests | 12 | ~2,500 | proptest, comprehensive, e2e, tier2 |
+| **合计** | **122** | **~44,500** | |
