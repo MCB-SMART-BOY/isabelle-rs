@@ -2364,19 +2364,23 @@ impl HolTheoremDb {
                 }
             }
             let attrs = &lem.attributes;
-            if attrs.iter().any(|a| a.contains("intro")) {
+            // Use the new attribute system for proper classification
+            let is_eq = crate::core::logic::Pure::dest_equals(thm.prop().term()).is_some();
+            let cats = crate::isar::attrib::compute_db_categories(attrs, &lem.name, is_eq);
+
+            if cats.contains("safe_intro") || cats.contains("unsafe_intro") || cats.contains("intro") {
                 self.intros.push(Arc::clone(&thm));
-                if Self::classify_intro_safe(&thm, attrs) {
+                if cats.contains("safe_intro") {
                     self.safe_intros.push(Arc::clone(&thm));
                 }
             }
-            if attrs.iter().any(|a| a.contains("elim")) {
+            if cats.contains("safe_elim") || cats.contains("elim") {
                 self.elims.push(Arc::clone(&thm));
-                if Self::classify_elim_safe(&thm, attrs) {
+                if cats.contains("safe_elim") {
                     self.safe_elims.push(Arc::clone(&thm));
                 }
             }
-            if attrs.iter().any(|a| a.contains("simp") || a.contains("iff")) {
+            if cats.contains("simp") {
                 self.simps.push(Arc::clone(&thm));
             }
         }
