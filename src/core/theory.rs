@@ -262,6 +262,12 @@ impl ProofContext {
     pub fn assumptions(&self) -> &[Term] {
         &self.assumptions
     }
+
+    /// Restore context to a previous state (for backtracking).
+    pub(crate) fn restore_to(&mut self, fixes_len: usize, assumptions_len: usize) {
+        self.fixes.truncate(fixes_len);
+        self.assumptions.truncate(assumptions_len);
+    }
 }
 
 // =========================================================================

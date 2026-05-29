@@ -60,12 +60,22 @@ impl LocalFacts {
     }
 }
 
+/// A snapshot of the context state for save/restore.
+#[derive(Clone, Debug)]
+pub struct ContextSnapshot {
+    pub fixes_len: usize,
+    pub assumptions_len: usize,
+    pub facts_count: usize,
+    pub chained_len: usize,
+    pub let_bindings_len: usize,
+}
+
 // =========================================================================
 // Isar Proof Context
 // =========================================================================
 
 /// The Isar proof context extends the core proof context with
-/// Isar-specific features like cases, local facts, and syntax.
+/// Isar-specific features like cases, local facts, syntax, and let bindings.
 #[derive(Clone, Debug)]
 pub struct IsarContext {
     /// The underlying core proof context.
@@ -76,8 +86,12 @@ pub struct IsarContext {
     facts: LocalFacts,
     /// Chained facts (for `using thm1 thm2`).
     chained: Vec<Arc<Thm>>,
-    /// Pending facts to chain into the next method.
-    pending: Vec<Arc<Thm>>,
+    /// Let bindings: name → term (for `let x = t`).
+    let_bindings: Vec<(String, Term)>,
+    /// Type variable bindings: name → Typ (for `let 'a = τ`).
+    type_bindings: Vec<(String, Typ)>,
+    /// Context stack for save/restore (backtracking).
+    stack: Vec<ContextSnapshot>,
 }
 
 impl IsarContext {
@@ -88,7 +102,9 @@ impl IsarContext {
             cases: Vec::new(),
             facts: LocalFacts::new(),
             chained: Vec::new(),
-            pending: Vec::new(),
+            let_bindings: Vec::new(),
+            type_bindings: Vec::new(),
+            stack: Vec::new(),
         }
     }
 
@@ -133,8 +149,43 @@ impl IsarContext {
 
     /// `with` = `using` + `from` (chain + make available as assumptions)
     pub fn with(&mut self, thms: Vec<Arc<Thm>>) {
-        self.chained = thms.clone();
-        self.pending = thms;
+        self.chained = thms;
+    }
+
+    /// Let binding: `let x = t`.
+    pub fn let_bind(&mut self, name: &str, term: Term) {
+        self.let_bindings.push((name.to_string(), term));
+    }
+
+    /// Look up a let binding by name.
+    pub fn get_let_binding(&self, name: &str) -> Option<&Term> {
+        self.let_bindings.iter().rev().find(|(n, _)| n == name).map(|(_, t)| t)
+    }
+
+    /// Type variable binding: `let 'a = τ`.
+    pub fn type_bind(&mut self, name: &str, typ: Typ) {
+        self.type_bindings.push((name.to_string(), typ));
+    }
+
+    /// Save current context state (for backtracking).
+    pub fn save(&mut self) {
+        let snap = ContextSnapshot {
+            fixes_len: self.core.fixes().len(),
+            assumptions_len: self.core.assumptions().len(),
+            facts_count: self.facts.facts.len(),
+            chained_len: self.chained.len(),
+            let_bindings_len: self.let_bindings.len(),
+        };
+        self.stack.push(snap);
+    }
+
+    /// Restore context to the last saved state.
+    pub fn restore(&mut self) {
+        if let Some(snap) = self.stack.pop() {
+            self.core.restore_to(snap.fixes_len, snap.assumptions_len);
+            self.chained.truncate(snap.chained_len);
+            self.let_bindings.truncate(snap.let_bindings_len);
+        }
     }
 
     /// Get chained facts (consumed by the next method).
