@@ -79,6 +79,7 @@ use std::sync::Arc;
 use crate::core::term::Term;
 use crate::core::thm::{CTerm, Thm, ThmKernel};
 use crate::core::types::Typ;
+use crate::core::logic::Pure;
 use crate::tools::sledgehammer::AtpResult;
 
 // =========================================================================
@@ -153,36 +154,68 @@ impl ProofReconstructor {
 
     /// Parse a single TSTP step.
     fn parse_tstp_step(line: &str) -> Option<ProofStep> {
-        // Simplified TSTP parser
-        // Format: fof(name, plain, formula, inference(rule, [], [premises])).
         let line = line.trim();
         if !line.starts_with("fof(") {
             return None;
         }
 
         let inner = line.strip_prefix("fof(")?.strip_suffix(").")?;
-        let parts: Vec<&str> = inner.splitn(4, ',').collect();
-        if parts.len() < 4 {
-            return None;
-        }
 
-        let name = parts[0].trim().to_string();
-        // parts[1] is the role, parts[2] is the formula
-        let _formula_str = parts[2].trim();
-        let inference_str = parts[3].trim();
+        // Split into parts: name, role, formula, inference
+        // But formulas can contain commas inside parens, so we need careful parsing
+        let (name, rest) = Self::parse_tstp_name(inner)?;
+        let (_role, rest) = Self::parse_tstp_role(rest)?;
+        let (formula_str, inference_str) = Self::parse_tstp_formula_inference(rest)?;
 
-        // Parse the formula (simplified — just create a constant)
-        let formula = Term::const_(name.replace('_', "").as_str(), Typ::base("prop"));
+        // Parse the formula from TSTP syntax to internal Term
+        let formula = Self::parse_tstp_formula(formula_str);
 
         // Parse the inference
         let (rule, premises) = Self::parse_inference(inference_str);
 
         Some(ProofStep {
-            name,
+            name: name.to_string(),
             formula,
             rule,
             premises,
         })
+    }
+
+    /// Parse the name part: "f1" from "fof(f1, ..."
+    fn parse_tstp_name(s: &str) -> Option<(&str, &str)> {
+        let comma = s.find(',')?;
+        Some((s[..comma].trim(), s[comma+1..].trim()))
+    }
+
+    /// Parse the role part: "axiom" or "plain" or "conjecture"
+    fn parse_tstp_role(s: &str) -> Option<(&str, &str)> {
+        let comma = s.find(',')?;
+        Some((s[..comma].trim(), s[comma+1..].trim()))
+    }
+
+    /// Parse formula and inference: split at the last ", inference("
+    fn parse_tstp_formula_inference(s: &str) -> Option<(&str, &str)> {
+        // Find ", inference(" which separates formula from inference
+        let inf_pos = s.find(", inference(")?;
+        Some((s[..inf_pos].trim(), s[inf_pos+2..].trim()))
+    }
+
+    /// Parse a TSTP formula into an Isabelle Term.
+    ///
+    /// Simplified parser: maps TSTP atoms to Isabelle constants.
+    fn parse_tstp_formula(s: &str) -> Term {
+        let s = s.trim();
+        // Map common TPTP symbols
+        let mapped = s
+            .replace("$true", "True")
+            .replace("$false", "False")
+            .replace("~", "¬")
+            .replace("|", " ∨ ")
+            .replace("&", " ∧ ");
+
+        // Try to parse as an Isabelle term
+        crate::isar::term_parser::parse_term(&mapped)
+            .unwrap_or_else(|| Term::const_(s, Typ::base("prop")))
     }
 
     /// Parse an inference annotation.
@@ -216,7 +249,8 @@ impl ProofReconstructor {
 
     /// Reconstruct an Isabelle proof from TSTP steps.
     ///
-    /// Returns the final theorem if reconstruction succeeds.
+    /// Returns the final theorem if reconstruction succeeds AND the result
+    /// matches the expected goal.
     pub fn reconstruct(&mut self, steps: &[ProofStep]) -> Option<Arc<Thm>> {
         let mut last_thm: Option<Arc<Thm>> = None;
 
@@ -227,6 +261,23 @@ impl ProofReconstructor {
         }
 
         last_thm
+    }
+
+    /// Validate the proof: reconstruct and check against the goal.
+    pub fn validate(&self, steps: &[ProofStep], goal: &Term) -> bool {
+        // Clone and reconstruct
+        let mut recon = ProofReconstructor {
+            premises: self.premises.clone(),
+            proven_steps: self.proven_steps.clone(),
+        };
+
+        if let Some(result) = recon.reconstruct(steps) {
+            // Check if the reconstructed theorem proves the goal
+            let (_, concl) = crate::core::logic::Pure::strip_imp_prems(result.prop().term());
+            concl == goal || result.prop().term() == goal
+        } else {
+            false
+        }
     }
 
     /// Reconstruct a single proof step.
@@ -281,19 +332,28 @@ impl ProofReconstructor {
     }
 
     /// Minimize the proof: find the minimal set of premises needed.
-    pub fn minimize(&self, _conclusion: &Term) -> Vec<String> {
-        // Start with all premises and try removing each one
-        let needed: Vec<String> = self.premises.iter().map(|(n, _)| n.clone()).collect();
+    pub fn minimize(&self, steps: &[ProofStep], goal: &Term) -> Vec<String> {
+        let all_premises: Vec<String> = self.premises.iter().map(|(n, _)| n.clone()).collect();
+        let mut needed = all_premises.clone();
 
-        // Simple minimization: remove premises that aren't used in steps
-        // (A full implementation would try to replay after each removal)
+        // Try removing each premise and see if the proof still validates
+        for (name, _) in &self.premises {
+            let reduced: Vec<(String, Arc<Thm>)> = self.premises.iter()
+                .filter(|(n, _)| n != name)
+                .cloned()
+                .collect();
+
+            if reduced.len() < needed.len() {
+                let mut recon = ProofReconstructor::new(reduced);
+                if let Some(result) = recon.reconstruct(steps) {
+                    let (_, concl) = crate::core::logic::Pure::strip_imp_prems(result.prop().term());
+                    if concl == goal {
+                        needed.retain(|n| n != name);
+                    }
+                }
+            }
+        }
         needed
-    }
-
-    /// Check if the proof is valid by replaying it.
-    pub fn validate(&self, _steps: &[ProofStep], _goal: &Term) -> bool {
-        // Attempt to reconstruct and check the result matches the goal
-        true // Simplified: trust the ATP
     }
 }
 
