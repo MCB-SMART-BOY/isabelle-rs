@@ -1913,6 +1913,8 @@ fn exec_induct(method_str: &str, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm>
         let induct_patterns = [
             "induct", "nat_induct", "list_induct", "length_induct",
             "measure_induct", "less_induct", "wf_induct",
+            "fp_induct",  // BNF Lfp induction
+            "nchotomy",    // Ctr_Sugar exhaustive case distinction
         ];
         for (name, thm) in db.by_name.iter() {
             for pat in &induct_patterns {
@@ -1921,12 +1923,28 @@ fn exec_induct(method_str: &str, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm>
                     break;
                 }
             }
-            if candidates.len() >= 15 { break; }
+            if candidates.len() >= 20 { break; }
+        }
+    }
+
+    // 3d. Try BNF Lfp fold/rec rules for constructor-based induction
+    if candidates.is_empty() && !var_name.is_empty() {
+        // Try to find {type}.fold or {type}.rec rules
+        let type_name = state.prem(0)
+            .map(|goal| infer_type_from_goal(&goal, var_name));
+        if let Some(tname) = type_name {
+            for suffix in &[".fold_", ".rec_", ".fp_induct"] {
+                for (name, thm) in db.by_name.iter() {
+                    if name.starts_with(&tname) && name.contains(suffix) {
+                        candidates.push(Arc::clone(thm));
+                    }
+                }
+            }
         }
     }
 
     // 4. Try induction/cases rules with subgoal solving
-    for rule in candidates.iter().take(5) {
+    for rule in candidates.iter().take(8) {
         let results = tactic::resolve_tac(&[(**rule).clone()], 0)(state);
         for r in &results {
             if r.nprems() == 0 { return vec![r.clone()]; }

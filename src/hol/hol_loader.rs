@@ -1181,6 +1181,9 @@ pub fn parse_lemmas_with_loc(source: &str, source_path: &str) -> Vec<ParsedLemma
         // Ctr_Sugar lemmas
         let sugar = crate::hol::ctr_sugar::CtrSugar::from_datatype(dt);
         lemmas.extend(sugar.generate_lemmas());
+        // BNF Lfp lemmas
+        let lfp = crate::hol::bnf_lfp::BnfLfp::from_datatype(dt, false);
+        lemmas.extend(lfp.generate_lemmas());
     }
     for pr in &parse_primrecs(source) {
         lemmas.extend(generate_primrec_lemmas(pr));
