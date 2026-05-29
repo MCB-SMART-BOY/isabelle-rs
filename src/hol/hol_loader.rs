@@ -260,16 +260,20 @@ pub fn parse_datatypes(source: &str) -> Vec<DatatypeDef> {
         let t = lines[i].trim();
         let is_datatype = t.starts_with("datatype ") || t.starts_with("datatype(");
         let is_codatatype = t.starts_with("codatatype ");
-        if is_datatype || is_codatatype {
+        // Skip "datatype" in comments, subsection titles, and strings
+        let is_false_positive = t.contains("subsection") || t.contains("\\<open>") || t.contains("(*") || t.contains("*)");
+        if (is_datatype || is_codatatype) && !is_false_positive {
             let mut defs_batch = parse_mutual_datatypes(&lines, &mut i, is_codatatype);
             defs.append(&mut defs_batch);
             continue;
         }
         if t.starts_with("old_rep_datatype ") || t.starts_with("rep_datatype ") {
-            if let Some((def, consumed)) = parse_old_rep_datatype(&lines, i) {
-                defs.push(def);
-                i = consumed;
-                continue;
+            if !is_false_positive {
+                if let Some((def, consumed)) = parse_old_rep_datatype(&lines, i) {
+                    defs.push(def);
+                    i = consumed;
+                    continue;
+                }
             }
         }
         i += 1;
