@@ -169,6 +169,7 @@ src/
 | [开发路线图](docs/ROADMAP.md) | Phase 0–51 完成状态与规划 |
 | [开发者指南](docs/DEVELOPMENT.md) | 环境配置、构建测试、项目结构 |
 | [Isabelle 对照](docs/ISABELLE_COMPARISON.md) | 与 Isabelle/ML 的功能覆盖度对比 |
+| [差距分析](docs/GAP_ANALYSIS.md) | **完整差距分析** — 缺什么、优先级 |
 | [规则文件](.rules/) | 20 个领域与工程规则文件 |
 
 ---
