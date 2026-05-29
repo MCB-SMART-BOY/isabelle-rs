@@ -19,7 +19,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_MIN_STACK: 134217728  # 128MB for deep term processing
+  RUST_MIN_STACK: 268435456  # 256MB for BNF/Ctr_Sugar/Lfp
 
 jobs:
   # ==========================================================================
