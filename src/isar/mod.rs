@@ -24,6 +24,7 @@ pub mod parse;
 pub mod proof;
 pub mod proof_context;
 pub mod proof_state;
+pub mod spec;
 pub mod term_parser;
 pub mod token;
 pub mod toplevel;
