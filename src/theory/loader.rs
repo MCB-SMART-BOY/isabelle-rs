@@ -1152,4 +1152,16 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_set_thy_style_lemma() {
+        let pure = Theory::pure();
+        let mut proc = TheoryProcessor::with_parent(pure, "Test");
+        let source = "theory Test imports Pure begin lemma Collect_mem: \"P a ==> a : {x. P x}\" by blast end";
+        let _thy = proc.process_source(source);
+        eprintln!("Errors: {:?}", proc.errors());
+        eprintln!("Theorems: {}", proc.theorem_count());
+        assert!(proc.theorem_count() > 0,
+            "Expected >=1 theorem. Errors: {:?}", proc.errors());
+    }
 }
