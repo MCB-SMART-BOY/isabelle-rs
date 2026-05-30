@@ -20,6 +20,8 @@ use std::cell::Cell;
 thread_local! {
     static AUTO_DEPTH: Cell<usize> = Cell::new(0);
     static AUTO_LIMIT: Cell<usize> = Cell::new(100);
+    /// Local theorem index for same-file definition lookups during processing
+    pub(crate) static LOCAL_THEOREM_INDEX: std::cell::RefCell<std::collections::HashMap<String, Arc<Thm>>> = std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
 // =========================================================================
@@ -2621,8 +2623,16 @@ fn apply_then(mut thm: Arc<Thm>, args: Vec<String>, db: &HolTheoremDb) -> Arc<Th
 
 /// Resolve a theorem name with flexible dot/underscore/qualifier matching.
 fn resolve_theorem_name(name: &str, db: &HolTheoremDb) -> Option<Arc<Thm>> {
+    // Check global DB first
     if let Some(thm) = db.by_name.get(name) {
         return Some(Arc::clone(thm));
+    }
+    // Check local index (set during theory processing for same-file refs)
+    let local_result = LOCAL_THEOREM_INDEX.with(|idx| {
+        idx.borrow().get(name).cloned()
+    });
+    if let Some(thm) = local_result {
+        return Some(thm);
     }
     let dot = name.replace('_', ".");
     if dot != name {
@@ -2716,7 +2726,31 @@ fn generalize_thm(thm: &Thm) -> Thm {
     ThmKernel::assume(CTerm::certify(apply(thm.prop().term(), &m)))
 }
 
-/// Verify a ParsedLemma: extract premises, execute proof, check result.
+/// Verify lemmas with local index for same-file definitions.
+pub fn verify_lemmas_batch(lemmas: &[ParsedLemma]) -> (usize, usize) {
+    LOCAL_THEOREM_INDEX.with(|idx| {
+        let mut map = idx.borrow_mut();
+        map.clear();
+        for lem in lemmas {
+            if !lem.name.is_empty() {
+                map.insert(lem.name.clone(), Arc::clone(&lem.theorem));
+            }
+        }
+    });
+    let mut verified = 0usize;
+    let mut attempted = 0usize;
+    for lem in lemmas {
+        if lem.proof_script.is_some() {
+            attempted += 1;
+            if verify_lemma(lem).is_some() {
+                verified += 1;
+            }
+        }
+    }
+    LOCAL_THEOREM_INDEX.with(|idx| idx.borrow_mut().clear());
+    (verified, attempted)
+}
+
 pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
     AUTO_DEPTH.with(|c| c.set(0));
 
