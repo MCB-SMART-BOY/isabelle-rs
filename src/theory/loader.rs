@@ -155,6 +155,15 @@ impl TheoryProcessor {
         self.errors.push(format!("line {}: {}", line, msg));
     }
 
+    /// Add a theorem to both the local index and the thread-local index.
+    fn add_theorem_to_index(&mut self, name: String, thm: Arc<Thm>) {
+        self.theorem_index.insert(name.clone(), Arc::clone(&thm));
+        self.theorems.push((name.clone(), thm.clone()));
+        crate::isar::method::LOCAL_THEOREM_INDEX.with(|idx| {
+            idx.borrow_mut().insert(name, thm);
+        });
+    }
+
     /// Process a single command span.
     /// Parse the theory header from the first command span.
     /// Creates the LocalTheory with proper parent imports.
