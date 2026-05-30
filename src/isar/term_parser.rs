@@ -124,13 +124,29 @@ fn parse_typ_atom(s: &mut P) -> Option<Typ> {
     }
 }
 
+thread_local! {
+    static PARSE_DEPTH: std::cell::Cell<usize> = std::cell::Cell::new(0);
+}
+const MAX_PARSE_DEPTH: usize = 200;
+
 pub fn parse_term(input: &str) -> Option<Term> {
+    PARSE_DEPTH.with(|d| d.set(0));
     let mut s = P::new(Lexer::new(input).tokenize());
     parse_trm(&mut s)
 }
 
 fn parse_trm(s: &mut P) -> Option<Term> {
-    parse_trm_flag(s, false)
+    let depth = PARSE_DEPTH.with(|d| {
+        let v = d.get() + 1;
+        d.set(v);
+        v
+    });
+    if depth > MAX_PARSE_DEPTH {
+        return None;
+    }
+    let result = parse_trm_flag(s, false);
+    PARSE_DEPTH.with(|d| d.set(d.get() - 1));
+    result
 }
 
 /// Parse a term that stops at implication (=, &, | bind tighter than ==>)
