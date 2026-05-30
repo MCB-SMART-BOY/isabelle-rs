@@ -278,16 +278,30 @@ impl TheoryProcessor {
     // ── Command processors ──
 
     fn begin_lemma(&mut self, span: &CommandSpan) {
-        // Extract name and statement from: `lemma name: "statement"`
         let body = &span.body;
-        let name = body.split(':').next().unwrap_or("unnamed").trim();
-        let stmt = body.split(':').nth(1).map(|s| s.trim().trim_matches('"')).unwrap_or("True");
-        let term = Term::const_(stmt, Typ::base("prop"));
+        // Split into: name, statement, [proof]
+        let (name, rest) = if let Some(colon) = body.find(':') {
+            (body[..colon].trim().to_string(), body[colon+1..].trim().to_string())
+        } else {
+            (body.to_string(), "True".to_string())
+        };
+        // Separate statement from proof: find "by " or "apply " or "proof"
+        let stmt = if let Some(by_pos) = rest.find(" by ") {
+            rest[..by_pos].trim().trim_matches('"').to_string()
+        } else if let Some(by_pos) = rest.find("\nby ") {
+            rest[..by_pos].trim().trim_matches('"').to_string()
+        } else if rest.contains("\napply") || rest.contains("\nproof") {
+            // Multi-line proof: statement is first line
+            rest.lines().next().unwrap_or(&rest).trim().trim_matches('"').to_string()
+        } else {
+            rest.trim().trim_matches('"').to_string()
+        };
+        let term = Term::const_(stmt.as_str(), Typ::base("prop"));
         let theory = self.local.as_ref().map(|l| l.parent().clone()).unwrap_or_else(Theory::pure);
         let mut proof = IsarProof::init(theory);
-        proof.lemma(name, term);
+        proof.lemma(&name, term);
         self.proof = Some(Box::new(proof));
-        self.pending_lemma = Some(name.to_string());
+        self.pending_lemma = Some(name);
     }
 
     fn process_theory_body(&mut self, span: &CommandSpan) {
