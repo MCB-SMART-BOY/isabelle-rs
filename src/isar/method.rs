@@ -2804,6 +2804,30 @@ pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
         }
     }
 
+    // "unfolding X by method" — apply unfolding then method
+    if proof.contains("unfolding ") {
+        // Split: "unfolding X1 X2 by method"
+        if let Some(rest) = proof.strip_prefix("unfolding ") {
+            if let Some(by_pos) = rest.find(" by ") {
+                let unfold_names = &rest[..by_pos];
+                let method = rest[by_pos + 4..].trim();
+                // Look up the unfolding definitions
+                let db = HolTheoremDb::get();
+                let mut current = goal.clone();
+                for name in unfold_names.split_whitespace() {
+                    if let Some(thm) = resolve_theorem_name(name, db) {
+                        current = ThmKernel::bicompose(false,
+                            &(*thm).clone(), &current, 0).unwrap_or(current);
+                    }
+                }
+                // Apply the remaining method
+                if let Some(results) = exec_proof(&current, method, &premises) {
+                    return Some(results);
+                }
+            }
+        }
+    }
+
     // For lemmas with premises, try Goal.init-style FIRST (bare conclusion)
     // This allows rules like subst/nat_induct to match the conclusion directly.
     if !prems.is_empty() {
