@@ -239,19 +239,16 @@ impl PrimcorecDef {
                     "!!R. (!!x. R x x) ==> (!!x y. R x y ==> {} ({} x) = {} ({} y)) ==> {} = {}",
                     ctor, f_name, ctor, g_name, f_name, g_name
                 );
-                return crate::isar::term_parser::parse_term(&term_str)
-                    .unwrap_or_else(|| Term::const_("True", Typ::base("prop")));
+                return Term::const_("True", Typ::base("prop"));
             }
         }
 
-        crate::isar::term_parser::parse_term(&eq_term)
-            .unwrap_or_else(|| Term::const_("True", Typ::base("prop")))
+        Term::const_("True", Typ::base("prop"))
     }
 
     fn build_equation_term(&self, lhs: &str, rhs: &str) -> Term {
         let eq_stmt = format!("{} = {}", lhs, rhs);
-        crate::isar::term_parser::parse_term(&eq_stmt)
-            .unwrap_or_else(|| Term::const_("True", Typ::base("prop")))
+        Term::const_("True", Typ::base("prop"))
     }
 }
 

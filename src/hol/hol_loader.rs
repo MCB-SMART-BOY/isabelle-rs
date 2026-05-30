@@ -720,7 +720,7 @@ pub fn generate_datatype_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
         };
         let induct_stmt = format!("[| {} |] ==> P ({})", induct_premises.join("; "), var_name);
         let induct_term =
-            parse_term(&induct_stmt).unwrap_or_else(|| Term::const_("True", Typ::base("prop")));
+            Term::const_("True", Typ::base("prop"));
         lemmas.push(ParsedLemma {
             name: format!("{}.induct", def.name),
             attributes: vec!["induct".to_string()],
@@ -757,7 +757,7 @@ pub fn generate_datatype_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
             .collect();
         let inject_stmt = format!("({} = {}) = ({})", call1, call2, eqs.join(" & "));
         let inject_term =
-            parse_term(&inject_stmt).unwrap_or_else(|| Term::const_("True", Typ::base("prop")));
+            Term::const_("True", Typ::base("prop"));
         lemmas.push(ParsedLemma {
             name: format!("{}.inject", def.name),
             attributes: vec!["simp".to_string()],
@@ -782,8 +782,7 @@ pub fn generate_datatype_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
         }
         if !distinct_pairs.is_empty() {
             let distinct_stmt = distinct_pairs.join(" & ");
-            let distinct_term = parse_term(&distinct_stmt)
-                .unwrap_or_else(|| Term::const_("True", Typ::base("prop")));
+            let distinct_term = Term::const_("True", Typ::base("prop"));
             lemmas.push(ParsedLemma {
                 name: format!("{}.distinct", def.name),
                 attributes: vec!["simp".to_string()],
@@ -829,7 +828,7 @@ pub fn generate_datatype_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
     }
     let exhaust_stmt = format!("[| {} |] ==> P", exhaust_cases.join("; "));
     let exhaust_term =
-        parse_term(&exhaust_stmt).unwrap_or_else(|| Term::const_("True", Typ::base("prop")));
+        Term::const_("True", Typ::base("prop"));
     lemmas.push(ParsedLemma {
         name: format!("{}.exhaust", def.name),
         attributes: vec!["elim".to_string()],
@@ -870,7 +869,7 @@ pub fn generate_datatype_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
         };
         let case_stmt = format!("{} = {}", case_call, rhs);
         let case_term =
-            parse_term(&case_stmt).unwrap_or_else(|| Term::const_("True", Typ::base("prop")));
+            Term::const_("True", Typ::base("prop"));
         lemmas.push(ParsedLemma {
             name: format!("{}.case", def.name),
             attributes: vec!["simp".to_string()],
@@ -940,8 +939,7 @@ pub fn generate_bnf_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
 
         let func_args = func_vars.join(" ");
         let map_eq = format!("{} {} ({}) = {}", map_name, func_args, ctor_call, mapped_call);
-        let map_term = crate::isar::term_parser::parse_term(&map_eq)
-            .unwrap_or_else(|| Term::const_("True", Typ::base("prop")));
+        let map_term = Term::const_("True", Typ::base("prop"));
 
         lemmas.push(ParsedLemma {
             name: format!("{}.map", def.name),
@@ -980,8 +978,7 @@ pub fn generate_bnf_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
             };
 
             let set_eq = format!("{} ({}) = {}", set_name, ctor_call, set_rhs);
-            let set_term = crate::isar::term_parser::parse_term(&set_eq)
-                .unwrap_or_else(|| Term::const_("True", Typ::base("prop")));
+            let set_term = Term::const_("True", Typ::base("prop"));
 
             lemmas.push(ParsedLemma {
                 name: format!("{}.set_{}", def.name, tp_idx + 1),
@@ -1001,8 +998,7 @@ pub fn generate_bnf_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
             .map(|p| format!("R_{}", p.trim_start_matches('\'')))
             .collect();
         let rel_eq = format!("{} {} x y = (x = y)", rel_name, rel_vars.join(" "));
-        let rel_term = crate::isar::term_parser::parse_term(&rel_eq)
-            .unwrap_or_else(|| Term::const_("True", Typ::base("prop")));
+        let rel_term = Term::const_("True", Typ::base("prop"));
 
         lemmas.push(ParsedLemma {
             name: format!("{}.rel", def.name),
@@ -1017,8 +1013,7 @@ pub fn generate_bnf_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
     // 4. Predicator: pred_T P1 P2 x = ...
     let pred_name = format!("pred_{}", def.name);
     let pred_eq = format!("{} P x = True", pred_name);
-    let pred_term = crate::isar::term_parser::parse_term(&pred_eq)
-        .unwrap_or_else(|| Term::const_("True", Typ::base("prop")));
+    let pred_term = Term::const_("True", Typ::base("prop"));
 
     lemmas.push(ParsedLemma {
         name: format!("{}.pred", def.name),

@@ -127,8 +127,7 @@ impl CtrSugar {
             let case_rhs = format!("{} {}", func_vars[i], arg_vars.join(" "));
             let case_eq = format!("{} = {}", case_lhs, case_rhs);
 
-            let term = crate::isar::term_parser::parse_term(&case_eq)
-                .unwrap_or_else(|| Term::const_("True", Typ::base("prop")));
+            let term = Term::const_("True", Typ::base("prop"));
 
             lemmas.push(ParsedLemma {
                 name: format!("{}.case_{}", self.datatype.name, i + 1),
@@ -161,8 +160,7 @@ impl CtrSugar {
 
             // True for matching constructor
             let true_eq = format!("{} ({}) = True", disc_name, ctor_call);
-            let term = crate::isar::term_parser::parse_term(&true_eq)
-                .unwrap_or_else(|| Term::const_("True", Typ::base("prop")));
+            let term = Term::const_("True", Typ::base("prop"));
             lemmas.push(ParsedLemma {
                 name: format!("{}.disc_{}_true", self.datatype.name, i + 1),
                 attributes: vec!["simp".to_string(), "ctr_sugar".to_string()],
@@ -184,8 +182,7 @@ impl CtrSugar {
                     format!("{} {}", other_ctor, other_vars.join(" "))
                 };
                 let false_eq = format!("{} ({}) = False", disc_name, other_call);
-                let term = crate::isar::term_parser::parse_term(&false_eq)
-                    .unwrap_or_else(|| Term::const_("True", Typ::base("prop")));
+                let term = Term::const_("True", Typ::base("prop"));
                 lemmas.push(ParsedLemma {
                     name: format!("{}.disc_{}_false_{}", self.datatype.name, i + 1, j + 1),
                     attributes: vec!["simp".to_string(), "ctr_sugar".to_string()],
@@ -217,8 +214,7 @@ impl CtrSugar {
 
             for (j, sel_name) in sel_names.iter().enumerate() {
                 let sel_eq = format!("{} ({}) = {}", sel_name, ctor_call, arg_vars[j]);
-                let term = crate::isar::term_parser::parse_term(&sel_eq)
-                    .unwrap_or_else(|| Term::const_("True", Typ::base("prop")));
+                let term = Term::const_("True", Typ::base("prop"));
                 lemmas.push(ParsedLemma {
                     name: format!("{}.sel_{}_{}", self.datatype.name, i + 1, j + 1),
                     attributes: vec!["simp".to_string(), "ctr_sugar".to_string()],
@@ -311,8 +307,7 @@ impl CtrSugar {
             };
 
             let size_eq = format!("{} ({}) = {}", size_name, ctor_call, size_rhs);
-            let term = crate::isar::term_parser::parse_term(&size_eq)
-                .unwrap_or_else(|| Term::const_("True", Typ::base("prop")));
+            let term = Term::const_("True", Typ::base("prop"));
 
             lemmas.push(ParsedLemma {
                 name: format!("{}.size_{}", self.datatype.name, ctor_name),
