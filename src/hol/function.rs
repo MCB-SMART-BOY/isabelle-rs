@@ -267,7 +267,7 @@ pub fn fundef_to_lemmas(def: &FunDef) -> Vec<crate::hol::hol_loader::ParsedLemma
     let theorems = def.generate_theorems();
 
     for (name, term, attrs) in theorems {
-        let thm = ThmKernel::assume(CTerm::certify_annotated(term));
+        let thm = ThmKernel::assume(CTerm::certify(term));
         lemmas.push(crate::hol::hol_loader::ParsedLemma {
             name,
             attributes: attrs,

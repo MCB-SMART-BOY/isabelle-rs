@@ -100,7 +100,7 @@ pub fn typedef_to_lemmas(
     // Rep: `Rep_name :: name => 'a` (representation function)
     let rep_name = format!("Rep_{name}");
     let rep_term = Term::const_(rep_name.as_str(), Typ::dummy());
-    let rep_thm = ThmKernel::assume(CTerm::certify_annotated(rep_term));
+    let rep_thm = ThmKernel::assume(CTerm::certify(rep_term));
     lemmas.push(make_lemma(
         &format!("{name}.Rep"),
         rep_thm,
@@ -110,7 +110,7 @@ pub fn typedef_to_lemmas(
     // Abs: `Abs_name :: 'a => name` (abstraction function)
     let abs_name = format!("Abs_{name}");
     let abs_term = Term::const_(abs_name.as_str(), Typ::dummy());
-    let abs_thm = ThmKernel::assume(CTerm::certify_annotated(abs_term));
+    let abs_thm = ThmKernel::assume(CTerm::certify(abs_term));
     lemmas.push(make_lemma(
         &format!("{name}.Abs"),
         abs_thm,
@@ -120,7 +120,7 @@ pub fn typedef_to_lemmas(
     // Rep_inverse: `Abs (Rep x) = x`
     let s = format!("{name}.Rep_inverse");
     let rep_inv_term = Term::const_(s.as_str(), Typ::base("prop"));
-    let rep_inv_thm = ThmKernel::assume(CTerm::certify_annotated(rep_inv_term));
+    let rep_inv_thm = ThmKernel::assume(CTerm::certify(rep_inv_term));
     lemmas.push(make_lemma(
         &format!("{name}.Rep_inverse"),
         rep_inv_thm,
@@ -130,7 +130,7 @@ pub fn typedef_to_lemmas(
     // Abs_inverse: `Rep (Abs y) = y` (for y in the set)
     let s = format!("{name}.Abs_inverse");
     let abs_inv_term = Term::const_(s.as_str(), Typ::base("prop"));
-    let abs_inv_thm = ThmKernel::assume(CTerm::certify_annotated(abs_inv_term));
+    let abs_inv_thm = ThmKernel::assume(CTerm::certify(abs_inv_term));
     lemmas.push(make_lemma(
         &format!("{name}.Abs_inverse"),
         abs_inv_thm,
@@ -140,7 +140,7 @@ pub fn typedef_to_lemmas(
     // Rep_inject: `Rep x = Rep y ==> x = y`
     let s = format!("{name}.Rep_inject");
     let rep_inj_term = Term::const_(s.as_str(), Typ::base("prop"));
-    let rep_inj_thm = ThmKernel::assume(CTerm::certify_annotated(rep_inj_term));
+    let rep_inj_thm = ThmKernel::assume(CTerm::certify(rep_inj_term));
     lemmas.push(make_lemma(
         &format!("{name}.Rep_inject"),
         rep_inj_thm,
@@ -150,7 +150,7 @@ pub fn typedef_to_lemmas(
     // Abs_inject: `Abs x = Abs y ==> x = y`
     let s = format!("{name}.Abs_inject");
     let abs_inj_term = Term::const_(s.as_str(), Typ::base("prop"));
-    let abs_inj_thm = ThmKernel::assume(CTerm::certify_annotated(abs_inj_term));
+    let abs_inj_thm = ThmKernel::assume(CTerm::certify(abs_inj_term));
     lemmas.push(make_lemma(
         &format!("{name}.Abs_inject"),
         abs_inj_thm,
@@ -160,7 +160,7 @@ pub fn typedef_to_lemmas(
     // Type definition axiom
     let s = format!("type_definition_{name}");
     let typedef_term = Term::const_(s.as_str(), Typ::base("prop"));
-    let typedef_thm = ThmKernel::assume(CTerm::certify_annotated(typedef_term));
+    let typedef_thm = ThmKernel::assume(CTerm::certify(typedef_term));
     lemmas.push(make_lemma(
         &format!("type_definition_{name}"),
         typedef_thm,
@@ -245,7 +245,7 @@ pub fn record_to_lemmas(
     // Type constructor
     let s = format!("{name}.make");
     let type_term = Term::const_(s.as_str(), Typ::dummy());
-    let type_thm = ThmKernel::assume(CTerm::certify_annotated(type_term));
+    let type_thm = ThmKernel::assume(CTerm::certify(type_term));
     lemmas.push(make_lemma(
         &format!("{name}.make"),
         type_thm,
@@ -257,7 +257,7 @@ pub fn record_to_lemmas(
         // Accessor: `fname :: name => ftype`
         let s = format!("{name}.{fname}");
         let acc_term = Term::const_(s.as_str(), Typ::dummy());
-        let acc_thm = ThmKernel::assume(CTerm::certify_annotated(acc_term));
+        let acc_thm = ThmKernel::assume(CTerm::certify(acc_term));
         lemmas.push(make_lemma(
             &format!("{name}.{fname}"),
             acc_thm,
@@ -267,7 +267,7 @@ pub fn record_to_lemmas(
         // Updater: `fname_update :: (ftype => ftype) => name => name`
         let s = format!("{name}.{fname}_update");
         let upd_term = Term::const_(s.as_str(), Typ::dummy());
-        let upd_thm = ThmKernel::assume(CTerm::certify_annotated(upd_term));
+        let upd_thm = ThmKernel::assume(CTerm::certify(upd_term));
         lemmas.push(make_lemma(
             &format!("{name}.{fname}_update"),
             upd_thm,
@@ -279,7 +279,7 @@ pub fn record_to_lemmas(
     for (fname, _) in &decl.fields {
         let s = format!("{name}.{fname}_def");
         let sel_term = Term::const_(s.as_str(), Typ::base("prop"));
-        let sel_thm = ThmKernel::assume(CTerm::certify_annotated(sel_term));
+        let sel_thm = ThmKernel::assume(CTerm::certify(sel_term));
         lemmas.push(make_lemma(
             &format!("{name}.{fname}_def"),
             sel_thm,
@@ -290,7 +290,7 @@ pub fn record_to_lemmas(
     // Extensibility: two records are equal iff all fields are equal
     let s = format!("{name}.ext");
     let ext_term = Term::const_(s.as_str(), Typ::base("prop"));
-    let ext_thm = ThmKernel::assume(CTerm::certify_annotated(ext_term));
+    let ext_thm = ThmKernel::assume(CTerm::certify(ext_term));
     lemmas.push(make_lemma(
         &format!("{name}.ext"),
         ext_thm,
@@ -300,7 +300,7 @@ pub fn record_to_lemmas(
     // Split rule
     let s = format!("{name}.split");
     let split_term = Term::const_(s.as_str(), Typ::base("prop"));
-    let split_thm = ThmKernel::assume(CTerm::certify_annotated(split_term));
+    let split_thm = ThmKernel::assume(CTerm::certify(split_term));
     lemmas.push(make_lemma(
         &format!("{name}.split"),
         split_thm,

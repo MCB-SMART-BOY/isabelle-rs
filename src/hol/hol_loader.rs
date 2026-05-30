@@ -724,7 +724,7 @@ pub fn generate_datatype_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
         lemmas.push(ParsedLemma {
             name: format!("{}.induct", def.name),
             attributes: vec!["induct".to_string()],
-            theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(induct_term))),
+            theorem: Arc::new(ThmKernel::assume(CTerm::certify(induct_term))),
             proof_script: None,
             alias_for: None,
             source_loc: None,
@@ -761,7 +761,7 @@ pub fn generate_datatype_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
         lemmas.push(ParsedLemma {
             name: format!("{}.inject", def.name),
             attributes: vec!["simp".to_string()],
-            theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(inject_term))),
+            theorem: Arc::new(ThmKernel::assume(CTerm::certify(inject_term))),
             proof_script: None,
             alias_for: None,
             source_loc: None,
@@ -787,7 +787,7 @@ pub fn generate_datatype_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
             lemmas.push(ParsedLemma {
                 name: format!("{}.distinct", def.name),
                 attributes: vec!["simp".to_string()],
-                theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(distinct_term))),
+                theorem: Arc::new(ThmKernel::assume(CTerm::certify(distinct_term))),
                 proof_script: None,
                 alias_for: None,
                 source_loc: None,
@@ -833,7 +833,7 @@ pub fn generate_datatype_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
     lemmas.push(ParsedLemma {
         name: format!("{}.exhaust", def.name),
         attributes: vec!["elim".to_string()],
-        theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(exhaust_term))),
+        theorem: Arc::new(ThmKernel::assume(CTerm::certify(exhaust_term))),
         proof_script: None,
         alias_for: None,
         source_loc: None,
@@ -874,7 +874,7 @@ pub fn generate_datatype_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
         lemmas.push(ParsedLemma {
             name: format!("{}.case", def.name),
             attributes: vec!["simp".to_string()],
-            theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(case_term))),
+            theorem: Arc::new(ThmKernel::assume(CTerm::certify(case_term))),
             proof_script: None,
             alias_for: None,
             source_loc: None,
@@ -946,7 +946,7 @@ pub fn generate_bnf_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
         lemmas.push(ParsedLemma {
             name: format!("{}.map", def.name),
             attributes: vec!["simp".to_string(), "bnf".to_string()],
-            theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(map_term))),
+            theorem: Arc::new(ThmKernel::assume(CTerm::certify(map_term))),
             proof_script: None,
             alias_for: None,
             source_loc: None,
@@ -986,7 +986,7 @@ pub fn generate_bnf_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
             lemmas.push(ParsedLemma {
                 name: format!("{}.set_{}", def.name, tp_idx + 1),
                 attributes: vec!["simp".to_string(), "bnf".to_string()],
-                theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(set_term))),
+                theorem: Arc::new(ThmKernel::assume(CTerm::certify(set_term))),
                 proof_script: None,
                 alias_for: None,
                 source_loc: None,
@@ -1007,7 +1007,7 @@ pub fn generate_bnf_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
         lemmas.push(ParsedLemma {
             name: format!("{}.rel", def.name),
             attributes: vec!["bnf".to_string()],
-            theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(rel_term))),
+            theorem: Arc::new(ThmKernel::assume(CTerm::certify(rel_term))),
             proof_script: None,
             alias_for: None,
             source_loc: None,
@@ -1023,7 +1023,7 @@ pub fn generate_bnf_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
     lemmas.push(ParsedLemma {
         name: format!("{}.pred", def.name),
         attributes: vec!["bnf".to_string()],
-        theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(pred_term))),
+        theorem: Arc::new(ThmKernel::assume(CTerm::certify(pred_term))),
         proof_script: None,
         alias_for: None,
         source_loc: None,
@@ -1476,7 +1476,7 @@ fn parse_one_line(lines: &[&str], i: &mut usize) -> Option<Vec<ParsedLemma>> {
     while let Some(stmt) = extract_quoted(remaining) {
         let conv = convert_syntax(&stmt);
         if let Some(term) = parse_term(&conv) {
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify_annotated(term)));
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(term)));
             let lemma_name = if stmt_idx == 0 {
                 if name.is_empty() {
                     let preview: String = stmt.chars().take(30).collect();
@@ -1721,7 +1721,7 @@ fn parse_structured_stmt(
         for (show_name, show_stmt) in &shows_clauses {
             let conv = convert_syntax(show_stmt);
             let term = parse_term(&conv)?;
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify_annotated(term)));
+            let thm = Arc::new(ThmKernel::assume(CTerm::certify(term)));
             let name = if show_name.is_empty() {
                 if lemma_name.is_empty() {
                     let preview: String = show_stmt.chars().take(30).collect();
@@ -1764,7 +1764,7 @@ fn parse_structured_stmt(
         for prem in premises.iter().rev() {
             term = Pure::mk_implies(prem.clone(), term);
         }
-        let thm = Arc::new(ThmKernel::assume(CTerm::certify_annotated(term)));
+        let thm = Arc::new(ThmKernel::assume(CTerm::certify(term)));
         let name = if show_name.is_empty() {
             if lemma_name.is_empty() {
                 let preview: String = show_stmt.chars().take(30).collect();
@@ -3322,7 +3322,7 @@ impl HolTheoremDb {
 thread_local! {
     static DB_OVERRIDE: std::cell::RefCell<Option<*const HolTheoremDb>> = std::cell::RefCell::new(None);
     /// Set to true while HOL_THEOREMS is being initialized, to prevent
-    /// recursive deadlocks when CTerm::certify_annotated calls HolTheoremDb::get().
+    /// recursive deadlocks when CTerm::certify calls HolTheoremDb::get().
     static DB_INIT_IN_PROGRESS: std::cell::Cell<bool> = std::cell::Cell::new(false);
 }
 

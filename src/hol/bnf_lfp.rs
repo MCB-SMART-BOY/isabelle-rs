@@ -88,7 +88,7 @@ impl BnfLfp {
         ParsedLemma {
             name,
             attributes: vec!["induct".to_string(), "bnf_lfp".to_string()],
-            theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(term))),
+            theorem: Arc::new(ThmKernel::assume(CTerm::certify(term))),
             proof_script: None,
             alias_for: None,
             source_loc: None,
@@ -102,7 +102,7 @@ impl BnfLfp {
         ParsedLemma {
             name,
             attributes: vec!["coinduct".to_string(), "bnf_lfp".to_string()],
-            theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(term))),
+            theorem: Arc::new(ThmKernel::assume(CTerm::certify(term))),
             proof_script: None,
             alias_for: None,
             source_loc: None,
@@ -133,7 +133,7 @@ impl BnfLfp {
             lemmas.push(ParsedLemma {
                 name: format!("{}.fold_{}", self.datatype.name, ctor_name),
                 attributes: vec!["simp".to_string(), "bnf_lfp".to_string()],
-                theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(term))),
+                theorem: Arc::new(ThmKernel::assume(CTerm::certify(term))),
                 proof_script: None,
                 alias_for: None,
                 source_loc: None,
@@ -164,7 +164,7 @@ impl BnfLfp {
             lemmas.push(ParsedLemma {
                 name: format!("{}.rec_{}", self.datatype.name, ctor_name),
                 attributes: vec!["simp".to_string(), "bnf_lfp".to_string()],
-                theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(term))),
+                theorem: Arc::new(ThmKernel::assume(CTerm::certify(term))),
                 proof_script: None,
                 alias_for: None,
                 source_loc: None,
@@ -186,7 +186,7 @@ impl BnfLfp {
             lemmas.push(ParsedLemma {
                 name: format!("{}.unfold_{}", self.datatype.name, ctor_name),
                 attributes: vec!["simp".to_string(), "bnf_lfp".to_string()],
-                theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(term))),
+                theorem: Arc::new(ThmKernel::assume(CTerm::certify(term))),
                 proof_script: None,
                 alias_for: None,
                 source_loc: None,
@@ -208,7 +208,7 @@ impl BnfLfp {
             lemmas.push(ParsedLemma {
                 name: format!("{}.corec_{}", self.datatype.name, ctor_name),
                 attributes: vec!["simp".to_string(), "bnf_lfp".to_string()],
-                theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(term))),
+                theorem: Arc::new(ThmKernel::assume(CTerm::certify(term))),
                 proof_script: None,
                 alias_for: None,
                 source_loc: None,

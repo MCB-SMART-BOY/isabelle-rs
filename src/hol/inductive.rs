@@ -309,7 +309,7 @@ pub fn inductive_to_lemmas(def: &InductiveDef) -> Vec<crate::hol::hol_loader::Pa
     let theorems = def.generate_theorems();
 
     for (name, term, attrs) in &theorems {
-        let thm = ThmKernel::assume(CTerm::certify_annotated(term.clone()));
+        let thm = ThmKernel::assume(CTerm::certify(term.clone()));
         lemmas.push(crate::hol::hol_loader::ParsedLemma {
             name: name.clone(),
             attributes: attrs.clone(),

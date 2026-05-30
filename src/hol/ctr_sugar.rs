@@ -133,7 +133,7 @@ impl CtrSugar {
             lemmas.push(ParsedLemma {
                 name: format!("{}.case_{}", self.datatype.name, i + 1),
                 attributes: vec!["simp".to_string(), "ctr_sugar".to_string()],
-                theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(term))),
+                theorem: Arc::new(ThmKernel::assume(CTerm::certify(term))),
                 proof_script: None,
                 alias_for: None,
                 source_loc: None,
@@ -166,7 +166,7 @@ impl CtrSugar {
             lemmas.push(ParsedLemma {
                 name: format!("{}.disc_{}_true", self.datatype.name, i + 1),
                 attributes: vec!["simp".to_string(), "ctr_sugar".to_string()],
-                theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(term))),
+                theorem: Arc::new(ThmKernel::assume(CTerm::certify(term))),
                 proof_script: None,
                 alias_for: None,
                 source_loc: None,
@@ -189,7 +189,7 @@ impl CtrSugar {
                 lemmas.push(ParsedLemma {
                     name: format!("{}.disc_{}_false_{}", self.datatype.name, i + 1, j + 1),
                     attributes: vec!["simp".to_string(), "ctr_sugar".to_string()],
-                    theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(term))),
+                    theorem: Arc::new(ThmKernel::assume(CTerm::certify(term))),
                     proof_script: None,
                     alias_for: None,
                     source_loc: None,
@@ -222,7 +222,7 @@ impl CtrSugar {
                 lemmas.push(ParsedLemma {
                     name: format!("{}.sel_{}_{}", self.datatype.name, i + 1, j + 1),
                     attributes: vec!["simp".to_string(), "ctr_sugar".to_string()],
-                    theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(term))),
+                    theorem: Arc::new(ThmKernel::assume(CTerm::certify(term))),
                     proof_script: None,
                     alias_for: None,
                     source_loc: None,
@@ -243,7 +243,7 @@ impl CtrSugar {
         ParsedLemma {
             name: split_name,
             attributes: vec!["split".to_string(), "ctr_sugar".to_string()],
-            theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(split_term))),
+            theorem: Arc::new(ThmKernel::assume(CTerm::certify(split_term))),
             proof_script: None,
             alias_for: None,
             source_loc: None,
@@ -260,7 +260,7 @@ impl CtrSugar {
         ParsedLemma {
             name: cong_name,
             attributes: vec!["cong".to_string(), "ctr_sugar".to_string()],
-            theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(cong_term))),
+            theorem: Arc::new(ThmKernel::assume(CTerm::certify(cong_term))),
             proof_script: None,
             alias_for: None,
             source_loc: None,
@@ -277,7 +277,7 @@ impl CtrSugar {
         ParsedLemma {
             name: nchotomy_name,
             attributes: vec!["elim".to_string(), "ctr_sugar".to_string()],
-            theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(nchotomy_term))),
+            theorem: Arc::new(ThmKernel::assume(CTerm::certify(nchotomy_term))),
             proof_script: None,
             alias_for: None,
             source_loc: None,
@@ -317,7 +317,7 @@ impl CtrSugar {
             lemmas.push(ParsedLemma {
                 name: format!("{}.size_{}", self.datatype.name, ctor_name),
                 attributes: vec!["simp".to_string(), "ctr_sugar".to_string()],
-                theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(term))),
+                theorem: Arc::new(ThmKernel::assume(CTerm::certify(term))),
                 proof_script: None,
                 alias_for: None,
                 source_loc: None,
