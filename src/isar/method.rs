@@ -2828,6 +2828,53 @@ pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
         }
     }
 
+    // "by (simp add: X1 X2)" — simplification with specific rules
+    if proof.starts_with("by (simp add:") || proof.starts_with("by(simp add:") {
+        let add_rules = proof
+            .strip_prefix("by (simp add:")
+            .or_else(|| proof.strip_prefix("by(simp add:"))
+            .map(|r| r.trim_end_matches(')').trim());
+        if let Some(rules_str) = add_rules {
+            let db = HolTheoremDb::get();
+            let mut current = goal.clone();
+            let rule_names: Vec<&str> = rules_str.split_whitespace().collect();
+            // Apply each simp rule via bicompose
+            for name in &rule_names {
+                if let Some(thm) = resolve_theorem_name(name, db) {
+                    // Apply as rewrite: use the theorem as an equality
+                    if let Some(new_state) = ThmKernel::bicompose(false, &(*thm).clone(), &current, 0) {
+                        current = new_state;
+                    }
+                }
+            }
+            if current.nprems() < goal.nprems() || current != goal {
+                return Some(current);
+            }
+        }
+    }
+
+    // "by (auto intro: X)" — auto with specific introduction rules
+    if proof.starts_with("by (auto intro:") || proof.starts_with("by(auto intro:") {
+        let intro_rule = proof
+            .strip_prefix("by (auto intro:")
+            .or_else(|| proof.strip_prefix("by(auto intro:"))
+            .map(|r| r.trim_end_matches(')').trim());
+        if let Some(rule_name) = intro_rule {
+            let db = HolTheoremDb::get();
+            // Try resolving with the specific intro rule first
+            if let Some(rule_thm) = resolve_theorem_name(rule_name, db) {
+                let resolved = crate::core::tactic::resolve_tac(&[(*rule_thm).clone()], 0)(&goal);
+                if let Some(thm) = resolved.into_iter().next() {
+                    return Some(thm);
+                }
+            }
+            // Fall back to auto
+            if let Some(results) = exec_proof(&goal, "auto", &premises) {
+                return Some(results);
+            }
+        }
+    }
+
     // For lemmas with premises, try Goal.init-style FIRST (bare conclusion)
     // This allows rules like subst/nat_induct to match the conclusion directly.
     if !prems.is_empty() {
