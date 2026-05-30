@@ -51,7 +51,7 @@ mod quick_verify {
             };
 
             let mut proc = TheoryProcessor::with_parent(Theory::pure(), name);
-            proc.accept_all = true; // Full mode: accept + verify
+            proc.accept_all = true; // accept_all: avoids deep recursion in BNF generation
             let _thy = proc.process_source(&source);
             let elapsed = start.elapsed();
 
