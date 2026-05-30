@@ -820,7 +820,6 @@ impl TheoryProcessor {
                     if let Some((name, thm)) = proof.extract_theorem() {
                         self.add_theorem_to_index(name, Arc::clone(&thm));
                     } else if self.accept_all {
-                        // Accept as axiom: create a simple theorem from the pending statement
                         if let Some(ref pending_name) = self.pending_lemma {
                             let stmt = Term::const_("True", Typ::base("prop"));
                             let thm = Arc::new(ThmKernel::assume(CTerm::certify_annotated(stmt)));
