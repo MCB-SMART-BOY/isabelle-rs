@@ -119,6 +119,8 @@ impl TheoryProcessor {
     /// Each span is wrapped in catch_unwind so one bad command doesn't crash the whole theory.
     pub fn process_source(&mut self, source: &str) -> Arc<Theory> {
         self.source = source.to_string();
+        // Clear thread-local index for this file
+        crate::isar::method::LOCAL_THEOREM_INDEX.with(|idx| idx.borrow_mut().clear());
         let spans = self.syntax.parse_spans(source);
         for span in &spans {
             let span_clone = span.clone();
@@ -797,8 +799,7 @@ impl TheoryProcessor {
                 if proof.level() <= 2 {
                     self.lemma_count += 1;
                     if let Some((name, thm)) = proof.extract_theorem() {
-                        self.theorems.push((name.clone(), Arc::clone(&thm)));
-                        self.theorem_index.insert(name, Arc::clone(&thm));
+                        self.add_theorem_to_index(name, Arc::clone(&thm));
                     }
                 }
             }
