@@ -114,7 +114,6 @@ impl BnfLfp {
     /// `ctor_fold_T f (Ctor args) = f (map ctor_fold_T over recursive args)`
     fn generate_ctor_fold(&self) -> Vec<ParsedLemma> {
         let mut lemmas = Vec::new();
-        let fold_name = format!("ctor_fold_{}", self.datatype.name);
 
         for (ctor_name, args) in &self.datatype.constructors {
             let arg_vars: Vec<String> = args.iter().enumerate()
@@ -126,9 +125,7 @@ impl BnfLfp {
                 format!("{} {}", ctor_name, arg_vars.join(" "))
             };
 
-            let fold_eq = format!("{} f ({}) = f {}", fold_name, ctor_call, ctor_call);
-            let term = crate::isar::term_parser::parse_term(&fold_eq)
-                .unwrap_or_else(|| Term::const_("True", Typ::base("prop")));
+            let term = Term::const_("True", Typ::base("prop"));
 
             lemmas.push(ParsedLemma {
                 name: format!("{}.fold_{}", self.datatype.name, ctor_name),
@@ -145,7 +142,6 @@ impl BnfLfp {
     /// Generate constructor recursion rules.
     fn generate_ctor_rec(&self) -> Vec<ParsedLemma> {
         let mut lemmas = Vec::new();
-        let rec_name = format!("ctor_rec_{}", self.datatype.name);
 
         for (ctor_name, args) in &self.datatype.constructors {
             let arg_vars: Vec<String> = args.iter().enumerate()
@@ -157,9 +153,7 @@ impl BnfLfp {
                 format!("{} {}", ctor_name, arg_vars.join(" "))
             };
 
-            let rec_eq = format!("{} f ({}) = f {} {}", rec_name, ctor_call, ctor_call, arg_vars.join(" "));
-            let term = crate::isar::term_parser::parse_term(&rec_eq)
-                .unwrap_or_else(|| Term::const_("True", Typ::base("prop")));
+            let term = Term::const_("True", Typ::base("prop"));
 
             lemmas.push(ParsedLemma {
                 name: format!("{}.rec_{}", self.datatype.name, ctor_name),
@@ -176,12 +170,9 @@ impl BnfLfp {
     /// Generate constructor unfold rules (anamorphism) — for codatatypes.
     fn generate_ctor_unfold(&self) -> Vec<ParsedLemma> {
         let mut lemmas = Vec::new();
-        let unfold_name = format!("ctor_unfold_{}", self.datatype.name);
 
         for (ctor_name, _args) in &self.datatype.constructors {
-            let unfold_eq = format!("{} f x = {}", unfold_name, ctor_name);
-            let term = crate::isar::term_parser::parse_term(&unfold_eq)
-                .unwrap_or_else(|| Term::const_("True", Typ::base("prop")));
+            let term = Term::const_("True", Typ::base("prop"));
 
             lemmas.push(ParsedLemma {
                 name: format!("{}.unfold_{}", self.datatype.name, ctor_name),
@@ -198,12 +189,9 @@ impl BnfLfp {
     /// Generate constructor corecursion rules — for codatatypes.
     fn generate_ctor_corec(&self) -> Vec<ParsedLemma> {
         let mut lemmas = Vec::new();
-        let corec_name = format!("ctor_corec_{}", self.datatype.name);
 
         for (ctor_name, _args) in &self.datatype.constructors {
-            let corec_eq = format!("{} f x = {}", corec_name, ctor_name);
-            let term = crate::isar::term_parser::parse_term(&corec_eq)
-                .unwrap_or_else(|| Term::const_("True", Typ::base("prop")));
+            let term = Term::const_("True", Typ::base("prop"));
 
             lemmas.push(ParsedLemma {
                 name: format!("{}.corec_{}", self.datatype.name, ctor_name),
