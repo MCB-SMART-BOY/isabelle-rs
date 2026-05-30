@@ -15,6 +15,9 @@ mod quick_verify {
         ("Set", "isabelle-source/src/HOL/Set.thy"),
         ("Fun", "isabelle-source/src/HOL/Fun.thy"),
         ("Product_Type", "isabelle-source/src/HOL/Product_Type.thy"),
+    ];
+
+    const EXTRA_FILES: &[(&str, &str)] = &[
         ("Nat", "isabelle-source/src/HOL/Nat.thy"),
         ("List", "isabelle-source/src/HOL/List.thy"),
         ("Option", "isabelle-source/src/HOL/Option.thy"),
@@ -23,17 +26,26 @@ mod quick_verify {
     ];
 
     #[test]
-    fn test_quick_verify_10_core() {
+    fn test_batch1_core() {
+        verify_files(CORE_FILES, "Batch 1 — Core");
+    }
+
+    #[test]
+    fn test_batch2_extra() {
+        verify_files(EXTRA_FILES, "Batch 2 — Extra");
+    }
+
+    fn verify_files(files: &[(&str, &str)], label: &str) {
         let mut total_theorems = 0usize;
         let mut total_errors = 0usize;
         let mut total_time = 0f64;
         let mut ok_count = 0usize;
 
         eprintln!("\n╔══════════════════════════════════════════════╗");
-        eprintln!("║   Quick Verify — 10 Core HOL Theories        ║");
+        eprintln!("║   {} — {} HOL Theories        ║", label, files.len());
         eprintln!("╚══════════════════════════════════════════════╝\n");
 
-        for (name, path_str) in CORE_FILES {
+        for (name, path_str) in files {
             let path = Path::new(path_str);
             if !path.exists() {
                 eprintln!("  ❓ {:>15} — file not found", name);
