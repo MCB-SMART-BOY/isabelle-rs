@@ -552,14 +552,15 @@ impl IsarProof {
 
     /// `apply method` — apply a proof method to the current goal.
     /// Delegates to the actual method system in `method.rs`.
-    /// Returns the number of subgoals remaining.
     pub fn apply(&mut self, method_name: &str) -> usize {
         self.assert_backward();
+        let method_name = method_name.trim();
+        // Collect premises before borrowing self mutably for find_goal_mut
+        let premises: Vec<Arc<Thm>> = self.collect_premises();
         if let Some(goal) = self.find_goal_mut() {
-            // Try known methods that don't require DB lookup
+            // Try built-in quick methods first
             match method_name {
                 "assumption" | "." => {
-                    // Resolve by assuming the goal
                     let stmt_ct = CTerm::certify(goal.statement.clone());
                     if goal.goal_thm.hyps().contains(&stmt_ct) {
                         if let Ok(closed) = ThmKernel::trivial(stmt_ct) {
@@ -567,25 +568,38 @@ impl IsarProof {
                         }
                     }
                 }
-                "this" | "skip" | "induct" | "cases" => {
+                "this" | "skip" => {
                     let stmt_ct = CTerm::certify(goal.statement.clone());
                     if let Ok(closed) = ThmKernel::trivial(stmt_ct) {
                         goal.goal_thm = closed;
                     }
                 }
                 _ => {
-                    // Fast path: close goal with trivial (works for basic tests)
-                    // Real method dispatch is available via the method system
-                    let stmt_ct = CTerm::certify(goal.statement.clone());
-                    if let Ok(closed) = ThmKernel::trivial(stmt_ct) {
-                        goal.goal_thm = closed;
+                    // Dispatch to the actual method engine
+                    let results = crate::isar::method::exec_single_method(
+                        &goal.goal_thm, method_name, &premises,
+                    );
+                    if let Some(thm) = results.into_iter().find(|r| r.nprems() == 0) {
+                        goal.goal_thm = thm;
                     }
+                    // If method fails, leave goal unchanged (proof fails)
                 }
             }
             goal.nprems()
         } else {
             0
         }
+    }
+
+    /// Collect premises from the context for method dispatch.
+    fn collect_premises(&self) -> Vec<Arc<Thm>> {
+        let mut prems = Vec::new();
+        for node in self.stack.iter() {
+            if let Some((ref thms, _)) = node.facts {
+                prems.extend(thms.iter().map(|t| Arc::new(t.clone())));
+            }
+        }
+        prems
     }
 
     /// `by method` — terminal proof (apply + close current sub-goal).
