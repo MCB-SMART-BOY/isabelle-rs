@@ -18,8 +18,8 @@ use crate::hol::hol_loader::ParsedLemma;
  // used in tests
 use std::cell::Cell;
 thread_local! {
-    static AUTO_DEPTH: Cell<usize> = Cell::new(0);
-    static AUTO_LIMIT: Cell<usize> = Cell::new(100);
+    pub(crate) static AUTO_DEPTH: Cell<usize> = Cell::new(0);
+    pub(crate) static AUTO_LIMIT: Cell<usize> = Cell::new(100);
     /// Local theorem index for same-file definition lookups during processing
     pub(crate) static LOCAL_THEOREM_INDEX: std::cell::RefCell<std::collections::HashMap<String, Arc<Thm>>> = std::cell::RefCell::new(std::collections::HashMap::new());
 }

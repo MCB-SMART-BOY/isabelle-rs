@@ -576,6 +576,8 @@ impl IsarProof {
                 }
                 _ => {
                     // Dispatch to the actual method engine
+                    crate::isar::method::AUTO_DEPTH.with(|c| c.set(0));
+                    crate::isar::method::AUTO_LIMIT.with(|c| c.set(50));
                     let results = crate::isar::method::exec_single_method(
                         &goal.goal_thm, method_name, &premises,
                     );
