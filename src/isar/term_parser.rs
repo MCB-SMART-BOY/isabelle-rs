@@ -180,6 +180,41 @@ fn parse_trm_flag(s: &mut P, stop_at_imp: bool) -> Option<Term> {
         let body = parse_trm(s)?;
         return Some(vars.into_iter().rfold(body, |b, (n, t)| Term::abs(n, t, b)));
     }
+    // Set comprehension: {x. P x} or {x | P x}
+    if s.is_sym("{") {
+        s.adv();
+        // Collect bound variables before . or |
+        let mut vars = vec![];
+        while s.is_id() {
+            let name = Arc::from(s.src()?.as_str());
+            s.adv();
+            vars.push(name);
+            // Check for type annotation: x :: 'a
+            if s.is_sym("::") {
+                s.adv();
+                let _typ = parse_typ(s).unwrap_or(Typ::dummy());
+            }
+        }
+        // Separator: . or |
+        if s.is_sym(".") || s.is_sym("|") {
+            s.adv();
+        }
+        // Parse the body predicate
+        let body = parse_trm(s)?;
+        // Expect closing }
+        if s.is_sym("}") {
+            s.adv();
+        }
+        // Build: Collect(P) where P = λvars. body
+        let set_const = Term::const_(
+            "HOL.Collect",
+            Typ::arrow(Typ::arrow(Typ::dummy(), Typ::base("bool")), Typ::base("set")),
+        );
+        let abs_body = vars.into_iter().rfold(body, |b, n| {
+            Term::abs(n, Typ::dummy(), b)
+        });
+        return Some(Term::app(set_const, abs_body));
+    }
     // Application: head arg1 arg2 ...
     // [| A; B |] ==> C  — bracketed premises
     if s.is_sym("[|") {

@@ -265,11 +265,11 @@ impl TypeInfer {
                     self.subst.insert(name.clone(), t1.clone());
                 }
 
-                // Arrow types
+                // Arrow types: ensure both have 2 args before indexing
                 (Typ::Type { name: n1, args: a1 }, Typ::Type { name: n2, args: a2 })
-                    if n1.as_ref() == "fun" && n2.as_ref() == "fun" =>
+                    if n1.as_ref() == "fun" && n2.as_ref() == "fun"
+                    && a1.len() == 2 && a2.len() == 2 =>
                 {
-                    // Unify domain and codomain
                     constraints.push(Constraint { left: a1[0].clone(), right: a2[0].clone() });
                     constraints.push(Constraint { left: a1[1].clone(), right: a2[1].clone() });
                 }
