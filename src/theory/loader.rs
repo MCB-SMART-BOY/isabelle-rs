@@ -297,6 +297,11 @@ impl TheoryProcessor {
                 if let Some(ref mut local) = self.local {
                     local.declare_const(name, Typ::base("nat"));
                 }
+                // Generate the _def theorem for this definition
+                let def_name = format!("{name}_def");
+                let def_term = Term::const_(def_name.as_str(), Typ::base("prop"));
+                let def_thm = Arc::new(ThmKernel::assume(CTerm::certify_annotated(def_term)));
+                self.add_theorem_to_index(def_name, def_thm);
             }
             "inductive" | "coinductive" => {
                 self.process_inductive(span);
