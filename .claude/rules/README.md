@@ -1,14 +1,22 @@
 ---
-description: Isabelle-rs 项目总纲。Phase 48: Metis + Transfer/Lifting 完成。130 files, 670+ tests, ~48K LOC。
+description: Isabelle-rs — Rust 重写 Isabelle，程序员友好的证明助手。v1.9.0-dev, Route A 稳定性优先。
 globs: "**/*.rs"
 alwaysApply: true
-version: 6.0
-updated: 2026-06-03
+version: 9.0
+updated: 2026-06-16
 ---
 
 # Isabelle-rs 项目规则
 
-Rust 重写 Isabelle 证明助手内核。LCF 可信内核 + 高阶统一 + Isar 证明语言 + 理论加载 pipeline。
+## 项目愿景
+
+**用 Rust 重写 Isabelle，打造更程序员友好的证明助手。**
+
+功能与 Isabelle/ML 保持一致，但：
+- **错误信息** → Rust 编译器风格：错误码 + 源代码定位 + `= help:` 建议
+- **工具链** → `cargo build` / `cargo test` / `cargo clippy`，标准 Rust 生态
+- **代码风格** → 现代 Rust 惯用法，零 `unsafe`（除必要的 FFI）
+- **类型安全** → 编译期捕获尽可能多的错误，而非运行时 panic
 
 ## 铁律
 
@@ -23,39 +31,56 @@ Rust 重写 Isabelle 证明助手内核。LCF 可信内核 + 高阶统一 + Isar
 9. **理论加载用 `TheoryProcessor`** — 解析 .thy → 命令分发 → LocalTheory → finalize
 10. **`show` 必须记录 `refines`** — 用于 `qed` 时父目标精化
 11. **定理构造用 `CTerm::certify_annotated`** — 自动从 TypeEnv 标注类型
+12. **提交信息用中文，不含 Co-Authored-By** — 全部由 MCB-SMART-BOY 提交，禁止 AI 署名
+13. **每次对话结束后必须更新 .claude/** — 状态、已知问题、路线图必须反映最新代码状态。用户不应需要重复强调偏好
+14. **先修 bug，后加功能** — Route A 稳定性优先：测试→OOM→Tier2→属性→文档
+15. **错误信息用 Rust 风格** — 每次新增/修改错误必须包含：错误码 (E0xxx)、`= help:` 建议、源代码位置。参考 `rustc` 的报错格式
+
+## 当前策略：Route A — 稳定性优先
+
+```
+1. ✅ 修复 5 个失败测试 (ctr_sugar, primrec, fleche, rule_lookup, set_thy)
+2. ✅ 定位 + 修复 OOM 根因 (repeat_conv 定点检测 + stack优化)
+3. 🔄 Tier2 验证扩展 (6/20 → 6 files 100% running, expected 15+/19)
+4. ✅ 属性系统补完 (attrib.rs → hol_loader.rs 集成: begin_lemma + lemmas + declare + attrs存储)
+5. 🔄 全线文档同步 (当前进行中)
+```
 
 ## 状态
 
 | 指标 | 值 |
 |------|-----|
 | 内核 | 15 ops + tpairs/shyps, 100% Isabelle 等价, 0 Typ::dummy() fallback |
-| 证明引擎 | Isar state machine (3 modes) + 25 proof methods |
+| 证明引擎 | Isar state machine (3 modes) + 27 proof methods |
 | 经典推理器 | best/depth/dup_step + 三阶段 safe rules |
 | 算术求解 | Fourier-Motzkin 变量消去 (nat/int 线性算术) |
 | HOL 简化器 | 条件重写 + solver 插件 (ArithSolver, AsmSolver) |
+| hologic | HOL 抽象语法层, 40+ mk_*/dest_*/is_* 函数, 100% HOL const 调用归口 |
+| simpdata | HOL simpset 初始化, 28 内置规则, init_hol_simpset() |
+| args | MethodArgs 解析, parse_modifiers() 接入 exec_simp + exec_induct |
+| spec | Definition/Axiomatization/Abbreviation/TypeAbbrev/Typedecl 解析器集成 |
+| defs | 定义一致性检查: 循环检测 + 类型参数验证 |
 | BNF Lfp/Gfp | 完整: induction/coinduction/fold/rec/unfold/corec + map/set/rel/pred |
 | Ctr_Sugar | case/disc/sel/split/cong/nchotomy/size 定理生成 |
-| Meson | 模型消除证明器 — 一等证明方法 |
-| Transfer/Lifting | 传输规则生成 + rel_fun/rel_set + 商类型定理 |
-| 属性系统 | 完整 parse→classify→DB→apply_attributes 流水线 |
-| 方法组合子 | THEN/ORELSE/REPEAT (参考 Isabelle) |
-| 模块 | core (31), isar (18), hol (18), theory (8) + tools (6) + server/lsp/session/syntax/wasm (27) |
-| Isar 命令 | 30+ 种 (完整覆盖) |
+| Meson | Model elimination prover — 1st-class proof method |
+| Transfer/Lifting | Transfer rule generation + rel_fun/rel_set + quotient type theorems |
+| 属性系统 | attrib.rs ✅ Route A 补完: begin_lemma + lemmas + declare + attrs存储 |
+| 方法组合子 | THEN/ORELSE/REPEAT |
+| 模块 | core (33), isar (19), hol (22), theory (8) + tools (7) + server/lsp/session/syntax (30) |
+| Isar 命令 | 30+ 种 |
 | 理论命令 | locale/class/instance/interpretation/typedef/record/datatype/fun/inductive |
-| 语法 | Pretty printer (20+ operators) + thy_header parser |
-| LSP | 8 handlers |
-| 代码 | ~46K Rust LOC, 121 files |
-| 测试 | 694+ |
-| 验证 | Core 4/5 文件 100%, Tier2 3/20 文件 100% |
-| 路线图 | Phase 0-53 完成 |
+| 代码 | ~54K Rust LOC, 124 files |
+| 测试 | 714 (638 lib + 76 integration) |
+| 验证 | Core 5/5 files 125/125 (100%), Tier2 6/20 files 100% |
+| 路线图 | Phase 0-54 完成, Route A 进行中 |
 
 ## 已知问题
 
-| 问题 | 严重度 |
-|------|:--:|
-| test_batch_scan_theories 256MB 栈溢出 | 🔴 高 |
-| test_verify_all_core_files 默认栈溢出 | 🔴 高 |
-| test_batch_verify_all 1GB 栈溢出 | 🔴 高 |
+| 问题 | 严重度 | 详情 |
+|------|:--:|------|
+| Tier2 验证运行中 | 🟡 中 | tmux session 'tier2': Fun/Product_Type/Sum_Type/Lattices/Groups/Rings 100% ✅ |
+| HolTheoremDb LazyLock 初始化慢 | 🟡 中 | 首次 `get()` 加载全部 theory 文件, 需优化为按需加载 |
+| hologic 常量残留 (3 处) | 🟢 低 | hol_loader prop eq + term_builder unused + comment — 有意保留 |
 
 ## 架构
 
@@ -71,9 +96,9 @@ Rust 重写 Isabelle 证明助手内核。LCF 可信内核 + 高阶统一 + Isar
     ├─ qed     → goal refinement (show matches parent)
     └─ end     → LocalTheory::finalize() → Arc<Theory>
   → SessionBuilder::build_session()
-    ├─ TheoryGraph 扫描 + 拓扑排序
-    ├─ 批量编译 .thy 文件
-    └─ 统计报告
+    ├─ TheoryGraph scan + topological sort
+    ├─ Batch compile .thy files
+    └─ Statistics report
 ```
 
 ## 规则索引
@@ -107,4 +132,4 @@ Rust 重写 Isabelle 证明助手内核。LCF 可信内核 + 高阶统一 + Isar
 | 添加文档 / rustdoc / ADR | [documentation.md](documentation.md) |
 | CI/CD / GitHub Actions / 自动化 | [ci-cd.md](ci-cd.md) |
 | 属性测试 / proptest / 不变量 | [property-testing.md](property-testing.md) |
-| 每个 Phase 完成后的流程 | [phase-sop.md](phase-sop.md) |
+| 每个 Phase/任务完成后的流程 | [phase-sop.md](phase-sop.md) |

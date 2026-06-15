@@ -1,9 +1,11 @@
 # CLAUDE.md — Isabelle-rs
 
-> Rust reimplementation of the Isabelle proof assistant kernel.
+> **用 Rust 重写 Isabelle，打造更程序员友好的证明助手。**
+>
+> 功能与 Isabelle/ML 一致。错误信息 → Rust 编译器风格。工具链 → 标准 Rust 生态。
 > LCF trusted kernel + higher-order unification + Isar proof language + theory loading pipeline.
 
-## Project State (v1.9.0-dev)
+## Project State (v1.9.0-dev, Route A: Stability First)
 
 | Metric | Value |
 |--------|-------|
@@ -16,27 +18,33 @@
 | Ctr_Sugar | case/disc/sel/split/cong/nchotomy/size theorem generation |
 | Meson | Model elimination prover — 1st-class proof method |
 | Transfer/Lifting | Transfer rule generation + rel_fun/rel_set + quotient type theorems |
-| Attributes | Full pipeline: parse_attrs → classify → DB categories → apply_attributes |
-| Combinators | THEN / ORELSE (`\|`) / REPEAT |
-| **hologic** | HOL abstract syntax: ~40 mk_*/dest_*/is_* functions (Phase 49 complete) |
-| **simpdata** | HOL simpset init: 28 built-in rules, `init_hol_simpset()` (Phase 50 complete) |
-| **args** | Method arg parsing: `Args::parse_modifiers()` wired into `exec_simp` (Phase 51 partial) |
-| **defs** | Definition consistency checking: cycle detection, type arg validation |
-| **spec** | Enhanced: Definition, Axiomatization, Abbreviation, TypeAbbrev parsers (Phase 52-54: deepen) |
+| **hologic** | ✅ 40+ mk_*/dest_*/is_* functions, 100→3 bare HOL const calls (Phase 49 done) |
+| **simpdata** | ✅ 28 built-in rules, `init_hol_simpset()`, all simp.rs migrated (Phase 50 done) |
+| **args** | ✅ `Args::parse_modifiers()` wired into `exec_simp` + `exec_induct` (Phase 51 done) |
+| **spec** | ✅ Definition/Axiomatization/Abbreviation/TypeAbbrev/Typedecl parsers integrated (Phase 52-54 done) |
 | Code | ~54K Rust LOC, 124 files |
 | Tests | 714 (638 lib + 76 integration) |
 | Verification | **Core 5/5 files 100% (125/125)**, Tier2 6/20 files 100% |
+| isabelle-source | ✅ Isabelle 2025 full distribution (364MB, 1,473 .thy files) |
+
+## Active Strategy: Route A — Stability First
+
+```
+1. ✅ Fix 5 failing tests
+2. ✅ Fix OOM/stack overflow root causes
+3. 🔄 Expand Tier2 verification (tmux session 'tier2': 6/19 files 100% so far)
+4. ✅ Complete attribute system integration (begin_lemma + lemmas + declare + attrs prop)
+5. 🔄 Full documentation sync (current)
+```
 
 ## Known Issues
 
 | Issue | Severity | Detail |
 |-------|:--------:|--------|
-| `test_batch_scan_theories` stack overflow at 256MB | 🟡 Medium | Root cause TBD; likely in deep term rewriting or bicompose |
-| `test_batch_verify_all` timeout/slow | 🟡 Medium | Scale tests run very slowly; accept_all mode works (1,384/1,395 files) |
-| Tier2/Tier3 verification partial | 🟡 Medium | 6/20 Tier2 verified 100%, remaining need specification/defs infrastructure |
-| Metis method → auto fallback | 🟡 Medium | `metis.rs` exists (2,254 lines) but dispatch uses auto as fallback — needs wiring |
-| hologic ops scattered across 25+ files | 🟡 Medium | Phase 49: consolidate into `hologic.rs` as single HOL syntax layer |
-| `isabelle-source/` is gitignored | 🟢 Low | Fresh clones lack .thy files for batch compile; demo/tests work without it |
+| Tier2 verification running | 🟡 Medium | tmux 'tier2': Fun/Product_Type/Sum_Type/Lattices/Groups/Rings 100% ✅ |
+| LazyLock DB init slow | 🟡 Medium | First HolTheoremDb::get() loads all 1,473 .thy files; should be on-demand |
+| hologic constants (3 remaining) | 🟢 Low | Intentional: prop eq, term_builder, comment |
+
 
 ## Iron Laws
 
@@ -55,6 +63,8 @@
 13. **After any src/ change, sync docs and .claude/** — run `/sync-docs` to update `docs/` (ARCHITECTURE, GAP_ANALYSIS, ROADMAP, DEVELOPMENT) and `.claude/` (CLAUDE.md, skills, settings). Any commit that touches src/ should also touch the relevant doc files.
 14. **After every task completion, update ALL project documentation** — 每次完成任何任务/Phase/功能后，必须更新所有文档：`docs/` (ARCHITECTURE, GAP_ANALYSIS, ROADMAP, DEVELOPMENT) 和 `.claude/` (CLAUDE.md, skills, settings, phase-sop)。这不是可选的。文档必须反映代码的最新状态。
 15. **After every task completion, audit the changed code** — 每次完成任何任务/Phase/功能后，必须审计变更的代码：(a) 内核变更 → `/audit-kernel`, (b) 证明方法变更 → `/verify` + 回归测试, (c) 任何 src/ 变更 → `cargo check --lib` + `cargo test --lib` (相关模块), (d) 检查是否有新的 `Typ::dummy()`、裸 `Term::const_("HOL.xxx")` 绕过 hologic、重复实现。
+16. **At the end of EVERY conversation, update .claude/** — `.claude/rules/README.md` (状态表/已知问题), `.claude/rules/phase-sop.md` (完成清单), `CLAUDE.md` (项目状态). This ensures the next session starts with accurate state. Don't wait for the user to ask.
+17. **Commit messages in Chinese, NO Co-Authored-By** — 提交信息用中文。禁止添加 `Co-Authored-By:` 或任何形式的 AI 署名。所有 commit 由 MCB-SMART-BOY 提交。See `## Commit Rules` below.
 
 ## Architecture
 
@@ -184,3 +194,37 @@ cargo clippy -- -D warnings
 # Format
 cargo fmt -- --check
 ```
+
+## Commit Rules
+
+- **Commit messages MUST be concise and in Chinese (项目使用中文)**
+- **NEVER add `Co-Authored-By:` or any AI attribution to commit messages**
+- **Git user is `MCB-SMART-BOY`** — all commits are authored by this user
+
+## Error Style — Rust 编译器风格
+
+项目目标：打造更程序员友好的 Isabelle。所有错误信息遵循 `rustc` 风格：
+
+```
+E0xxx: short description
+  found: ...
+  expected: ...
+  = help: actionable suggestion
+  = note: additional context
+```
+
+### 规则
+- **每个错误必须有错误码** (E0001-E0405，见 `src/core/error.rs`)
+- **每个错误必须有 `= help:` 建议**
+- **parse/type/kernel 错误必须包含源代码位置**（行号、列号）
+- **禁止裸 `String` 报错** — 用结构化 error enum，避免 `format!("error: ...")`
+- **参考**: `rustc --explain E0308` 的格式风格
+
+### 错误码范围
+| 范围 | 类别 |
+|------|------|
+| E0001-E0099 | Kernel (trusted core invariants) |
+| E0100-E0199 | Type system |
+| E0200-E0299 | Proof search |
+| E0300-E0399 | Parse |
+| E0400-E0499 | IO/Config/Theory |

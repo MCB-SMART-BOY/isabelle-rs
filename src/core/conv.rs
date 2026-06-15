@@ -33,6 +33,7 @@
 use std::sync::Arc;
 
 use super::{
+    logic::Pure,
     term::Term,
     thm::{CTerm, Thm, ThmKernel},
 };
@@ -131,18 +132,32 @@ pub fn try_conv(c: Conv) -> Conv {
 pub fn repeat_conv(c: Conv) -> Conv {
     Arc::new(move |thm: &Thm| {
         let mut current = thm.clone();
-        for _ in 0..100 {
+        let mut iterations = 0u32;
+        while iterations < 100 {
+            iterations += 1;
             match c(&current) {
                 Some(next) => {
-                    // Check if conclusions are the same (convergence)
-                    if current.concl() == next.concl() {
-                        return Some(current);
+                    // Extract the RHS from the equality theorem: ⊢ t ≡ u → u is the result
+                    let next_concl = next.concl();
+                    let (lhs, rhs) = match Pure::dest_equals(&next_concl) {
+                        Some(pair) => (pair.0, pair.1),
+                        None => return Some(current), // not an equality — stop
+                    };
+                    let cur_concl = current.concl();
+                    // Convergence: RHS equals LHS (no actual rewriting happened)
+                    if lhs == rhs {
+                        return Some(next);
+                    }
+                    // Convergence: RHS equals current conclusion (fixed point)
+                    if rhs == &cur_concl {
+                        return Some(next);
                     }
                     current = next;
                 },
                 None => return Some(current),
             }
         }
+        // Max iterations reached — return best result so far
         Some(current)
     })
 }

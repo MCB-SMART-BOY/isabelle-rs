@@ -854,6 +854,104 @@ pub fn mk_binrel(c: &str, t: Term, u: Term) -> Term {
 }
 
 // ============================================================================
+// Arithmetic operators
+// ============================================================================
+
+/// The `Groups.plus` constant for a given type T: `T => T => T`.
+#[inline]
+pub fn plus_const(typ: Typ) -> Term {
+    Term::const_("Groups.plus_class.plus", Typ::arrow(typ.clone(), Typ::arrow(typ.clone(), typ)))
+}
+
+/// The `Groups.minus` constant for a given type T: `T => T => T`.
+#[inline]
+pub fn minus_const(typ: Typ) -> Term {
+    Term::const_("Groups.minus_class.minus", Typ::arrow(typ.clone(), Typ::arrow(typ.clone(), typ)))
+}
+
+/// The `Groups.uminus` constant for a given type T: `T => T`.
+#[inline]
+pub fn uminus_const(typ: Typ) -> Term {
+    Term::const_("Groups.uminus_class.uminus", Typ::arrow(typ.clone(), typ))
+}
+
+/// The `Nat.Suc` constant: `nat => nat`.
+#[inline]
+pub fn suc_const() -> Term {
+    Term::const_("Nat.Suc", Typ::arrow(natT(), natT()))
+}
+
+// ============================================================================
+// Complete lattice operations
+// ============================================================================
+
+/// The `Complete_Lattices.Inf` constant for type `set T => T`.
+#[inline]
+pub fn Inf_const(typ: Typ) -> Term {
+    Term::const_("Complete_Lattices.Inf_class.Inf",
+        Typ::arrow(mk_setT(typ.clone()), typ))
+}
+
+/// The `Complete_Lattices.Sup` constant for type `set T => T`.
+#[inline]
+pub fn Sup_const(typ: Typ) -> Term {
+    Term::const_("Complete_Lattices.Sup_class.Sup",
+        Typ::arrow(mk_setT(typ.clone()), typ))
+}
+
+// ============================================================================
+// Set constructors (additional)
+// ============================================================================
+
+/// The `Set.insert` constant for a given element type: `T => set T => set T`.
+#[inline]
+pub fn insert_const(typ: Typ) -> Term {
+    let st = mk_setT(typ.clone());
+    Term::const_("Set.insert", Typ::arrow(typ, Typ::arrow(st.clone(), st)))
+}
+
+/// The `Orderings.bot_class.bot` constant for a given type.
+#[inline]
+pub fn bot_const(typ: Typ) -> Term {
+    Term::const_("Orderings.bot_class.bot", typ)
+}
+
+/// The `Orderings.top_class.top` constant for a given type.
+#[inline]
+pub fn top_const(typ: Typ) -> Term {
+    Term::const_("Orderings.top_class.top", typ)
+}
+
+/// The empty set constant for a given element type (bot at set type).
+#[inline]
+pub fn empty_set_const(typ: Typ) -> Term {
+    bot_const(mk_setT(typ))
+}
+
+/// The set range constant: `Set.setRange :: (T => U) => set U`.
+/// Used for building set comprehensions with explicit ranges.
+#[inline]
+pub fn set_range_const() -> Term {
+    Term::const_("Set.setRange", Typ::arrow(Typ::dummy(), Typ::dummy()))
+}
+
+/// The `HOL.natSet` constant — the set of all natural numbers.
+#[inline]
+pub fn nat_set_const() -> Term {
+    Term::const_("HOL.natSet", Typ::dummy())
+}
+
+// ============================================================================
+// Case expression
+// ============================================================================
+
+/// The `HOL.Case` constant. Actual type depends on the number of cases.
+#[inline]
+pub fn case_const() -> Term {
+    Term::const_("HOL.Case", Typ::dummy())
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 

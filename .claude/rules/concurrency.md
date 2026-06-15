@@ -160,6 +160,32 @@ pub struct SessionBuilder {
 | WASM Runtime | Host 隔离 | `wasmtime::Store` |
 | TheoryProcessor | 顺序处理 | 无 (方法内状态) |
 
+## 模式 6: tmux 并行会话
+
+长时间任务（测试、构建、验证）应在 tmux 中运行，而非后台任务。tmux 允许随时 `attach` 查看进度，不会因 pipe 阻塞丢失输出。
+
+```bash
+# ✅ 推荐: tmux 会话跑长时间任务
+tmux new-session -d -s tier2 "RUST_MIN_STACK=268435456 cargo test --test tier2_verify -- --nocapture 2>&1; echo '=== DONE ==='; $SHELL"
+
+# 查看进度
+tmux capture-pane -t tier2 -p
+
+# 进入交互
+tmux attach -t tier2
+
+# 列表
+tmux ls
+
+# 杀掉
+tmux kill-session -t tier2
+```
+
+```bash
+# ❌ 避免: 后台任务 + pipe + tail (输出被缓冲，无法看进度)
+cargo test --test tier2_verify 2>&1 | tail -40 &
+```
+
 ## 检查清单
 
 - [ ] 跨线程共享数据用 `Arc`，非 `Rc`

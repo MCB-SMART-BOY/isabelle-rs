@@ -46,6 +46,32 @@
     "fallback": "haiku"
   },
 
+  "strategy": {
+    "active": "Route A — Stability First",
+    "description": "Fix bugs before adding features: tests → OOM → Tier2 → attributes → docs",
+    "priorities": [
+      "Fix 5 failing tests",
+      "Fix OOM/stack overflow root causes",
+      "Expand Tier2 verification (6→100+ files)",
+      "Complete attribute system integration",
+      "Full documentation sync"
+    ],
+    "noNewFeatures": true,
+    "why": "Core kernel is solid (125/125). Focus on making existing verification work, not adding new features."
+  },
+
+  "commitRules": {
+    "noCoAuthoredBy": true,
+    "gitUser": "MCB-SMART-BOY",
+    "language": "zh-CN",
+    "description": "Commit messages in Chinese, authored by MCB-SMART-BOY only. No AI co-author attribution."
+  },
+
+  "sessionRules": {
+    "updateClaudeDir": true,
+    "description": "At end of every conversation, update .claude/rules/README.md, .claude/rules/phase-sop.md, and CLAUDE.md with current state. The user should never need to repeat preferences."
+  },
+
   "hooks": {
     "PreToolUse": [
       {

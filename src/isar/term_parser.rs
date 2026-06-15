@@ -279,33 +279,29 @@ fn parse_trm_flag(s: &mut P, stop_at_imp: bool) -> Option<Term> {
         s.adv();
         let body =
             if let Some(b) = parse_trm(s) { b } else { Term::const_("True", Typ::base("prop")) };
-        let not_const = Term::const_("HOL.Not", Typ::arrow(Typ::base("prop"), Typ::base("prop")));
-        return Some(Term::app(not_const, body));
+        return Some(Term::app(hologic::not_const(), body));
     }
     // Unary minus (set complement, arithmetic negation)
     if s.is_sym("-") {
         s.adv();
         let body =
             if let Some(b) = parse_trm(s) { b } else { Term::const_("True", Typ::base("prop")) };
-        let minus_const = Term::const_("HOL.uminus", Typ::arrow(Typ::dummy(), Typ::dummy()));
-        return Some(Term::app(minus_const, body));
+        return Some(Term::app(hologic::uminus_const(Typ::dummy()), body));
     }
     // Infimum / supremum prefix
     if s.is_sym("\\<Sqinter>") {
         s.adv();
         if let Some(body) = parse_trm(s) {
-            let const_ = Term::const_("HOL.Inf", Typ::arrow(Typ::dummy(), Typ::dummy()));
-            return Some(Term::app(const_, body));
+            return Some(Term::app(hologic::Inf_const(Typ::dummy()), body));
         }
-        return Some(Term::const_("HOL.Inf", Typ::dummy()));
+        return Some(hologic::Inf_const(Typ::dummy()));
     }
     if s.is_sym("\\<Squnion>") {
         s.adv();
         if let Some(body) = parse_trm(s) {
-            let const_ = Term::const_("HOL.Sup", Typ::arrow(Typ::dummy(), Typ::dummy()));
-            return Some(Term::app(const_, body));
+            return Some(Term::app(hologic::Sup_const(Typ::dummy()), body));
         }
-        return Some(Term::const_("HOL.Sup", Typ::dummy()));
+        return Some(hologic::Sup_const(Typ::dummy()));
     }
     let mut head = parse_atom(s)?;
     loop {
@@ -380,7 +376,7 @@ fn parse_trm_flag(s: &mut P, stop_at_imp: bool) -> Option<Term> {
             // Empty list
             if s.is_sym("]") {
                 s.adv();
-                head = Term::app(head, Term::const_("HOL.Nil", Typ::dummy()));
+                head = Term::app(head, hologic::nil_const(Typ::dummy()));
                 continue;
             }
             let first = parse_trm(s)?;
@@ -393,8 +389,8 @@ fn parse_trm_flag(s: &mut P, stop_at_imp: bool) -> Option<Term> {
                 s.adv();
             }
             // Build list: x # y # z # []
-            let nil = Term::const_("HOL.Nil", Typ::dummy());
-            let cons = Term::const_("HOL.Cons", Typ::dummy());
+            let nil = hologic::nil_const(Typ::dummy());
+            let cons = hologic::cons_const(Typ::dummy());
             let mut result = nil;
             for e in elems.into_iter().rev() {
                 result = Term::app(Term::app(cons.clone(), e), result);
@@ -408,7 +404,7 @@ fn parse_trm_flag(s: &mut P, stop_at_imp: bool) -> Option<Term> {
             s.adv();
             if s.is_sym("}") {
                 s.adv();
-                head = Term::app(head, Term::const_("HOL.emptySet", Typ::dummy()));
+                head = Term::app(head, hologic::empty_set_const(Typ::dummy()));
                 continue;
             }
 
@@ -431,7 +427,7 @@ fn parse_trm_flag(s: &mut P, stop_at_imp: bool) -> Option<Term> {
                     if s.is_sym("}") {
                         s.adv();
                     }
-                    let range_const = Term::const_("HOL.setRange", Typ::dummy());
+                    let range_const = hologic::set_range_const();
                     let result = match upper {
                         Some(up) => Term::app(range_const, up),
                         None => range_const,
@@ -462,7 +458,7 @@ fn parse_trm_flag(s: &mut P, stop_at_imp: bool) -> Option<Term> {
                     if s.is_sym("}") {
                         s.adv();
                     }
-                    let range_const = Term::const_("HOL.setRange", Typ::dummy());
+                    let range_const = hologic::set_range_const();
                     let result = match upper {
                         Some(up) => Term::app(Term::app(range_const, first), up),
                         None => Term::app(range_const, first),
@@ -479,7 +475,7 @@ fn parse_trm_flag(s: &mut P, stop_at_imp: bool) -> Option<Term> {
                 if s.is_sym("}") {
                     s.adv();
                 }
-                let collect = Term::const_("HOL.Collect", Typ::dummy());
+                let collect = hologic::collect_const(Typ::dummy());
                 let abs = Term::abs("_", Typ::dummy(), body);
                 head = Term::app(head, Term::app(collect, abs));
                 continue;
@@ -494,8 +490,8 @@ fn parse_trm_flag(s: &mut P, stop_at_imp: bool) -> Option<Term> {
             if s.is_sym("}") {
                 s.adv();
             }
-            let empty = Term::const_("HOL.emptySet", Typ::dummy());
-            let insert = Term::const_("HOL.insert", Typ::dummy());
+            let empty = hologic::empty_set_const(Typ::dummy());
+            let insert = hologic::insert_const(Typ::dummy());
             let mut result = empty;
             for e in elems.into_iter().rev() {
                 result = Term::app(Term::app(insert.clone(), e), result);
@@ -555,9 +551,7 @@ fn parse_trm_flag(s: &mut P, stop_at_imp: bool) -> Option<Term> {
 
         // --- Prefix negation (tightest binding) ---
         if s.is_sym("~") || s.is_sym("\u{00ac}") {
-            let not_const =
-                Term::const_("HOL.Not", Typ::arrow(Typ::base("prop"), Typ::base("prop")));
-            head = Term::app(not_const, head);
+            head = Term::app(hologic::not_const(), head);
             break;
         }
 
@@ -566,9 +560,7 @@ fn parse_trm_flag(s: &mut P, stop_at_imp: bool) -> Option<Term> {
             s.adv();
             if let Some(rhs) = parse_trm(s) {
                 head = hologic::mk_eq(head.clone(), rhs);
-                let not_const =
-                    Term::const_("HOL.Not", Typ::arrow(Typ::base("prop"), Typ::base("prop")));
-                head = Term::app(not_const, head);
+                head = Term::app(hologic::not_const(), head);
             }
             return Some(head);
         }
@@ -781,8 +773,7 @@ fn parse_atom(s: &mut P) -> Option<Term> {
         }
         let else_branch = parse_trm(s)?;
         // Build: HOL.If(cond, then, else)
-        let if_const = Term::const_("HOL.If", Typ::dummy());
-        return Some(Term::app(Term::app(Term::app(if_const, cond), then_branch), else_branch));
+        return Some(Term::app(Term::app(Term::app(hologic::if_const(Typ::dummy()), cond), then_branch), else_branch));
     }
     // let expression: let x = e1 in e2
     if s.is_kw("let") {
@@ -816,7 +807,7 @@ fn parse_atom(s: &mut P) -> Option<Term> {
         // Parse arms: P1 => R1 | P2 => R2 | ...
         // For simplicity, treat the entire case as a special term
         // Build: HOL.Case(scrutinee, arm1, arm2, ...)
-        let case_const = Term::const_("HOL.Case", Typ::dummy());
+        let case_const = hologic::case_const();
         let mut result = Term::app(case_const, scrutinee);
         loop {
             let _pat = parse_trm(s)?;
@@ -842,7 +833,7 @@ fn parse_atom(s: &mut P) -> Option<Term> {
         s.adv();
         if s.is_sym("]") {
             s.adv();
-            return Some(Term::const_("HOL.Nil", Typ::dummy()));
+            return Some(hologic::nil_const(Typ::dummy()));
         }
         let first = parse_trm(s)?;
         let mut elems = vec![first];
@@ -854,8 +845,8 @@ fn parse_atom(s: &mut P) -> Option<Term> {
             s.adv();
         }
         // Build: x # y # z # []
-        let nil = Term::const_("HOL.Nil", Typ::dummy());
-        let cons = Term::const_("HOL.Cons", Typ::dummy());
+        let nil = hologic::nil_const(Typ::dummy());
+        let cons = hologic::cons_const(Typ::dummy());
         let mut result = nil;
         for e in elems.into_iter().rev() {
             result = Term::app(Term::app(cons.clone(), e), result);
@@ -868,7 +859,7 @@ fn parse_atom(s: &mut P) -> Option<Term> {
             s.adv();
             if s.is_sym("}") {
                 s.adv();
-                return Some(Term::const_("HOL.emptySet", Typ::dummy()));
+                return Some(hologic::empty_set_const(Typ::dummy()));
             }
             // Check for range starting with ..: {..n}
             if s.is_sym(".") {
@@ -885,7 +876,7 @@ fn parse_atom(s: &mut P) -> Option<Term> {
                 if s.is_sym("}") {
                     s.adv();
                 }
-                let range_const = Term::const_("HOL.setRange", Typ::dummy());
+                let range_const = hologic::set_range_const();
                 let result = match upper {
                     Some(u) => Term::app(range_const, u),
                     None => range_const,
@@ -910,7 +901,7 @@ fn parse_atom(s: &mut P) -> Option<Term> {
                     s.adv();
                 }
                 // Build: setRange(lower, upper)
-                let range_const = Term::const_("HOL.setRange", Typ::dummy());
+                let range_const = hologic::set_range_const();
                 let result = match upper {
                     Some(u) => Term::app(Term::app(range_const, first), u),
                     None => Term::app(range_const, first),
@@ -924,7 +915,7 @@ fn parse_atom(s: &mut P) -> Option<Term> {
                 if s.is_sym("}") {
                     s.adv();
                 }
-                let collect = Term::const_("HOL.Collect", Typ::dummy());
+                let collect = hologic::collect_const(Typ::dummy());
                 let abs = Term::abs("_", Typ::dummy(), body);
                 return Some(Term::app(collect, abs));
             }
@@ -937,8 +928,8 @@ fn parse_atom(s: &mut P) -> Option<Term> {
             if s.is_sym("}") {
                 s.adv();
             }
-            let empty = Term::const_("HOL.emptySet", Typ::dummy());
-            let insert = Term::const_("HOL.insert", Typ::dummy());
+            let empty = hologic::empty_set_const(Typ::dummy());
+            let insert = hologic::insert_const(Typ::dummy());
             let mut result = empty;
             for e in elems.into_iter().rev() {
                 result = Term::app(Term::app(insert.clone(), e), result);
@@ -1019,19 +1010,19 @@ fn parse_atom(s: &mut P) -> Option<Term> {
         // Isabelle constant symbols (not operators)
         TokenKind::Symbol(x) if x.as_ref() == "\\<nat>" => {
             s.adv();
-            Some(Term::const_("HOL.natSet", Typ::dummy()))
+            Some(hologic::nat_set_const())
         },
         TokenKind::Symbol(x) if x.as_ref() == "\\<top>" => {
             s.adv();
-            Some(Term::const_("HOL.top", Typ::dummy()))
+            Some(hologic::top_const(Typ::dummy()))
         },
         TokenKind::Symbol(x) if x.as_ref() == "\\<bottom>" => {
             s.adv();
-            Some(Term::const_("HOL.bot", Typ::dummy()))
+            Some(hologic::bot_const(Typ::dummy()))
         },
         TokenKind::Symbol(x) if x.as_ref() == "\\<not>" => {
             s.adv();
-            Some(Term::const_("HOL.Not", Typ::dummy()))
+            Some(hologic::not_const())
         },
         _ => None,
     }

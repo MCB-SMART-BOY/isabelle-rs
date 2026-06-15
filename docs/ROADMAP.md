@@ -1,18 +1,21 @@
-# 开发路线图 v22.0 (v1.8.1 → v2.0.0)
+# 开发路线图 v23.0 (v1.9.0-dev → v2.0.0)
 
-> **当前版本**: v1.8.1 — 5/5 core files 125/125 (100%), prove_condition fixed
-> **下一目标**: v1.9.0 — hologic.ML + simpdata.ML + args.ML → HOL 基础设施现代化
+> **当前版本**: v1.9.0-dev — Route A 稳定性优先, Tier2 验证扩展中
+> **下一目标**: v1.9.0 — Route A 完成 (Tier2 + 属性集成 + 文档同步)
 
 ---
 
 ## 总体策略
 
 ```
-v1.8.1 (当前)   内核完整 + prove_condition 修复 + 5/5 core files 100%
+v1.9.0-dev (当前) Route A 进行中:
+                 ✅ 5 测试修复
+                 ✅ OOM 根因修复
+                 🔄 Tier2 验证扩展 (6/19 files 100%, tmux 运行中)
+                 ✅ 属性系统补完 (begin_lemma + lemmas + declare)
+                 🔄 文档同步
     ↓
-v1.9.0          HOL 基础设施 (hologic + simpdata + args)
-    ↓
-v1.10.0         specification + defs + typedecl → Isar 命令完整
+v1.9.0          Route A 完成 + Tier2 ≥15/19 files 100%
     ↓
 v2.0.0          Metis 真正集成 + 全库验证 1000+ files
 ```
@@ -23,7 +26,8 @@ v2.0.0          Metis 真正集成 + 全库验证 1000+ files
 
 | 版本 | 日期 | 状态 | 关键交付 |
 |------|------|:--:|------|
-| v1.8.1 | 2026-06-04 | ✅ current | List.thy 栈溢出修复, 5/5 core files 125/125 |
+| v1.9.0-dev | 2026-06-16 | 🔄 current | Route A: 5 tests fixed, OOM fixed, 属性补完, Tier2 running |
+| v1.8.1 | 2026-06-04 | ✅ | 5/5 core files 125/125, prove_condition 修复 |
 | v1.8.0 | 2026-06-03 | ✅ | Meson, 方法组合子, 属性链, verify_file(), Tier2/Tier3 |
 | v1.7.0 | 2026-06-03 | ✅ | BNF Lfp/Gfp 完整, Ctr_Sugar, Metis, Transfer/Lifting |
 | v1.5.0 | 2026-05-29 | ✅ | thy_header, HOL Simplifier, FM Arith |

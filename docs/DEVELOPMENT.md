@@ -1,11 +1,13 @@
-# 开发者指南 v2.0 (v1.8.0)
+# 开发者指南 v3.0 (v1.9.0-dev)
 
 ## 环境要求
 
-- Rust nightly (edition 2024)
+- Rust stable (edition 2024)
 - cargo
 - 推荐: 256MB+ stack (`RUST_MIN_STACK=268435456`)
-- 注意: 当前部分测试在默认栈 (8MB) 下会溢出
+- tmux (并行运行长时间测试)
+
+## 构建与测试
 
 ## 构建与测试
 

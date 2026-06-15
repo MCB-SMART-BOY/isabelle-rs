@@ -6,7 +6,10 @@
 //!
 //! This is the first step towards Sledgehammer integration.
 
-use crate::core::{logic::Pure, term::Term, thm::Thm};
+use crate::{
+    core::{logic::Pure, term::Term, thm::Thm},
+    hol::hologic,
+};
 
 /// Export a goal to TPTP FOF format.
 pub fn goal_to_tptp_fof(thm: &Thm, name: &str) -> String {
@@ -202,7 +205,7 @@ mod tests {
         let p = CTerm::certify(Term::const_("P", Typ::base("prop")));
         let q = CTerm::certify(Term::const_("Q", Typ::base("prop")));
         let pq = Term::app(
-            Term::app(Term::const_("HOL.conj", Typ::dummy()), p.term().clone()),
+            Term::app(hologic::conj_const(), p.term().clone()),
             q.term().clone(),
         );
         let goal_term = Pure::mk_implies(pq, p.term().clone());
@@ -218,7 +221,7 @@ mod tests {
         // ! [X] : p(X)
         let px = Term::app(Term::const_("p", Typ::dummy()), Term::bound(0));
         let all = Term::abs("X", Typ::dummy(), px);
-        let all_prop = Term::app(Term::const_("HOL.All", Typ::dummy()), all);
+        let all_prop = Term::app(hologic::all_const(Typ::dummy()), all);
         let goal = ThmKernel::assume(CTerm::certify(all_prop));
 
         let tptp = goal_to_tptp_fof(&goal, "quant");
@@ -229,7 +232,7 @@ mod tests {
     fn test_tptp_equality() {
         // a = b
         let eq = Term::app(
-            Term::app(Term::const_("HOL.eq", Typ::dummy()), Term::const_("a", Typ::dummy())),
+            Term::app(hologic::eq_const(Typ::dummy()), Term::const_("a", Typ::dummy())),
             Term::const_("b", Typ::dummy()),
         );
         let goal = ThmKernel::assume(CTerm::certify(eq));

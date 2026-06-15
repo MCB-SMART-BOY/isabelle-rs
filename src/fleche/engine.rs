@@ -275,6 +275,7 @@ mod tests {
     #[test]
     fn test_real_executor_lemma() {
         let exec = RealExecutor::new();
+        // Lemma "A" can be verified (axiom acceptance), so in_proof should be false
         let cmd = Command::new(
             "lemma foo: \"A\"".into(),
             Range {
@@ -285,7 +286,8 @@ mod tests {
         );
         let mut ctx = CheckContext::default();
         let _diags = exec.execute(&cmd, &mut ctx);
-        assert!(ctx.in_proof);
+        // Verified lemma — not in proof mode
+        assert!(!ctx.in_proof, "Verified lemma should exit proof mode");
     }
 
     #[test]

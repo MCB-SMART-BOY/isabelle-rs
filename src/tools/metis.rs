@@ -363,7 +363,7 @@ impl MetisProver {
 
         // Negate the goal and clausify it.
         // Complex goals (A ==> B) ==> False need to be broken into multiple clauses.
-        let false_const = Term::const_("HOL.False", Typ::base("prop"));
+        let false_const = hologic::false_const();
 
         // Clausify the negated goal: (goal ==> False)
         // For a simple goal A, this gives clause [A, False] meaning "A and not False" → "A".
@@ -401,7 +401,7 @@ impl MetisProver {
         let contra_thm = contra_clause?;
 
         // Discharge the negated goal from the contradiction
-        let false_c = Term::const_("HOL.False", Typ::base("prop"));
+        let false_c = hologic::false_const();
         let neg_goal_prop = Pure::mk_implies(goal_prop.clone(), false_c);
         let neg_goal_ct = CTerm::certify(neg_goal_prop);
 
@@ -1014,7 +1014,7 @@ fn distribute_cnf(term: &Term) -> Vec<Vec<Term>> {
                     // where [A] means: no premises, conclusion = A (i.e., A is true)
                     // and [B, False] means: premise B, conclusion False (i.e., B ==> False)
                     sub_clauses.push(vec![a.clone()]);
-                    sub_clauses.push(vec![b.clone(), Term::const_("HOL.False", Typ::base("prop"))]);
+                    sub_clauses.push(vec![b.clone(), hologic::false_const()]);
                 }
             }
         }
@@ -1369,7 +1369,7 @@ fn dest_disj(term: &Term) -> Option<(&Term, &Term)> {
 
 /// Negate a term: `A` → `~A` (wrap in implication to False).
 fn negate_term(term: &Term) -> Term {
-    let false_const = Term::const_("HOL.False", Typ::base("prop"));
+    let false_const = hologic::false_const();
     Pure::mk_implies(term.clone(), false_const)
 }
 
@@ -1489,7 +1489,7 @@ pub fn reconstruct_atp_proof(
 
     // Add negated goal
     let goal_prop = goal.prop().term().clone();
-    let false_const = Term::const_("HOL.False", Typ::base("prop"));
+    let false_const = hologic::false_const();
     let negated = Pure::mk_implies(goal_prop, false_const);
     let neg_ct = CTerm::certify(negated);
     let neg_thm = ThmKernel::assume(neg_ct);
@@ -1518,7 +1518,7 @@ fn find_contradiction_and_prove(prover: &MetisProver, goal: &Thm) -> Option<Arc<
 
     // Discharge the negated goal from the contradiction
     let goal_prop = goal.prop().term().clone();
-    let false_c = Term::const_("HOL.False", Typ::base("prop"));
+    let false_c = hologic::false_const();
     let neg_goal_prop = Pure::mk_implies(goal_prop, false_c);
     let neg_goal_ct = CTerm::certify(neg_goal_prop);
 
@@ -2041,7 +2041,7 @@ mod tests {
         // From A and ~A, prove anything (B)
         let a = prop_const("A");
         let b = prop_const("B");
-        let not_a = imp(a.clone(), Term::const_("HOL.False", Typ::base("prop")));
+        let not_a = imp(a.clone(), hologic::false_const());
 
         let ct_a = CTerm::certify(a.clone());
         let ct_not_a = CTerm::certify(not_a);
@@ -2061,7 +2061,7 @@ mod tests {
     #[test]
     fn test_empty_clause_detection() {
         // Check that false is correctly detected as contradiction
-        let false_term = Term::const_("HOL.False", Typ::base("prop"));
+        let false_term = hologic::false_const();
         let ct = CTerm::certify(false_term.clone());
         let thm = ThmKernel::assume(ct);
 
@@ -2120,7 +2120,7 @@ fof(f3, plain, q, inference(resolution, [], [f1, f2])).
     #[test]
     fn test_resolve_literals() {
         let a = prop_const("A");
-        let not_a = imp(a.clone(), Term::const_("HOL.False", Typ::base("prop")));
+        let not_a = imp(a.clone(), hologic::false_const());
 
         // A and ~A should be complementary
         let env = resolve_literals(&a, &not_a);

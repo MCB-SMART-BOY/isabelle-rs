@@ -56,6 +56,7 @@ use crate::{
         thm::{CTerm, Thm, ThmKernel},
         types::Typ,
     },
+    hol::hologic,
     isar::linarith,
 };
 
@@ -488,14 +489,14 @@ impl HolSimplifier {
             "HOL.eq",
             Typ::arrow(prop_typ.clone(), Typ::arrow(prop_typ.clone(), prop_typ.clone())),
         );
-        let true_c = Term::const_("HOL.True", prop_typ.clone());
-        let false_c = Term::const_("HOL.False", prop_typ.clone());
-        let not_c = Term::const_("HOL.Not", Typ::arrow(prop_typ.clone(), prop_typ.clone()));
-        let conj_c = Term::const_("HOL.conj", Typ::dummy());
-        let disj_c = Term::const_("HOL.disj", Typ::dummy());
-        let imp_const = Term::const_("HOL.implies", Typ::dummy());
-        let all_c = Term::const_("HOL.All", Typ::dummy());
-        let ex_c = Term::const_("HOL.Ex", Typ::dummy());
+        let true_c = hologic::true_const();
+        let false_c = hologic::false_const();
+        let not_c = hologic::not_const();
+        let conj_c = hologic::conj_const();
+        let disj_c = hologic::disj_const();
+        let imp_const = hologic::imp_const();
+        let all_c = hologic::all_const(Typ::dummy());
+        let ex_c = hologic::exists_const(Typ::dummy());
 
         fn mk_eq(eqc: &Term, a: Term, b: Term) -> Term {
             Term::app(Term::app(eqc.clone(), a), b)
@@ -700,7 +701,7 @@ impl HolSimplifier {
 
         // if True then A else B = A
         {
-            let if_c = Term::const_("HOL.If", Typ::dummy());
+            let if_c = hologic::if_const(Typ::dummy());
             var_idx += 1;
             let a = Term::var("a", var_idx, Typ::dummy());
             var_idx += 1;
@@ -716,7 +717,7 @@ impl HolSimplifier {
 
         // if False then A else B = B
         {
-            let if_c = Term::const_("HOL.If", Typ::dummy());
+            let if_c = hologic::if_const(Typ::dummy());
             var_idx += 1;
             let a = Term::var("a", var_idx, Typ::dummy());
             var_idx += 1;
@@ -850,8 +851,8 @@ mod tests {
     fn test_hol_rewrite_conj_true() {
         let hs = HolSimplifier::with_rules(HolSimplifier::builtin_rules());
         // Construct: True ∧ P
-        let conj_c = Term::const_("HOL.conj", Typ::dummy());
-        let true_c = Term::const_("HOL.True", Typ::base("prop"));
+        let conj_c = hologic::conj_const();
+        let true_c = hologic::true_const();
         let p = Term::free("P", Typ::dummy());
         let term = Term::app(Term::app(conj_c, true_c), p.clone());
 
@@ -864,8 +865,8 @@ mod tests {
     #[test]
     fn test_hol_rewrite_conj_false() {
         let hs = HolSimplifier::with_rules(HolSimplifier::builtin_rules());
-        let conj_c = Term::const_("HOL.conj", Typ::dummy());
-        let false_c = Term::const_("HOL.False", Typ::base("prop"));
+        let conj_c = hologic::conj_const();
+        let false_c = hologic::false_const();
         let p = Term::free("P", Typ::dummy());
         let term = Term::app(Term::app(conj_c, false_c.clone()), p);
 
@@ -878,8 +879,8 @@ mod tests {
     #[test]
     fn test_hol_rewrite_disj_true() {
         let hs = HolSimplifier::with_rules(HolSimplifier::builtin_rules());
-        let disj_c = Term::const_("HOL.disj", Typ::dummy());
-        let true_c = Term::const_("HOL.True", Typ::base("prop"));
+        let disj_c = hologic::disj_const();
+        let true_c = hologic::true_const();
         let p = Term::free("P", Typ::dummy());
         let term = Term::app(Term::app(disj_c, true_c.clone()), p);
 
@@ -892,8 +893,8 @@ mod tests {
     #[test]
     fn test_hol_rewrite_disj_false() {
         let hs = HolSimplifier::with_rules(HolSimplifier::builtin_rules());
-        let disj_c = Term::const_("HOL.disj", Typ::dummy());
-        let false_c = Term::const_("HOL.False", Typ::base("prop"));
+        let disj_c = hologic::disj_const();
+        let false_c = hologic::false_const();
         let p = Term::free("P", Typ::dummy());
         let term = Term::app(Term::app(disj_c, false_c), p.clone());
 
@@ -906,9 +907,9 @@ mod tests {
     #[test]
     fn test_hol_rewrite_not_true() {
         let hs = HolSimplifier::with_rules(HolSimplifier::builtin_rules());
-        let not_c = Term::const_("HOL.Not", Typ::arrow(Typ::base("prop"), Typ::base("prop")));
-        let true_c = Term::const_("HOL.True", Typ::base("prop"));
-        let false_c = Term::const_("HOL.False", Typ::base("prop"));
+        let not_c = hologic::not_const();
+        let true_c = hologic::true_const();
+        let false_c = hologic::false_const();
         let term = Term::app(not_c, true_c);
 
         let result = hs.hol_rewrite(&term);
@@ -920,9 +921,9 @@ mod tests {
     #[test]
     fn test_hol_rewrite_not_false() {
         let hs = HolSimplifier::with_rules(HolSimplifier::builtin_rules());
-        let not_c = Term::const_("HOL.Not", Typ::arrow(Typ::base("prop"), Typ::base("prop")));
-        let false_c = Term::const_("HOL.False", Typ::base("prop"));
-        let true_c = Term::const_("HOL.True", Typ::base("prop"));
+        let not_c = hologic::not_const();
+        let false_c = hologic::false_const();
+        let true_c = hologic::true_const();
         let term = Term::app(not_c, false_c);
 
         let result = hs.hol_rewrite(&term);
@@ -934,8 +935,8 @@ mod tests {
     #[test]
     fn test_hol_rewrite_imp_true() {
         let hs = HolSimplifier::with_rules(HolSimplifier::builtin_rules());
-        let imp_c = Term::const_("HOL.implies", Typ::dummy());
-        let true_c = Term::const_("HOL.True", Typ::base("prop"));
+        let imp_c = hologic::imp_const();
+        let true_c = hologic::true_const();
         let p = Term::free("P", Typ::dummy());
         let term = Term::app(Term::app(imp_c, true_c), p.clone());
 
@@ -948,9 +949,9 @@ mod tests {
     #[test]
     fn test_hol_rewrite_imp_false() {
         let hs = HolSimplifier::with_rules(HolSimplifier::builtin_rules());
-        let imp_c = Term::const_("HOL.implies", Typ::dummy());
-        let false_c = Term::const_("HOL.False", Typ::base("prop"));
-        let true_c = Term::const_("HOL.True", Typ::base("prop"));
+        let imp_c = hologic::imp_const();
+        let false_c = hologic::false_const();
+        let true_c = hologic::true_const();
         let p = Term::free("P", Typ::dummy());
         let term = Term::app(Term::app(imp_c, false_c), p);
 
@@ -963,9 +964,9 @@ mod tests {
     #[test]
     fn test_hol_rewrite_deep_nested() {
         let hs = HolSimplifier::with_rules(HolSimplifier::builtin_rules());
-        let conj_c = Term::const_("HOL.conj", Typ::dummy());
-        let true_c = Term::const_("HOL.True", Typ::base("prop"));
-        let false_c = Term::const_("HOL.False", Typ::base("prop"));
+        let conj_c = hologic::conj_const();
+        let true_c = hologic::true_const();
+        let false_c = hologic::false_const();
         let p = Term::free("P", Typ::dummy());
 
         // (True ∧ P) ∧ False  →  P ∧ False  →  False
@@ -1031,7 +1032,7 @@ mod tests {
         let hs = HolSimplifier::with_rules(HolSimplifier::builtin_rules());
         let tac = hs.simp_tactic();
         // Create a simple proof state
-        let true_c = Term::const_("HOL.True", Typ::base("prop"));
+        let true_c = hologic::true_const();
         let goal_ct = CTerm::certify(true_c);
         let state = ThmKernel::assume(goal_ct);
         let results = tac(&state);
@@ -1042,8 +1043,8 @@ mod tests {
     #[test]
     fn test_if_true_rewrite() {
         let hs = HolSimplifier::with_rules(HolSimplifier::builtin_rules());
-        let if_c = Term::const_("HOL.If", Typ::dummy());
-        let true_c = Term::const_("HOL.True", Typ::base("prop"));
+        let if_c = hologic::if_const(Typ::dummy());
+        let true_c = hologic::true_const();
         let a = Term::free("a", Typ::dummy());
         let b = Term::free("b", Typ::dummy());
         let term = Term::apps(if_c, [true_c, a.clone(), b.clone()]);
@@ -1057,8 +1058,8 @@ mod tests {
     #[test]
     fn test_if_false_rewrite() {
         let hs = HolSimplifier::with_rules(HolSimplifier::builtin_rules());
-        let if_c = Term::const_("HOL.If", Typ::dummy());
-        let false_c = Term::const_("HOL.False", Typ::base("prop"));
+        let if_c = hologic::if_const(Typ::dummy());
+        let false_c = hologic::false_const();
         let a = Term::free("a", Typ::dummy());
         let b = Term::free("b", Typ::dummy());
         let term = Term::apps(if_c, [false_c, a.clone(), b.clone()]);
@@ -1072,8 +1073,8 @@ mod tests {
     #[test]
     fn test_all_true_rewrite() {
         let hs = HolSimplifier::with_rules(HolSimplifier::builtin_rules());
-        let all_c = Term::const_("HOL.All", Typ::dummy());
-        let true_c = Term::const_("HOL.True", Typ::base("prop"));
+        let all_c = hologic::all_const(Typ::dummy());
+        let true_c = hologic::true_const();
         let body = true_c.clone();
         let term = Term::app(all_c, Term::abs("x", Typ::dummy(), body));
 
@@ -1086,8 +1087,8 @@ mod tests {
     #[test]
     fn test_ex_false_rewrite() {
         let hs = HolSimplifier::with_rules(HolSimplifier::builtin_rules());
-        let ex_c = Term::const_("HOL.Ex", Typ::dummy());
-        let false_c = Term::const_("HOL.False", Typ::base("prop"));
+        let ex_c = hologic::exists_const(Typ::dummy());
+        let false_c = hologic::false_const();
         let body = false_c.clone();
         let term = Term::app(ex_c, Term::abs("x", Typ::dummy(), body));
 

@@ -1,6 +1,6 @@
-# 架构设计 v22.0 (v1.8.1)
+# 架构设计 v23.0 (v1.9.0-dev)
 
-> LCF 内核：15 ops + tpairs/shyps · 27 methods · FM 算术 · HOL 简化器 · Meson + Metis + Sledgehammer ATP
+> LCF 内核：15 ops + tpairs/shyps · 27 methods · FM 算术 · HOL 简化器 · Meson + Metis · Route A 稳定性优先
 > 验证：5/5 core files 125/125 (100%) · 0 kernel errors · prove_condition 已修复
 > 性能：179ns-12μs (release mode, criterion 实测)
 

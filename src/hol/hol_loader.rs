@@ -17,6 +17,7 @@ use crate::{
         thm::{CTerm, Thm, ThmKernel},
         types::{Sort, Symbol, Typ, TypeEnv},
     },
+    hol::hologic,
     isar::term_parser::parse_term,
 };
 
@@ -2003,7 +2004,7 @@ fn extract_quoted(s: &str) -> Option<String> {
 }
 
 /// Parse `name[attrs]` or `name` from the lemma/theorem name part.
-fn parse_name_attrs(name_part: &str) -> (&str, Vec<String>) {
+pub(crate) fn parse_name_attrs(name_part: &str) -> (&str, Vec<String>) {
     let name_part = name_part.trim();
     if let Some(b) = name_part.find('[') {
         let name = name_part[..b].trim();
@@ -2016,7 +2017,7 @@ fn parse_name_attrs(name_part: &str) -> (&str, Vec<String>) {
 
 /// Parse Isabelle attribute syntax: `[simp, intro!, elim add: th1]` → `["simp", "intro!", "elim"]`
 /// Handles nested brackets, attribute arguments (`add:`, `del:`, `THEN`, `OF`), and modifiers.
-fn parse_attrs(s: &str) -> Vec<String> {
+pub(crate) fn parse_attrs(s: &str) -> Vec<String> {
     let inner = s.trim_start_matches('[').trim_end_matches(']').trim();
     if inner.is_empty() {
         return Vec::new();
@@ -2086,39 +2087,74 @@ fn extract_attr_base(s: &str) -> String {
 }
 
 fn convert_syntax(s: &str) -> String {
-    // Cartouche conversion: \<open>...\<close> → "..." (must be first)
+    // Isabelle symbol → ASCII conversion.
+    // Order matters: compound symbols must be replaced before their components.
+    // Reference: Isabelle src/Pure/Syntax/symbol.ML and etc/symbols.
     s.replace("\\<open>", "\"")
         .replace("\\<close>", "\"")
-        .replace("\\<lbrakk>", "[|")
-        .replace("\\<rbrakk>", "|]")
-        .replace("\\<Longrightarrow>", "==>")
+        // Meta-logic: Pure operators
         .replace("\\<And>", "!!")
-        .replace("\\<not>", "~")
-        .replace("\\<noteq>", "~=")
-        .replace("\\<forall>", "ALL")
-        .replace("\\<exists>\\<^sub>\\<le>\\<^sub>1", "EX1")
-        .replace("\\<exists>!", "EX1")
-        .replace("\\<exists>", "EX")
-        .replace("\\<nexists>", "~EX")
+        .replace("\\<Longrightarrow>", "==>")
+        .replace("\\<equiv>", "==") // Pure.eq (meta-equality)
+        // HOL logic: connectives
         .replace("\\<longrightarrow>", "-->")
+        .replace("\\<longleftrightarrow>", "=") // HOL.eq on bool
         .replace("\\<and>", "&")
         .replace("\\<or>", "|")
-        .replace("\\<longleftrightarrow>", "IFF")
-        .replace("\\<setminus>", "-")
-        .replace("\\<equiv>", "=")
+        .replace("\\<not>", "~")
+        // Quantifiers (compound patterns first)
+        .replace("\\<exists>\\<^sub>\\<le>\\<^sub>1", "EX1")
+        .replace("\\<exists>!", "EX1")
+        .replace("\\<forall>", "ALL")
+        .replace("\\<exists>", "EX")
+        .replace("\\<nexists>", "~EX")
+        // Relations
+        .replace("\\<noteq>", "~=")
+        .replace("\\<le>", "<=")
+        .replace("\\<ge>", ">=")
+        .replace("\\<preceq>", "<=")
+        .replace("\\<succeq>", ">=")
+        // Brackets
+        .replace("\\<lbrakk>", "[|")
+        .replace("\\<rbrakk>", "|]")
+        .replace("\\<lbrace>", "{")
+        .replace("\\<rbrace>", "}")
+        // Lambda and binding
         .replace("\\<lambda>", "%")
+        .replace("\\<Colon>", "::")
+        // Set operations
+        .replace("\\<in>", ":")
+        .replace("\\<notin>", "~:")
+        .replace("\\<subseteq>", "<=")
+        .replace("\\<subset>", "<")
+        .replace("\\<inter>", "Int")
+        .replace("\\<union>", "Un")
+        .replace("\\<setminus>", "-")
+        .replace("\\<times>", "*")
+        // Function arrow
+        .replace("\\<Rightarrow>", "=>")
+        .replace("\\<rightarrow>", "->")
         .replace("\\<circ>", "o")
+        // Other constants
         .replace("\\<epsilon>", "SOME")
         .replace("\\<bar>", "abs")
-        // ASCII mixfix operator: append (spaces prevent matching @{)
+        .replace("\\<bottom>", "bot")
+        .replace("\\<top>", "top")
+        // ASCII mixfix operator: append
         .replace(" @ ", " APPEND ")
-        // Strip formatting commands (don't affect logical content)
+        // Strip formatting/decoration (don't affect logical content)
         .replace("::{}", "")
         .replace("\\<^bold>", "")
         .replace("\\<^sup>", "")
         .replace("\\<^sub>", "")
         .replace("\\<^bsub>", "")
         .replace("\\<^esub>", "")
+        .replace("\\<^loc>", "")
+        .replace("\\<^item>", "")
+        .replace("\\<^here>", "")
+        // Remove leftover Unicode combining characters
+        .replace("\\<acute>", "'")
+        .replace("\\<prime>", "'")
 }
 
 /// Merge multi-line quoted strings into complete statements.
@@ -2645,8 +2681,8 @@ impl HolTheoremDb {
         let suc_c = Term::const_("Nat.Suc", Typ::dummy());
         let less_c = Term::const_("Orderings.less", Typ::dummy());
         let le_c = Term::const_("Orderings.less_eq", Typ::dummy());
-        let not_c = Term::const_("HOL.Not", Typ::arrow(prop_typ.clone(), prop_typ.clone()));
-        let _disj_c = Term::const_("HOL.disj", Typ::dummy());
+        let not_c = hologic::not_const();
+        let _disj_c = hologic::disj_const();
         let eq_const = Term::const_(
             "HOL.eq",
             Typ::arrow(prop_typ.clone(), Typ::arrow(prop_typ.clone(), prop_typ.clone())),
@@ -2705,8 +2741,8 @@ impl HolTheoremDb {
         // True_or_False: (P = True) | (P = False)
         if !db.by_name.contains_key("True_or_False") {
             let p = Term::var("P", 0, prop_typ.clone());
-            let true_c = Term::const_("HOL.True", prop_typ.clone());
-            let false_c = Term::const_("HOL.False", prop_typ.clone());
+            let true_c = hologic::true_const();
+            let false_c = hologic::false_const();
             let eq_true = mk_eq(&eq_const, p.clone(), true_c);
             let eq_false = mk_eq(&eq_const, p, false_c);
             let disj = Term::const_(
@@ -2723,7 +2759,7 @@ impl HolTheoremDb {
         if !db.by_name.contains_key("notE") {
             let p = Term::var("P", 0, prop_typ.clone());
             let r = Term::var("R", 1, prop_typ.clone());
-            let not_c = Term::const_("HOL.Not", Typ::arrow(prop_typ.clone(), prop_typ.clone()));
+            let not_c = hologic::not_const();
             let not_p = Term::app(not_c, p.clone());
             let stmt = Pure::mk_implies(not_p, Pure::mk_implies(p, r));
             let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
@@ -2736,7 +2772,7 @@ impl HolTheoremDb {
         {
             let p = Term::var("P", 0, prop_typ.clone());
             let q = Term::var("Q", 1, prop_typ.clone());
-            let not_c = Term::const_("HOL.Not", Typ::arrow(prop_typ.clone(), prop_typ.clone()));
+            let not_c = hologic::not_const();
             let not_q = Term::app(not_c.clone(), q.clone());
             let not_p = Term::app(not_c, p.clone());
             let p_imp_q = Pure::mk_implies(p, q);
@@ -2751,7 +2787,7 @@ impl HolTheoremDb {
         {
             let p = Term::var("P", 0, prop_typ.clone());
             let q = Term::var("Q", 1, prop_typ.clone());
-            let not_c = Term::const_("HOL.Not", Typ::arrow(prop_typ.clone(), prop_typ.clone()));
+            let not_c = hologic::not_const();
             let not_q = Term::app(not_c.clone(), q.clone());
             let not_p = Term::app(not_c, p.clone());
             let p_imp_not_q = Pure::mk_implies(p, not_q);
@@ -2809,7 +2845,7 @@ impl HolTheoremDb {
         {
             let s = mk_var("s", 0);
             let t = mk_var("t", 1);
-            let not_c = Term::const_("HOL.Not", Typ::arrow(prop_typ.clone(), prop_typ.clone()));
+            let not_c = hologic::not_const();
             let eq_st = mk_eq(&eq_const, s.clone(), t.clone());
             let eq_ts = mk_eq(&eq_const, t, s);
             let not_st = Term::app(not_c.clone(), eq_st);
@@ -2823,8 +2859,8 @@ impl HolTheoremDb {
         // False_neq_True: False = True ==> P
         {
             let p = Term::var("P", 0, prop_typ.clone());
-            let false_c = Term::const_("HOL.False", prop_typ.clone());
-            let true_c = Term::const_("HOL.True", prop_typ.clone());
+            let false_c = hologic::false_const();
+            let true_c = hologic::true_const();
             let eq_f_t = mk_eq(&eq_const, false_c, true_c);
             let stmt = Pure::mk_implies(eq_f_t, p);
             let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
@@ -2838,7 +2874,7 @@ impl HolTheoremDb {
             let p = Term::var("P", 0, prop_typ.clone());
             let q = Term::var("Q", 1, prop_typ.clone());
             let r = Term::var("R", 2, prop_typ.clone());
-            let disj_c = Term::const_("HOL.disj", Typ::dummy());
+            let disj_c = hologic::disj_const();
             let p_or_q = Term::app(Term::app(disj_c, p.clone()), q.clone());
             let p_imp_r = Pure::mk_implies(p, r.clone());
             let q_imp_r = Pure::mk_implies(q, r.clone());
@@ -3075,7 +3111,7 @@ impl HolTheoremDb {
         if !db.by_name.contains_key("Suc_not_Zero") {
             let n = mk_var("n", 0);
             let eq_suc_0 = mk_eq(&eq_const, mk_suc(&suc_c, n), Term::const_("0", Typ::dummy()));
-            let not_c = Term::const_("HOL.Not", Typ::arrow(prop_typ.clone(), prop_typ.clone()));
+            let not_c = hologic::not_const();
             let stmt = Term::app(not_c, eq_suc_0);
             let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
             db.by_name.insert("Suc_not_Zero".into(), Arc::clone(&thm));
@@ -3086,7 +3122,7 @@ impl HolTheoremDb {
         if !db.by_name.contains_key("Zero_not_Suc") {
             let n = mk_var("n", 0);
             let eq_0_suc = mk_eq(&eq_const, Term::const_("0", Typ::dummy()), mk_suc(&suc_c, n));
-            let not_c = Term::const_("HOL.Not", Typ::arrow(prop_typ.clone(), prop_typ.clone()));
+            let not_c = hologic::not_const();
             let stmt = Term::app(not_c, eq_0_suc);
             let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
             db.by_name.insert("Zero_not_Suc".into(), Arc::clone(&thm));
@@ -3119,7 +3155,7 @@ impl HolTheoremDb {
         if !db.by_name.contains_key("n_not_Suc_n") {
             let n = mk_var("n", 0);
             let eq_n_sucn = mk_eq(&eq_const, n.clone(), mk_suc(&suc_c, n));
-            let not_c = Term::const_("HOL.Not", Typ::arrow(prop_typ.clone(), prop_typ.clone()));
+            let not_c = hologic::not_const();
             let stmt = Term::app(not_c, eq_n_sucn);
             let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
             db.by_name.insert("n_not_Suc_n".into(), Arc::clone(&thm));
@@ -3130,7 +3166,7 @@ impl HolTheoremDb {
         if !db.by_name.contains_key("Suc_n_not_n") {
             let n = mk_var("n", 0);
             let eq_sucn_n = mk_eq(&eq_const, mk_suc(&suc_c, n.clone()), n);
-            let not_c = Term::const_("HOL.Not", Typ::arrow(prop_typ.clone(), prop_typ.clone()));
+            let not_c = hologic::not_const();
             let stmt = Term::app(not_c, eq_sucn_n);
             let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
             db.by_name.insert("Suc_n_not_n".into(), Arc::clone(&thm));
@@ -4279,9 +4315,13 @@ mod primrec_tests {
             ],
         };
         let lemmas = generate_primrec_lemmas(&def);
-        assert!(lemmas.len() >= 2);
-        for l in &lemmas {
-            assert!(l.attributes.contains(&"simp".to_string()));
+        assert!(lemmas.len() >= 2, "Expected >=2 lemmas, got {}", lemmas.len());
+        // Equation lemmas (.simps) must have [simp]; induction/cases may not
+        let simp_lemmas: Vec<_> = lemmas.iter().filter(|l| l.name.contains(".simps")).collect();
+        assert!(!simp_lemmas.is_empty(), "Expected at least one .simps lemma");
+        for l in &simp_lemmas {
+            assert!(l.attributes.contains(&"simp".to_string()),
+                "Lemma {} should have [simp] attribute", l.name);
         }
     }
 }

@@ -1,8 +1,8 @@
-# isabelle-rs vs Isabelle 完整差距分析 v4.0
+# isabelle-rs vs Isabelle 完整差距分析 v5.0
 
-> v1.8.1 | 2026-06-04 | 基于实际代码审计
+> v1.9.0-dev | 2026-06-16 | Route A 稳定性优先
 > **总体覆盖: 核心内核 ~95%, 整体 ~25%**
-> **isabelle-rs**: ~46K Rust LOC (121 .rs) | **Isabelle**: ~317K ML + ~90K Scala
+> **isabelle-rs**: ~54K Rust LOC (124 .rs) | **Isabelle**: ~317K ML + ~90K Scala
 
 ---
 
