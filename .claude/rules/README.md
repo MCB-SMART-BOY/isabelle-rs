@@ -78,8 +78,10 @@ updated: 2026-06-16
 
 | 问题 | 严重度 | 详情 |
 |------|:--:|------|
-| Tier2 验证运行中 | 🟡 中 | tmux session 'tier2': Fun/Product_Type/Sum_Type/Lattices/Groups/Rings 100% ✅ |
-| HolTheoremDb LazyLock 初始化慢 | 🟡 中 | 首次 `get()` 加载全部 theory 文件, 需优化为按需加载 |
+| Fields.thy 证明搜索慢 | 🟡 中 | arithmetic-heavy lemmas 导致 prover 内存增长 (373MB+), 需优化 field_simps 处理 |
+| Tier2 验证进行中 | 🟡 中 | tmux 'tier2': 6/19 files 100% ✅ (Fun→Rings), Fields running |
+| HolTheoremDb LazyLock 初始化 | 🟡 中 | 首次 `get()` 加载全部 1,473 .thy files, 需按需加载 |
+| ctr_sugar test_verify_systematic | 🟢 低 | disj_parts.pop().unwrap() on empty vec, 预存 bug |
 | hologic 常量残留 (3 处) | 🟢 低 | hol_loader prop eq + term_builder unused + comment — 有意保留 |
 
 ## 架构

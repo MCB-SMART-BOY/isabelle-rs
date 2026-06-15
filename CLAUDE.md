@@ -41,8 +41,10 @@
 
 | Issue | Severity | Detail |
 |-------|:--------:|--------|
-| Tier2 verification running | 🟡 Medium | tmux 'tier2': Fun/Product_Type/Sum_Type/Lattices/Groups/Rings 100% ✅ |
+| Fields.thy prover bottleneck | 🟡 Medium | Arithmetic lemmas cause memory growth (373MB+); needs field_simps optimization |
+| Tier2 verification in progress | 🟡 Medium | tmux 'tier2': 6/19 files 100% ✅ (Fun→Rings), Fields running |
 | LazyLock DB init slow | 🟡 Medium | First HolTheoremDb::get() loads all 1,473 .thy files; should be on-demand |
+| ctr_sugar test_verify_systematic | 🟢 Low | disj_parts.pop().unwrap() pre-existing bug |
 | hologic constants (3 remaining) | 🟢 Low | Intentional: prop eq, term_builder, comment |
 
 
