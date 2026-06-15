@@ -1023,6 +1023,13 @@ impl Method {
         if count > AUTO_LIMIT.with(|c| c.get()) {
             return vec![state.clone()];
         }
+        // Check soft deadline — bail out if exceeded
+        let expired = VERIFY_DEADLINE.with(|c| {
+            c.get().map_or(false, |d| std::time::Instant::now() >= d)
+        });
+        if expired {
+            return vec![state.clone()];
+        }
         if depth > 15 || state.nprems() == 0 {
             return vec![state.clone()];
         }
