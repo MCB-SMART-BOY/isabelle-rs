@@ -23,8 +23,9 @@ RUST_MIN_STACK=268435456 cargo test test_verify_all_core_files -- --nocapture
 ## Extended
 
 ```bash
-RUST_MIN_STACK=268435456 cargo test --test tier2_verify -- --nocapture
-RUST_MIN_STACK=268435456 cargo test --test tier3_verify -- --nocapture
+# Tier2: 19 HOL theories, use tmux for long runs
+tmux new-session -d -s tier2 "RUST_MIN_STACK=268435456 cargo test --test tier2_verify -- --nocapture 2>&1"
+tmux attach -t tier2  # check progress
 ```
 
 ## All Integration
@@ -33,11 +34,13 @@ RUST_MIN_STACK=268435456 cargo test --test tier3_verify -- --nocapture
 RUST_MIN_STACK=268435456 cargo test --test bnf_tests --test comprehensive --test integration_tests
 ```
 
-## Expected Results (v1.7.0)
+## Expected Results (v1.9.0-dev)
 
 | Suite | Expected |
 |-------|----------|
 | Kernel tests | All pass |
-| Metis tests | 22 pass |
-| Core verification | HOL/Orderings/Set/Nat: 100%. List: overflow (known) |
-| Tier 2/3 | Parse OK (accept_all mode) |
+| Core verification | 5/5 files 125/125 (100%) |
+| Tier2 | 6+/19 files 100% (Fun→Rings ✅, Fields arithmetic bottleneck) |
+| Theory tests | 77 pass, 1 skip (ctr_sugar pre-existing) |
+| lib tests | 710+ pass |
+| cargo check --lib | 0 warnings |

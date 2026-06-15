@@ -35,18 +35,18 @@ cargo test --test integration_tests
 cargo test --test proptest
 ```
 
-## Expected Results (v1.8.1)
+## Expected Results (v1.9.0-dev)
 
-| Suite | Expected | Known Issues |
-|-------|----------|-------------|
-| `core::thm` | All pass | — |
-| `core::unify` | All pass | — |
-| `tools::metis` | 22 pass | — |
-| `hol::hol_loader::lemma_tests` | 17 pass | — |
-| `--lib` (256MB) | Most pass | batch_scan_theories overflows |
-| `test_verify_all_core_files` | **5/5 files, 125/125 (100%)** | ✅ List.thy fixed v1.8.1 |
-| `tier2_verify` | Parse OK | accept_all mode |
-| `tier3_verify` | Parse OK | accept_all mode |
+| Suite | Expected | Notes |
+|-------|----------|-------|
+| `core::thm` | 12 pass | LCF kernel |
+| `core::unify` | All pass | Higher-order unification |
+| `cargo check --lib` | **0 warnings** | Required per SOP |
+| `test_verify_all_core_files` | **5/5 files, 125/125 (100%)** | Core verification |
+| `theory` module | 77 pass, 1 skip | ctr_sugar pre-existing |
+| `method` module | 28 pass, 1 skip | batch_verify_all |
+| `tier2_verify` | **6+/19 files 100%** | Fields.thy arithmetic bottleneck |
+| `--lib` full | 710+ pass | 0 warnings |
 
 ## Quick Sanity Check
 

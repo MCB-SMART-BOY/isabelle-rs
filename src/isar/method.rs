@@ -26,6 +26,8 @@ thread_local! {
     pub(crate) static AUTO_LIMIT: Cell<usize> = Cell::new(100);
     /// Local theorem index for same-file definition lookups during processing
     pub(crate) static LOCAL_THEOREM_INDEX: std::cell::RefCell<std::collections::HashMap<String, Arc<Thm>>> = std::cell::RefCell::new(std::collections::HashMap::new());
+    /// Soft deadline for verify_file — when exceeded, verification returns partial results.
+    pub(crate) static VERIFY_DEADLINE: Cell<Option<std::time::Instant>> = Cell::new(None);
 }
 
 // =========================================================================
@@ -3114,6 +3116,17 @@ pub fn set_auto_limit(limit: usize) {
     AUTO_LIMIT.with(|c| c.set(limit));
 }
 
+/// Set a soft deadline for verification. When exceeded, `verify_file`
+/// returns partial results instead of processing all lemmas.
+pub fn set_verify_deadline(deadline: std::time::Instant) {
+    VERIFY_DEADLINE.with(|c| c.set(Some(deadline)));
+}
+
+/// Clear the verification deadline.
+pub fn clear_verify_deadline() {
+    VERIFY_DEADLINE.with(|c| c.set(None));
+}
+
 /// Verify a single .thy file using a local DB — no global LazyLock init.
 /// Returns (verified_count, attempted_count).
 /// Uses 3-phase approach: parse with empty DB → build local DB → verify with override.
@@ -3136,6 +3149,7 @@ pub fn verify_file(source: &str) -> (usize, usize) {
 }
 
 /// Verify lemmas with local index for same-file definitions.
+/// Checks `VERIFY_DEADLINE` before each lemma — returns partial results if exceeded.
 pub fn verify_lemmas_batch(lemmas: &[ParsedLemma]) -> (usize, usize) {
     LOCAL_THEOREM_INDEX.with(|idx| {
         let mut map = idx.borrow_mut();
@@ -3149,6 +3163,13 @@ pub fn verify_lemmas_batch(lemmas: &[ParsedLemma]) -> (usize, usize) {
     let mut verified = 0usize;
     let mut attempted = 0usize;
     for lem in lemmas {
+        // Check soft deadline before each lemma
+        let expired = VERIFY_DEADLINE.with(|c| {
+            c.get().map_or(false, |d| std::time::Instant::now() >= d)
+        });
+        if expired {
+            break;
+        }
         if lem.proof_script.is_some() {
             attempted += 1;
             if verify_lemma(lem).is_some() {
