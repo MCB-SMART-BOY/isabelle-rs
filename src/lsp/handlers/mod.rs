@@ -20,12 +20,12 @@
 //!   └── "textDocument/didSave"   → document::handle_did_save
 //! ```
 
-use std::sync::Arc;
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 
-use crate::fleche::engine::Fleche;
-use crate::server::lsp_types::*;
-use crate::server::transport::OutgoingMessage;
+use crate::{
+    fleche::engine::Fleche,
+    server::{lsp_types::*, transport::OutgoingMessage},
+};
 
 // =========================================================================
 // Handler context
@@ -43,11 +43,7 @@ pub struct HandlerContext {
 
 impl HandlerContext {
     pub fn new(tx: mpsc::Sender<OutgoingMessage>, fleche: Arc<Fleche>) -> Self {
-        HandlerContext {
-            tx,
-            fleche,
-            lifecycle: ServerLifecycle::Created,
-        }
+        HandlerContext { tx, fleche, lifecycle: ServerLifecycle::Created }
     }
 
     /// Send a successful JSON-RPC response.
@@ -76,13 +72,11 @@ impl HandlerContext {
             "uri": uri,
             "diagnostics": diags,
         });
-        let _ = self
-            .tx
-            .send(OutgoingMessage::Notification(JsonRpcNotification {
-                jsonrpc: "2.0".into(),
-                method: notifications::PUBLISH_DIAGNOSTICS.into(),
-                params,
-            }));
+        let _ = self.tx.send(OutgoingMessage::Notification(JsonRpcNotification {
+            jsonrpc: "2.0".into(),
+            method: notifications::PUBLISH_DIAGNOSTICS.into(),
+            params,
+        }));
     }
 
     /// Get the full text of a document from the Fleche engine.

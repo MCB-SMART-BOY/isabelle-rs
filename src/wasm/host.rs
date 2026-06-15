@@ -41,9 +41,7 @@ pub struct ThmTable {
 
 impl ThmTable {
     pub fn new() -> Self {
-        ThmTable {
-            entries: Vec::new(),
-        }
+        ThmTable { entries: Vec::new() }
     }
 
     /// Register a theorem and get its handle.
@@ -72,9 +70,11 @@ impl Default for ThmTable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::term::Term;
-    use crate::core::thm::{CTerm, ThmKernel};
-    use crate::core::types::Typ;
+    use crate::core::{
+        term::Term,
+        thm::{CTerm, ThmKernel},
+        types::Typ,
+    };
 
     #[test]
     fn test_thm_table_register_and_get() {

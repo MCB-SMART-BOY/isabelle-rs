@@ -17,10 +17,12 @@
 
 use std::sync::Arc;
 
-use crate::core::simplifier::Simplifier;
-use crate::core::term::Term;
-use crate::core::thm::{CTerm, Thm, ThmKernel};
-use crate::core::types::Typ;
+use crate::core::{
+    simplifier::Simplifier,
+    term::Term,
+    thm::{CTerm, Thm, ThmKernel},
+    types::Typ,
+};
 
 // =========================================================================
 // Tactic type
@@ -99,9 +101,8 @@ pub fn eresolve_tac(rules: &[Thm], i: usize) -> TacticFn {
 /// Destruct-resolution: convert destruction rules to elimination rules,
 /// then apply eresolve_tac.
 pub fn dresolve_tac(rules: &[Thm], i: usize) -> TacticFn {
-    let elim_rules: Vec<Thm> = rules.iter().map(|r| {
-        make_elim(r).unwrap_or_else(|| r.clone())
-    }).collect();
+    let elim_rules: Vec<Thm> =
+        rules.iter().map(|r| make_elim(r).unwrap_or_else(|| r.clone())).collect();
     eresolve_tac(&elim_rules, i)
 }
 
@@ -140,11 +141,7 @@ pub fn then_tac(tac1: TacticFn, tac2: TacticFn) -> TacticFn {
 pub fn orelse_tac(tac1: TacticFn, tac2: TacticFn) -> TacticFn {
     Arc::new(move |st: &Thm| {
         let results = tac1(st);
-        if results.is_empty() {
-            tac2(st)
-        } else {
-            results
-        }
+        if results.is_empty() { tac2(st) } else { results }
     })
 }
 
@@ -183,11 +180,7 @@ pub fn repeat_tac(tac: TacticFn) -> TacticFn {
 pub fn determ_tac(tac: TacticFn) -> TacticFn {
     Arc::new(move |st: &Thm| {
         let results = tac(st);
-        if results.is_empty() {
-            vec![]
-        } else {
-            vec![results[0].clone()]
-        }
+        if results.is_empty() { vec![] } else { vec![results[0].clone()] }
     })
 }
 
@@ -197,31 +190,19 @@ pub fn cond_tac(
     tac1: TacticFn,
     tac2: TacticFn,
 ) -> TacticFn {
-    Arc::new(move |st: &Thm| {
-        if pred(st) {
-            tac1(st)
-        } else {
-            tac2(st)
-        }
-    })
+    Arc::new(move |st: &Thm| if pred(st) { tac1(st) } else { tac2(st) })
 }
 
 /// CHANGED: tac, but only return results that differ from the input.
 pub fn changed_tac(tac: TacticFn) -> TacticFn {
     Arc::new(move |st: &Thm| {
         let results = tac(st);
-        results
-            .into_iter()
-            .filter(|r| *st != *r)
-            .collect()
+        results.into_iter().filter(|r| *st != *r).collect()
     })
 }
 
 /// FILTER: only keep results satisfying pred.
-pub fn filter_tac(
-    pred: impl Fn(&Thm) -> bool + Send + Sync + 'static,
-    tac: TacticFn,
-) -> TacticFn {
+pub fn filter_tac(pred: impl Fn(&Thm) -> bool + Send + Sync + 'static, tac: TacticFn) -> TacticFn {
     Arc::new(move |st: &Thm| {
         let results = tac(st);
         results.into_iter().filter(|r| pred(r)).collect()
@@ -362,16 +343,34 @@ fn revcut_rl() -> Thm {
 
     let assume_v = ThmKernel::assume(v.clone());
     // Build: V ⟹ W
-    let v_imp_w = ThmKernel::assume(CTerm::certify(
-        Term::app(Term::app(Term::const_("Pure.imp", Typ::arrows(vec![Typ::base("prop"), Typ::base("prop")], Typ::base("prop"))), Term::free("V", Typ::base("prop"))), Term::free("W", Typ::base("prop"))),
-    ));
+    let v_imp_w = ThmKernel::assume(CTerm::certify(Term::app(
+        Term::app(
+            Term::const_(
+                "Pure.imp",
+                Typ::arrows(vec![Typ::base("prop"), Typ::base("prop")], Typ::base("prop")),
+            ),
+            Term::free("V", Typ::base("prop")),
+        ),
+        Term::free("W", Typ::base("prop")),
+    )));
     // modus ponens
     let w_thm = ThmKernel::implies_elim(&v_imp_w, &assume_v).unwrap();
 
     // Discharge assumptions
-    let thm1 = ThmKernel::implies_intr(&CTerm::certify(
-        Term::app(Term::app(Term::const_("Pure.imp", Typ::arrows(vec![Typ::base("prop"), Typ::base("prop")], Typ::base("prop"))), Term::free("V", Typ::base("prop"))), Term::free("W", Typ::base("prop"))),
-    ), &w_thm).unwrap();
+    let thm1 = ThmKernel::implies_intr(
+        &CTerm::certify(Term::app(
+            Term::app(
+                Term::const_(
+                    "Pure.imp",
+                    Typ::arrows(vec![Typ::base("prop"), Typ::base("prop")], Typ::base("prop")),
+                ),
+                Term::free("V", Typ::base("prop")),
+            ),
+            Term::free("W", Typ::base("prop")),
+        )),
+        &w_thm,
+    )
+    .unwrap();
     ThmKernel::implies_intr(&v, &thm1).unwrap()
 }
 

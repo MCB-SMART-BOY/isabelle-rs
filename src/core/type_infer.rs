@@ -7,8 +7,8 @@
 //!
 //! ## Algorithm
 //!
-//! 1. **Generate constraints**: Walk the term and generate type equality
-//!    constraints (e.g., from `f x` we get `typeof(f) = typeof(x) → α`)
+//! 1. **Generate constraints**: Walk the term and generate type equality constraints (e.g., from `f
+//!    x` we get `typeof(f) = typeof(x) → α`)
 //! 2. **Unify constraints**: Solve the constraints via unification
 //! 3. **Apply substitution**: Apply the resulting type substitution to the term
 //! 4. **Generalize**: Quantify over unconstrained type variables
@@ -21,8 +21,10 @@
 
 use std::collections::HashMap;
 
-use super::term::Term;
-use super::types::{Sort, Symbol, Typ};
+use super::{
+    term::Term,
+    types::{Sort, Symbol, Typ},
+};
 
 // =========================================================================
 // Inference types
@@ -80,11 +82,11 @@ impl TypeSubst {
                 } else {
                     typ.clone()
                 }
-            }
+            },
             Typ::Type { name, args } => {
                 let args: Vec<Typ> = args.iter().map(|a| self.apply(a)).collect();
                 Typ::Type { name: name.clone(), args }
-            }
+            },
             Typ::TFree { .. } => typ.clone(),
         }
     }
@@ -117,20 +119,12 @@ pub struct TypeInfer {
 impl TypeInfer {
     /// Create a new inference engine.
     pub fn new() -> Self {
-        TypeInfer {
-            subst: TypeSubst::new(),
-            next_var: 0,
-            type_env: None,
-        }
+        TypeInfer { subst: TypeSubst::new(), next_var: 0, type_env: None }
     }
 
     /// Create with a type environment.
     pub fn with_env(env: super::types::TypeEnv) -> Self {
-        TypeInfer {
-            subst: TypeSubst::new(),
-            next_var: 0,
-            type_env: Some(env),
-        }
+        TypeInfer { subst: TypeSubst::new(), next_var: 0, type_env: Some(env) }
     }
 
     /// Generate a fresh inference variable.
@@ -147,11 +141,7 @@ impl TypeInfer {
     pub fn infer(&mut self, term: &Term) -> Option<Typ> {
         let (typ, mut constraints) = self.infer_with_constraints(term);
         // Solve constraints
-        if self.solve_constraints(&mut constraints) {
-            Some(self.subst.apply(&typ))
-        } else {
-            None
-        }
+        if self.solve_constraints(&mut constraints) { Some(self.subst.apply(&typ)) } else { None }
     }
 
     /// Infer type and generate constraints.
@@ -173,7 +163,7 @@ impl TypeInfer {
                 } else {
                     (typ.clone(), vec![])
                 }
-            }
+            },
 
             Term::Free { typ, .. } => {
                 if typ.is_dummy() {
@@ -182,7 +172,7 @@ impl TypeInfer {
                 } else {
                     (typ.clone(), vec![])
                 }
-            }
+            },
 
             Term::Var { typ, .. } => {
                 if typ.is_dummy() {
@@ -191,23 +181,19 @@ impl TypeInfer {
                 } else {
                     (typ.clone(), vec![])
                 }
-            }
+            },
 
             Term::Bound(_) => {
                 let v = self.fresh_var(Sort::top());
                 (v, vec![])
-            }
+            },
 
             Term::Abs { typ, body, .. } => {
-                let dom = if typ.is_dummy() {
-                    self.fresh_var(Sort::top())
-                } else {
-                    typ.clone()
-                };
+                let dom = if typ.is_dummy() { self.fresh_var(Sort::top()) } else { typ.clone() };
                 let (cod, constraints) = self.infer_with_constraints(body);
                 let fun_typ = Typ::arrow(dom, cod);
                 (fun_typ, constraints)
-            }
+            },
 
             Term::App { func, arg } => {
                 let (fn_typ, mut constraints) = self.infer_with_constraints(func);
@@ -220,7 +206,7 @@ impl TypeInfer {
                     right: Typ::arrow(arg_typ, result_typ.clone()),
                 });
                 (result_typ, constraints)
-            }
+            },
         }
     }
 
@@ -241,12 +227,9 @@ impl TypeInfer {
                     if n1 == n2 && a1.len() == a2.len() =>
                 {
                     for (a, b) in a1.iter().zip(a2.iter()) {
-                        constraints.push(Constraint {
-                            left: a.clone(),
-                            right: b.clone(),
-                        });
+                        constraints.push(Constraint { left: a.clone(), right: b.clone() });
                     }
-                }
+                },
 
                 // Inference variable on left
                 (Typ::TVar { name, index: _, sort: _ }, _) => {
@@ -255,7 +238,7 @@ impl TypeInfer {
                         return false;
                     }
                     self.subst.insert(name.clone(), t2.clone());
-                }
+                },
 
                 // Inference variable on right
                 (_, Typ::TVar { name, index: _, sort: _ }) => {
@@ -263,16 +246,18 @@ impl TypeInfer {
                         return false;
                     }
                     self.subst.insert(name.clone(), t1.clone());
-                }
+                },
 
                 // Arrow types: ensure both have 2 args before indexing
                 (Typ::Type { name: n1, args: a1 }, Typ::Type { name: n2, args: a2 })
-                    if n1.as_ref() == "fun" && n2.as_ref() == "fun"
-                    && a1.len() == 2 && a2.len() == 2 =>
+                    if n1.as_ref() == "fun"
+                        && n2.as_ref() == "fun"
+                        && a1.len() == 2
+                        && a2.len() == 2 =>
                 {
                     constraints.push(Constraint { left: a1[0].clone(), right: a2[0].clone() });
                     constraints.push(Constraint { left: a1[1].clone(), right: a2[1].clone() });
-                }
+                },
 
                 // Mismatch
                 _ => return false,
@@ -289,29 +274,16 @@ impl TypeInfer {
     /// Apply the inferred types to a term, replacing dummy types.
     pub fn apply_to_term(&self, term: &Term) -> Term {
         match term {
-            Term::Const { name, typ } => {
-                Term::const_(name.as_ref(), self.subst.apply(typ))
-            }
-            Term::Free { name, typ } => {
-                Term::free(name.as_ref(), self.subst.apply(typ))
-            }
+            Term::Const { name, typ } => Term::const_(name.as_ref(), self.subst.apply(typ)),
+            Term::Free { name, typ } => Term::free(name.as_ref(), self.subst.apply(typ)),
             Term::Var { name, index, typ } => {
                 Term::var(name.as_ref(), *index, self.subst.apply(typ))
-            }
+            },
             Term::Bound(i) => Term::bound(*i),
             Term::Abs { name, typ, body } => {
-                Term::abs(
-                    name.as_ref(),
-                    self.subst.apply(typ),
-                    self.apply_to_term(body),
-                )
-            }
-            Term::App { func, arg } => {
-                Term::app(
-                    self.apply_to_term(func),
-                    self.apply_to_term(arg),
-                )
-            }
+                Term::abs(name.as_ref(), self.subst.apply(typ), self.apply_to_term(body))
+            },
+            Term::App { func, arg } => Term::app(self.apply_to_term(func), self.apply_to_term(arg)),
         }
     }
 }
@@ -344,8 +316,7 @@ fn occurs_in(var: &Symbol, typ: &Typ) -> bool {
 /// # Returns
 ///
 /// - `Some(typ)` — the inferred type if constraints can be satisfied.
-/// - `None` — if unification fails (type mismatch) or an occurs-check
-///   violation is detected.
+/// - `None` — if unification fails (type mismatch) or an occurs-check violation is detected.
 ///
 /// # Errors
 ///
@@ -358,15 +329,11 @@ fn occurs_in(var: &Symbol, typ: &Typ) -> bool {
 /// # Examples
 ///
 /// ```rust
-/// use isabelle_rs::core::term::Term;
-/// use isabelle_rs::core::types::Typ;
-/// use isabelle_rs::core::type_infer::infer_type;
+/// use isabelle_rs::core::{term::Term, type_infer::infer_type, types::Typ};
 ///
 /// // Infer type of a constant application: `¬ True`
-/// let not_true = Term::app(
-///     Term::const_("HOL.Not", Typ::dummy()),
-///     Term::const_("HOL.True", Typ::dummy()),
-/// );
+/// let not_true =
+///     Term::app(Term::const_("HOL.Not", Typ::dummy()), Term::const_("HOL.True", Typ::dummy()));
 /// let typ = infer_type(&not_true);
 /// assert!(typ.is_some());
 /// ```
@@ -390,14 +357,9 @@ pub fn infer_type(term: &Term) -> Option<Typ> {
 /// # Examples
 ///
 /// ```rust
-/// use isabelle_rs::core::term::Term;
-/// use isabelle_rs::core::types::Typ;
-/// use isabelle_rs::core::type_infer::infer_and_annotate;
+/// use isabelle_rs::core::{term::Term, type_infer::infer_and_annotate, types::Typ};
 ///
-/// let f_x = Term::app(
-///     Term::free("f", Typ::dummy()),
-///     Term::free("x", Typ::dummy()),
-/// );
+/// let f_x = Term::app(Term::free("f", Typ::dummy()), Term::free("x", Typ::dummy()));
 /// let annotated = infer_and_annotate(&f_x).unwrap();
 /// // The annotated term should no longer contain dummy types.
 /// ```

@@ -5,21 +5,38 @@
 
 #[cfg(test)]
 mod batch_verify {
-    use isabelle_rs::theory::session_builder::SessionBuilder;
-    use isabelle_rs::theory::verify_classifier::VerifyStatus;
     use std::path::Path;
+
+    use isabelle_rs::theory::{session_builder::SessionBuilder, verify_classifier::VerifyStatus};
 
     /// The "first tier" files — foundational theories that MUST verify.
     const TIER1_FILES: &[&str] = &[
-        "HOL", "Orderings", "Set", "Fun", "Product_Type",
-        "Sum_Type", "Nat", "Int", "List", "Option",
+        "HOL",
+        "Orderings",
+        "Set",
+        "Fun",
+        "Product_Type",
+        "Sum_Type",
+        "Nat",
+        "Int",
+        "List",
+        "Option",
     ];
 
     /// The "second tier" files — important HOL infrastructure.
     #[allow(dead_code)]
     const TIER2_FILES: &[&str] = &[
-        "Lattices", "Complete_Lattices", "Relation", "Equiv_Relations",
-        "Map", "Finite_Set", "Num", "Power", "Groups", "Rings", "Fields",
+        "Lattices",
+        "Complete_Lattices",
+        "Relation",
+        "Equiv_Relations",
+        "Map",
+        "Finite_Set",
+        "Num",
+        "Power",
+        "Groups",
+        "Rings",
+        "Fields",
     ];
 
     #[test]
@@ -52,7 +69,12 @@ mod batch_verify {
                 let icon = if r.status.has_verified() { "✅" } else { "❌" };
                 eprintln!(
                     "  {} {:>15} [{:>7}] {:>5.0}% — {} theorems ({:.1}ms)",
-                    icon, name, label, rate, r.theorem_count, r.elapsed.as_millis() as f64
+                    icon,
+                    name,
+                    label,
+                    rate,
+                    r.theorem_count,
+                    r.elapsed.as_millis() as f64
                 );
                 if r.status.has_verified() {
                     tier1_ok += 1;
@@ -100,7 +122,7 @@ mod batch_verify {
                 VerifyStatus::FullSuccess => assert!(r.status.rate() > 0.99),
                 VerifyStatus::PartialSuccess { verified, attempted, .. } => {
                     assert!(*verified <= *attempted, "verified > attempted for {}", r.name);
-                }
+                },
                 _ => assert!(r.status.rate() < 0.01),
             }
         }

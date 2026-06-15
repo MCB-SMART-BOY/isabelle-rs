@@ -150,7 +150,7 @@ pub fn parse_single(s: &str) -> Option<Attribute> {
         "sym" => Some(Attribute::Sym),
         s if s.starts_with("rule:") => {
             Some(Attribute::Named(s.strip_prefix("rule:").unwrap().to_string()))
-        }
+        },
         _ => None,
     }
 }
@@ -169,7 +169,7 @@ pub fn classify_from_attrs(attrs: &[Attribute]) -> AttrClass {
             Attribute::Intro(IntroModifier::Unsafe) => class.unsafe_intro = true,
             Attribute::Intro(IntroModifier::Extra) => {
                 // Extra intros are not added to any set by default
-            }
+            },
             Attribute::Elim(ElimModifier::Safe) => class.safe_elim = true,
             Attribute::Elim(ElimModifier::Regular) => class.elim = true,
             Attribute::Dest => class.dest = true,
@@ -177,13 +177,13 @@ pub fn classify_from_attrs(attrs: &[Attribute]) -> AttrClass {
                 class.safe_intro = true;
                 class.safe_elim = true;
                 class.simp = true;
-            }
+            },
             Attribute::Induct => class.induct = true,
             Attribute::Split => class.split = true,
             Attribute::Cong => class.cong = true,
             Attribute::Trans | Attribute::Sym | Attribute::Named(_) => {
                 // These don't affect the standard classification
-            }
+            },
         }
     }
 
@@ -234,15 +234,33 @@ pub fn compute_db_categories(attrs: &[String], name: &str, is_equality: bool) ->
     let class = classify_with_fallback(attrs, name, is_equality);
     let mut cats = HashSet::new();
 
-    if class.simp { cats.insert("simp".to_string()); }
-    if class.safe_intro { cats.insert("safe_intro".to_string()); }
-    if class.unsafe_intro { cats.insert("unsafe_intro".to_string()); }
-    if class.safe_elim { cats.insert("safe_elim".to_string()); }
-    if class.elim { cats.insert("elim".to_string()); }
-    if class.dest { cats.insert("dest".to_string()); }
-    if class.induct { cats.insert("induct".to_string()); }
-    if class.split { cats.insert("split".to_string()); }
-    if class.cong { cats.insert("cong".to_string()); }
+    if class.simp {
+        cats.insert("simp".to_string());
+    }
+    if class.safe_intro {
+        cats.insert("safe_intro".to_string());
+    }
+    if class.unsafe_intro {
+        cats.insert("unsafe_intro".to_string());
+    }
+    if class.safe_elim {
+        cats.insert("safe_elim".to_string());
+    }
+    if class.elim {
+        cats.insert("elim".to_string());
+    }
+    if class.dest {
+        cats.insert("dest".to_string());
+    }
+    if class.induct {
+        cats.insert("induct".to_string());
+    }
+    if class.split {
+        cats.insert("split".to_string());
+    }
+    if class.cong {
+        cats.insert("cong".to_string());
+    }
 
     // Default: at minimum, add to standard intro set
     if cats.is_empty() {
@@ -296,11 +314,8 @@ mod tests {
 
     #[test]
     fn test_compute_categories() {
-        let cats = compute_db_categories(
-            &["simp".to_string(), "intro!".to_string()],
-            "some_lemma",
-            false,
-        );
+        let cats =
+            compute_db_categories(&["simp".to_string(), "intro!".to_string()], "some_lemma", false);
         assert!(cats.contains("simp"));
         assert!(cats.contains("safe_intro"));
     }

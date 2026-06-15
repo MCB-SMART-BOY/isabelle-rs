@@ -34,10 +34,7 @@
 
 use std::sync::Arc;
 
-use super::term::Term;
-use super::theory::Theory;
-use super::thm::Thm;
-use super::types::Typ;
+use super::{term::Term, theory::Theory, thm::Thm, types::Typ};
 
 // =========================================================================
 // Morphism
@@ -77,13 +74,7 @@ impl Morphism {
 
     /// The identity morphism — no transformation.
     pub fn identity() -> Self {
-        Morphism {
-            term_fn: None,
-            typ_fn: None,
-            fact_fn: None,
-            thm_fn: None,
-            binding_fn: None,
-        }
+        Morphism { term_fn: None, typ_fn: None, fact_fn: None, thm_fn: None, binding_fn: None }
     }
 
     /// A morphism that only transforms terms.
@@ -116,9 +107,7 @@ impl Morphism {
     }
 
     /// A morphism that only provides fact lookup.
-    pub fn fact_morphism(
-        f: impl Fn(&str) -> Option<Arc<Thm>> + Send + Sync + 'static,
-    ) -> Self {
+    pub fn fact_morphism(f: impl Fn(&str) -> Option<Arc<Thm>> + Send + Sync + 'static) -> Self {
         let mut m = Morphism::identity();
         m.fact_fn = Some(Arc::new(f));
         m
@@ -205,13 +194,7 @@ impl Morphism {
         // Binding: self after other
         let binding_fn = compose_str_fn(&self.binding_fn, &other.binding_fn);
 
-        Morphism {
-            term_fn,
-            typ_fn,
-            fact_fn,
-            thm_fn,
-            binding_fn,
-        }
+        Morphism { term_fn, typ_fn, fact_fn, thm_fn, binding_fn }
     }
 }
 
@@ -238,7 +221,7 @@ fn compose_fn<T: 'static + Send + Sync>(
             let g = Arc::clone(g);
             let f = Arc::clone(f);
             Some(Arc::new(move |x: &T| g(&f(x))))
-        }
+        },
     }
 }
 
@@ -254,10 +237,8 @@ fn compose_fact_fn(
         (Some(g), Some(f)) => {
             let g = Arc::clone(g);
             let f = Arc::clone(f);
-            Some(Arc::new(move |name: &str| {
-                f(name).or_else(|| g(name))
-            }))
-        }
+            Some(Arc::new(move |name: &str| f(name).or_else(|| g(name))))
+        },
     }
 }
 
@@ -274,7 +255,7 @@ fn compose_str_fn(
             let g = Arc::clone(g);
             let f = Arc::clone(f);
             Some(Arc::new(move |s: &str| g(&f(s))))
-        }
+        },
     }
 }
 
@@ -293,10 +274,7 @@ pub struct CompositeMorphism {
 
 impl CompositeMorphism {
     pub fn new(morph: Morphism) -> Self {
-        CompositeMorphism {
-            morph,
-            export: None,
-        }
+        CompositeMorphism { morph, export: None }
     }
 
     /// Compose with another composite morphism.
@@ -349,45 +327,32 @@ fn subst_term(subst: &[(Term, Term)], t: &Term) -> Term {
 /// Substitute a single variable occurrence.
 fn subst_single(t: &Term, var: &Term, replacement: &Term) -> Term {
     match t {
-        Term::Var {
-            name: n1,
-            index: i1,
-            typ: t1,
-        } => match var {
-            Term::Var {
-                name: n2,
-                index: i2,
-                typ: t2,
-            } => {
+        Term::Var { name: n1, index: i1, typ: t1 } => match var {
+            Term::Var { name: n2, index: i2, typ: t2 } => {
                 if n1 == n2 && i1 == i2 && t1 == t2 {
                     replacement.clone()
                 } else {
                     t.clone()
                 }
-            }
+            },
             _ => t.clone(),
         },
-        Term::Free {
-            name: n1, typ: t1, ..
-        } => match var {
-            Term::Free {
-                name: n2, typ: t2, ..
-            } => {
+        Term::Free { name: n1, typ: t1, .. } => match var {
+            Term::Free { name: n2, typ: t2, .. } => {
                 if n1 == n2 && t1 == t2 {
                     replacement.clone()
                 } else {
                     t.clone()
                 }
-            }
+            },
             _ => t.clone(),
         },
         Term::Abs { name, typ, body } => {
             Term::abs(name.clone(), typ.clone(), subst_single(body, var, replacement))
-        }
-        Term::App { func, arg } => Term::app(
-            subst_single(func, var, replacement),
-            subst_single(arg, var, replacement),
-        ),
+        },
+        Term::App { func, arg } => {
+            Term::app(subst_single(func, var, replacement), subst_single(arg, var, replacement))
+        },
         _ => t.clone(),
     }
 }
@@ -403,7 +368,7 @@ fn subst_typ(subst: &[(String, Typ)], t: &Typ) -> Typ {
                 }
             }
             t.clone()
-        }
+        },
         Typ::TFree { name, .. } => {
             for (var_name, replacement) in subst {
                 if *var_name == name.as_ref() {
@@ -411,11 +376,10 @@ fn subst_typ(subst: &[(String, Typ)], t: &Typ) -> Typ {
                 }
             }
             t.clone()
-        }
-        Typ::Type { name, args } => Typ::apply(
-            name.clone(),
-            args.iter().map(|a| subst_typ(subst, a)).collect(),
-        ),
+        },
+        Typ::Type { name, args } => {
+            Typ::apply(name.clone(), args.iter().map(|a| subst_typ(subst, a)).collect())
+        },
     }
 }
 
@@ -439,7 +403,7 @@ mod tests {
         let m = Morphism::term_morphism(|t| match t {
             Term::Free { name, .. } if name.as_ref() == "x" => {
                 Term::const_("True", Typ::base("bool"))
-            }
+            },
             _ => t.clone(),
         });
 
@@ -467,16 +431,12 @@ mod tests {
     #[test]
     fn test_compose() {
         let m1 = Morphism::term_morphism(|t| match t {
-            Term::Free { name, .. } if name.as_ref() == "x" => {
-                Term::free("y", Typ::base("bool"))
-            }
+            Term::Free { name, .. } if name.as_ref() == "x" => Term::free("y", Typ::base("bool")),
             _ => t.clone(),
         });
 
         let m2 = Morphism::term_morphism(|t| match t {
-            Term::Free { name, .. } if name.as_ref() == "y" => {
-                Term::free("z", Typ::base("bool"))
-            }
+            Term::Free { name, .. } if name.as_ref() == "y" => Term::free("z", Typ::base("bool")),
             _ => t.clone(),
         });
 
@@ -500,19 +460,11 @@ mod tests {
     fn test_fact_morphism() {
         use crate::core::thm::{CTerm, ThmKernel};
 
-        let fact_thm = Arc::new(
-            ThmKernel::assume(CTerm::certify(Term::const_(
-                "P",
-                Typ::base("bool"),
-            ))),
-        );
+        let fact_thm =
+            Arc::new(ThmKernel::assume(CTerm::certify(Term::const_("P", Typ::base("bool")))));
 
         let m = Morphism::fact_morphism(move |name: &str| {
-            if name == "my_fact" {
-                Some(Arc::clone(&fact_thm))
-            } else {
-                None
-            }
+            if name == "my_fact" { Some(Arc::clone(&fact_thm)) } else { None }
         });
 
         assert!(m.fact("my_fact").is_some());
@@ -521,9 +473,7 @@ mod tests {
 
     #[test]
     fn test_typ_subst_morphism() {
-        let m = Morphism::typ_subst_morphism(vec![
-            ("'a".to_string(), Typ::base("nat")),
-        ]);
+        let m = Morphism::typ_subst_morphism(vec![("'a".to_string(), Typ::base("nat"))]);
 
         let a = Typ::free("'a", super::super::types::Sort::top());
         let result = m.typ(&a);

@@ -19,8 +19,9 @@
 //! - `$/isabelle/*` — server-to-client notifications (pushed)
 //! - `isabelle/*` — client-to-server requests (pulled)
 
-use super::lsp_types::*;
 use serde::{Deserialize, Serialize};
+
+use super::lsp_types::*;
 
 // =========================================================================
 // Extension method names

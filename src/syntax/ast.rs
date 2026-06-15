@@ -47,16 +47,10 @@ impl Ast {
         match node.kind() {
             SyntaxKind::Root => {
                 // A root is a sequence of commands; collect them
-                let children: Vec<Ast> = node
-                    .children()
-                    .filter_map(|c| Ast::from_syntax(&c))
-                    .collect();
-                if children.is_empty() {
-                    None
-                } else {
-                    Some(Ast::Mixfix("root".into(), children))
-                }
-            }
+                let children: Vec<Ast> =
+                    node.children().filter_map(|c| Ast::from_syntax(&c)).collect();
+                if children.is_empty() { None } else { Some(Ast::Mixfix("root".into(), children)) }
+            },
             SyntaxKind::Lemma | SyntaxKind::Theorem => {
                 // Extract name and statement from lemma children
                 let mut name = String::new();
@@ -68,22 +62,19 @@ impl Ast {
                             if name.is_empty() {
                                 name = text;
                             }
-                        }
+                        },
                         SyntaxKind::String_ => {
                             stmt = child.as_token()?.text().to_string();
-                        }
-                        _ => {}
+                        },
+                        _ => {},
                     }
                 }
                 if name.is_empty() {
                     None
                 } else {
-                    Some(Ast::Mixfix(
-                        "lemma".into(),
-                        vec![Ast::Variable(name), Ast::String(stmt)],
-                    ))
+                    Some(Ast::Mixfix("lemma".into(), vec![Ast::Variable(name), Ast::String(stmt)]))
                 }
-            }
+            },
             SyntaxKind::TheoryHeader => {
                 // Extract theory name from header
                 let ident = node
@@ -93,23 +84,23 @@ impl Ast {
                     .text()
                     .to_string();
                 Some(Ast::Mixfix("theory".into(), vec![Ast::Variable(ident)]))
-            }
+            },
             SyntaxKind::Ident | SyntaxKind::LongIdent => {
                 let text = node.first_token()?.text().to_string();
                 Some(Ast::Variable(text))
-            }
+            },
             SyntaxKind::Keyword => {
                 let text = node.first_token()?.text().to_string();
                 Some(Ast::Constant(text))
-            }
+            },
             SyntaxKind::String_ => {
                 let text = node.first_token()?.text().to_string();
                 Some(Ast::String(text))
-            }
+            },
             SyntaxKind::Number_ => {
                 let text = node.first_token()?.text().to_string();
                 Some(Ast::Number(text))
-            }
+            },
             _ => None,
         }
     }
@@ -155,7 +146,7 @@ mod tests {
             Ast::Mixfix(op, args) => {
                 assert_eq!(op, "lemma");
                 assert_eq!(args.len(), 2);
-            }
+            },
             _ => panic!("expected Mixfix"),
         }
     }

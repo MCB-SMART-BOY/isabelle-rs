@@ -40,31 +40,40 @@ fn arb_base_type() -> impl Strategy<Value = types::Typ> {
 fn arb_type() -> impl Strategy<Value = types::Typ> {
     let leaf = arb_base_type();
     leaf.prop_recursive(
-        4,    // max depth
-        16,   // max nodes
-        3,    // expected branches
-        |inner| {
-            (inner.clone(), inner.clone())
-                .prop_map(|(a, b)| types::Typ::arrow(a, b))
-        },
+        4,  // max depth
+        16, // max nodes
+        3,  // expected branches
+        |inner| (inner.clone(), inner.clone()).prop_map(|(a, b)| types::Typ::arrow(a, b)),
     )
 }
 
 /// Generates random Isabelle-style variable names.
 fn arb_var_name() -> impl Strategy<Value = String> {
     prop::sample::select(vec![
-        "x".to_string(), "y".to_string(), "z".to_string(),
-        "a".to_string(), "b".to_string(), "c".to_string(),
-        "P".to_string(), "Q".to_string(), "R".to_string(),
-        "f".to_string(), "g".to_string(), "h".to_string(),
+        "x".to_string(),
+        "y".to_string(),
+        "z".to_string(),
+        "a".to_string(),
+        "b".to_string(),
+        "c".to_string(),
+        "P".to_string(),
+        "Q".to_string(),
+        "R".to_string(),
+        "f".to_string(),
+        "g".to_string(),
+        "h".to_string(),
     ])
 }
 
 /// Generates random proposition names.
 fn arb_prop_name() -> impl Strategy<Value = String> {
     prop::sample::select(vec![
-        "A".to_string(), "B".to_string(), "C".to_string(),
-        "P".to_string(), "Q".to_string(), "R".to_string(),
+        "A".to_string(),
+        "B".to_string(),
+        "C".to_string(),
+        "P".to_string(),
+        "Q".to_string(),
+        "R".to_string(),
     ])
 }
 
@@ -79,17 +88,19 @@ fn arb_term() -> impl Strategy<Value = term::Term> {
         (0usize..10).prop_map(term::Term::bound),
     ];
     leaf.prop_recursive(
-        6,    // max depth
-        64,   // max nodes
-        5,    // expected branches
+        6,  // max depth
+        64, // max nodes
+        5,  // expected branches
         |inner| {
             prop_oneof![
                 // Application
-                (inner.clone(), inner.clone())
-                    .prop_map(|(f, a)| term::Term::app(f, a)),
+                (inner.clone(), inner.clone()).prop_map(|(f, a)| term::Term::app(f, a)),
                 // Abstraction
-                (arb_var_name(), arb_type(), inner)
-                    .prop_map(|(n, t, b)| term::Term::abs(n.as_str(), t, b)),
+                (arb_var_name(), arb_type(), inner).prop_map(|(n, t, b)| term::Term::abs(
+                    n.as_str(),
+                    t,
+                    b
+                )),
             ]
         },
     )

@@ -13,10 +13,13 @@
 //! This is sugar for defining a predicate `Ev :: nat => bool` with
 //! `inductive` and then defining the set as `{x. Ev x}`.
 
-use crate::core::term::Term;
-use crate::core::thm::{CTerm, ThmKernel};
-use crate::core::types::Typ;
 use std::sync::Arc;
+
+use crate::core::{
+    term::Term,
+    thm::{CTerm, ThmKernel},
+    types::Typ,
+};
 
 /// A parsed inductive_set definition.
 #[derive(Debug, Clone)]
@@ -70,9 +73,12 @@ pub fn parse_inductive_sets(source: &str) -> Vec<InductiveSetDef> {
             }
 
             // Stop at next declaration
-            if t.starts_with("lemma ") || t.starts_with("theorem ")
-                || t.starts_with("inductive ") || t.starts_with("inductive_set ")
-                || t.starts_with("fun ") || t.starts_with("datatype ")
+            if t.starts_with("lemma ")
+                || t.starts_with("theorem ")
+                || t.starts_with("inductive ")
+                || t.starts_with("inductive_set ")
+                || t.starts_with("fun ")
+                || t.starts_with("datatype ")
                 || t == "end"
             {
                 break;
@@ -140,11 +146,7 @@ impl InductiveSetDef {
         // 4. Set membership definition
         let mem_name = format!("{}.mem", self.name);
         let mem_term = Term::const_(mem_name.as_str(), Typ::base("prop"));
-        results.push((
-            mem_name,
-            mem_term,
-            vec!["simp".to_string(), "inductive_set".to_string()],
-        ));
+        results.push((mem_name, mem_term, vec!["simp".to_string(), "inductive_set".to_string()]));
 
         results
     }

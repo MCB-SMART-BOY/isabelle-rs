@@ -10,7 +10,7 @@
 //! 4. **Proof checking** — proof term validation
 //! 5. **Net operations** — discrimination net lookup
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use isabelle_rs::core::*;
 
 // =========================================================================
@@ -28,10 +28,9 @@ fn bench_kernel_reflexive(c: &mut Criterion) {
     for (i, typ) in types.iter().enumerate() {
         let t = term::Term::const_("c", typ.clone());
         let ct = thm::CTerm::certify(t);
-        group.bench_function(
-            format!("reflexive_type_{i}"),
-            |b| b.iter(|| thm::ThmKernel::reflexive(black_box(ct.clone()))),
-        );
+        group.bench_function(format!("reflexive_type_{i}"), |b| {
+            b.iter(|| thm::ThmKernel::reflexive(black_box(ct.clone())))
+        });
     }
     group.finish();
 }
@@ -73,10 +72,7 @@ fn bench_unification(c: &mut Criterion) {
     group.bench_function("simple_var_term", |b| {
         let x = term::Term::free("x", types::Typ::dummy());
         let t = term::Term::const_("c", types::Typ::base("bool"));
-        let config = unify::UnifyConfig {
-            search_bound: 20,
-            max_unifiers: 1,
-        };
+        let config = unify::UnifyConfig { search_bound: 20, max_unifiers: 1 };
 
         b.iter(|| {
             let env = envir::Envir::init();
@@ -86,10 +82,7 @@ fn bench_unification(c: &mut Criterion) {
 
     // Deep term unification
     group.bench_function("deep_term", |b| {
-        let config = unify::UnifyConfig {
-            search_bound: 20,
-            max_unifiers: 1,
-        };
+        let config = unify::UnifyConfig { search_bound: 20, max_unifiers: 1 };
         // Build a moderately deep term
         let mut t = term::Term::free("x", types::Typ::dummy());
         for _ in 0..5 {
@@ -115,9 +108,10 @@ fn bench_type_infer(c: &mut Criterion) {
     let mut group = c.benchmark_group("type_infer");
 
     group.bench_function("simple_app", |b| {
-        let f = term::Term::free("f", types::Typ::arrow(
-            types::Typ::free("'a", types::Sort::top()), types::Typ::base("bool")
-        ));
+        let f = term::Term::free(
+            "f",
+            types::Typ::arrow(types::Typ::free("'a", types::Sort::top()), types::Typ::base("bool")),
+        );
         let x = term::Term::free("x", types::Typ::free("'a", types::Sort::top()));
         let app = term::Term::app(f, x);
 
@@ -153,10 +147,7 @@ fn bench_proof_checking(c: &mut Criterion) {
 
     group.bench_function("check_axiom", |b| {
         let prop = term::Term::const_("A", types::Typ::base("prop"));
-        let proof = proofterm::ProofTerm::PAxm {
-            name: "test".into(),
-            prop: prop.clone(),
-        };
+        let proof = proofterm::ProofTerm::PAxm { name: "test".into(), prop: prop.clone() };
         b.iter(|| {
             let _ = proofterm::check_proof(black_box(&proof), black_box(&prop));
         });
@@ -167,18 +158,10 @@ fn bench_proof_checking(c: &mut Criterion) {
         let b_term = term::Term::const_("B", types::Typ::base("prop"));
         let imp = logic::Pure::mk_implies(a.clone(), b_term.clone());
 
-        let proof_imp = proofterm::ProofTerm::PAxm {
-            name: "impI".into(),
-            prop: imp,
-        };
-        let proof_a = proofterm::ProofTerm::PAxm {
-            name: "assume".into(),
-            prop: a,
-        };
-        let app = proofterm::ProofTerm::PAppP {
-            proof1: Box::new(proof_imp),
-            proof2: Box::new(proof_a),
-        };
+        let proof_imp = proofterm::ProofTerm::PAxm { name: "impI".into(), prop: imp };
+        let proof_a = proofterm::ProofTerm::PAxm { name: "assume".into(), prop: a };
+        let app =
+            proofterm::ProofTerm::PAppP { proof1: Box::new(proof_imp), proof2: Box::new(proof_a) };
         bench.iter(|| {
             let _ = proofterm::check_proof(black_box(&app), black_box(&b_term));
         });

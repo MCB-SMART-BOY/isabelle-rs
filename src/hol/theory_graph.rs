@@ -10,12 +10,14 @@
 //! 4. Topological sort respecting import dependencies
 //! 5. Load theories in order, inheriting parent theorem databases
 
-use std::collections::{HashMap, VecDeque};
-use std::path::{Path, PathBuf};
+use std::{
+    collections::{HashMap, VecDeque},
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use super::hol_loader::{HolTheoremDb, ParsedLemma, parse_theory_header};
 use crate::core::thm::Thm;
-use std::sync::Arc;
 
 // =========================================================================
 // TheoryGraph
@@ -225,10 +227,10 @@ impl TheoryGraph {
                         }
                         db.extend(&lemmas);
                         drop(lemmas);
-                    }
+                    },
                     Err(e) => {
                         self.errors.push((name.clone(), e));
-                    }
+                    },
                 }
             }
         }
@@ -294,11 +296,7 @@ mod tests {
         let mut graph = TheoryGraph::new();
         let count = graph.scan(Path::new("theories")).unwrap();
         eprintln!("{}", graph.summary());
-        assert!(
-            count >= 13,
-            "Should find at least 13 theories, found {}",
-            count
-        );
+        assert!(count >= 13, "Should find at least 13 theories, found {}", count);
     }
 
     #[test]
@@ -316,11 +314,7 @@ mod tests {
         let mut graph = TheoryGraph::new();
         graph.scan(Path::new("theories")).unwrap();
         let result = graph.topological_sort();
-        assert!(
-            result.is_ok(),
-            "DAG should have no cycles: {:?}",
-            result.err()
-        );
+        assert!(result.is_ok(), "DAG should have no cycles: {:?}", result.err());
     }
 }
 
@@ -344,11 +338,11 @@ mod scale_tests {
                     eprintln!("Topological sort OK: {} theories in order", order.len());
                     eprintln!("First 5: {:?}", &order[..5.min(order.len())]);
                     eprintln!("Last 5: {:?}", &order[order.len().saturating_sub(5)..]);
-                }
+                },
                 Err(e) => {
                     eprintln!("DAG error: {}", e);
                     eprintln!("Graph summary: {}", graph.summary());
-                }
+                },
             }
         } else {
             eprintln!("isabelle-source/src/HOL not found, skipping full scan test");
@@ -373,21 +367,14 @@ mod scale_tests {
 
             match result {
                 Ok(db) => {
-                    eprintln!(
-                        "Loaded {} theories, {} theorems in DB",
-                        loaded,
-                        db.all.len()
-                    );
+                    eprintln!("Loaded {} theories, {} theorems in DB", loaded, db.all.len());
                     eprintln!("DB by_name keys: {}", db.by_name.len());
-                }
+                },
                 Err(e) => {
                     eprintln!("Load error: {}", e);
-                }
+                },
             }
-            eprintln!(
-                "Errors: {:?}",
-                graph.errors.iter().take(5).collect::<Vec<_>>()
-            );
+            eprintln!("Errors: {:?}", graph.errors.iter().take(5).collect::<Vec<_>>());
         }
     }
 
@@ -430,13 +417,13 @@ mod scale_tests {
                                 errors,
                             );
                         }
-                    }
+                    },
                     Err(e) => {
                         errors += 1;
                         if errors <= 5 {
                             eprintln!("  Error loading {}: {}", name, e);
                         }
-                    }
+                    },
                 }
             }
         }
@@ -444,7 +431,10 @@ mod scale_tests {
         HolTheoremDb::add_builtins(&mut db);
         eprintln!(
             "Done: {} files loaded, {} errors, {} total theorems, {} by-name",
-            loaded, errors, db.all.len(), db.by_name.len()
+            loaded,
+            errors,
+            db.all.len(),
+            db.by_name.len()
         );
     }
 
@@ -491,18 +481,27 @@ mod scale_tests {
         // Verify sample lemmas using the custom DB
         HolTheoremDb::with_override(&db, || {
             let target_files = [
-                "Fun.thy", "Product_Type.thy", "Sum_Type.thy",
-                "Option.thy", "Lattices.thy", "Typedef.thy",
-                "Num.thy", "Power.thy", "Fields.thy",
+                "Fun.thy",
+                "Product_Type.thy",
+                "Sum_Type.thy",
+                "Option.thy",
+                "Lattices.thy",
+                "Typedef.thy",
+                "Num.thy",
+                "Power.thy",
+                "Fields.thy",
             ];
             let mut total_v = 0usize;
             let mut total_a = 0usize;
             for fname in &target_files {
                 let path = hol_dir.join(fname);
-                if !path.exists() { continue; }
+                if !path.exists() {
+                    continue;
+                }
                 let source = std::fs::read_to_string(&path).unwrap_or_default();
                 let lemmas = crate::hol::hol_loader::parse_lemmas(&source);
-                let with_proofs: Vec<_> = lemmas.iter().filter(|l| l.proof_script.is_some()).collect();
+                let with_proofs: Vec<_> =
+                    lemmas.iter().filter(|l| l.proof_script.is_some()).collect();
                 let sample = with_proofs.len().min(15);
                 let mut verified = 0;
                 for lem in with_proofs.iter().take(sample) {
@@ -514,8 +513,12 @@ mod scale_tests {
                 total_a += sample;
                 eprintln!("  {}: {}/{}", fname, verified, sample);
             }
-            eprintln!("Beyond-core: {}/{} ({:.1}%)", total_v, total_a,
-                if total_a > 0 { (total_v as f64 / total_a as f64) * 100.0 } else { 0.0 });
+            eprintln!(
+                "Beyond-core: {}/{} ({:.1}%)",
+                total_v,
+                total_a,
+                if total_a > 0 { (total_v as f64 / total_a as f64) * 100.0 } else { 0.0 }
+            );
         });
     }
 
@@ -545,28 +548,59 @@ mod scale_tests {
 
         // Target files to verify
         let target_files = [
-            "HOL.thy", "Orderings.thy", "Set.thy", "Nat.thy", "List.thy",
-            "Fun.thy", "Product_Type.thy", "Sum_Type.thy", "Option.thy",
-            "Lattices.thy", "Typedef.thy", "Num.thy", "Power.thy", "Fields.thy",
-            "Groups.thy", "Rings.thy", "Int.thy",
-            "Complete_Lattices.thy", "Boolean_Algebras.thy",
+            "HOL.thy",
+            "Orderings.thy",
+            "Set.thy",
+            "Nat.thy",
+            "List.thy",
+            "Fun.thy",
+            "Product_Type.thy",
+            "Sum_Type.thy",
+            "Option.thy",
+            "Lattices.thy",
+            "Typedef.thy",
+            "Num.thy",
+            "Power.thy",
+            "Fields.thy",
+            "Groups.thy",
+            "Rings.thy",
+            "Int.thy",
+            "Complete_Lattices.thy",
+            "Boolean_Algebras.thy",
             "Set_Interval.thy",
-            "Equiv_Relations.thy", "Order_Relation.thy",
-            "Map.thy", "Filter.thy", "Limits.thy",
+            "Equiv_Relations.thy",
+            "Order_Relation.thy",
+            "Map.thy",
+            "Filter.thy",
+            "Limits.thy",
             // Below: overflow with cumulative DB
             // "GCD.thy", "Binomial.thy", "Factorial.thy", "Parity.thy",
-            "Enum.thy", "String.thy",
-            "Bit_Operations.thy", "Code_Numeral.thy",
-            "Groups_Big.thy", "Groups_List.thy",
-            "Lattices_Big.thy", "Archimedean_Field.thy",
+            "Enum.thy",
+            "String.thy",
+            "Bit_Operations.thy",
+            "Code_Numeral.thy",
+            "Groups_Big.thy",
+            "Groups_List.thy",
+            "Lattices_Big.thy",
+            "Archimedean_Field.thy",
             "Transitive_Closure.thy",
-            "Complete_Partial_Order.thy", "Conditionally_Complete_Lattices.thy",
-            "Hull.thy", "Modules.thy",
+            "Complete_Partial_Order.thy",
+            "Conditionally_Complete_Lattices.thy",
+            "Hull.thy",
+            "Modules.thy",
             // "Vector_Spaces.thy",  // overflow
-            "Fun_Def.thy", "ATP.thy", "Meson.thy", "Metis.thy",
-            "Basic_BNF_LFPs.thy", "Basic_BNFs.thy",
-            "BNF_Def.thy", "BNF_Composition.thy",
-            "Deriv.thy", "MacLaurin.thy", "NthRoot.thy", "Series.thy",
+            "Fun_Def.thy",
+            "ATP.thy",
+            "Meson.thy",
+            "Metis.thy",
+            "Basic_BNF_LFPs.thy",
+            "Basic_BNFs.thy",
+            "BNF_Def.thy",
+            "BNF_Composition.thy",
+            "Deriv.thy",
+            "MacLaurin.thy",
+            "NthRoot.thy",
+            "Series.thy",
             "Transfer.thy",
             // Additional small/medium files
             "Inequalities.thy",
@@ -626,14 +660,17 @@ mod scale_tests {
         HolTheoremDb::with_override(&db, || {
             for fname in &target_files {
                 let path = hol_dir.join(fname);
-                if !path.exists() { continue; }
+                if !path.exists() {
+                    continue;
+                }
                 let source = std::fs::read_to_string(&path).unwrap_or_default();
                 let lemmas = crate::hol::hol_loader::parse_lemmas(&source);
-                let with_proofs: Vec<_> = lemmas.iter()
-                    .filter(|l| l.proof_script.is_some())
-                    .collect();
+                let with_proofs: Vec<_> =
+                    lemmas.iter().filter(|l| l.proof_script.is_some()).collect();
                 let sample = with_proofs.len().min(10);
-                if sample == 0 { continue; }
+                if sample == 0 {
+                    continue;
+                }
                 let mut verified = 0;
                 for lem in with_proofs.iter().take(sample) {
                     if crate::isar::method::verify_lemma(lem).is_some() {
@@ -648,8 +685,14 @@ mod scale_tests {
         });
 
         let pct = if total_a > 0 { (total_v as f64 / total_a as f64) * 100.0 } else { 0.0 };
-        eprintln!("Extended ({}/{} files): {}/{} ({:.1}%)",
-            target_files.len(), target_files.len(), total_v, total_a, pct);
+        eprintln!(
+            "Extended ({}/{} files): {}/{} ({:.1}%)",
+            target_files.len(),
+            target_files.len(),
+            total_v,
+            total_a,
+            pct
+        );
     }
 
     /// Verify overflow-prone files using the global theorem database.
@@ -685,13 +728,16 @@ mod scale_tests {
         let mut total_a = 0usize;
         for fname in &target_files {
             let path = hol_dir.join(fname);
-            if !path.exists() { continue; }
+            if !path.exists() {
+                continue;
+            }
             let Ok(source) = std::fs::read_to_string(&path) else { continue };
             let lemmas = crate::hol::hol_loader::parse_lemmas(&source);
-            let with_proofs: Vec<_> = lemmas.iter()
-                .filter(|l| l.proof_script.is_some()).collect();
+            let with_proofs: Vec<_> = lemmas.iter().filter(|l| l.proof_script.is_some()).collect();
             let sample = with_proofs.len().min(10);
-            if sample == 0 { continue; }
+            if sample == 0 {
+                continue;
+            }
             let mut verified = 0;
             for lem in with_proofs.iter().take(sample) {
                 if crate::isar::method::verify_lemma(lem).is_some() {
@@ -748,11 +794,12 @@ mod scale_tests {
                     let path = &node.path;
                     let Ok(source) = std::fs::read_to_string(path) else { continue };
                     let lemmas = crate::hol::hol_loader::parse_lemmas(&source);
-                    let with_proofs: Vec<_> = lemmas.iter()
-                        .filter(|l| l.proof_script.is_some())
-                        .collect();
+                    let with_proofs: Vec<_> =
+                        lemmas.iter().filter(|l| l.proof_script.is_some()).collect();
                     let sample = with_proofs.len().min(5);
-                    if sample == 0 { continue; }
+                    if sample == 0 {
+                        continue;
+                    }
 
                     let mut verified = 0;
                     for lem in with_proofs.iter().take(sample) {
@@ -772,9 +819,14 @@ mod scale_tests {
             }
         });
 
-        eprintln!("Systematic: {}/{} files fully verified, {}/{} theorems ({:.1}%)",
-            passed, passed + failed, total_verified, total_thms,
-            if total_thms > 0 { (total_verified as f64 / total_thms as f64) * 100.0 } else { 0.0 });
+        eprintln!(
+            "Systematic: {}/{} files fully verified, {}/{} theorems ({:.1}%)",
+            passed,
+            passed + failed,
+            total_verified,
+            total_thms,
+            if total_thms > 0 { (total_verified as f64 / total_thms as f64) * 100.0 } else { 0.0 }
+        );
     }
 
     /// Verify additional theory files beyond the core beyond-core set.
@@ -789,27 +841,45 @@ mod scale_tests {
         // Files with their own isolated DB (no cumulative overflow)
         let files_to_try = [
             "Set_Interval.thy",
-            "Complete_Lattices.thy", "Boolean_Algebras.thy",
-            "Order_Relation.thy", "Equiv_Relations.thy",
+            "Complete_Lattices.thy",
+            "Boolean_Algebras.thy",
+            "Order_Relation.thy",
+            "Equiv_Relations.thy",
             "Groups.thy",
-            "Complete_Partial_Order.thy", "Conditionally_Complete_Lattices.thy",
-            "Map.thy", "Filter.thy", "Limits.thy",
-            "Rings.thy", "Int.thy",
-            "Enum.thy", "String.thy",
-            "Parity.thy", "Code_Numeral.thy",
+            "Complete_Partial_Order.thy",
+            "Conditionally_Complete_Lattices.thy",
+            "Map.thy",
+            "Filter.thy",
+            "Limits.thy",
+            "Rings.thy",
+            "Int.thy",
+            "Enum.thy",
+            "String.thy",
+            "Parity.thy",
+            "Code_Numeral.thy",
             "Bit_Operations.thy",
             "Numeral_Simprocs.thy",
-            "Groups_Big.thy", "Groups_List.thy",
-            "Lattices_Big.thy", "Archimedean_Field.thy",
+            "Groups_Big.thy",
+            "Groups_List.thy",
+            "Lattices_Big.thy",
+            "Archimedean_Field.thy",
             "Transitive_Closure.thy",
             "Fun_Def.thy",
-            "ATP.thy", "Meson.thy", "Metis.thy",
-            "Basic_BNF_LFPs.thy", "Basic_BNFs.thy",
-            "Hull.thy", "Modules.thy",
-            "BNF_Def.thy", "BNF_Composition.thy",
-            "Deriv.thy", "MacLaurin.thy",
-            "NthRoot.thy", "Series.thy",
-            "Transfer.thy", "Fun_Def_Base.thy",
+            "ATP.thy",
+            "Meson.thy",
+            "Metis.thy",
+            "Basic_BNF_LFPs.thy",
+            "Basic_BNFs.thy",
+            "Hull.thy",
+            "Modules.thy",
+            "BNF_Def.thy",
+            "BNF_Composition.thy",
+            "Deriv.thy",
+            "MacLaurin.thy",
+            "NthRoot.thy",
+            "Series.thy",
+            "Transfer.thy",
+            "Fun_Def_Base.thy",
             // Additional individual files
             "Finite_Set.thy",
             "Fun.thy",
@@ -842,7 +912,9 @@ mod scale_tests {
 
         for fname in &files_to_try {
             let path = hol_dir.join(fname);
-            if !path.exists() { continue; }
+            if !path.exists() {
+                continue;
+            }
 
             // Build minimal DB
             let Ok(source) = std::fs::read_to_string(&path) else { continue };
@@ -852,7 +924,9 @@ mod scale_tests {
             HolTheoremDb::add_builtins(&mut db);
 
             let with_proofs: Vec<_> = lemmas.iter().filter(|l| l.proof_script.is_some()).collect();
-            if with_proofs.is_empty() { continue; }
+            if with_proofs.is_empty() {
+                continue;
+            }
 
             let sample = with_proofs.len().min(10);
             let mut verified = 0;
@@ -889,27 +963,45 @@ mod scale_tests {
         let files_to_try = [
             // Already verified
             "Set_Interval.thy",
-            "Complete_Lattices.thy", "Boolean_Algebras.thy",
-            "Order_Relation.thy", "Equiv_Relations.thy",
+            "Complete_Lattices.thy",
+            "Boolean_Algebras.thy",
+            "Order_Relation.thy",
+            "Equiv_Relations.thy",
             "Groups.thy",
-            "Complete_Partial_Order.thy", "Conditionally_Complete_Lattices.thy",
-            "Map.thy", "Filter.thy", "Limits.thy",
-            "Rings.thy", "Int.thy",
-            "Enum.thy", "String.thy",
-            "Parity.thy", "Code_Numeral.thy",
+            "Complete_Partial_Order.thy",
+            "Conditionally_Complete_Lattices.thy",
+            "Map.thy",
+            "Filter.thy",
+            "Limits.thy",
+            "Rings.thy",
+            "Int.thy",
+            "Enum.thy",
+            "String.thy",
+            "Parity.thy",
+            "Code_Numeral.thy",
             "Bit_Operations.thy",
             "Numeral_Simprocs.thy",
-            "Groups_Big.thy", "Groups_List.thy",
-            "Lattices_Big.thy", "Archimedean_Field.thy",
+            "Groups_Big.thy",
+            "Groups_List.thy",
+            "Lattices_Big.thy",
+            "Archimedean_Field.thy",
             "Transitive_Closure.thy",
             "Fun_Def.thy",
-            "ATP.thy", "Meson.thy", "Metis.thy",
-            "Basic_BNF_LFPs.thy", "Basic_BNFs.thy",
-            "Hull.thy", "Modules.thy",
-            "BNF_Def.thy", "BNF_Composition.thy",
-            "Deriv.thy", "MacLaurin.thy",
-            "NthRoot.thy", "Series.thy",
-            "Transfer.thy", "Fun_Def_Base.thy",
+            "ATP.thy",
+            "Meson.thy",
+            "Metis.thy",
+            "Basic_BNF_LFPs.thy",
+            "Basic_BNFs.thy",
+            "Hull.thy",
+            "Modules.thy",
+            "BNF_Def.thy",
+            "BNF_Composition.thy",
+            "Deriv.thy",
+            "MacLaurin.thy",
+            "NthRoot.thy",
+            "Series.thy",
+            "Transfer.thy",
+            "Fun_Def_Base.thy",
             // New candidates — try these
             "Finite_Set.thy",
             "Fun.thy",
@@ -943,7 +1035,9 @@ mod scale_tests {
 
         for fname in &files_to_try {
             let path = hol_dir.join(fname);
-            if !path.exists() { continue; }
+            if !path.exists() {
+                continue;
+            }
 
             // Build minimal DB: just this file's lemmas
             let Ok(source) = std::fs::read_to_string(&path) else { continue };
@@ -953,7 +1047,9 @@ mod scale_tests {
             HolTheoremDb::add_builtins(&mut db);
 
             let with_proofs: Vec<_> = lemmas.iter().filter(|l| l.proof_script.is_some()).collect();
-            if with_proofs.is_empty() { continue; }
+            if with_proofs.is_empty() {
+                continue;
+            }
 
             let sample = with_proofs.len().min(10);
             let mut verified = 0;

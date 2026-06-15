@@ -63,17 +63,12 @@ pub struct PluginContext {
 
 impl PluginContext {
     pub fn new() -> Self {
-        PluginContext {
-            named_theorems: Vec::new(),
-        }
+        PluginContext { named_theorems: Vec::new() }
     }
 
     /// Look up a theorem by name.
     pub fn lookup(&self, name: &str) -> Option<&Arc<Thm>> {
-        self.named_theorems
-            .iter()
-            .find(|(n, _)| n == name)
-            .map(|(_, thm)| thm)
+        self.named_theorems.iter().find(|(n, _)| n == name).map(|(_, thm)| thm)
     }
 }
 
@@ -105,8 +100,7 @@ mod tests {
             crate::core::types::Typ::base("prop"),
         ));
         let thm = Arc::new(crate::core::thm::ThmKernel::trivial(a_cterm).unwrap());
-        ctx.named_theorems
-            .push(("trivial".into(), Arc::clone(&thm)));
+        ctx.named_theorems.push(("trivial".into(), Arc::clone(&thm)));
         assert!(ctx.lookup("trivial").is_some());
         assert!(ctx.lookup("other").is_none());
     }

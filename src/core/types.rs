@@ -1,9 +1,11 @@
 //! Isabelle type system: sorts, type classes, type expressions.
 //! Corresponds to src/Pure/type.ML, src/Pure/sorts.ML.
-use std::cell::RefCell;
-use std::collections::{BTreeSet, HashMap};
-use std::fmt;
-use std::sync::Arc;
+use std::{
+    cell::RefCell,
+    collections::{BTreeSet, HashMap},
+    fmt,
+    sync::Arc,
+};
 
 thread_local! { static IT: RefCell<HashMap<String, Arc<str>>> = RefCell::new(HashMap::new()); }
 
@@ -31,15 +33,10 @@ pub struct ClassAlgebra {
 
 impl ClassAlgebra {
     pub fn empty() -> Self {
-        ClassAlgebra {
-            sub_classes: HashMap::new(),
-        }
+        ClassAlgebra { sub_classes: HashMap::new() }
     }
     pub fn add_classrel(&mut self, sub: impl Into<Arc<str>>, sup: impl Into<Arc<str>>) {
-        self.sub_classes
-            .entry(sub.into())
-            .or_default()
-            .push(sup.into());
+        self.sub_classes.entry(sub.into()).or_default().push(sup.into());
     }
     pub fn is_subclass(&self, sub: &Class, sup: &Class) -> bool {
         if Arc::ptr_eq(sub, sup) {
@@ -63,9 +60,7 @@ impl ClassAlgebra {
         false
     }
     pub fn sort_le(&self, s1: &Sort, s2: &Sort) -> bool {
-        s1.classes
-            .iter()
-            .all(|c1| s2.classes.iter().any(|c2| self.is_subclass(c1, c2)))
+        s1.classes.iter().all(|c1| s2.classes.iter().any(|c2| self.is_subclass(c1, c2)))
     }
 }
 
@@ -75,13 +70,9 @@ pub struct Sort {
 }
 
 impl Sort {
-    pub const EMPTY: Sort = Sort {
-        classes: BTreeSet::new(),
-    };
+    pub const EMPTY: Sort = Sort { classes: BTreeSet::new() };
     pub fn new(classes: impl IntoIterator<Item = Class>) -> Self {
-        Sort {
-            classes: classes.into_iter().collect(),
-        }
+        Sort { classes: classes.into_iter().collect() }
     }
     pub fn singleton(class: &str) -> Self {
         Sort::new(std::iter::once(Arc::from(class)))
@@ -120,46 +111,23 @@ impl fmt::Display for Sort {
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Typ {
-    Type {
-        name: Arc<str>,
-        args: Vec<Typ>,
-    },
-    TFree {
-        name: Arc<str>,
-        sort: Sort,
-    },
-    TVar {
-        name: Arc<str>,
-        index: usize,
-        sort: Sort,
-    },
+    Type { name: Arc<str>, args: Vec<Typ> },
+    TFree { name: Arc<str>, sort: Sort },
+    TVar { name: Arc<str>, index: usize, sort: Sort },
 }
 
 impl Typ {
     pub fn base(name: impl Into<Arc<str>>) -> Self {
-        Typ::Type {
-            name: name.into(),
-            args: vec![],
-        }
+        Typ::Type { name: name.into(), args: vec![] }
     }
     pub fn apply(name: impl Into<Arc<str>>, args: Vec<Typ>) -> Self {
-        Typ::Type {
-            name: name.into(),
-            args,
-        }
+        Typ::Type { name: name.into(), args }
     }
     pub fn free(name: impl Into<Arc<str>>, sort: Sort) -> Self {
-        Typ::TFree {
-            name: name.into(),
-            sort,
-        }
+        Typ::TFree { name: name.into(), sort }
     }
     pub fn var(name: impl Into<Arc<str>>, index: usize, sort: Sort) -> Self {
-        Typ::TVar {
-            name: name.into(),
-            index,
-            sort,
-        }
+        Typ::TVar { name: name.into(), index, sort }
     }
     pub fn arrow(from: Typ, to: Typ) -> Self {
         Typ::apply("fun", vec![from, to])
@@ -183,7 +151,7 @@ impl Typ {
         match self {
             Typ::Type { name, args } if name.as_ref() == "fun" && args.len() == 2 => {
                 Some((&args[0], &args[1]))
-            }
+            },
             _ => None,
         }
     }
@@ -204,14 +172,14 @@ impl Typ {
         match self {
             Typ::Type { name, args } if name.as_ref() == "dummy" && args.is_empty() => {
                 false // Can't annotate a pure dummy without context
-            }
+            },
             Typ::Type { name: _, args } => {
                 let mut changed = false;
                 for arg in args.iter_mut() {
                     changed |= arg.annotate_from_env(env);
                 }
                 changed
-            }
+            },
             Typ::TFree { .. } | Typ::TVar { .. } => false,
         }
     }
@@ -234,7 +202,7 @@ impl fmt::Display for Typ {
             Typ::Type { name, args } if args.is_empty() => write!(f, "{name}"),
             Typ::Type { name, args } if name.as_ref() == "fun" && args.len() == 2 => {
                 write!(f, "({:?} => {:?})", args[0], args[1])
-            }
+            },
             Typ::Type { name, .. } => write!(f, "{name}"),
             Typ::TFree { name, .. } => write!(f, "'{name}"),
             Typ::TVar { name, index, .. } => write!(f, "?'{name}.{index}"),
@@ -324,11 +292,7 @@ impl TypeEnv {
     pub fn lookup_const(&self, name: &str) -> Option<&Typ> {
         self.consts.get(name).or_else(|| {
             // Try without prefix (e.g., "eq" → "HOL.eq")
-            if !name.contains('.') {
-                self.consts.get(&format!("HOL.{}", name))
-            } else {
-                None
-            }
+            if !name.contains('.') { self.consts.get(&format!("HOL.{}", name)) } else { None }
         })
     }
 
@@ -372,10 +336,13 @@ mod tests {
         assert_eq!(env.type_arity("set"), Some(1));
         assert_eq!(env.type_arity("nonexistent"), None);
 
-        env.declare_const("HOL.eq", Typ::arrows(
-            vec![Typ::free("'a", Sort::top()), Typ::free("'a", Sort::top())],
-            Typ::base("bool"),
-        ));
+        env.declare_const(
+            "HOL.eq",
+            Typ::arrows(
+                vec![Typ::free("'a", Sort::top()), Typ::free("'a", Sort::top())],
+                Typ::base("bool"),
+            ),
+        );
         assert!(env.const_type("HOL.eq").is_some());
         assert!(env.lookup_const("eq").is_some()); // fallback lookup
     }

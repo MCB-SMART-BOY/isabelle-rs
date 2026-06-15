@@ -13,7 +13,7 @@ pub fn handle_document_symbol(ctx: &HandlerContext, req: JsonRpcRequest) {
         Err(e) => {
             ctx.send_error(req.id, JsonRpcError::new(-32602, format!("{e}")));
             return;
-        }
+        },
     };
 
     let uri = &params.text_document.uri;
@@ -24,7 +24,7 @@ pub fn handle_document_symbol(ctx: &HandlerContext, req: JsonRpcRequest) {
         None => {
             ctx.send_result(req.id, serde_json::Value::Null);
             return;
-        }
+        },
     };
 
     // Parse the document into symbols
@@ -33,12 +33,9 @@ pub fn handle_document_symbol(ctx: &HandlerContext, req: JsonRpcRequest) {
     let result = match serde_json::to_value(&symbols) {
         Ok(v) => v,
         Err(e) => {
-            ctx.send_error(
-                req.id,
-                JsonRpcError::internal_error(format!("serialization: {e}")),
-            );
+            ctx.send_error(req.id, JsonRpcError::internal_error(format!("serialization: {e}")));
             return;
-        }
+        },
     };
 
     ctx.send_result(req.id, result);
@@ -101,7 +98,9 @@ fn parse_document_symbols_inner(source: &str) -> Vec<DocumentSymbol> {
         }
 
         // Detect lemma/theorem
-        if t.starts_with("lemma ") || t.starts_with("theorem ") || t.starts_with("corollary ")
+        if t.starts_with("lemma ")
+            || t.starts_with("theorem ")
+            || t.starts_with("corollary ")
             || t.starts_with("proposition ")
         {
             let (name, end_line) = extract_lemma_name(t, &lines, i);
@@ -130,9 +129,13 @@ fn parse_document_symbols_inner(source: &str) -> Vec<DocumentSymbol> {
         }
 
         // Detect definition/fun/primrec
-        if t.starts_with("definition ") || t.starts_with("fun ") || t.starts_with("primrec ")
-            || t.starts_with("inductive ") || t.starts_with("coinductive ")
-            || t.starts_with("datatype ") || t.starts_with("record ")
+        if t.starts_with("definition ")
+            || t.starts_with("fun ")
+            || t.starts_with("primrec ")
+            || t.starts_with("inductive ")
+            || t.starts_with("coinductive ")
+            || t.starts_with("datatype ")
+            || t.starts_with("record ")
         {
             let kind_word = t.split_whitespace().next().unwrap_or("def");
             let name = t.split_whitespace().nth(1).unwrap_or("?").trim_matches('"');

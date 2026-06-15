@@ -9,8 +9,8 @@
 //!
 //! ## Key concepts
 //!
-//! - **Context**: tracks declared names; `declare` adds a name,
-//!   `variant` produces a fresh variant, `invent` generates N fresh names
+//! - **Context**: tracks declared names; `declare` adds a name, `variant` produces a fresh variant,
+//!   `invent` generates N fresh names
 //! - **Internal names**: suffixed with `_` (internalized), `__` (skolem)
 //! - **Bound names**: prefixed with `:` for de Bruijn indices
 //! - **Default names**: `uu`, `uu_`, `'a` for anonymous variables
@@ -128,7 +128,7 @@ pub fn bump_string(s: &str) -> String {
             let mut v = s.as_bytes().to_vec();
             v[bytes.len() - 1] = c + 1;
             String::from_utf8(v).unwrap_or_else(|_| format!("{}a", s))
-        }
+        },
     }
 }
 
@@ -146,7 +146,7 @@ pub fn bump_init(s: &str) -> String {
             let mut chars: Vec<u8> = bytes.to_vec();
             chars[0] = c + 1;
             String::from_utf8(chars).unwrap_or_else(|_| format!("a{}", &s[1..]))
-        }
+        },
     }
 }
 
@@ -303,10 +303,7 @@ impl NameContext {
 
     /// Invent names paired with items.
     pub fn invent_names<'a, T>(&self, base: &str, items: &'a [T]) -> Vec<(String, &'a T)> {
-        self.invent(base, items.len())
-            .into_iter()
-            .zip(items.iter())
-            .collect()
+        self.invent(base, items.len()).into_iter().zip(items.iter()).collect()
     }
 
     // ── Variants ──
@@ -342,11 +339,7 @@ impl NameContext {
 
     /// Make a variant for a bound name (prefix bare names with "u").
     pub fn variant_bound(&self, name: &str) -> (String, Self) {
-        if is_bound_name(name) {
-            self.variant(name)
-        } else {
-            self.variant("u")
-        }
+        if is_bound_name(name) { self.variant(name) } else { self.variant("u") }
     }
 
     /// Make variants for a list of names.

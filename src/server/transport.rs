@@ -6,11 +6,13 @@
 //!
 //! Reference: <https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#headerPart>
 
-use std::io::{self, BufRead, BufReader, Read, Write};
-use std::sync::Arc;
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    mpsc,
+use std::{
+    io::{self, BufRead, BufReader, Read, Write},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
 };
 
 use super::lsp_types::{JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, RequestId};
@@ -69,12 +71,12 @@ impl Transport {
                                 let _ = out.write_all(header.as_bytes());
                                 let _ = out.write_all(body.as_bytes());
                                 let _ = out.flush();
-                            }
+                            },
                             Err(e) => {
                                 eprintln!("[transport] JSON serialization error: {e}");
-                            }
+                            },
                         }
-                    }
+                    },
                     Err(_) => break,
                 }
             }
@@ -91,22 +93,18 @@ impl Transport {
                         if incoming_tx.send(msg).is_err() {
                             break; // channel closed
                         }
-                    }
+                    },
                     Ok(None) => break, // EOF
                     Err(e) => {
                         eprintln!("[transport] Read error: {e}");
                         break;
-                    }
+                    },
                 }
             }
             read_running.store(false, Ordering::Relaxed);
         });
 
-        Transport {
-            outgoing_tx,
-            incoming_rx,
-            running: running_clone,
-        }
+        Transport { outgoing_tx, incoming_rx, running: running_clone }
     }
 
     /// Send an outgoing message (non-blocking).

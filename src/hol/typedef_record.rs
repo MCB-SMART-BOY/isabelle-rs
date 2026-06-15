@@ -27,10 +27,13 @@
 //! - Field accessors `x`, `y`
 //! - Constructor `point.make`
 
-use crate::core::term::Term;
-use crate::core::thm::{CTerm, ThmKernel};
-use crate::core::types::Typ;
 use std::sync::Arc;
+
+use crate::core::{
+    term::Term,
+    thm::{CTerm, ThmKernel},
+    types::Typ,
+};
 
 // =========================================================================
 // Typedef
@@ -63,10 +66,7 @@ pub fn parse_typedefs(source: &str) -> Vec<TypedefDecl> {
         let (type_params, rest) = if rest.starts_with('(') {
             if let Some(paren_end) = rest.find(')') {
                 let args_str = &rest[1..paren_end];
-                let args: Vec<String> = args_str
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .collect();
+                let args: Vec<String> = args_str.split(',').map(|s| s.trim().to_string()).collect();
                 (args, rest[paren_end + 1..].trim())
             } else {
                 (vec![], rest)
@@ -79,21 +79,14 @@ pub fn parse_typedefs(source: &str) -> Vec<TypedefDecl> {
         if let Some(eq_pos) = rest.find('=') {
             let name = rest[..eq_pos].trim().to_string();
             let set_expr = rest[eq_pos + 1..].trim().trim_matches('"').to_string();
-            results.push(TypedefDecl {
-                name,
-                type_params,
-                set_expr,
-                morphisms: None,
-            });
+            results.push(TypedefDecl { name, type_params, set_expr, morphisms: None });
         }
     }
     results
 }
 
 /// Generate theorems for a typedef declaration.
-pub fn typedef_to_lemmas(
-    decl: &TypedefDecl,
-) -> Vec<crate::hol::hol_loader::ParsedLemma> {
+pub fn typedef_to_lemmas(decl: &TypedefDecl) -> Vec<crate::hol::hol_loader::ParsedLemma> {
     let mut lemmas = Vec::new();
     let name = &decl.name;
 
@@ -101,21 +94,13 @@ pub fn typedef_to_lemmas(
     let rep_name = format!("Rep_{name}");
     let rep_term = Term::const_(rep_name.as_str(), Typ::dummy());
     let rep_thm = ThmKernel::assume(CTerm::certify(rep_term));
-    lemmas.push(make_lemma(
-        &format!("{name}.Rep"),
-        rep_thm,
-        vec!["typedef".to_string()],
-    ));
+    lemmas.push(make_lemma(&format!("{name}.Rep"), rep_thm, vec!["typedef".to_string()]));
 
     // Abs: `Abs_name :: 'a => name` (abstraction function)
     let abs_name = format!("Abs_{name}");
     let abs_term = Term::const_(abs_name.as_str(), Typ::dummy());
     let abs_thm = ThmKernel::assume(CTerm::certify(abs_term));
-    lemmas.push(make_lemma(
-        &format!("{name}.Abs"),
-        abs_thm,
-        vec!["typedef".to_string()],
-    ));
+    lemmas.push(make_lemma(&format!("{name}.Abs"), abs_thm, vec!["typedef".to_string()]));
 
     // Rep_inverse: `Abs (Rep x) = x`
     let s = format!("{name}.Rep_inverse");
@@ -236,9 +221,7 @@ pub fn parse_records(source: &str) -> Vec<RecordDecl> {
 }
 
 /// Generate theorems for a record declaration.
-pub fn record_to_lemmas(
-    decl: &RecordDecl,
-) -> Vec<crate::hol::hol_loader::ParsedLemma> {
+pub fn record_to_lemmas(decl: &RecordDecl) -> Vec<crate::hol::hol_loader::ParsedLemma> {
     let mut lemmas = Vec::new();
     let name = &decl.name;
 
@@ -246,11 +229,7 @@ pub fn record_to_lemmas(
     let s = format!("{name}.make");
     let type_term = Term::const_(s.as_str(), Typ::dummy());
     let type_thm = ThmKernel::assume(CTerm::certify(type_term));
-    lemmas.push(make_lemma(
-        &format!("{name}.make"),
-        type_thm,
-        vec!["record".to_string()],
-    ));
+    lemmas.push(make_lemma(&format!("{name}.make"), type_thm, vec!["record".to_string()]));
 
     // Field accessors
     for (fname, _ftype) in &decl.fields {
@@ -291,21 +270,13 @@ pub fn record_to_lemmas(
     let s = format!("{name}.ext");
     let ext_term = Term::const_(s.as_str(), Typ::base("prop"));
     let ext_thm = ThmKernel::assume(CTerm::certify(ext_term));
-    lemmas.push(make_lemma(
-        &format!("{name}.ext"),
-        ext_thm,
-        vec!["record".to_string()],
-    ));
+    lemmas.push(make_lemma(&format!("{name}.ext"), ext_thm, vec!["record".to_string()]));
 
     // Split rule
     let s = format!("{name}.split");
     let split_term = Term::const_(s.as_str(), Typ::base("prop"));
     let split_thm = ThmKernel::assume(CTerm::certify(split_term));
-    lemmas.push(make_lemma(
-        &format!("{name}.split"),
-        split_thm,
-        vec!["record".to_string()],
-    ));
+    lemmas.push(make_lemma(&format!("{name}.split"), split_thm, vec!["record".to_string()]));
 
     lemmas
 }

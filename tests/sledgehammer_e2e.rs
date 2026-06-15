@@ -1,15 +1,23 @@
 //! End-to-end Sledgehammer integration tests.
 //!
-//! Tests the full ATP pipeline: TPTP export → (optional ATP call) → result parsing → proof reconstruction.
+//! Tests the full ATP pipeline: TPTP export → (optional ATP call) → result parsing → proof
+//! reconstruction.
 
 #[cfg(test)]
 mod sledgehammer_e2e {
-    use isabelle_rs::core::term::Term;
-    use isabelle_rs::core::thm::{CTerm, Thm, ThmKernel};
-    use isabelle_rs::core::types::Typ;
-    use isabelle_rs::tools::sledgehammer::{Atp, Sledgehammer, SledgehammerConfig};
-    use isabelle_rs::tools::reconstruct::{self, ProofReconstructor};
     use std::sync::Arc;
+
+    use isabelle_rs::{
+        core::{
+            term::Term,
+            thm::{CTerm, Thm, ThmKernel},
+            types::Typ,
+        },
+        tools::{
+            reconstruct::{self, ProofReconstructor},
+            sledgehammer::{Atp, Sledgehammer, SledgehammerConfig},
+        },
+    };
 
     /// Helper: create a simple theorem to use as goal
     fn make_simple_goal() -> Thm {
@@ -41,10 +49,10 @@ mod sledgehammer_e2e {
         match tptp {
             Some((_atp, _result)) => {
                 eprintln!("ATP found a proof!");
-            }
+            },
             None => {
                 eprintln!("No ATP available — skipping (expected on CI)");
-            }
+            },
         }
     }
 
@@ -61,8 +69,10 @@ fof(f2, plain, p(a), inference(assumption, [], [f1])).
         eprintln!("Parsed {} TSTP steps", steps.len());
 
         for step in &steps {
-            eprintln!("  {}: {} (rule: {}, premises: {:?})",
-                step.name, step.formula, step.rule, step.premises);
+            eprintln!(
+                "  {}: {} (rule: {}, premises: {:?})",
+                step.name, step.formula, step.rule, step.premises
+            );
         }
     }
 
@@ -105,9 +115,7 @@ fof(f2, plain, p(a), inference(assumption, [], [f1])).
         let goal = ThmKernel::trivial(ct).unwrap();
         let assume_a = ThmKernel::assume(CTerm::certify(a));
 
-        let premises = vec![
-            ("assume_A".to_string(), Arc::new(assume_a)),
-        ];
+        let premises = vec![("assume_A".to_string(), Arc::new(assume_a))];
 
         let result = reconstruct::sledgehammer_prove(&goal, &premises);
 

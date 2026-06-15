@@ -5,11 +5,10 @@
 
 use std::sync::{Arc, Mutex};
 
-use crate::core::theory::Theory;
-use crate::document::document::*;
-use crate::hol::hol_loader::parse_lemmas;
-use crate::isar::toplevel::Toplevel;
-use crate::server::lsp_types::*;
+use crate::{
+    core::theory::Theory, document::document::*, hol::hol_loader::parse_lemmas,
+    isar::toplevel::Toplevel, server::lsp_types::*,
+};
 
 // =========================================================================
 // Checking Context
@@ -25,12 +24,7 @@ pub struct CheckContext {
 
 impl Default for CheckContext {
     fn default() -> Self {
-        CheckContext {
-            proof_state: None,
-            context_hash: 0,
-            in_proof: false,
-            proof_depth: 0,
-        }
+        CheckContext { proof_state: None, context_hash: 0, in_proof: false, proof_depth: 0 }
     }
 }
 
@@ -53,17 +47,13 @@ pub struct RealExecutor {
 
 impl RealExecutor {
     pub fn new() -> Self {
-        RealExecutor {
-            theory: Theory::pure(),
-        }
+        RealExecutor { theory: Theory::pure() }
     }
 }
 
 impl CommandExecutor for RealExecutor {
     fn clone_box(&self) -> Box<dyn CommandExecutor> {
-        Box::new(RealExecutor {
-            theory: Arc::clone(&self.theory),
-        })
+        Box::new(RealExecutor { theory: Arc::clone(&self.theory) })
     }
 
     fn execute(&self, cmd: &Command, ctx: &mut CheckContext) -> Vec<Diagnostic> {
@@ -86,7 +76,7 @@ impl CommandExecutor for RealExecutor {
                     message: format!("Theory {}", trimmed),
                     related_information: None,
                 });
-            }
+            },
             "lemma" | "theorem" | "corollary" | "proposition" => {
                 // Try to verify this lemma using the HOL theorem database
                 let parsed = parse_lemmas(trimmed);
@@ -108,7 +98,7 @@ impl CommandExecutor for RealExecutor {
                                 background_goals: vec![],
                                 has_unsolved: false,
                             });
-                        }
+                        },
                         None => {
                             // Verification failed — report as warning with proof state
                             diags.push(Diagnostic {
@@ -116,7 +106,11 @@ impl CommandExecutor for RealExecutor {
                                 severity: Some(DiagnosticSeverity::Warning),
                                 code: Some("lemma-unverified".into()),
                                 source: Some("isabelle-rs".into()),
-                                message: format!("⚠️ Unverified: {} (proof script may be incomplete or method not supported)", lem.name),
+                                message: format!(
+                                    "⚠️ Unverified: {} (proof script may be incomplete or method \
+                                     not supported)",
+                                    lem.name
+                                ),
                                 related_information: None,
                             });
                             ctx.in_proof = true;
@@ -129,7 +123,7 @@ impl CommandExecutor for RealExecutor {
                                 background_goals: vec![],
                                 has_unsolved: true,
                             });
-                        }
+                        },
                     }
                 } else {
                     // Couldn't parse
@@ -142,7 +136,7 @@ impl CommandExecutor for RealExecutor {
                         related_information: None,
                     });
                 }
-            }
+            },
             "definition" | "fun" | "primrec" | "datatype" | "inductive" => {
                 // Definitions are always "accepted" (they're axiomatic in our kernel)
                 diags.push(Diagnostic {
@@ -153,7 +147,7 @@ impl CommandExecutor for RealExecutor {
                     message: format!("📝 {}", trimmed.chars().take(80).collect::<String>()),
                     related_information: None,
                 });
-            }
+            },
             _ => {
                 // Unknown/other commands — try the toplevel executor as fallback
                 let mut top = Toplevel::new(Arc::clone(&self.theory));
@@ -169,7 +163,7 @@ impl CommandExecutor for RealExecutor {
                                 related_information: None,
                             });
                         }
-                    }
+                    },
                     Err(e) => {
                         diags.push(Diagnostic {
                             range: cmd.range.clone(),
@@ -179,9 +173,9 @@ impl CommandExecutor for RealExecutor {
                             message: e,
                             related_information: None,
                         });
-                    }
+                    },
                 }
-            }
+            },
         }
         diags
     }
@@ -198,10 +192,7 @@ pub struct Fleche {
 
 impl Fleche {
     pub fn new(executor: Arc<dyn CommandExecutor>) -> Self {
-        Fleche {
-            document: Arc::new(Mutex::new(Document::new())),
-            executor,
-        }
+        Fleche { document: Arc::new(Mutex::new(Document::new())), executor }
     }
 
     pub fn open_file(&self, uri: &str, content: &str) -> Vec<Diagnostic> {
@@ -254,10 +245,7 @@ impl Fleche {
     pub fn get_proof_state(&self, uri: &str, _line: u32) -> Option<ProofState> {
         let doc = self.document.lock().expect("Document lock poisoned");
         let node = doc.get_node(uri)?;
-        node.snapshots
-            .iter()
-            .rev()
-            .find_map(|s| s.proof_state.clone())
+        node.snapshots.iter().rev().find_map(|s| s.proof_state.clone())
     }
 
     pub fn get_hover(&self, _uri: &str, _line: u32, _character: u32) -> Option<String> {
@@ -290,14 +278,8 @@ mod tests {
         let cmd = Command::new(
             "lemma foo: \"A\"".into(),
             Range {
-                start: Position {
-                    line: 0,
-                    character: 0,
-                },
-                end: Position {
-                    line: 0,
-                    character: 16,
-                },
+                start: Position { line: 0, character: 0 },
+                end: Position { line: 0, character: 16 },
             },
             0,
         );

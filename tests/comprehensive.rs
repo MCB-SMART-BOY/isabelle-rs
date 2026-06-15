@@ -7,8 +7,9 @@
 
 #[cfg(test)]
 mod comprehensive {
-    use isabelle_rs::core::*;
     use std::sync::Arc;
+
+    use isabelle_rs::core::*;
 
     // =========================================================================
     // Kernel roundtrip tests
@@ -66,10 +67,10 @@ mod comprehensive {
         use isabelle_rs::core::type_infer::TypeInfer;
 
         // Create a term with dummy types and infer
-        let f = term::Term::free("f", types::Typ::arrow(
-            types::Typ::free("'a", types::Sort::top()),
-            types::Typ::base("bool"),
-        ));
+        let f = term::Term::free(
+            "f",
+            types::Typ::arrow(types::Typ::free("'a", types::Sort::top()), types::Typ::base("bool")),
+        );
         let x = term::Term::free("x", types::Typ::free("'a", types::Sort::top()));
         let app = term::Term::app(f, x);
 
@@ -85,8 +86,7 @@ mod comprehensive {
 
     #[test]
     fn test_full_context_pipeline() {
-        use isabelle_rs::core::context::Context;
-        use isabelle_rs::core::theory::Theory;
+        use isabelle_rs::core::{context::Context, theory::Theory};
 
         let thy = Theory::pure();
         let ctx = Context::theory(Arc::clone(&thy));
@@ -109,7 +109,9 @@ mod comprehensive {
 
     #[test]
     fn test_full_bnf_pipeline() {
-        use isabelle_rs::hol::hol_loader::{DatatypeDef, generate_datatype_lemmas, generate_bnf_lemmas};
+        use isabelle_rs::hol::hol_loader::{
+            DatatypeDef, generate_bnf_lemmas, generate_datatype_lemmas,
+        };
 
         // Define a simple datatype
         let dt = DatatypeDef {
@@ -130,8 +132,7 @@ mod comprehensive {
         assert!(!bnf_lemmas.is_empty(), "No BNF lemmas generated");
 
         // Check theorem counts
-        eprintln!("Datatype lemmas: {}, BNF lemmas: {}",
-            lemmas.len(), bnf_lemmas.len());
+        eprintln!("Datatype lemmas: {}, BNF lemmas: {}", lemmas.len(), bnf_lemmas.len());
         assert!(lemmas.len() >= 4, "Expected >=4 datatype lemmas");
         assert!(bnf_lemmas.len() >= 3, "Expected >=3 BNF lemmas");
     }

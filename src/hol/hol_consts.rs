@@ -6,9 +6,11 @@
 //!
 //! These are defined in `HOL.thy` and loaded by `hol_loader`.
 
-use crate::core::term::Term;
-use crate::core::thm::{CTerm, Thm, ThmKernel};
-use crate::core::types::Typ;
+use crate::core::{
+    term::Term,
+    thm::{CTerm, Thm, ThmKernel},
+    types::Typ,
+};
 
 /// Truth introduction: `⊢ True`
 ///
@@ -74,9 +76,7 @@ mod tests {
     #[test]
     fn test_false_elim() {
         let p = CTerm::certify(Term::const_("P", Typ::base("prop")));
-        let false_thm = ThmKernel::assume(CTerm::certify(
-            Term::const_("False", Typ::base("prop"))
-        ));
+        let false_thm = ThmKernel::assume(CTerm::certify(Term::const_("False", Typ::base("prop"))));
         let result = false_elim(&false_thm, p);
         assert_eq!(result.prop().term(), &Term::const_("P", Typ::base("prop")));
     }

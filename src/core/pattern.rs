@@ -3,16 +3,18 @@
 //! Corresponds to `src/Pure/pattern.ML`.
 //!
 //! Pattern unification is a decidable fragment of higher-order unification:
-//! - The pattern side (LHS) must be in "pattern form": every occurrence
-//!   of a schematic variable is applied to distinct bound variables.
+//! - The pattern side (LHS) must be in "pattern form": every occurrence of a schematic variable is
+//!   applied to distinct bound variables.
 //! - E.g., `?f(x, y)` is a pattern; `?f(g(x))` is not.
 //!
 //! This is sufficient for most Isabelle proof steps and is
 //! significantly more efficient than full higher-order unification.
 
-use super::envir::Envir;
-use super::term::Term;
-use super::unify::{self, UnifyConfig};
+use super::{
+    envir::Envir,
+    term::Term,
+    unify::{self, UnifyConfig},
+};
 
 // =========================================================================
 // Pattern check
@@ -30,7 +32,7 @@ pub fn is_pattern(term: &Term) -> bool {
             } else {
                 is_pattern(func) && is_pattern(arg)
             }
-        }
+        },
         Term::Abs { body, .. } => is_pattern(body),
         _ => true,
     }

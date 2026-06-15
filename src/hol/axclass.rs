@@ -1,19 +1,22 @@
 //! Type class definition — implements Isabelle's `class` mechanism.
-//! 
-//! In Isabelle, `class C = A + B + fixes f :: ... assumes ...` 
+//!
+//! In Isabelle, `class C = A + B + fixes f :: ... assumes ...`
 //! is sugar for:
 //! 1. A locale with the same structure
 //! 2. A sort algebra entry: C is a subclass of A, B
 //! 3. An introduction rule: C_def
 //!
-//! This module bridges `parse_classes`, `locale::LocaleDef`, 
+//! This module bridges `parse_classes`, `locale::LocaleDef`,
 //! and `sorts::Algebra`.
 
-use crate::core::sorts::Algebra;
-use crate::core::term::Term;
-use crate::core::thm::{CTerm, ThmKernel};
-use crate::core::types::{Symbol, Typ};
 use std::sync::Arc;
+
+use crate::core::{
+    sorts::Algebra,
+    term::Term,
+    thm::{CTerm, ThmKernel},
+    types::{Symbol, Typ},
+};
 
 // =========================================================================
 // AxClass — a proper type class
@@ -35,9 +38,8 @@ pub struct AxClass {
 impl AxClass {
     /// Convert to a LocaleDef (since class = locale).
     pub fn to_locale(&self) -> crate::hol::locale::LocaleDef {
-        let fixes: Vec<(String, String, Option<String>)> = self.fixes.iter()
-            .map(|(n, t)| (n.clone(), t.clone(), None))
-            .collect();
+        let fixes: Vec<(String, String, Option<String>)> =
+            self.fixes.iter().map(|(n, t)| (n.clone(), t.clone(), None)).collect();
         crate::hol::locale::LocaleDef {
             name: self.name.clone(),
             extends: self.superclasses.clone(),
@@ -50,9 +52,8 @@ impl AxClass {
     /// Update the sort algebra: register the class and its superclass relations.
     pub fn update_algebra(&self, algebra: &mut Algebra) {
         let class_sym = Symbol::from(self.name.as_str());
-        let super_syms: Vec<Symbol> = self.superclasses.iter()
-            .map(|s| Symbol::from(s.as_str()))
-            .collect();
+        let super_syms: Vec<Symbol> =
+            self.superclasses.iter().map(|s| Symbol::from(s.as_str())).collect();
         algebra.add_class(&class_sym, &super_syms);
     }
 
@@ -135,9 +136,7 @@ mod tests {
                 ("plus".to_string(), "'a => 'a => 'a".to_string()),
                 ("times".to_string(), "'a => 'a => 'a".to_string()),
             ],
-            assumes: vec![
-                ("distrib".to_string(), "a * (b + c) = a * b + a * c".to_string()),
-            ],
+            assumes: vec![("distrib".to_string(), "a * (b + c) = a * b + a * c".to_string())],
         };
 
         let locale = cls.to_locale();

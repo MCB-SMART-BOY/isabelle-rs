@@ -20,9 +20,7 @@
 //! | `Timeout` | File processing exceeds time budget |
 //! | `NoLemmas` | File has no verifiable lemmas |
 
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::time::Duration;
+use std::{collections::HashMap, path::PathBuf, time::Duration};
 
 // =========================================================================
 // Types
@@ -34,11 +32,7 @@ pub enum VerifyStatus {
     /// All sampled lemmas verified successfully.
     FullSuccess,
     /// Some lemmas verified, some failed.
-    PartialSuccess {
-        verified: usize,
-        attempted: usize,
-        failed_names: Vec<String>,
-    },
+    PartialSuccess { verified: usize, attempted: usize, failed_names: Vec<String> },
     /// File could not be parsed at all.
     SyntaxError { message: String },
     /// Type checking failed on one or more lemmas.
@@ -64,8 +58,12 @@ impl VerifyStatus {
         match self {
             VerifyStatus::FullSuccess => 1.0,
             VerifyStatus::PartialSuccess { verified, attempted, .. } => {
-                if *attempted == 0 { 0.0 } else { *verified as f64 / *attempted as f64 }
-            }
+                if *attempted == 0 {
+                    0.0
+                } else {
+                    *verified as f64 / *attempted as f64
+                }
+            },
             _ => 0.0,
         }
     }
@@ -136,29 +134,19 @@ impl VerifyReport {
                 VerifyStatus::FullSuccess => {
                     total_verified += 1;
                     total_attempted += 1;
-                }
+                },
                 VerifyStatus::PartialSuccess { verified, attempted, .. } => {
                     total_verified += verified;
                     total_attempted += attempted;
-                }
-                _ => {}
+                },
+                _ => {},
             }
         }
 
-        let overall_rate = if total_attempted == 0 {
-            0.0
-        } else {
-            total_verified as f64 / total_attempted as f64
-        };
+        let overall_rate =
+            if total_attempted == 0 { 0.0 } else { total_verified as f64 / total_attempted as f64 };
 
-        VerifyReport {
-            total,
-            results,
-            counts,
-            overall_rate,
-            total_theorems,
-            total_time,
-        }
+        VerifyReport { total, results, counts, overall_rate, total_theorems, total_time }
     }
 
     /// Print a human-readable report.
@@ -167,11 +155,15 @@ impl VerifyReport {
         println!("║        Isabelle-rs Verification Report               ║");
         println!("╠══════════════════════════════════════════════════════╣");
         println!("║ Files processed:  {:>6}                              ║", self.total);
-        println!("║ Total time:       {:>8.2}s                           ║",
-            self.total_time.as_secs_f64());
+        println!(
+            "║ Total time:       {:>8.2}s                           ║",
+            self.total_time.as_secs_f64()
+        );
         println!("║ Total theorems:   {:>6}                              ║", self.total_theorems);
-        println!("║ Overall rate:     {:>7.1}%                            ║",
-            self.overall_rate * 100.0);
+        println!(
+            "║ Overall rate:     {:>7.1}%                            ║",
+            self.overall_rate * 100.0
+        );
         println!("╠══════════════════════════════════════════════════════╣");
 
         let order = ["OK", "PARTIAL", "TIMEOUT", "PROOF", "TYPE", "SYNTAX", "NO-LEMMA", "IO"];

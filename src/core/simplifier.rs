@@ -13,13 +13,15 @@
 
 use std::sync::Arc;
 
-use super::envir::Envir;
-use super::logic::Pure;
-use super::term::Term;
-use super::term_subst;
-use super::thm::{CTerm, Thm, ThmKernel};
-use super::types::Typ;
-use super::unify::{self, UnifyConfig};
+use super::{
+    envir::Envir,
+    logic::Pure,
+    term::Term,
+    term_subst,
+    thm::{CTerm, Thm, ThmKernel},
+    types::Typ,
+    unify::{self, UnifyConfig},
+};
 
 // =========================================================================
 // Conversion — a term rewriting function
@@ -64,7 +66,7 @@ pub fn arg_conv(i: usize, conv: Conv) -> Conv {
             } else {
                 None
             }
-        }
+        },
         _ => None,
     })
 }
@@ -74,7 +76,7 @@ pub fn abs_conv(conv: Conv) -> Conv {
     Box::new(move |t| match t {
         Term::Abs { name, typ, body } => {
             conv(body).and_then(|thm| ThmKernel::abstraction(name.as_ref(), typ.clone(), &thm).ok())
-        }
+        },
         _ => None,
     })
 }
@@ -126,12 +128,7 @@ impl RewriteRule {
             }
             Some(cond)
         };
-        Some(RewriteRule {
-            lhs: l.clone(),
-            rhs: r.clone(),
-            condition,
-            thm,
-        })
+        Some(RewriteRule { lhs: l.clone(), rhs: r.clone(), condition, thm })
     }
 }
 
@@ -139,11 +136,17 @@ impl RewriteRule {
 // Simplifier
 // =========================================================================
 
+/// Callback type for external condition solvers.
+/// Returns `true` if the condition can be proved.
+pub type ConditionSolver = Arc<dyn Fn(&Term) -> bool + Send + Sync>;
+
 /// The simplifier: a set of rewrite rules + conversions.
 pub struct Simplifier {
     rules: Vec<RewriteRule>,
     conversions: Vec<Conv>,
     config: UnifyConfig,
+    /// External condition solver called before recursive simplification.
+    condition_solver: Option<ConditionSolver>,
 }
 
 impl Simplifier {
@@ -153,12 +156,18 @@ impl Simplifier {
             rules,
             conversions: Vec::new(),
             config: UnifyConfig::default(),
+            condition_solver: None,
         }
     }
 
     /// Add a conversion (like β-reduction).
     pub fn add_conv(&mut self, conv: Conv) {
         self.conversions.push(conv);
+    }
+
+    /// Set an external condition solver for conditional rewriting.
+    pub fn set_condition_solver(&mut self, solver: ConditionSolver) {
+        self.condition_solver = Some(solver);
     }
 
     /// Rewrite a term using all rules and conversions.
@@ -210,10 +219,7 @@ impl Simplifier {
         if let Some((result, thm)) = self.rewrite(&inner_term) {
             if result != inner_term {
                 // Compose: inner_thm (term ≡ inner_term) THEN rewrite_thm (inner_term ≡ result)
-                return Some((
-                    result,
-                    self.compose_equalities(inner_thm_opt.as_ref(), &thm),
-                ));
+                return Some((result, self.compose_equalities(inner_thm_opt.as_ref(), &thm)));
             }
         }
 
@@ -251,7 +257,7 @@ impl Simplifier {
                         (term.clone(), None)
                     }
                 }
-            }
+            },
             Term::Abs { name, typ, body } => {
                 let (new_body, body_thm) = self.rewrite_subterms(body);
                 if let Some(thm) = body_thm {
@@ -264,7 +270,7 @@ impl Simplifier {
                 } else {
                     (term.clone(), None)
                 }
-            }
+            },
             _ => (term.clone(), None),
         }
     }
@@ -274,21 +280,23 @@ impl Simplifier {
         match first {
             Some(first_thm) => {
                 ThmKernel::transitive(first_thm, second).unwrap_or_else(|_| second.clone())
-            }
+            },
             None => second.clone(),
         }
     }
 
     /// Try to apply a single rewrite rule to a term.
     fn try_rule(&self, term: &Term, rule: &RewriteRule) -> Option<(Term, Thm)> {
-        let env = Envir::init();
+        // Compute max variable index from the pattern for proper env initialization
+        let maxidx = compute_maxidx(&rule.lhs);
+        let env = Envir::empty(maxidx);
         // Match the LHS pattern against the term
         let env = unify::matchers(&env, &rule.lhs, term, &self.config);
-        // If Free-based matching fails, try Var-based generalization
+        // If direct matching fails, try Var-based generalization
         let env = env.or_else(|| {
             let gen_lhs = generalize_term_for_match(&rule.lhs);
-            let maxidx = compute_maxidx(&gen_lhs);
-            let env2 = Envir::empty(maxidx);
+            let maxidx2 = compute_maxidx(&gen_lhs);
+            let env2 = Envir::empty(maxidx2);
             unify::matchers(&env2, &gen_lhs, term, &self.config)
         })?;
 
@@ -306,30 +314,27 @@ impl Simplifier {
         Some((rhs_inst, (*rule.thm).clone()))
     }
 
-    /// Try to prove a condition. Uses depth-limited recursive simplification.
-    fn prove_condition(&self, cond: &Term, depth: usize) -> bool {
-        if depth > 3 {
-            return false;
-        }
-        // If condition is trivially true (e.g., True, or reflexive equality)
+    /// Try to prove a condition (premise of a conditional rewrite rule).
+    ///
+    /// Corresponds to Isabelle's `simple_prover`:
+    /// `SINGLE o (fn ctxt => ALLGOALS (resolve_tac ctxt (prems_of ctxt)))`
+    ///
+    /// The condition_solver (ArithSolver, AsmSolver, etc.) fills this role.
+    /// We do NOT recursively rewrite the condition — that would create the
+    /// unbounded mutual recursion prove_condition → rewrite → try_rule → prove_condition.
+    pub fn prove_condition(&self, cond: &Term, _depth: usize) -> bool {
+        // Trivial case: condition is 'True'
         if let Term::Const { name, .. } = cond {
             if name.as_ref() == "True" {
                 return true;
             }
         }
-        // Try rewriting the condition itself
-        if let Some((result, _)) = self.rewrite(cond) {
-            if &result != cond {
-                // Condition simplified — recurse
-                return self.prove_condition(&result, depth + 1);
-            }
+        // Delegate to external solver (ArithSolver, AsmSolver, etc.)
+        if let Some(ref solver) = self.condition_solver {
+            return solver(cond);
         }
-        // Try deeper rewriting
-        if let Some((result, _)) = self.rewrite_deep(cond) {
-            if &result != cond {
-                return self.prove_condition(&result, depth + 1);
-            }
-        }
+        // Without a solver, can't prove non-trivial conditions.
+        // This mirrors Isabelle: simple_prover needs prems_of(ctxt) to work.
         false
     }
 
@@ -368,7 +373,7 @@ pub fn beta_simp() -> Simplifier {
 
 // ── Term generalization helpers ──
 
-fn compute_maxidx(term: &Term) -> usize {
+pub fn compute_maxidx(term: &Term) -> usize {
     match term {
         Term::Var { index, .. } => *index,
         Term::App { func, arg } => compute_maxidx(func).max(compute_maxidx(arg)),
@@ -377,21 +382,30 @@ fn compute_maxidx(term: &Term) -> usize {
     }
 }
 
-fn generalize_term_for_match(term: &Term) -> Term {
+pub fn generalize_term_for_match(term: &Term) -> Term {
     // Collect Free variables with their types
     let mut frees: Vec<(String, Typ)> = Vec::new();
     fn collect(term: &Term, out: &mut Vec<(String, Typ)>) {
         match term {
-            Term::Free { name, typ } => { out.push((name.to_string(), typ.clone())); }
-            Term::App { func, arg } => { collect(func, out); collect(arg, out); }
-            Term::Abs { body, .. } => { collect(body, out); }
-            _ => {}
+            Term::Free { name, typ } => {
+                out.push((name.to_string(), typ.clone()));
+            },
+            Term::App { func, arg } => {
+                collect(func, out);
+                collect(arg, out);
+            },
+            Term::Abs { body, .. } => {
+                collect(body, out);
+            },
+            _ => {},
         }
     }
     collect(term, &mut frees);
     let mut seen = std::collections::HashSet::new();
     frees.retain(|(n, _)| seen.insert(n.clone()));
-    if frees.is_empty() { return term.clone(); }
+    if frees.is_empty() {
+        return term.clone();
+    }
     let mut subst: std::collections::HashMap<String, Term> = std::collections::HashMap::new();
     for (i, (name, typ)) in frees.iter().enumerate() {
         let var_type = if typ.is_dummy() { Typ::dummy() } else { typ.clone() };
@@ -399,7 +413,9 @@ fn generalize_term_for_match(term: &Term) -> Term {
     }
     fn apply(term: &Term, s: &std::collections::HashMap<String, Term>) -> Term {
         match term {
-            Term::Free { name, .. } => s.get(name.as_ref()).cloned().unwrap_or_else(|| term.clone()),
+            Term::Free { name, .. } => {
+                s.get(name.as_ref()).cloned().unwrap_or_else(|| term.clone())
+            },
             Term::App { func, arg } => Term::app(apply(func, s), apply(arg, s)),
             Term::Abs { name, typ, body } => Term::abs(name.clone(), typ.clone(), apply(body, s)),
             _ => term.clone(),
@@ -453,11 +469,14 @@ mod tests {
 
 #[cfg(test)]
 mod conditional_tests {
-    use super::*;
-    use crate::core::term::Term;
-    use crate::core::thm::{CTerm, ThmKernel};
-    use crate::core::types::Typ;
     use std::sync::Arc;
+
+    use super::*;
+    use crate::core::{
+        term::Term,
+        thm::{CTerm, ThmKernel},
+        types::Typ,
+    };
 
     #[test]
     fn test_conditional_rule_creation() {
@@ -499,14 +518,8 @@ mod conditional_tests {
         let nat = Typ::base("nat");
         let x = Term::free("x", nat.clone());
         let zero = Term::const_("Zero", nat.clone());
-        let fx = Term::app(
-            Term::const_("f", Typ::arrow(nat.clone(), nat.clone())),
-            x.clone(),
-        );
-        let f0 = Term::app(
-            Term::const_("f", Typ::arrow(nat.clone(), nat.clone())),
-            zero.clone(),
-        );
+        let fx = Term::app(Term::const_("f", Typ::arrow(nat.clone(), nat.clone())), x.clone());
+        let f0 = Term::app(Term::const_("f", Typ::arrow(nat.clone(), nat.clone())), zero.clone());
         let eq_cond = Pure::mk_equals(nat.clone(), x.clone(), zero.clone());
         let eq_concl = Pure::mk_equals(nat.clone(), fx, f0.clone());
         let prop = Pure::mk_implies(eq_cond, eq_concl);

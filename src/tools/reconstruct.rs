@@ -39,13 +39,11 @@
 //!
 //! # Key Types
 //!
-//! - **[`ProofStep`]** — A single inference in the ATP's proof:
-//!   a name, the inferred formula, the inference rule, and references
-//!   to earlier steps.
-//! - **[`ReconstructedProof`]** — An ordered list of [`ProofStep`]s
-//!   along with a `validated` flag.
-//! - **[`ProofReconstructor`]** — The engine that parses TSTP output,
-//!   looks up premises, and replays each step through the kernel.
+//! - **[`ProofStep`]** — A single inference in the ATP's proof: a name, the inferred formula, the
+//!   inference rule, and references to earlier steps.
+//! - **[`ReconstructedProof`]** — An ordered list of [`ProofStep`]s along with a `validated` flag.
+//! - **[`ProofReconstructor`]** — The engine that parses TSTP output, looks up premises, and
+//!   replays each step through the kernel.
 //!
 //! # ATP Proof Formats
 //!
@@ -73,14 +71,14 @@
 //! assert_eq!(steps[0].rule, "resolution");
 //! ```
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
-use crate::core::term::Term;
-use crate::core::thm::{CTerm, Thm, ThmKernel};
-use crate::core::types::Typ;
-use crate::core::logic::Pure;
-use crate::tools::sledgehammer::AtpResult;
+use crate::core::{
+    logic::Pure,
+    term::Term,
+    thm::{CTerm, Thm, ThmKernel},
+    types::Typ,
+};
 
 // =========================================================================
 // Proof step
@@ -127,10 +125,7 @@ impl ProofReconstructor {
         for (name, thm) in &premises {
             proven.insert(name.clone(), Arc::clone(thm));
         }
-        ProofReconstructor {
-            premises,
-            proven_steps: proven,
-        }
+        ProofReconstructor { premises, proven_steps: proven }
     }
 
     /// Parse a TSTP proof output into proof steps.
@@ -173,31 +168,26 @@ impl ProofReconstructor {
         // Parse the inference
         let (rule, premises) = Self::parse_inference(inference_str);
 
-        Some(ProofStep {
-            name: name.to_string(),
-            formula,
-            rule,
-            premises,
-        })
+        Some(ProofStep { name: name.to_string(), formula, rule, premises })
     }
 
     /// Parse the name part: "f1" from "fof(f1, ..."
     fn parse_tstp_name(s: &str) -> Option<(&str, &str)> {
         let comma = s.find(',')?;
-        Some((s[..comma].trim(), s[comma+1..].trim()))
+        Some((s[..comma].trim(), s[comma + 1..].trim()))
     }
 
     /// Parse the role part: "axiom" or "plain" or "conjecture"
     fn parse_tstp_role(s: &str) -> Option<(&str, &str)> {
         let comma = s.find(',')?;
-        Some((s[..comma].trim(), s[comma+1..].trim()))
+        Some((s[..comma].trim(), s[comma + 1..].trim()))
     }
 
     /// Parse formula and inference: split at the last ", inference("
     fn parse_tstp_formula_inference(s: &str) -> Option<(&str, &str)> {
         // Find ", inference(" which separates formula from inference
         let inf_pos = s.find(", inference(")?;
-        Some((s[..inf_pos].trim(), s[inf_pos+2..].trim()))
+        Some((s[..inf_pos].trim(), s[inf_pos + 2..].trim()))
     }
 
     /// Parse a TSTP formula into an Isabelle Term.
@@ -235,11 +225,8 @@ impl ProofReconstructor {
         // Parse premises: [name1, name2, ...]
         let premises_str = parts.last().unwrap_or(&"").trim();
         let premises = if premises_str.starts_with('[') && premises_str.ends_with(']') {
-            let inner = &premises_str[1..premises_str.len()-1];
-            inner.split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect()
+            let inner = &premises_str[1..premises_str.len() - 1];
+            inner.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
         } else {
             vec![]
         };
@@ -283,11 +270,8 @@ impl ProofReconstructor {
     /// Reconstruct a single proof step.
     fn reconstruct_step(&self, step: &ProofStep) -> Option<Arc<Thm>> {
         // Look up premises
-        let prem_thms: Vec<Arc<Thm>> = step
-            .premises
-            .iter()
-            .filter_map(|name| self.proven_steps.get(name).cloned())
-            .collect();
+        let prem_thms: Vec<Arc<Thm>> =
+            step.premises.iter().filter_map(|name| self.proven_steps.get(name).cloned()).collect();
 
         match step.rule.as_str() {
             "resolution" | "binary_resolution" => {
@@ -301,33 +285,32 @@ impl ProofReconstructor {
                 } else {
                     prem_thms.first().cloned()
                 }
-            }
+            },
 
             "paramodulation" | "superposition" => {
                 // Equality resolution: from s = t and P[s], derive P[t]
                 // In Isabelle: subst_premise
                 if prem_thms.len() >= 2 {
-                    ThmKernel::subst_premise(&prem_thms[0], &prem_thms[1], 0)
-                        .map(Arc::new)
+                    ThmKernel::subst_premise(&prem_thms[0], &prem_thms[1], 0).map(Arc::new)
                 } else {
                     prem_thms.first().cloned()
                 }
-            }
+            },
 
             "assumption" | "axiom" => {
                 // These are already in our premise set
                 prem_thms.first().cloned()
-            }
+            },
 
             "negation" | "cnf" | "clausify" => {
                 // Clause normal form transformations — trust the ATP
                 prem_thms.first().cloned()
-            }
+            },
 
             _ => {
                 // Unknown rule — try to use the first premise
                 prem_thms.first().cloned()
-            }
+            },
         }
     }
 
@@ -338,15 +321,14 @@ impl ProofReconstructor {
 
         // Try removing each premise and see if the proof still validates
         for (name, _) in &self.premises {
-            let reduced: Vec<(String, Arc<Thm>)> = self.premises.iter()
-                .filter(|(n, _)| n != name)
-                .cloned()
-                .collect();
+            let reduced: Vec<(String, Arc<Thm>)> =
+                self.premises.iter().filter(|(n, _)| n != name).cloned().collect();
 
             if reduced.len() < needed.len() {
                 let mut recon = ProofReconstructor::new(reduced);
                 if let Some(result) = recon.reconstruct(steps) {
-                    let (_, concl) = crate::core::logic::Pure::strip_imp_prems(result.prop().term());
+                    let (_, concl) =
+                        crate::core::logic::Pure::strip_imp_prems(result.prop().term());
                     if concl == goal {
                         needed.retain(|n| n != name);
                     }
@@ -367,41 +349,41 @@ impl ProofReconstructor {
 pub fn reconstruct_from_atp(
     atp_output: &str,
     premises: Vec<(String, Arc<Thm>)>,
-    _goal: &Thm,
+    goal: &Thm,
 ) -> Option<Arc<Thm>> {
     let steps = ProofReconstructor::parse_tstp(atp_output);
     if steps.is_empty() {
-        return None;
+        // Fall back to Metis-based proof search
+        return reconstruct_with_metis(premises, goal);
     }
 
+    // Try MetisReplay for step-by-step kernel-certified reconstruction
+    let mut replay = crate::tools::metis::MetisReplay::new(goal, &premises);
+    if let Some(result) = replay.replay(&steps) {
+        return Some(result);
+    }
+
+    // Fall back to simpler reconstruction
     let mut recon = ProofReconstructor::new(premises);
     recon.reconstruct(&steps)
+}
+
+/// Reconstruct a proof using Metis prover directly (fallback when TSTP parsing fails).
+pub fn reconstruct_with_metis(premises: Vec<(String, Arc<Thm>)>, goal: &Thm) -> Option<Arc<Thm>> {
+    let premise_arcs: Vec<Arc<Thm>> = premises.iter().map(|(_, thm)| Arc::clone(thm)).collect();
+
+    let mut prover = crate::tools::metis::MetisProver::with_limits(10000);
+    prover.add_premises(&premise_arcs);
+    prover.prove(goal)
 }
 
 /// Try to prove a goal using Sledgehammer and reconstruct the proof.
 ///
 /// This is the main entry point for Sledgehammer integration.
-pub fn sledgehammer_prove(
-    goal: &Thm,
-    premises: &[(String, Arc<Thm>)],
-) -> Option<Arc<Thm>> {
-    use crate::tools::sledgehammer::Sledgehammer;
-
-    let hammer = Sledgehammer::new();
-    let premise_thms: Vec<Thm> = premises.iter()
-        .map(|(_, thm)| (**thm).clone())
-        .collect();
-
-    let result = hammer.run(goal, &premise_thms);
-
-    match result {
-        Some((_atp, AtpResult::Theorem)) => {
-            // ATP found a proof — but we can't reconstruct without the ATP output
-            // For now, return the goal as an axiom (trust the ATP)
-            Some(Arc::new(goal.clone()))
-        }
-        _ => None,
-    }
+/// It first tries external ATPs, then falls back to Metis for proof reconstruction.
+pub fn sledgehammer_prove(goal: &Thm, premises: &[(String, Arc<Thm>)]) -> Option<Arc<Thm>> {
+    // First try the Metis-based LCF reconstruction
+    crate::tools::metis::sledgehammer_prove_lcf(goal, premises)
 }
 
 // =========================================================================

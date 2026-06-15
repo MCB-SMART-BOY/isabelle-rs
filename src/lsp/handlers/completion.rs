@@ -1,8 +1,7 @@
 //! Handler for textDocument/completion.
 
 use super::HandlerContext;
-use crate::hol::hol_loader::HolTheoremDb;
-use crate::server::lsp_types::*;
+use crate::{hol::hol_loader::HolTheoremDb, server::lsp_types::*};
 
 /// Isabelle keywords for auto-completion.
 const KEYWORDS: &[(&str, &str)] = &[
@@ -76,7 +75,7 @@ pub fn handle_completion(ctx: &HandlerContext, req: JsonRpcRequest) {
         Err(e) => {
             ctx.send_error(req.id, JsonRpcError::new(-32602, format!("{e}")));
             return;
-        }
+        },
     };
 
     let mut items = Vec::new();
@@ -107,7 +106,9 @@ pub fn handle_completion(ctx: &HandlerContext, req: JsonRpcRequest) {
     let db = HolTheoremDb::get();
     let mut count = 0;
     for (name, thm) in &db.by_name {
-        if count >= 200 { break; }
+        if count >= 200 {
+            break;
+        }
         let nprems = thm.nprems();
         let detail = if nprems == 0 {
             "theorem (unconditional)".into()
@@ -124,12 +125,6 @@ pub fn handle_completion(ctx: &HandlerContext, req: JsonRpcRequest) {
         count += 1;
     }
 
-    let result = CompletionList {
-        is_incomplete: count >= 200,
-        items,
-    };
-    ctx.send_result(
-        req.id,
-        serde_json::to_value(result).expect("Serialization failed"),
-    );
+    let result = CompletionList { is_incomplete: count >= 200, items };
+    ctx.send_result(req.id, serde_json::to_value(result).expect("Serialization failed"));
 }

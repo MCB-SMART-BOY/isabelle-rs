@@ -20,10 +20,11 @@
 
 use std::sync::Arc;
 
-use super::envir::Envir;
-use super::term::Term;
-use super::types::Symbol;
-use super::types::Typ;
+use super::{
+    envir::Envir,
+    term::Term,
+    types::{Symbol, Typ},
+};
 
 // =========================================================================
 // Types
@@ -76,17 +77,18 @@ impl Default for UnifyConfig {
 ///
 /// This is the main entry point — it unifies types and terms simultaneously.
 pub fn unifiers(env: &Envir, pairs: &[(Term, Term)], config: &UnifyConfig) -> Option<Envir> {
-    let dpairs: Vec<DPair> = pairs
-        .iter()
-        .map(|(t, u)| (vec![], t.clone(), u.clone()))
-        .collect();
+    let dpairs: Vec<DPair> = pairs.iter().map(|(t, u)| (vec![], t.clone(), u.clone())).collect();
     unify_dpairs_iter(env.clone(), dpairs, config)
 }
 
 /// Iterative unification of disagreement pairs using an explicit work stack.
 /// This replaces the recursive `unify_dpairs` to prevent stack overflow on
 /// deeply nested terms (e.g., inductive definitions, fixpoint combinators).
-fn unify_dpairs_iter(mut env: Envir, initial_pairs: Vec<DPair>, config: &UnifyConfig) -> Option<Envir> {
+fn unify_dpairs_iter(
+    mut env: Envir,
+    initial_pairs: Vec<DPair>,
+    config: &UnifyConfig,
+) -> Option<Envir> {
     let mut stack: Vec<DPair> = initial_pairs;
     stack.reverse(); // Process in original order (pop from back)
     let mut steps = 0usize;
@@ -109,50 +111,49 @@ fn unify_dpairs_iter(mut env: Envir, initial_pairs: Vec<DPair>, config: &UnifyCo
             (Term::Var { .. }, Term::Var { .. }) => {
                 // Push to back to handle later (after bindings may resolve them)
                 // But don't loop endlessly — only postpone once
-            }
+            },
 
             // ── Flex-Rigid ──
             (Term::Var { name, index, typ }, rigid) => {
                 match bind_var_step(&mut env, name, *index, typ, rigid) {
-                    BindResult::Bound => {} // env updated, continue
+                    BindResult::Bound => {}, // env updated, continue
                     BindResult::AlreadyBound => {
                         // Re-normalize and retry
-                        let renamed = env.norm_term(&Term::var(Arc::clone(name), *index, typ.clone()));
+                        let renamed =
+                            env.norm_term(&Term::var(Arc::clone(name), *index, typ.clone()));
                         stack.push((rbinder, renamed, rigid.clone()));
-                    }
+                    },
                     BindResult::Failed => return None,
                 }
-            }
+            },
             (rigid, Term::Var { name, index, typ }) => {
                 match bind_var_step(&mut env, name, *index, typ, rigid) {
-                    BindResult::Bound => {}
+                    BindResult::Bound => {},
                     BindResult::AlreadyBound => {
-                        let renamed = env.norm_term(&Term::var(Arc::clone(name), *index, typ.clone()));
+                        let renamed =
+                            env.norm_term(&Term::var(Arc::clone(name), *index, typ.clone()));
                         stack.push((rbinder, rigid.clone(), renamed));
-                    }
+                    },
                     BindResult::Failed => return None,
                 }
-            }
+            },
 
             // ── Rigid-Rigid: decompose App ──
             (Term::App { func: f1, arg: a1 }, Term::App { func: f2, arg: a2 }) => {
                 // Push arg first (processed second), func second (processed first)
                 stack.push((rbinder.clone(), a1.as_ref().clone(), a2.as_ref().clone()));
                 stack.push((rbinder, f1.as_ref().clone(), f2.as_ref().clone()));
-            }
+            },
 
             // ── Rigid-Rigid: decompose Abs ──
-            (
-                Term::Abs { name: _, typ: ty1, body: b1 },
-                Term::Abs { typ: ty2, body: b2, .. },
-            ) => {
+            (Term::Abs { name: _, typ: ty1, body: b1 }, Term::Abs { typ: ty2, body: b2, .. }) => {
                 if ty1 != ty2 {
                     return None;
                 }
                 let mut new_rbinder = rbinder.clone();
                 new_rbinder.push((Arc::from("x"), ty1.clone()));
                 stack.push((new_rbinder, b1.as_ref().clone(), b2.as_ref().clone()));
-            }
+            },
 
             // ── Same head atoms ──
             (Term::Const { name: n1, .. }, Term::Const { name: n2, .. }) if n1 == n2 => continue,
@@ -171,7 +172,7 @@ fn unify_dpairs_iter(mut env: Envir, initial_pairs: Vec<DPair>, config: &UnifyCo
                         Term::abs("x", Typ::dummy(), Term::bound(0)),
                     );
                 }
-            }
+            },
             (obj, Term::App { func, arg })
                 if matches!(func.as_ref(), Term::Var { .. }) && term_eq_notypes(arg, obj) =>
             {
@@ -183,7 +184,7 @@ fn unify_dpairs_iter(mut env: Envir, initial_pairs: Vec<DPair>, config: &UnifyCo
                         Term::abs("x", Typ::dummy(), Term::bound(0)),
                     );
                 }
-            }
+            },
 
             // ── Type mismatch ──
             _ => return None,
@@ -204,7 +205,13 @@ enum BindResult {
 }
 
 /// Attempt to bind a variable to a term. Returns the result.
-fn bind_var_step(env: &mut Envir, name: &Symbol, index: usize, typ: &Typ, rigid: &Term) -> BindResult {
+fn bind_var_step(
+    env: &mut Envir,
+    name: &Symbol,
+    index: usize,
+    typ: &Typ,
+    rigid: &Term,
+) -> BindResult {
     if env.lookup(name, index).is_some() {
         return BindResult::AlreadyBound;
     }
@@ -231,8 +238,8 @@ fn occurs_check(name: &Symbol, index: usize, term: &Term) -> bool {
             Term::App { func, arg } => {
                 stack.push(arg);
                 stack.push(func);
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
     false
@@ -259,10 +266,7 @@ fn match_pattern_iter(mut env: Envir, initial_pat: &Term, initial_obj: &Term) ->
         obj: Term,
     }
 
-    let mut frames: Vec<Frame> = vec![Frame {
-        pat: initial_pat.clone(),
-        obj: initial_obj.clone(),
-    }];
+    let mut frames: Vec<Frame> = vec![Frame { pat: initial_pat.clone(), obj: initial_obj.clone() }];
     let mut steps = 0usize;
 
     while let Some(frame) = frames.pop() {
@@ -287,7 +291,7 @@ fn match_pattern_iter(mut env: Envir, initial_pat: &Term, initial_obj: &Term) ->
                     return None;
                 }
                 env.update(Arc::clone(name), *index, typ.clone(), obj.clone());
-            }
+            },
             Term::App { func: f1, arg: a1 } => {
                 // Higher-order pattern: if head is Var applied to bound vars
                 if let Some(bound_vars) = collect_bound_args(&pat) {
@@ -300,14 +304,14 @@ fn match_pattern_iter(mut env: Envir, initial_pat: &Term, initial_obj: &Term) ->
                         // Push arg first (processed second), func second (processed first)
                         frames.push(Frame { pat: a1.as_ref().clone(), obj: a2.as_ref().clone() });
                         frames.push(Frame { pat: f1.as_ref().clone(), obj: f2.as_ref().clone() });
-                    }
+                    },
                     _ => return None,
                 }
-            }
+            },
             Term::Abs { body: b1, .. } => match &obj {
                 Term::Abs { body: b2, .. } => {
                     frames.push(Frame { pat: b1.as_ref().clone(), obj: b2.as_ref().clone() });
-                }
+                },
                 _ => return None,
             },
             _ => return None,
@@ -335,10 +339,10 @@ fn collect_bound_args(term: &Term) -> Option<Vec<Term>> {
                     }
                     args.push(arg.as_ref().clone());
                     Some(args)
-                }
+                },
                 _ => None,
             }
-        }
+        },
         _ => None,
     }
 }
@@ -373,14 +377,14 @@ fn match_ho_pattern(
         match arg {
             Term::Bound(i) => {
                 abstracted = Term::abs(Arc::from(format!("x{}", i)), Typ::dummy(), abstracted);
-            }
+            },
             Term::Free { name, typ } => {
                 abstracted = Term::abs(Arc::clone(name), typ.clone(), abstracted);
-            }
+            },
             Term::Var { name, typ, .. } => {
                 abstracted = Term::abs(Arc::clone(name), typ.clone(), abstracted);
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
     if occurs_check(var_name, var_index, &abstracted) {
@@ -403,15 +407,18 @@ fn term_eq_notypes(a: &Term, b: &Term) -> bool {
             (Term::Const { name: n1, .. }, Term::Const { name: n2, .. }) if n1 == n2 => continue,
             (Term::Free { name: n1, .. }, Term::Free { name: n2, .. }) if n1 == n2 => continue,
             (Term::Var { name: n1, index: i1, .. }, Term::Var { name: n2, index: i2, .. })
-                if n1 == n2 && i1 == i2 => continue,
+                if n1 == n2 && i1 == i2 =>
+            {
+                continue;
+            },
             (Term::Bound(i1), Term::Bound(i2)) if i1 == i2 => continue,
             (Term::Abs { body: b1, .. }, Term::Abs { body: b2, .. }) => {
                 stack.push((b1, b2));
-            }
+            },
             (Term::App { func: f1, arg: a1 }, Term::App { func: f2, arg: a2 }) => {
                 stack.push((a1, a2));
                 stack.push((f1, f2));
-            }
+            },
             _ => return false,
         }
     }
@@ -467,10 +474,8 @@ mod tests {
         let env = Envir::init();
         // ?x = f(?x) should fail (occurs check)
         let x = Term::var("x", 0, Typ::base("nat"));
-        let fx = Term::app(
-            Term::free("f", Typ::arrow(Typ::base("nat"), Typ::base("nat"))),
-            x.clone(),
-        );
+        let fx =
+            Term::app(Term::free("f", Typ::arrow(Typ::base("nat"), Typ::base("nat"))), x.clone());
         let result = unifiers(&env, &[(x, fx)], &UnifyConfig::default());
         assert!(result.is_none());
     }
@@ -482,10 +487,7 @@ mod tests {
         let obj = Term::const_("True", Typ::base("prop"));
         let result = matchers(&env, &pat, &obj, &UnifyConfig::default());
         assert!(result.is_some());
-        assert_eq!(
-            result.expect("matching should succeed").norm_term(&pat),
-            obj
-        );
+        assert_eq!(result.expect("matching should succeed").norm_term(&pat), obj);
     }
 
     #[test]
@@ -503,10 +505,7 @@ mod tests {
             Term::const_("0", Typ::base("nat")),
         );
         let result = matchers(&env, &pat, &obj, &UnifyConfig::default());
-        assert!(
-            result.is_some(),
-            "HO matching should succeed for induction pattern"
-        );
+        assert!(result.is_some(), "HO matching should succeed for induction pattern");
         let env = result.unwrap();
         // ?P should be bound to λxs. length xs = 0
         let p_bound = env.norm_term(&p_var);

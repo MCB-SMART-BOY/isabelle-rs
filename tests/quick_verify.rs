@@ -3,11 +3,9 @@
 
 #[cfg(test)]
 mod quick_verify {
-    use isabelle_rs::theory::loader::TheoryProcessor;
-    use isabelle_rs::core::theory::Theory;
-    use std::path::Path;
-    
-    use std::time::Instant;
+    use std::{path::Path, time::Instant};
+
+    use isabelle_rs::{core::theory::Theory, theory::loader::TheoryProcessor};
 
     const CORE_FILES: &[(&str, &str)] = &[
         ("HOL", "isabelle-source/src/HOL/HOL.thy"),
@@ -59,7 +57,7 @@ mod quick_verify {
                     eprintln!("  ❌ {:>15} — read error: {}", name, e);
                     total_errors += 1;
                     continue;
-                }
+                },
             };
 
             let mut proc = TheoryProcessor::with_parent(Theory::pure(), name);
@@ -73,7 +71,11 @@ mod quick_verify {
 
             eprintln!(
                 "  {} {:>15} — {:>4} thms, {:>3} errs, {:>6.1}ms",
-                icon, name, thms, errs, elapsed.as_secs_f64() * 1000.0
+                icon,
+                name,
+                thms,
+                errs,
+                elapsed.as_secs_f64() * 1000.0
             );
 
             total_theorems += thms;
@@ -92,8 +94,10 @@ mod quick_verify {
         }
 
         eprintln!("\n───────────────────────────────────────────────");
-        eprintln!("  Total: {} theorems, {} errors, {:.1}s",
-            total_theorems, total_errors, total_time);
+        eprintln!(
+            "  Total: {} theorems, {} errors, {:.1}s",
+            total_theorems, total_errors, total_time
+        );
         eprintln!("  Passed: {}/{} files", ok_count, CORE_FILES.len());
         eprintln!("───────────────────────────────────────────────\n");
 

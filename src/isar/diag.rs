@@ -2,8 +2,10 @@
 
 #[cfg(test)]
 mod diag_tests {
-    use crate::hol::hol_loader::{HolTheoremDb, parse_lemmas};
-    use crate::isar::method::verify_lemma;
+    use crate::{
+        hol::hol_loader::{HolTheoremDb, parse_lemmas},
+        isar::method::verify_lemma,
+    };
 
     #[test]
     fn test_diag_structured_proofs() {
@@ -11,10 +13,7 @@ mod diag_tests {
 
         let files: [(&str, &str); 5] = [
             ("HOL", include_str!("../../theories/HOL/HOL.thy")),
-            (
-                "Orderings",
-                include_str!("../../theories/HOL/Orderings.thy"),
-            ),
+            ("Orderings", include_str!("../../theories/HOL/Orderings.thy")),
             ("Nat", include_str!("../../theories/HOL/Nat.thy")),
             ("Set", include_str!("../../theories/HOL/Set.thy")),
             ("List", include_str!("../../theories/HOL/List.thy")),
@@ -47,11 +46,8 @@ mod diag_tests {
                     ok += 1;
                     eprintln!("      OK");
                 } else {
-                    let preview = lem
-                        .proof_script
-                        .as_ref()
-                        .map(|p| &p[..p.len().min(60)])
-                        .unwrap_or("");
+                    let preview =
+                        lem.proof_script.as_ref().map(|p| &p[..p.len().min(60)]).unwrap_or("");
                     eprintln!("      FAIL: {}", preview);
                 }
             }

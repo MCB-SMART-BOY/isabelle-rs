@@ -11,11 +11,12 @@
 //! - Type instance checking: is `eq :: nat => nat => prop` an instance of the scheme?
 //! - Monomorphic vs polymorphic constants
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
-use super::types::Symbol;
-use super::types::Typ;
+use super::types::{Symbol, Typ};
 
 // =========================================================================
 // Type scheme
@@ -58,13 +59,13 @@ fn collect_tfrees_inner(typ: &Typ, set: &mut BTreeSet<String>) {
     match typ {
         Typ::TFree { name, .. } => {
             set.insert(name.to_string());
-        }
+        },
         Typ::Type { args, .. } => {
             for a in args {
                 collect_tfrees_inner(a, set);
             }
-        }
-        Typ::TVar { .. } => {}
+        },
+        Typ::TVar { .. } => {},
     }
 }
 
@@ -72,15 +73,15 @@ fn match_types(scheme: &Typ, concrete: &Typ, mapping: &mut BTreeMap<String, Typ>
     match (scheme, concrete) {
         (Typ::TFree { name, .. }, _) => {
             mapping.insert(name.to_string(), concrete.clone());
-        }
+        },
         (Typ::Type { name: n1, args: a1 }, Typ::Type { name: n2, args: a2 })
             if n1 == n2 && a1.len() == a2.len() =>
         {
             for (s, c) in a1.iter().zip(a2.iter()) {
                 match_types(s, c, mapping);
             }
-        }
-        _ => {}
+        },
+        _ => {},
     }
 }
 
@@ -108,9 +109,7 @@ pub struct Consts {
 
 impl Consts {
     pub fn empty() -> Self {
-        Consts {
-            decls: BTreeMap::new(),
-        }
+        Consts { decls: BTreeMap::new() }
     }
 
     /// Declare a new constant.
@@ -118,11 +117,7 @@ impl Consts {
         let mono = collect_tfrees(&scheme.body).is_empty();
         self.decls.insert(
             Arc::from(name),
-            ConstDecl {
-                name: Arc::from(name),
-                scheme,
-                monomorphic: mono,
-            },
+            ConstDecl { name: Arc::from(name), scheme, monomorphic: mono },
         );
     }
 

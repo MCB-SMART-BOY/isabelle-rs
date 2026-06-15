@@ -4,10 +4,13 @@
 //! checking engine. It implements the full LSP lifecycle.
 
 use std::sync::Arc;
+
 use tokio::sync::mpsc;
 
-use super::lsp_types::*;
-use super::transport::{IncomingMessage, OutgoingMessage, Transport};
+use super::{
+    lsp_types::*,
+    transport::{IncomingMessage, OutgoingMessage, Transport},
+};
 use crate::fleche::engine::Fleche;
 
 /// The Isabelle LSP server.
@@ -39,16 +42,13 @@ impl IsabelleServer {
         tracing::info!(" LSP server started, waiting for client...");
 
         while self.lifecycle != ServerLifecycle::Shutdown {
-            let transport = self
-                .transport
-                .as_mut()
-                .expect("transport required for sync mode");
+            let transport = self.transport.as_mut().expect("transport required for sync mode");
             match transport.recv() {
                 Some(msg) => self.handle_message(msg),
                 None => {
                     tracing::info!(" Transport closed, shutting down.");
                     break;
-                }
+                },
             }
         }
 
@@ -57,11 +57,7 @@ impl IsabelleServer {
 
     /// Create an async server instance.
     pub fn new_async(fleche: Arc<Fleche>, _tx: mpsc::Sender<OutgoingMessage>) -> Self {
-        IsabelleServer {
-            transport: None,
-            fleche,
-            lifecycle: ServerLifecycle::Created,
-        }
+        IsabelleServer { transport: None, fleche, lifecycle: ServerLifecycle::Created }
     }
 
     /// Run the async event loop.
@@ -73,7 +69,7 @@ impl IsabelleServer {
                 None => {
                     tracing::info!("Transport closed");
                     break;
-                }
+                },
             }
         }
     }
@@ -85,7 +81,7 @@ impl IsabelleServer {
             IncomingMessage::Notification(notif) => self.handle_notification(notif),
             IncomingMessage::Response(resp) => {
                 tracing::info!(" Unexpected response: {:?}", resp.id);
-            }
+            },
         }
     }
 
@@ -112,7 +108,7 @@ impl IsabelleServer {
             requests::PROOF_GOALS => self.handle_proof_goals(req),
             _ => {
                 self.send_error(req.id, JsonRpcError::method_not_found(&req.method));
-            }
+            },
         }
     }
 
@@ -124,26 +120,26 @@ impl IsabelleServer {
         match notif.method.as_str() {
             notifications::INITIALIZED => {
                 tracing::info!(" Client initialized.");
-            }
+            },
             notifications::TEXT_DOCUMENT_DID_OPEN => {
                 self.handle_did_open(notif);
-            }
+            },
             notifications::TEXT_DOCUMENT_DID_CHANGE => {
                 self.handle_did_change(notif);
-            }
+            },
             notifications::TEXT_DOCUMENT_DID_CLOSE => {
                 self.handle_did_close(notif);
-            }
+            },
             notifications::TEXT_DOCUMENT_DID_SAVE => {
                 self.handle_did_save(notif);
-            }
+            },
             notifications::EXIT => {
                 tracing::info!(" Client requested exit.");
                 self.lifecycle = ServerLifecycle::ShuttingDown;
-            }
+            },
             _ => {
                 // Unknown notifications are silently ignored per LSP spec
-            }
+            },
         }
     }
 
@@ -155,12 +151,9 @@ impl IsabelleServer {
         let _params: InitializeParams = match serde_json::from_value(req.params.clone()) {
             Ok(p) => p,
             Err(e) => {
-                self.send_error(
-                    req.id,
-                    JsonRpcError::new(-32602, format!("Invalid params: {e}")),
-                );
+                self.send_error(req.id, JsonRpcError::new(-32602, format!("Invalid params: {e}")));
                 return;
-            }
+            },
         };
 
         let result = InitializeResult {
@@ -181,10 +174,7 @@ impl IsabelleServer {
             },
         };
 
-        self.send_result(
-            req.id,
-            serde_json::to_value(result).expect("Serialization failed"),
-        );
+        self.send_result(req.id, serde_json::to_value(result).expect("Serialization failed"));
         self.lifecycle = ServerLifecycle::Initialized;
 
         tracing::info!(" Initialized — ready for requests!");
@@ -207,7 +197,7 @@ impl IsabelleServer {
             Err(e) => {
                 tracing::info!(" Bad didOpen params: {e}");
                 return;
-            }
+            },
         };
 
         let uri = &params.text_document.uri;
@@ -225,7 +215,7 @@ impl IsabelleServer {
             Err(e) => {
                 tracing::info!(" Bad didChange params: {e}");
                 return;
-            }
+            },
         };
 
         let uri = &params.text_document.uri;
@@ -254,7 +244,7 @@ impl IsabelleServer {
             Err(e) => {
                 tracing::info!(" Bad didClose params: {e}");
                 return;
-            }
+            },
         };
 
         tracing::info!(" Closed: {}", params.text_document.uri);
@@ -276,7 +266,7 @@ impl IsabelleServer {
             Err(e) => {
                 self.send_error(req.id, JsonRpcError::new(-32602, format!("{e}")));
                 return;
-            }
+            },
         };
 
         let hover_text = self.fleche.get_hover(
@@ -298,23 +288,17 @@ impl IsabelleServer {
                     req.id,
                     serde_json::to_value(hover).expect("Serialization failed"),
                 );
-            }
+            },
             None => {
                 self.send_result(req.id, serde_json::Value::Null);
-            }
+            },
         }
     }
 
     fn handle_completion(&mut self, req: JsonRpcRequest) {
         // For now, return empty completion list
-        let result = CompletionList {
-            is_incomplete: false,
-            items: vec![],
-        };
-        self.send_result(
-            req.id,
-            serde_json::to_value(result).expect("Serialization failed"),
-        );
+        let result = CompletionList { is_incomplete: false, items: vec![] };
+        self.send_result(req.id, serde_json::to_value(result).expect("Serialization failed"));
     }
 
     fn handle_definition(&mut self, req: JsonRpcRequest) {
@@ -323,7 +307,7 @@ impl IsabelleServer {
             Err(e) => {
                 self.send_error(req.id, JsonRpcError::new(-32602, format!("{e}")));
                 return;
-            }
+            },
         };
 
         let uri = &params.text_document.uri;
@@ -342,9 +326,9 @@ impl IsabelleServer {
                             JsonRpcError::new(-32800, format!("Cannot read document: {e}")),
                         );
                         return;
-                    }
+                    },
                 }
-            }
+            },
         };
 
         // Find word at cursor position
@@ -357,7 +341,7 @@ impl IsabelleServer {
             None => {
                 self.send_result(req.id, serde_json::Value::Null);
                 return;
-            }
+            },
         };
 
         // Look up in definition index
@@ -376,14 +360,8 @@ impl IsabelleServer {
                 let location = Location {
                     uri: def_uri,
                     range: Range {
-                        start: Position {
-                            line: (loc.line as u32).saturating_sub(1),
-                            character: 0,
-                        },
-                        end: Position {
-                            line: (loc.line as u32).saturating_sub(1),
-                            character: 0,
-                        },
+                        start: Position { line: (loc.line as u32).saturating_sub(1), character: 0 },
+                        end: Position { line: (loc.line as u32).saturating_sub(1), character: 0 },
                     },
                 };
 
@@ -391,10 +369,10 @@ impl IsabelleServer {
                     req.id,
                     serde_json::to_value(&location).expect("Serialization failed"),
                 );
-            }
+            },
             None => {
                 self.send_result(req.id, serde_json::Value::Null);
-            }
+            },
         }
     }
 
@@ -404,7 +382,7 @@ impl IsabelleServer {
             Err(e) => {
                 self.send_error(req.id, JsonRpcError::new(-32602, format!("{e}")));
                 return;
-            }
+            },
         };
 
         let uri = &params.text_document.uri;
@@ -417,16 +395,13 @@ impl IsabelleServer {
                     Err(_) => {
                         self.send_result(req.id, serde_json::Value::Null);
                         return;
-                    }
+                    },
                 }
-            }
+            },
         };
 
         let symbols = crate::lsp::handlers::symbols::parse_document_symbols_for_server(&text);
-        self.send_result(
-            req.id,
-            serde_json::to_value(&symbols).expect("Serialization failed"),
-        );
+        self.send_result(req.id, serde_json::to_value(&symbols).expect("Serialization failed"));
     }
 
     fn handle_proof_goals(&mut self, req: JsonRpcRequest) {
@@ -435,23 +410,19 @@ impl IsabelleServer {
             Err(e) => {
                 self.send_error(req.id, JsonRpcError::new(-32602, format!("{e}")));
                 return;
-            }
+            },
         };
 
-        let proof_state = self
-            .fleche
-            .get_proof_state(&params.text_document.uri, params.position.line);
+        let proof_state =
+            self.fleche.get_proof_state(&params.text_document.uri, params.position.line);
 
         match proof_state {
             Some(ps) => {
-                self.send_result(
-                    req.id,
-                    serde_json::to_value(ps).expect("Serialization failed"),
-                );
-            }
+                self.send_result(req.id, serde_json::to_value(ps).expect("Serialization failed"));
+            },
             None => {
                 self.send_result(req.id, serde_json::Value::Null);
-            }
+            },
         }
     }
 
@@ -461,28 +432,26 @@ impl IsabelleServer {
 
     /// Send a successful response.
     fn send_result(&self, id: RequestId, result: serde_json::Value) {
-        self.transport
-            .as_ref()
-            .expect("Transport not initialized")
-            .send(OutgoingMessage::Response(JsonRpcResponse {
+        self.transport.as_ref().expect("Transport not initialized").send(
+            OutgoingMessage::Response(JsonRpcResponse {
                 jsonrpc: "2.0".into(),
                 id,
                 result: Some(result),
                 error: None,
-            }));
+            }),
+        );
     }
 
     /// Send an error response.
     fn send_error(&self, id: RequestId, error: JsonRpcError) {
-        self.transport
-            .as_ref()
-            .expect("Transport not initialized")
-            .send(OutgoingMessage::Response(JsonRpcResponse {
+        self.transport.as_ref().expect("Transport not initialized").send(
+            OutgoingMessage::Response(JsonRpcResponse {
                 jsonrpc: "2.0".into(),
                 id,
                 result: None,
                 error: Some(error),
-            }));
+            }),
+        );
     }
 
     /// Publish diagnostics for a file.
@@ -492,20 +461,15 @@ impl IsabelleServer {
             "diagnostics": diags,
         });
 
-        self.transport
-            .as_ref()
-            .expect("Transport not initialized")
-            .send(OutgoingMessage::Notification(JsonRpcNotification {
+        self.transport.as_ref().expect("Transport not initialized").send(
+            OutgoingMessage::Notification(JsonRpcNotification {
                 jsonrpc: "2.0".into(),
                 method: notifications::PUBLISH_DIAGNOSTICS.into(),
                 params,
-            }));
-
-        eprintln!(
-            "[isabelle-rs] Published {} diagnostics for {}",
-            diags.len(),
-            uri
+            }),
         );
+
+        eprintln!("[isabelle-rs] Published {} diagnostics for {}", diags.len(), uri);
     }
 }
 

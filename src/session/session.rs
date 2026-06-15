@@ -18,14 +18,18 @@
 //!                         Diagnostics
 //! ```
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
+
 use tokio::sync::oneshot;
 
-use super::file_worker::{FileWorker, FileWorkerHandle, WorkerCommand};
-use super::watchdog::Watchdog;
-use crate::fleche::engine::CommandExecutor;
-use crate::server::lsp_types::{Diagnostic, ProofState};
+use super::{
+    file_worker::{FileWorker, FileWorkerHandle, WorkerCommand},
+    watchdog::Watchdog,
+};
+use crate::{
+    fleche::engine::CommandExecutor,
+    server::lsp_types::{Diagnostic, ProofState},
+};
 
 // =========================================================================
 // Session error
@@ -50,11 +54,7 @@ pub struct Session {
 
 impl Session {
     pub fn new(executor: Arc<dyn CommandExecutor>) -> Self {
-        Session {
-            workers: HashMap::new(),
-            executor,
-            _watchdog: Watchdog::new(),
-        }
+        Session { workers: HashMap::new(), executor, _watchdog: Watchdog::new() }
     }
 
     /// Open a file and run initial check. Returns diagnostics.
@@ -63,14 +63,9 @@ impl Session {
         self.workers.insert(uri.to_string(), handle.clone());
 
         let (reply_tx, reply_rx) = oneshot::channel();
-        handle.send(WorkerCommand::CheckFile {
-            content: content.to_string(),
-            reply: reply_tx,
-        });
+        handle.send(WorkerCommand::CheckFile { content: content.to_string(), reply: reply_tx });
 
-        reply_rx
-            .blocking_recv()
-            .map_err(|_| SessionError::WorkerGone(uri.to_string()))
+        reply_rx.blocking_recv().map_err(|_| SessionError::WorkerGone(uri.to_string()))
     }
 
     /// Update a file and re-check incrementally.
@@ -82,14 +77,9 @@ impl Session {
         let handle = self.get_handle(uri)?;
 
         let (reply_tx, reply_rx) = oneshot::channel();
-        handle.send(WorkerCommand::CheckFile {
-            content: content.to_string(),
-            reply: reply_tx,
-        });
+        handle.send(WorkerCommand::CheckFile { content: content.to_string(), reply: reply_tx });
 
-        reply_rx
-            .blocking_recv()
-            .map_err(|_| SessionError::WorkerGone(uri.to_string()))
+        reply_rx.blocking_recv().map_err(|_| SessionError::WorkerGone(uri.to_string()))
     }
 
     /// Get hover info at a position.
@@ -101,27 +91,16 @@ impl Session {
     ) -> Result<Option<String>, SessionError> {
         let handle = self.get_handle(uri)?;
         let (reply_tx, reply_rx) = oneshot::channel();
-        handle.send(WorkerCommand::Hover {
-            line,
-            character,
-            reply: reply_tx,
-        });
-        reply_rx
-            .blocking_recv()
-            .map_err(|_| SessionError::WorkerGone(uri.to_string()))
+        handle.send(WorkerCommand::Hover { line, character, reply: reply_tx });
+        reply_rx.blocking_recv().map_err(|_| SessionError::WorkerGone(uri.to_string()))
     }
 
     /// Get proof state at a position.
     pub fn proof_state(&self, uri: &str, line: u32) -> Result<Option<ProofState>, SessionError> {
         let handle = self.get_handle(uri)?;
         let (reply_tx, reply_rx) = oneshot::channel();
-        handle.send(WorkerCommand::ProofState {
-            line,
-            reply: reply_tx,
-        });
-        reply_rx
-            .blocking_recv()
-            .map_err(|_| SessionError::WorkerGone(uri.to_string()))
+        handle.send(WorkerCommand::ProofState { line, reply: reply_tx });
+        reply_rx.blocking_recv().map_err(|_| SessionError::WorkerGone(uri.to_string()))
     }
 
     /// Close a file and terminate its worker.
@@ -132,9 +111,7 @@ impl Session {
     }
 
     fn get_handle(&self, uri: &str) -> Result<&FileWorkerHandle, SessionError> {
-        self.workers
-            .get(uri)
-            .ok_or_else(|| SessionError::FileNotFound(uri.to_string()))
+        self.workers.get(uri).ok_or_else(|| SessionError::FileNotFound(uri.to_string()))
     }
 
     pub fn open_count(&self) -> usize {
@@ -171,15 +148,9 @@ mod tests {
     fn test_open_file_round_trip() {
         let mut session = dummy_session();
 
-        let result = session.open_file(
-            "file:///test.thy",
-            "theory Test\nlemma foo: True\n  by auto",
-        );
-        assert!(
-            result.is_ok(),
-            "open_file should succeed: {:?}",
-            result.err()
-        );
+        let result =
+            session.open_file("file:///test.thy", "theory Test\nlemma foo: True\n  by auto");
+        assert!(result.is_ok(), "open_file should succeed: {:?}", result.err());
         assert_eq!(session.open_count(), 1);
 
         let diags = result.unwrap();
@@ -196,18 +167,11 @@ mod tests {
         let mut session = dummy_session();
 
         // Open initial content
-        session
-            .open_file(
-                "file:///test.thy",
-                "theory Test\nlemma foo: True\n  by auto",
-            )
-            .unwrap();
+        session.open_file("file:///test.thy", "theory Test\nlemma foo: True\n  by auto").unwrap();
 
         // Update with new content
-        let result = session.update_file(
-            "file:///test.thy",
-            "theory Test\nlemma foo: True\nproof auto\nqed",
-        );
+        let result = session
+            .update_file("file:///test.thy", "theory Test\nlemma foo: True\nproof auto\nqed");
         assert!(result.is_ok());
 
         session.close_file("file:///test.thy");
@@ -217,12 +181,7 @@ mod tests {
     fn test_hover_round_trip() {
         let mut session = dummy_session();
 
-        session
-            .open_file(
-                "file:///test.thy",
-                "theory Test\nlemma foo: True\n  by auto",
-            )
-            .unwrap();
+        session.open_file("file:///test.thy", "theory Test\nlemma foo: True\n  by auto").unwrap();
 
         let hover = session.hover("file:///test.thy", 0, 0).unwrap();
         assert!(hover.is_some());
@@ -235,10 +194,7 @@ mod tests {
         let mut session = dummy_session();
 
         session
-            .open_file(
-                "file:///test.thy",
-                "theory Test\nlemma foo: True\nproof auto\nqed",
-            )
+            .open_file("file:///test.thy", "theory Test\nlemma foo: True\nproof auto\nqed")
             .unwrap();
 
         let ps = session.proof_state("file:///test.thy", 2).unwrap();

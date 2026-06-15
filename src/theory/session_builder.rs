@@ -14,13 +14,16 @@
 //! 6. Register loaded theories in `TheoryRegistry`
 //! 7. Report results (success count, theorem count, errors)
 
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
-use crate::core::theory::Theory;
-use crate::theory::loader::TheoryProcessor;
-use crate::theory::registry::TheoryRegistry;
+use crate::{
+    core::theory::Theory,
+    theory::{loader::TheoryProcessor, registry::TheoryRegistry},
+};
 
 // =========================================================================
 // TheoryFile — metadata about a .thy file
@@ -60,11 +63,7 @@ impl TheoryFile {
             }
         }
 
-        Some(TheoryFile {
-            name,
-            path: path.to_path_buf(),
-            imports,
-        })
+        Some(TheoryFile { name, path: path.to_path_buf(), imports })
     }
 }
 
@@ -172,11 +171,8 @@ impl SessionBuilder {
         }
 
         // Kahn's algorithm
-        let mut queue: Vec<&str> = in_degree
-            .iter()
-            .filter(|(_, d)| **d == 0)
-            .map(|(n, _)| *n)
-            .collect();
+        let mut queue: Vec<&str> =
+            in_degree.iter().filter(|(_, d)| **d == 0).map(|(n, _)| *n).collect();
 
         let mut order = Vec::new();
         while let Some(name) = queue.pop() {
@@ -225,11 +221,11 @@ impl SessionBuilder {
                     result.loaded += 1;
                     result.theorems += thm_count;
                     result.theory_names.push(name.clone());
-                }
+                },
                 Err(errs) => {
                     result.failed += 1;
                     result.error_messages.extend(errs);
-                }
+                },
             }
         }
 
@@ -238,7 +234,8 @@ impl SessionBuilder {
 
     /// Build a single theory file.
     fn build_one(&mut self, tf: &TheoryFile) -> Result<usize, Vec<String>> {
-        let parent = tf.imports
+        let parent = tf
+            .imports
             .first()
             .and_then(|imp| self.registry.lookup(imp))
             .unwrap_or_else(Theory::pure);
@@ -279,8 +276,9 @@ impl SessionBuilder {
     /// Instead of just counting success/failure, this classifies each theory
     /// into detailed status categories using `VerifyClassifier`.
     pub fn build_with_classifier(&mut self) -> crate::theory::verify_classifier::VerifyReport {
-        use crate::theory::verify_classifier::VerifyResult;
         use std::time::Instant;
+
+        use crate::theory::verify_classifier::VerifyResult;
 
         let mut results = Vec::new();
 
@@ -309,10 +307,14 @@ impl SessionBuilder {
     }
 
     /// Build a single theory and classify the result.
-    fn build_one_classified(&mut self, tf: &TheoryFile) -> crate::theory::verify_classifier::VerifyStatus {
+    fn build_one_classified(
+        &mut self,
+        tf: &TheoryFile,
+    ) -> crate::theory::verify_classifier::VerifyStatus {
         use crate::theory::verify_classifier::VerifyStatus;
 
-        let parent = tf.imports
+        let parent = tf
+            .imports
             .first()
             .and_then(|imp| self.registry.lookup(imp))
             .unwrap_or_else(Theory::pure);
@@ -341,11 +343,12 @@ impl SessionBuilder {
                 let failed_names: Vec<String> = proc.errors().iter().take(10).cloned().collect();
                 if verified == 0 {
                     // Check if any errors are syntax-related
-                    let syntax_err = proc.errors().iter().any(|e|
-                        e.contains("parse") || e.contains("syntax") || e.contains("token"));
+                    let syntax_err = proc.errors().iter().any(|e| {
+                        e.contains("parse") || e.contains("syntax") || e.contains("token")
+                    });
                     if syntax_err {
                         Ok(VerifyStatus::SyntaxError {
-                            message: proc.errors().first().cloned().unwrap_or_default()
+                            message: proc.errors().first().cloned().unwrap_or_default(),
                         })
                     } else {
                         Ok(VerifyStatus::ProofFailure { attempted })
@@ -360,16 +363,14 @@ impl SessionBuilder {
             Ok(Ok(status)) => status,
             Ok(Err(status)) => status,
             Err(_) => VerifyStatus::SyntaxError {
-                message: "panic: internal error during processing".to_string()
+                message: "panic: internal error during processing".to_string(),
             },
         }
     }
 
     /// Get the theorem count for a theory by name.
     fn theorem_count_for(&self, name: &str) -> usize {
-        self.registry.lookup(name)
-            .map(|thy| thy.all_theorem_names().len())
-            .unwrap_or(0)
+        self.registry.lookup(name).map(|thy| thy.all_theorem_names().len()).unwrap_or(0)
     }
 }
 
@@ -398,13 +399,17 @@ mod tests {
         let rest = trimmed.strip_prefix("theory ").unwrap();
         let parts: Vec<&str> = rest.split_whitespace().collect();
         assert_eq!(parts[0], "Foo");
-        
+
         let mut imports = Vec::new();
         let mut in_imports = false;
         for part in &parts[1..] {
-            if *part == "imports" { in_imports = true; }
-            else if *part == "begin" || *part == "keywords" { break; }
-            else if in_imports { imports.push(part.to_string()); }
+            if *part == "imports" {
+                in_imports = true;
+            } else if *part == "begin" || *part == "keywords" {
+                break;
+            } else if in_imports {
+                imports.push(part.to_string());
+            }
         }
         assert_eq!(imports, vec!["Bar", "Baz"]);
     }

@@ -17,13 +17,14 @@
 //! 4. **Derivations**: theorems carry proof terms (or oracle tags)
 //! 5. **Maxidx**: proper tracking for fresh variable generation
 
-use std::fmt;
-use std::sync::Arc;
+use std::{fmt, sync::Arc};
 
-use super::error::KernelError;
-use super::logic::Pure;
-use super::term::Term;
-use super::types::{Sort, Typ};
+use super::{
+    error::KernelError,
+    logic::Pure,
+    term::Term,
+    types::{Sort, Typ},
+};
 
 // =========================================================================
 // Certified terms (cterm) — align with Isabelle's cterm
@@ -60,9 +61,15 @@ impl CTerm {
         CTerm { term, maxidx, term_type: typ }
     }
 
-    pub fn term(&self) -> &Term { &self.term }
-    pub fn maxidx(&self) -> usize { self.maxidx }
-    pub fn term_type(&self) -> &Typ { &self.term_type }
+    pub fn term(&self) -> &Term {
+        &self.term
+    }
+    pub fn maxidx(&self) -> usize {
+        self.maxidx
+    }
+    pub fn term_type(&self) -> &Typ {
+        &self.term_type
+    }
 
     /// Require non-dummy type — fails if the type is Typ::dummy().
     /// Use this at kernel rule boundaries to ensure type safety.
@@ -95,12 +102,8 @@ impl CTerm {
             Term::Abs { typ, .. } if !typ.is_dummy() => typ.clone(),
             Term::App { func, arg: _ } => {
                 let ft = Self::infer_type(func);
-                if let Some((_, ret)) = ft.dest_fun() {
-                    ret.clone()
-                } else {
-                    Typ::dummy()
-                }
-            }
+                if let Some((_, ret)) = ft.dest_fun() { ret.clone() } else { Typ::dummy() }
+            },
             _ => Typ::dummy(),
         }
     }
@@ -114,19 +117,19 @@ impl CTerm {
                 Term::Var { index, typ, .. } => {
                     maxidx = usize::max(maxidx, *index);
                     maxidx = usize::max(maxidx, typ.maxidx());
-                }
+                },
                 Term::Const { typ, .. } | Term::Free { typ, .. } => {
                     maxidx = usize::max(maxidx, typ.maxidx());
-                }
+                },
                 Term::Abs { typ, body, .. } => {
                     maxidx = usize::max(maxidx, typ.maxidx());
                     stack.push(body);
-                }
+                },
                 Term::App { func, arg } => {
                     stack.push(arg);
                     stack.push(func);
-                }
-                Term::Bound(_) => {}
+                },
+                Term::Bound(_) => {},
             }
         }
         maxidx
@@ -154,9 +157,7 @@ pub struct Hyps {
 
 impl Hyps {
     pub fn empty() -> Self {
-        Hyps {
-            entries: Vec::new(),
-        }
+        Hyps { entries: Vec::new() }
     }
 
     pub fn singleton(h: CTerm) -> Self {
@@ -172,9 +173,7 @@ impl Hyps {
 
     /// Check if a hypothesis is already present (modulo α-equivalence).
     pub fn contains(&self, h: &CTerm) -> bool {
-        self.entries
-            .iter()
-            .any(|existing| Self::alpha_eq(existing.term(), h.term()))
+        self.entries.iter().any(|existing| Self::alpha_eq(existing.term(), h.term()))
     }
 
     pub fn len(&self) -> usize {
@@ -222,26 +221,17 @@ impl Hyps {
                 n1 == n2
                     || n1.as_ref().ends_with(&format!(".{}", n2.as_ref()))
                     || n2.as_ref().ends_with(&format!(".{}", n1.as_ref()))
-            }
+            },
             (Term::Var { name: n1, .. }, Term::Free { name: n2, .. })
             | (Term::Free { name: n2, .. }, Term::Var { name: n1, .. }) => n1 == n2,
-            (
-                Term::Var {
-                    name: n1,
-                    index: i1,
-                    ..
-                },
-                Term::Var {
-                    name: n2,
-                    index: i2,
-                    ..
-                },
-            ) => n1 == n2 && i1 == i2,
+            (Term::Var { name: n1, index: i1, .. }, Term::Var { name: n2, index: i2, .. }) => {
+                n1 == n2 && i1 == i2
+            },
             (Term::Bound(i1), Term::Bound(i2)) => i1 == i2,
             (Term::Abs { body: b1, .. }, Term::Abs { body: b2, .. }) => Self::alpha_eq(b1, b2),
             (Term::App { func: f1, arg: a1 }, Term::App { func: f2, arg: a2 }) => {
                 Self::alpha_eq(f1, f2) && Self::alpha_eq(a1, a2)
-            }
+            },
             _ => false,
         }
     }
@@ -274,17 +264,9 @@ impl fmt::Debug for Hyps {
 /// - `Rule`: a primitive inference rule applied to premises
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Derivation {
-    Oracle {
-        name: String,
-        prop: CTerm,
-    },
-    Axiom {
-        name: &'static str,
-    },
-    Rule {
-        name: &'static str,
-        premises: Vec<ThmDeriv>,
-    },
+    Oracle { name: String, prop: CTerm },
+    Axiom { name: &'static str },
+    Rule { name: &'static str, premises: Vec<ThmDeriv> },
 }
 
 /// A reference to a premise theorem's derivation.
@@ -404,11 +386,7 @@ impl Thm {
 
 impl fmt::Debug for Thm {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let hyps: Vec<String> = self
-            .hyps
-            .iter()
-            .map(|h| format!("{:?}", h.term()))
-            .collect();
+        let hyps: Vec<String> = self.hyps.iter().map(|h| format!("{:?}", h.term())).collect();
         if hyps.is_empty() {
             write!(f, "⊢ {:?}", self.prop.term())
         } else {
@@ -511,10 +489,7 @@ impl ThmKernel {
             shyps: thm.shyps.clone(),
             derivation: Derivation::Rule {
                 name: "symmetric",
-                premises: vec![ThmDeriv {
-                    serial: thm.serial,
-                    prop: thm.prop.clone(),
-                }],
+                premises: vec![ThmDeriv { serial: thm.serial, prop: thm.prop.clone() }],
             },
             serial: new_serial(),
         })
@@ -555,14 +530,8 @@ impl ThmKernel {
             derivation: Derivation::Rule {
                 name: "transitive",
                 premises: vec![
-                    ThmDeriv {
-                        serial: thm1.serial,
-                        prop: thm1.prop.clone(),
-                    },
-                    ThmDeriv {
-                        serial: thm2.serial,
-                        prop: thm2.prop.clone(),
-                    },
+                    ThmDeriv { serial: thm1.serial, prop: thm1.prop.clone() },
+                    ThmDeriv { serial: thm2.serial, prop: thm2.prop.clone() },
                 ],
             },
             serial: new_serial(),
@@ -614,14 +583,8 @@ impl ThmKernel {
             derivation: Derivation::Rule {
                 name: "combination",
                 premises: vec![
-                    ThmDeriv {
-                        serial: thm_f.serial,
-                        prop: thm_f.prop.clone(),
-                    },
-                    ThmDeriv {
-                        serial: thm_x.serial,
-                        prop: thm_x.prop.clone(),
-                    },
+                    ThmDeriv { serial: thm_f.serial, prop: thm_f.prop.clone() },
+                    ThmDeriv { serial: thm_x.serial, prop: thm_x.prop.clone() },
                 ],
             },
             serial: new_serial(),
@@ -642,9 +605,7 @@ impl ThmKernel {
         // Side condition: x must not be free in the hypotheses
         for hyp in thm.hyps.iter() {
             if free_in(x_name, hyp.term()) {
-                return Err(KernelError::FreeVarInHypotheses {
-                    name: x_name.to_string(),
-                });
+                return Err(KernelError::FreeVarInHypotheses { name: x_name.to_string() });
             }
         }
 
@@ -665,10 +626,7 @@ impl ThmKernel {
             shyps: vec![],
             derivation: Derivation::Rule {
                 name: "abstraction",
-                premises: vec![ThmDeriv {
-                    serial: thm.serial,
-                    prop: thm.prop.clone(),
-                }],
+                premises: vec![ThmDeriv { serial: thm.serial, prop: thm.prop.clone() }],
             },
             serial: new_serial(),
         })
@@ -719,10 +677,8 @@ impl ThmKernel {
             return Err(KernelError::HypothesisNotFound);
         }
 
-        let new_prop = CTerm::certify(Pure::mk_implies(
-            assumption.term().clone(),
-            thm.prop.term().clone(),
-        ));
+        let new_prop =
+            CTerm::certify(Pure::mk_implies(assumption.term().clone(), thm.prop.term().clone()));
 
         Ok(Thm {
             hyps: thm.hyps.remove(assumption),
@@ -732,10 +688,7 @@ impl ThmKernel {
             shyps: vec![],
             derivation: Derivation::Rule {
                 name: "implies_intr",
-                premises: vec![ThmDeriv {
-                    serial: thm.serial,
-                    prop: thm.prop.clone(),
-                }],
+                premises: vec![ThmDeriv { serial: thm.serial, prop: thm.prop.clone() }],
             },
             serial: new_serial(),
         })
@@ -764,14 +717,8 @@ impl ThmKernel {
             derivation: Derivation::Rule {
                 name: "implies_elim",
                 premises: vec![
-                    ThmDeriv {
-                        serial: thm_imp.serial,
-                        prop: thm_imp.prop.clone(),
-                    },
-                    ThmDeriv {
-                        serial: thm_a.serial,
-                        prop: thm_a.prop.clone(),
-                    },
+                    ThmDeriv { serial: thm_imp.serial, prop: thm_imp.prop.clone() },
+                    ThmDeriv { serial: thm_a.serial, prop: thm_a.prop.clone() },
                 ],
             },
             serial: new_serial(),
@@ -785,9 +732,7 @@ impl ThmKernel {
     pub fn forall_intr(x_name: &str, x_typ: Typ, thm: &Thm) -> Result<Thm, KernelError> {
         for hyp in thm.hyps.iter() {
             if free_in(x_name, hyp.term()) {
-                return Err(KernelError::FreeVarInHypotheses {
-                    name: x_name.to_string(),
-                });
+                return Err(KernelError::FreeVarInHypotheses { name: x_name.to_string() });
             }
         }
         let all_term = Pure::mk_all(x_name, x_typ.clone(), thm.prop.term().clone());
@@ -799,10 +744,7 @@ impl ThmKernel {
             shyps: vec![],
             derivation: Derivation::Rule {
                 name: "forall_intr",
-                premises: vec![ThmDeriv {
-                    serial: thm.serial,
-                    prop: thm.prop.clone(),
-                }],
+                premises: vec![ThmDeriv { serial: thm.serial, prop: thm.prop.clone() }],
             },
             serial: new_serial(),
         })
@@ -820,10 +762,7 @@ impl ThmKernel {
             shyps: vec![],
             derivation: Derivation::Rule {
                 name: "forall_elim",
-                premises: vec![ThmDeriv {
-                    serial: thm.serial,
-                    prop: thm.prop.clone(),
-                }],
+                premises: vec![ThmDeriv { serial: thm.serial, prop: thm.prop.clone() }],
             },
             serial: new_serial(),
         })
@@ -850,10 +789,7 @@ impl ThmKernel {
             shyps: thm.shyps.clone(),
             derivation: Derivation::Rule {
                 name: "instantiate",
-                premises: vec![ThmDeriv {
-                    serial: thm.serial,
-                    prop: thm.prop.clone(),
-                }],
+                premises: vec![ThmDeriv { serial: thm.serial, prop: thm.prop.clone() }],
             },
             serial: new_serial(),
         }
@@ -884,22 +820,28 @@ impl ThmKernel {
             (Term::App { .. }, Term::App { .. }) => true,
             (Term::Abs { .. }, Term::Abs { .. }) => true,
             (Term::Const { name: n1, typ: t1 }, Term::Const { name: n2, typ: t2 }) => {
-                if n1 != n2 { return false; }
+                if n1 != n2 {
+                    return false;
+                }
                 // Type-aware: check TypeEnv when embedded types are dummy
                 let t1_eff = if t1.is_dummy() {
                     use crate::hol::hol_loader::HolTheoremDb;
                     HolTheoremDb::get().type_env.const_type(n1).unwrap_or(t1)
-                } else { t1 };
+                } else {
+                    t1
+                };
                 let t2_eff = if t2.is_dummy() {
                     use crate::hol::hol_loader::HolTheoremDb;
                     HolTheoremDb::get().type_env.const_type(n2).unwrap_or(t2)
-                } else { t2 };
+                } else {
+                    t2
+                };
                 if !t1_eff.is_dummy() && !t2_eff.is_dummy() {
                     Self::types_compatible(t1_eff, t2_eff)
                 } else {
                     true
                 }
-            }
+            },
             (Term::Free { name: n1, .. }, Term::Free { name: n2, .. }) => n1 == n2,
             (Term::Bound(i1), Term::Bound(i2)) => i1 == i2,
             _ => false,
@@ -910,10 +852,14 @@ impl ThmKernel {
     fn types_compatible(t1: &Typ, t2: &Typ) -> bool {
         match (t1, t2) {
             (Typ::Type { name: n1, args: a1 }, Typ::Type { name: n2, args: a2 }) => {
-                if n1 != n2 { return false; }
-                if a1.len() != a2.len() { return false; }
+                if n1 != n2 {
+                    return false;
+                }
+                if a1.len() != a2.len() {
+                    return false;
+                }
                 a1.iter().zip(a2.iter()).all(|(a, b)| Self::types_compatible(a, b))
-            }
+            },
             _ => true, // TFree, TVar, dummy — always potentially compatible
         }
     }
@@ -996,14 +942,8 @@ impl ThmKernel {
             derivation: Derivation::Rule {
                 name: "bicompose",
                 premises: vec![
-                    ThmDeriv {
-                        serial: thm1.serial,
-                        prop: thm1.prop.clone(),
-                    },
-                    ThmDeriv {
-                        serial: thm2.serial,
-                        prop: thm2.prop.clone(),
-                    },
+                    ThmDeriv { serial: thm1.serial, prop: thm1.prop.clone() },
+                    ThmDeriv { serial: thm2.serial, prop: thm2.prop.clone() },
                 ],
             },
             serial: new_serial(),
@@ -1046,14 +986,8 @@ impl ThmKernel {
             derivation: Derivation::Rule {
                 name: "subst_premise",
                 premises: vec![
-                    ThmDeriv {
-                        serial: eq_thm.serial,
-                        prop: eq_thm.prop.clone(),
-                    },
-                    ThmDeriv {
-                        serial: state.serial,
-                        prop: state.prop.clone(),
-                    },
+                    ThmDeriv { serial: eq_thm.serial, prop: eq_thm.prop.clone() },
+                    ThmDeriv { serial: state.serial, prop: state.prop.clone() },
                 ],
             },
             serial: new_serial(),
@@ -1173,14 +1107,8 @@ impl ThmKernel {
             derivation: Derivation::Rule {
                 name: "bicompose_eresolve",
                 premises: vec![
-                    ThmDeriv {
-                        serial: thm1.serial,
-                        prop: thm1.prop.clone(),
-                    },
-                    ThmDeriv {
-                        serial: thm2.serial,
-                        prop: thm2.prop.clone(),
-                    },
+                    ThmDeriv { serial: thm1.serial, prop: thm1.prop.clone() },
+                    ThmDeriv { serial: thm2.serial, prop: thm2.prop.clone() },
                 ],
             },
             serial: new_serial(),
@@ -1227,16 +1155,10 @@ impl ThmKernel {
         let mut resolved = true;
 
         for (t, u) in &thm.tpairs {
-            let config = super::unify::UnifyConfig {
-                search_bound: 10,
-                max_unifiers: 1,
-            };
+            let config = super::unify::UnifyConfig { search_bound: 10, max_unifiers: 1 };
             // Try to unify the flex-flex pair
-            if let Some(new_env) = super::unify::unifiers(
-                &env,
-                &[(t.clone(), u.clone())],
-                &config,
-            ) {
+            if let Some(new_env) = super::unify::unifiers(&env, &[(t.clone(), u.clone())], &config)
+            {
                 env = new_env;
             } else {
                 resolved = false;
@@ -1311,8 +1233,8 @@ fn free_in(var_name: &str, term: &Term) -> bool {
             Term::App { func, arg } => {
                 stack.push(arg);
                 stack.push(func);
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
     false
@@ -1332,16 +1254,16 @@ pub fn compute_shyps(term: &Term) -> Vec<Sort> {
         match t {
             Term::Const { typ, .. } | Term::Free { typ, .. } | Term::Var { typ, .. } => {
                 collect_type_sorts(typ, &mut shyps, &mut seen);
-            }
+            },
             Term::Abs { typ, body, .. } => {
                 collect_type_sorts(typ, &mut shyps, &mut seen);
                 stack.push(body);
-            }
+            },
             Term::App { func, arg } => {
                 stack.push(arg);
                 stack.push(func);
-            }
-            Term::Bound(_) => {}
+            },
+            Term::Bound(_) => {},
         }
     }
     shyps
@@ -1358,12 +1280,12 @@ fn collect_type_sorts(
             if *sort != Sort::top() && seen.insert(sort.clone()) {
                 shyps.push(sort.clone());
             }
-        }
+        },
         Typ::Type { args, .. } => {
             for arg in args {
                 collect_type_sorts(arg, shyps, seen);
             }
-        }
+        },
     }
 }
 
@@ -1374,8 +1296,7 @@ fn collect_type_sorts(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::envir::Envir;
-    use crate::core::types::Symbol;
+    use crate::core::{envir::Envir, types::Symbol};
 
     fn prop(name: &str) -> CTerm {
         CTerm::certify(Term::const_(name, Typ::base("prop")))
@@ -1472,14 +1393,10 @@ mod tests {
         let a = prop("A");
         let b = prop("B");
         let c = prop("C");
-        let thm = ThmKernel::assume(CTerm::certify(Pure::mk_implies(
-            b.term().clone(),
-            a.term().clone(),
-        )));
-        let state = ThmKernel::assume(CTerm::certify(Pure::mk_implies(
-            a.term().clone(),
-            c.term().clone(),
-        )));
+        let thm =
+            ThmKernel::assume(CTerm::certify(Pure::mk_implies(b.term().clone(), a.term().clone())));
+        let state =
+            ThmKernel::assume(CTerm::certify(Pure::mk_implies(a.term().clone(), c.term().clone())));
         let result = ThmKernel::bicompose(false, &thm, &state, 0);
         assert!(result.is_some());
         let r = result.unwrap();
@@ -1504,7 +1421,7 @@ mod tests {
         let result = ThmKernel::beta_conversion(t);
         assert!(result.is_err());
         match result {
-            Err(KernelError::BetaConversion(_)) => {} // expected
+            Err(KernelError::BetaConversion(_)) => {}, // expected
             _ => panic!("expected BetaConversion error"),
         }
     }

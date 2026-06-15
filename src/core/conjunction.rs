@@ -6,10 +6,12 @@
 //! multiple subgoals. Unlike `A /\ B` (HOL conjunction), `&&&` is
 //! at the Pure level and uses the same hypotheses.
 
-use super::logic::Pure;
-use super::term::Term;
-use super::thm::{CTerm, Thm, ThmKernel};
-use super::types::Typ;
+use super::{
+    logic::Pure,
+    term::Term,
+    thm::{CTerm, Thm, ThmKernel},
+    types::Typ,
+};
 
 /// Build `A &&& B` as a Pure proposition.
 /// In the kernel, this is represented as `A ==> B ==> A` (a trick).

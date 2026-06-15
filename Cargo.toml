@@ -1,8 +1,8 @@
 [package]
 name = "isabelle-rs"
-version = "1.2.0"
+version = "1.8.0"
 edition = "2024"
-description = "Isabelle proof assistant kernel and Isar proof engine, rewritten in Rust. LCF trusted core with type inference, context switching, flex-flex resolution, sort hypotheses, proof terms, BNF map/set/rel support, Sledgehammer ATP interface, and proof reconstruction."
+description = "Isabelle proof assistant kernel and Isar proof engine, rewritten in Rust. 27 proof methods (including Metis, Meson), attribute application system, method combinators (THEN/ORELSE/REPEAT), BNF Lfp/Gfp, Ctr_Sugar, Transfer/Lifting, Sledgehammer ATP integration."
 license = "Apache-2.0"
 repository = "https://github.com/MCB-SMART-BOY/isabelle-rs"
 documentation = "https://docs.rs/isabelle-rs"

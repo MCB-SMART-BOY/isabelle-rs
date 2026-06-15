@@ -45,11 +45,7 @@ fn path_to_uri(path: &str) -> String {
         return path.to_string();
     }
     // For relative paths, make them absolute
-    let abs = if path.starts_with('/') {
-        path.to_string()
-    } else {
-        format!("/{}", path)
-    };
+    let abs = if path.starts_with('/') { path.to_string() } else { format!("/{}", path) };
     format!("file://{}", abs)
 }
 
@@ -59,7 +55,7 @@ pub fn handle_definition(ctx: &HandlerContext, req: JsonRpcRequest) {
         Err(e) => {
             ctx.send_error(req.id, JsonRpcError::new(-32602, format!("{e}")));
             return;
-        }
+        },
     };
 
     let uri = &params.text_document.uri;
@@ -69,37 +65,29 @@ pub fn handle_definition(ctx: &HandlerContext, req: JsonRpcRequest) {
         Some(t) => t,
         None => {
             // Try to load from file system
-            let file_path = uri
-                .strip_prefix("file://")
-                .unwrap_or(uri);
+            let file_path = uri.strip_prefix("file://").unwrap_or(uri);
             match std::fs::read_to_string(file_path) {
                 Ok(t) => t,
                 Err(e) => {
                     ctx.send_error(
                         req.id,
-                        JsonRpcError::new(
-                            -32800,
-                            format!("Cannot read document: {e}"),
-                        ),
+                        JsonRpcError::new(-32800, format!("Cannot read document: {e}")),
                     );
                     return;
-                }
+                },
             }
-        }
+        },
     };
 
     // Find the word at cursor position
-    let (word, _col_start, _col_end) = match word_at_position(
-        &text,
-        params.position.line,
-        params.position.character,
-    ) {
-        Some(w) => w,
-        None => {
-            ctx.send_result(req.id, serde_json::Value::Null);
-            return;
-        }
-    };
+    let (word, _col_start, _col_end) =
+        match word_at_position(&text, params.position.line, params.position.character) {
+            Some(w) => w,
+            None => {
+                ctx.send_result(req.id, serde_json::Value::Null);
+                return;
+            },
+        };
 
     // Look up in the definition index
     match crate::hol::hol_loader::HolTheoremDb::get_definition_location(&word) {
@@ -118,10 +106,7 @@ pub fn handle_definition(ctx: &HandlerContext, req: JsonRpcRequest) {
                         line: (loc.line as u32).saturating_sub(1), // 0-based
                         character: 0,
                     },
-                    end: Position {
-                        line: (loc.line as u32).saturating_sub(1),
-                        character: 0,
-                    },
+                    end: Position { line: (loc.line as u32).saturating_sub(1), character: 0 },
                 },
             };
 
@@ -133,14 +118,14 @@ pub fn handle_definition(ctx: &HandlerContext, req: JsonRpcRequest) {
                         JsonRpcError::internal_error(format!("serialization: {e}")),
                     );
                     return;
-                }
+                },
             };
 
             ctx.send_result(req.id, result);
-        }
+        },
         None => {
             // Not found — return null
             ctx.send_result(req.id, serde_json::Value::Null);
-        }
+        },
     }
 }

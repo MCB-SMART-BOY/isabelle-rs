@@ -47,8 +47,8 @@
 //!
 //! ```rust
 //! use std::sync::Arc;
-//! use isabelle_rs::core::context::Context;
-//! use isabelle_rs::core::theory::Theory;
+//!
+//! use isabelle_rs::core::{context::Context, theory::Theory};
 //!
 //! let thy = Arc::new(Theory::pure());
 //!
@@ -62,9 +62,12 @@
 //! ```
 
 use std::sync::Arc;
-use super::theory::Theory;
-use super::term::Term;
-use super::types::{Symbol, Typ};
+
+use super::{
+    term::Term,
+    theory::Theory,
+    types::{Symbol, Typ},
+};
 
 // =========================================================================
 // Context — the generic context type
@@ -90,16 +93,15 @@ pub enum Context {
 ///
 /// # Fields
 ///
-/// - **`theory`** — A reference to the immutable theory that this proof
-///   block operates within.  Newly-proved theorems contribute to a new
-///   theory snapshot produced at `exit_proof` time.
-/// - **`fixes`** — Locally-fixed term variables (e.g., `fix x::nat`).
-///   Each entry is a `(name, type)` pair.
-/// - **`assumptions`** — Propositions temporarily assumed true (e.g.,
-///   from `assume "A"`).  These are discharged when the proof is closed.
+/// - **`theory`** — A reference to the immutable theory that this proof block operates within.
+///   Newly-proved theorems contribute to a new theory snapshot produced at `exit_proof` time.
+/// - **`fixes`** — Locally-fixed term variables (e.g., `fix x::nat`). Each entry is a `(name,
+///   type)` pair.
+/// - **`assumptions`** — Propositions temporarily assumed true (e.g., from `assume "A"`).  These
+///   are discharged when the proof is closed.
 /// - **`binds`** — Local let-bindings introduced with `define`.
-/// - **`goal`** — The current statement being proved (if the proof is in
-///   backward/refinement mode).  `None` when in forward/apply mode.
+/// - **`goal`** — The current statement being proved (if the proof is in backward/refinement mode).
+///   `None` when in forward/apply mode.
 #[derive(Clone, Debug)]
 pub struct ProofState {
     /// The underlying theory context.
@@ -211,7 +213,7 @@ impl Context {
             Context::Proof(mut state) => {
                 state.goal = Some(goal);
                 Context::Proof(state)
-            }
+            },
         }
     }
 
@@ -247,7 +249,7 @@ impl Context {
             Context::Proof(mut state) => {
                 state.theory = new_theory;
                 Context::Proof(state)
-            }
+            },
         }
     }
 

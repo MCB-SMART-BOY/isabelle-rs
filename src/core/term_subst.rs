@@ -16,14 +16,13 @@
 //! | `generalize(frees, idx, term)` | Replace Frees with Vars (for export) |
 //! | `beta_norm(term)` | Fully β-normalize a term |
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
-use super::term::Term;
-use super::types::Typ;
-use super::types::Symbol;
-
-use super::envir::VarKey;
+use super::{
+    envir::VarKey,
+    term::Term,
+    types::{Symbol, Typ},
+};
 
 // =========================================================================
 // Bound variable substitution
@@ -52,29 +51,29 @@ pub fn subst_bounds(args: &[Term], body: &Term) -> Term {
                     } else {
                         results.push(Term::bound(*i - args.len()));
                     }
-                }
+                },
                 Term::Abs { name, typ, body: inner } => {
                     let mut new_args: Vec<Term> = vec![Term::bound(0)];
                     new_args.extend(args.iter().map(|a| lift_bound_iter(a, 0, 1)));
                     stack.push(Frame::BuildAbs(Arc::clone(name), typ.clone()));
                     stack.push(Frame::Process(inner.as_ref().clone(), new_args));
-                }
+                },
                 Term::App { func, arg } => {
                     stack.push(Frame::BuildApp);
                     stack.push(Frame::Process(arg.as_ref().clone(), args.clone()));
                     stack.push(Frame::Process(func.as_ref().clone(), args));
-                }
+                },
                 other => results.push(other.clone()),
             },
             Frame::BuildAbs(name, typ) => {
                 let body = results.pop().unwrap_or_else(|| Term::bound(0));
                 results.push(Term::abs(name, typ, body));
-            }
+            },
             Frame::BuildApp => {
                 let arg = results.pop().unwrap_or_else(|| Term::bound(0));
                 let func = results.pop().unwrap_or_else(|| Term::bound(0));
                 results.push(Term::app(func, arg));
-            }
+            },
         }
     }
     results.pop().unwrap_or_else(|| body.clone())
@@ -98,27 +97,27 @@ fn lift_bound_iter(term: &Term, cutoff: usize, n: usize) -> Term {
                     } else {
                         results.push(Term::bound(*i));
                     }
-                }
+                },
                 Term::Abs { name, typ, body } => {
                     stack.push(Frame::BuildAbs(Arc::clone(name), typ.clone()));
                     stack.push(Frame::Process(body.as_ref().clone()));
-                }
+                },
                 Term::App { func, arg } => {
                     stack.push(Frame::BuildApp);
                     stack.push(Frame::Process(arg.as_ref().clone()));
                     stack.push(Frame::Process(func.as_ref().clone()));
-                }
+                },
                 other => results.push(other.clone()),
             },
             Frame::BuildAbs(name, typ) => {
                 let body = results.pop().unwrap_or_else(|| Term::bound(0));
                 results.push(Term::abs(name, typ, body));
-            }
+            },
             Frame::BuildApp => {
                 let arg = results.pop().unwrap_or_else(|| Term::bound(0));
                 let func = results.pop().unwrap_or_else(|| Term::bound(0));
                 results.push(Term::app(func, arg));
-            }
+            },
         }
     }
     results.pop().unwrap_or_else(|| term.clone())
@@ -143,11 +142,10 @@ pub fn instantiate_type(tyinst: &TypeInst, typ: &Typ) -> Typ {
             } else {
                 typ.clone()
             }
-        }
-        Typ::Type { name, args } => Typ::apply(
-            Arc::clone(name),
-            args.iter().map(|a| instantiate_type(tyinst, a)).collect(),
-        ),
+        },
+        Typ::Type { name, args } => {
+            Typ::apply(Arc::clone(name), args.iter().map(|a| instantiate_type(tyinst, a)).collect())
+        },
         Typ::TFree { .. } => typ.clone(),
     }
 }
@@ -172,7 +170,7 @@ pub fn instantiate(tyinst: &TypeInst, tminst: &TermInst, term: &Term) -> Term {
                 };
                 Term::var(Arc::clone(name), *index, new_typ)
             }
-        }
+        },
         Term::Const { name, typ } => Term::const_(Arc::clone(name), instantiate_type(tyinst, typ)),
         Term::Free { name, typ } => Term::free(Arc::clone(name), instantiate_type(tyinst, typ)),
         Term::Bound(i) => Term::bound(*i),
@@ -181,10 +179,9 @@ pub fn instantiate(tyinst: &TypeInst, tminst: &TermInst, term: &Term) -> Term {
             instantiate_type(tyinst, typ),
             instantiate(tyinst, tminst, body),
         ),
-        Term::App { func, arg } => Term::app(
-            instantiate(tyinst, tminst, func),
-            instantiate(tyinst, tminst, arg),
-        ),
+        Term::App { func, arg } => {
+            Term::app(instantiate(tyinst, tminst, func), instantiate(tyinst, tminst, arg))
+        },
     }
 }
 
@@ -209,17 +206,14 @@ fn generalize_inner(frees: &std::collections::BTreeSet<&str>, idx: usize, term: 
             } else {
                 term.clone()
             }
-        }
+        },
         Term::Const { .. } | Term::Bound(_) | Term::Var { .. } => term.clone(),
-        Term::Abs { name, typ, body } => Term::abs(
-            Arc::clone(name),
-            typ.clone(),
-            generalize_inner(frees, idx, body),
-        ),
-        Term::App { func, arg } => Term::app(
-            generalize_inner(frees, idx, func),
-            generalize_inner(frees, idx, arg),
-        ),
+        Term::Abs { name, typ, body } => {
+            Term::abs(Arc::clone(name), typ.clone(), generalize_inner(frees, idx, body))
+        },
+        Term::App { func, arg } => {
+            Term::app(generalize_inner(frees, idx, func), generalize_inner(frees, idx, arg))
+        },
     }
 }
 
@@ -242,10 +236,10 @@ pub fn beta_norm(term: &Term) -> Term {
                     // (λx. t) u → t[x:=u]
                     let reduced = subst_bounds(&[beta_norm(arg)], body);
                     beta_norm(&reduced) // continue normalizing
-                }
+                },
                 _ => Term::app(func_norm, beta_norm(arg)),
             }
-        }
+        },
         Term::Abs { name, typ, body } => Term::abs(Arc::clone(name), typ.clone(), beta_norm(body)),
         other => other.clone(),
     }
@@ -270,13 +264,13 @@ pub fn eta_contract(term: &Term) -> Term {
                             } else {
                                 term.clone()
                             }
-                        }
+                        },
                         _ => term.clone(),
                     }
-                }
+                },
                 _ => term.clone(),
             }
-        }
+        },
         _ => term.clone(),
     }
 }
@@ -300,10 +294,10 @@ fn lower_bound(term: &Term, cutoff: usize) -> Term {
             } else {
                 Term::bound(*i)
             }
-        }
+        },
         Term::Abs { name, typ, body } => {
             Term::abs(Arc::clone(name), typ.clone(), lower_bound(body, cutoff + 1))
-        }
+        },
         Term::App { func, arg } => Term::app(lower_bound(func, cutoff), lower_bound(arg, cutoff)),
         other => other.clone(),
     }
@@ -324,10 +318,7 @@ mod tests {
         let b = Term::free("b", Typ::dummy());
         // subst_bounds([v0,v1,...], Bound(i)) = v_i
         assert_eq!(subst_bounds(&[a.clone()], &Term::bound(0)), a.clone());
-        assert_eq!(
-            subst_bounds(&[a.clone(), b.clone()], &Term::bound(0)),
-            a.clone()
-        );
+        assert_eq!(subst_bounds(&[a.clone(), b.clone()], &Term::bound(0)), a.clone());
         assert_eq!(subst_bounds(&[a.clone(), b.clone()], &Term::bound(1)), b);
     }
 
@@ -369,7 +360,7 @@ mod tests {
         let result = instantiate(&tyinst, &tminst, &var);
         // Should be λx. x (the type part is also instantiated)
         match &result {
-            Term::Abs { .. } => { /* ok */ }
+            Term::Abs { .. } => { /* ok */ },
             _ => panic!("expected Abs, got {result:?}"),
         }
     }
@@ -383,7 +374,7 @@ mod tests {
             Term::Var { name, index, .. } => {
                 assert_eq!(name.as_ref(), "x");
                 assert_eq!(*index, 10);
-            }
+            },
             _ => panic!("expected Var, got {result:?}"),
         }
     }

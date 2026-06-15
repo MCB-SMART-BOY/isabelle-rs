@@ -1,11 +1,15 @@
 //! End-to-end integration tests for the full isabelle-rs pipeline.
 //! Tests theory loading, lemma parsing, proof verification, and theorem generation.
 
-use isabelle_rs::core::thm::{CTerm, ThmKernel};
-use isabelle_rs::core::types::Typ;
-use isabelle_rs::hol::hol_loader::*;
-use isabelle_rs::theory::loader::TheoryProcessor;
-use isabelle_rs::core::theory::Theory;
+use isabelle_rs::{
+    core::{
+        theory::Theory,
+        thm::{CTerm, ThmKernel},
+        types::Typ,
+    },
+    hol::hol_loader::*,
+    theory::loader::TheoryProcessor,
+};
 
 #[test]
 fn test_kernel_15_ops() {
@@ -23,7 +27,11 @@ fn test_kernel_15_ops() {
     let _sym = ThmKernel::symmetric(&refl).unwrap();
 
     // 4. combination
-    let f = CTerm::certify(isabelle_rs::core::term::Term::abs("x", Typ::dummy(), isabelle_rs::core::term::Term::bound(0)));
+    let f = CTerm::certify(isabelle_rs::core::term::Term::abs(
+        "x",
+        Typ::dummy(),
+        isabelle_rs::core::term::Term::bound(0),
+    ));
     let x = CTerm::certify(isabelle_rs::core::term::Term::const_("a", Typ::dummy()));
     let rf = ThmKernel::reflexive(f.clone());
     let rx = ThmKernel::reflexive(x.clone());
@@ -34,7 +42,11 @@ fn test_kernel_15_ops() {
 
     // 6. beta_conversion
     let app = isabelle_rs::core::term::Term::app(
-        isabelle_rs::core::term::Term::abs("x", Typ::dummy(), isabelle_rs::core::term::Term::bound(0)),
+        isabelle_rs::core::term::Term::abs(
+            "x",
+            Typ::dummy(),
+            isabelle_rs::core::term::Term::bound(0),
+        ),
         isabelle_rs::core::term::Term::const_("c", Typ::dummy()),
     );
     let ct = CTerm::certify(app);
@@ -143,8 +155,7 @@ fn test_datatype_parsing() {
 
 #[test]
 fn test_pretty_printer() {
-    use isabelle_rs::syntax::printer::print_term;
-    use isabelle_rs::core::term::Term;
+    use isabelle_rs::{core::term::Term, syntax::printer::print_term};
 
     // Infix operators
     let a = Term::free("a", Typ::dummy());
@@ -153,21 +164,24 @@ fn test_pretty_printer() {
     assert_eq!(print_term(&eq), "a = b");
 
     // Arithmetic
-    let plus = Term::app(Term::app(Term::const_("HOL.plus", Typ::dummy()),
-        Term::free("a", Typ::dummy())), Term::free("b", Typ::dummy()));
+    let plus = Term::app(
+        Term::app(Term::const_("HOL.plus", Typ::dummy()), Term::free("a", Typ::dummy())),
+        Term::free("b", Typ::dummy()),
+    );
     assert_eq!(print_term(&plus), "a + b");
 
     // Implication
-    let imp = Term::app(Term::app(Term::const_("Pure.imp", Typ::dummy()),
-        Term::free("A", Typ::dummy())), Term::free("B", Typ::dummy()));
+    let imp = Term::app(
+        Term::app(Term::const_("Pure.imp", Typ::dummy()), Term::free("A", Typ::dummy())),
+        Term::free("B", Typ::dummy()),
+    );
     let result = print_term(&imp);
     assert!(result.contains("==>") || result.contains("=>"), "Expected implication");
 }
 
 #[test]
 fn test_tptp_export() {
-    use isabelle_rs::tools::tptp::*;
-    use isabelle_rs::core::logic::Pure;
+    use isabelle_rs::{core::logic::Pure, tools::tptp::*};
 
     let p = CTerm::certify(isabelle_rs::core::term::Term::const_("P", Typ::base("prop")));
     let q = CTerm::certify(isabelle_rs::core::term::Term::const_("Q", Typ::base("prop")));
@@ -189,15 +203,15 @@ fn test_tptp_export() {
 #[test]
 fn test_printer_tptp_roundtrip() {
     // Test that printed terms can be recognized by TPTP export
-    use isabelle_rs::syntax::printer::print_term;
-    use isabelle_rs::tools::tptp::goal_to_tptp_fof;
-    use isabelle_rs::core::term::Term;
-    use isabelle_rs::core::types::Typ;
+    use isabelle_rs::{
+        core::{term::Term, types::Typ},
+        syntax::printer::print_term,
+        tools::tptp::goal_to_tptp_fof,
+    };
 
     // Create: a = b
     let eq = Term::app(
-        Term::app(Term::const_("HOL.eq", Typ::dummy()),
-            Term::free("a", Typ::dummy())),
+        Term::app(Term::const_("HOL.eq", Typ::dummy()), Term::free("a", Typ::dummy())),
         Term::free("b", Typ::dummy()),
     );
     let printed = print_term(&eq);
@@ -260,10 +274,8 @@ fn test_batch_verify_with_classifier() {
 #[test]
 fn test_batch_verify_core_files() {
     // Verify just the core HOL theories (the ones used in benchmarks)
-    let core_files = vec![
-        "HOL", "Orderings", "Set", "Nat", "List",
-        "Fun", "Product_Type", "Sum_Type", "Option",
-    ];
+    let core_files =
+        vec!["HOL", "Orderings", "Set", "Nat", "List", "Fun", "Product_Type", "Sum_Type", "Option"];
 
     let hol_dir = std::path::Path::new("isabelle-source/src/HOL");
     if !hol_dir.exists() {
@@ -284,11 +296,22 @@ fn test_batch_verify_core_files() {
         if let Some(r) = report.results.iter().find(|r| r.name == *name) {
             let label = r.status.label();
             let rate = r.status.rate();
-            eprintln!("  {}: [{}] {:.0}% — {} theorems", name, label, rate * 100.0, r.theorem_count);
+            eprintln!(
+                "  {}: [{}] {:.0}% — {} theorems",
+                name,
+                label,
+                rate * 100.0,
+                r.theorem_count
+            );
             // At minimum, core files should not have syntax errors
             assert!(
-                !matches!(r.status, isabelle_rs::theory::verify_classifier::VerifyStatus::SyntaxError { .. }),
-                "Core file {} has syntax error: {:?}", name, r.status
+                !matches!(
+                    r.status,
+                    isabelle_rs::theory::verify_classifier::VerifyStatus::SyntaxError { .. }
+                ),
+                "Core file {} has syntax error: {:?}",
+                name,
+                r.status
             );
         } else {
             eprintln!("  {}: NOT FOUND in results", name);

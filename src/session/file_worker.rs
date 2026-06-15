@@ -20,12 +20,15 @@
 //! 5. **Closed** on `textDocument/didClose` → Arena GC'd
 
 use std::thread;
+
 use tokio::sync::{mpsc, oneshot};
 
-use crate::document::document::{Document, Snapshot};
-use crate::fleche::engine::{CheckContext, CommandExecutor};
-use crate::isar::toplevel::Toplevel;
-use crate::server::lsp_types::{Diagnostic, ProofState};
+use crate::{
+    document::document::{Document, Snapshot},
+    fleche::engine::{CheckContext, CommandExecutor},
+    isar::toplevel::Toplevel,
+    server::lsp_types::{Diagnostic, ProofState},
+};
 
 // =========================================================================
 // Worker commands
@@ -34,21 +37,11 @@ use crate::server::lsp_types::{Diagnostic, ProofState};
 /// Commands sent to a FileWorker.
 pub enum WorkerCommand {
     /// Check the file (full or incremental re-check).
-    CheckFile {
-        content: String,
-        reply: oneshot::Sender<Vec<Diagnostic>>,
-    },
+    CheckFile { content: String, reply: oneshot::Sender<Vec<Diagnostic>> },
     /// Get hover type/info at a position.
-    Hover {
-        line: u32,
-        character: u32,
-        reply: oneshot::Sender<Option<String>>,
-    },
+    Hover { line: u32, character: u32, reply: oneshot::Sender<Option<String>> },
     /// Get proof state (goals) at a position.
-    ProofState {
-        line: u32,
-        reply: oneshot::Sender<Option<ProofState>>,
-    },
+    ProofState { line: u32, reply: oneshot::Sender<Option<ProofState>> },
     /// Shutdown the worker.
     Shutdown,
 }
@@ -91,10 +84,7 @@ impl FileWorker {
     /// Spawn a new FileWorker for the given URI with the given executor.
     pub fn spawn(uri: String, executor: Box<dyn CommandExecutor>) -> FileWorkerHandle {
         let (tx, rx) = mpsc::channel(64);
-        let handle = FileWorkerHandle {
-            uri: uri.clone(),
-            tx,
-        };
+        let handle = FileWorkerHandle { uri: uri.clone(), tx };
 
         thread::spawn(move || {
             let mut worker = FileWorker {
@@ -123,19 +113,15 @@ impl FileWorker {
                 WorkerCommand::CheckFile { content, reply } => {
                     let diags = self.handle_check_file(content);
                     let _ = reply.send(diags);
-                }
-                WorkerCommand::Hover {
-                    line,
-                    character,
-                    reply,
-                } => {
+                },
+                WorkerCommand::Hover { line, character, reply } => {
                     let result = self.handle_hover(line, character);
                     let _ = reply.send(result);
-                }
+                },
                 WorkerCommand::ProofState { line, reply } => {
                     let result = self.handle_proof_state(line);
                     let _ = reply.send(result);
-                }
+                },
                 WorkerCommand::Shutdown => break,
             }
         }
@@ -189,11 +175,8 @@ impl FileWorker {
         }
 
         // Also collect any existing diagnostics from previous snapshots
-        let persisted: Vec<Diagnostic> = node
-            .snapshots
-            .iter()
-            .flat_map(|s| s.diagnostics.clone())
-            .collect();
+        let persisted: Vec<Diagnostic> =
+            node.snapshots.iter().flat_map(|s| s.diagnostics.clone()).collect();
 
         persisted
     }

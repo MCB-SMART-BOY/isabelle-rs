@@ -1,6 +1,8 @@
 //! Pure meta-logic: the minimal logical framework.
-use super::term::{Term, lambda};
-use super::types::{Symbol, Typ};
+use super::{
+    term::{Term, lambda},
+    types::{Symbol, Typ},
+};
 
 pub struct Pure;
 impl Pure {
@@ -10,10 +12,7 @@ impl Pure {
     pub fn imp_const() -> Term {
         Term::const_(
             "Pure.imp",
-            Typ::arrow(
-                Typ::base("prop"),
-                Typ::arrow(Typ::base("prop"), Typ::base("prop")),
-            ),
+            Typ::arrow(Typ::base("prop"), Typ::arrow(Typ::base("prop"), Typ::base("prop"))),
         )
     }
     pub fn mk_implies(a: Term, b: Term) -> Term {
@@ -22,13 +21,10 @@ impl Pure {
     pub fn dest_implies(term: &Term) -> Option<(&Term, &Term)> {
         match term {
             Term::App { func, arg } => match func.as_ref() {
-                Term::App {
-                    func: inner,
-                    arg: a,
-                } => match inner.as_ref() {
+                Term::App { func: inner, arg: a } => match inner.as_ref() {
                     Term::Const { name, .. } if name.as_ref() == "Pure.imp" => {
                         Some((a.as_ref(), arg.as_ref()))
-                    }
+                    },
                     _ => None,
                 },
                 _ => None,
@@ -77,10 +73,7 @@ impl Pure {
     pub fn dest_equals_with_type(term: &Term) -> Option<(&Term, &Term, Typ)> {
         match term {
             Term::App { func, arg } => match func.as_ref() {
-                Term::App {
-                    func: inner,
-                    arg: t,
-                } => match inner.as_ref() {
+                Term::App { func: inner, arg: t } => match inner.as_ref() {
                     Term::Const { name, typ }
                         if name.as_ref() == "Pure.eq"
                             || name.as_ref() == "HOL.eq"
@@ -88,7 +81,7 @@ impl Pure {
                     {
                         let eq_typ = Self::extract_eq_type(typ);
                         Some((t.as_ref(), arg.as_ref(), eq_typ))
-                    }
+                    },
                     _ => None,
                 },
                 _ => None,
@@ -100,10 +93,7 @@ impl Pure {
     /// Extract the type parameter from an equality constant's type.
     /// `Pure.eq : 'a => 'a => prop` → extract `'a`.
     pub fn extract_eq_type(eq_const_type: &Typ) -> Typ {
-        eq_const_type
-            .dest_fun()
-            .map(|(dom, _)| dom.clone())
-            .unwrap_or_else(Typ::dummy)
+        eq_const_type.dest_fun().map(|(dom, _)| dom.clone()).unwrap_or_else(Typ::dummy)
     }
     pub fn strip_imp_prems(term: &Term) -> (Vec<&Term>, &Term) {
         let mut prems = Vec::new();

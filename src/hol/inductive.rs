@@ -25,10 +25,13 @@
 //!   → Vec<ParsedLemma>       — theorems to add to DB
 //! ```
 
-use crate::core::term::Term;
-use crate::core::thm::{CTerm, ThmKernel};
-use crate::core::types::Typ;
 use std::sync::Arc;
+
+use crate::core::{
+    term::Term,
+    thm::{CTerm, ThmKernel},
+    types::Typ,
+};
 
 // =========================================================================
 // Inductive Definition
@@ -58,21 +61,14 @@ impl InductiveDef {
             results.push((
                 name.clone(),
                 term.clone(),
-                vec![format!(
-                    "{}_intro",
-                    if self.is_coind { "coinduct" } else { "induct" }
-                )],
+                vec![format!("{}_intro", if self.is_coind { "coinduct" } else { "induct" })],
             ));
         }
 
         // 2. Generate induction rule
         if !self.is_coind {
             if let Some(induct) = self.gen_induct_rule() {
-                results.push((
-                    format!("{}.induct", self.name),
-                    induct,
-                    vec!["induct".to_string()],
-                ));
+                results.push((format!("{}.induct", self.name), induct, vec!["induct".to_string()]));
             }
         } else {
             if let Some(coinduct) = self.gen_coinduct_rule() {
@@ -122,10 +118,7 @@ impl InductiveDef {
 
         // Build: prem1 ==> prem2 ==> ... ==> P x
         let x = Term::var("?x", 0, Typ::dummy());
-        let pred_x = Term::app(
-            Term::const_(predicate_name.as_str(), Typ::dummy()),
-            x.clone(),
-        );
+        let pred_x = Term::app(Term::const_(predicate_name.as_str(), Typ::dummy()), x.clone());
 
         let mut result = pred_x;
         for prem in induct_premises.iter().rev() {
@@ -147,10 +140,7 @@ impl InductiveDef {
 
         // For each occurrence P(args), assume P(args) (induction hypothesis)
         for args in &args_list {
-            let pred_app = Term::apps(
-                Term::const_(pred_name, Typ::dummy()),
-                args.iter().cloned(),
-            );
+            let pred_app = Term::apps(Term::const_(pred_name, Typ::dummy()), args.iter().cloned());
             ihs.push(pred_app);
         }
 
@@ -162,10 +152,8 @@ impl InductiveDef {
         let mut concl_args: Vec<Term> = Vec::new();
         self.extract_pred_args(&concl, pred_name, &mut concl_args);
 
-        let pred_concl = Term::apps(
-            Term::const_(pred_name, Typ::dummy()),
-            concl_args.iter().cloned(),
-        );
+        let pred_concl =
+            Term::apps(Term::const_(pred_name, Typ::dummy()), concl_args.iter().cloned());
 
         if ihs.is_empty() {
             // Base case: no induction hypotheses, just P(conclusion)
@@ -181,13 +169,20 @@ impl InductiveDef {
     }
 
     /// Collect all occurrences of `pred_name(args)` in a term.
-    fn collect_pred_occurrences(&self, term: &Term, pred_name: &str, args_list: &mut Vec<Vec<Term>>) {
+    fn collect_pred_occurrences(
+        &self,
+        term: &Term,
+        pred_name: &str,
+        args_list: &mut Vec<Vec<Term>>,
+    ) {
         let mut stack: Vec<&Term> = vec![term];
         while let Some(t) = stack.pop() {
             match t {
                 Term::App { func, arg } => {
                     if let Term::Const { name, .. } = func.as_ref() {
-                        if name.as_ref() == pred_name || name.as_ref().ends_with(&format!(".{}", pred_name)) {
+                        if name.as_ref() == pred_name
+                            || name.as_ref().ends_with(&format!(".{}", pred_name))
+                        {
                             let args = vec![arg.as_ref().clone()];
                             // Collect additional args from nested apps
                             let mut current = func.as_ref();
@@ -204,11 +199,11 @@ impl InductiveDef {
                     }
                     stack.push(arg);
                     stack.push(func);
-                }
+                },
                 Term::Abs { body, .. } => {
                     stack.push(body);
-                }
-                _ => {}
+                },
+                _ => {},
             }
         }
     }
@@ -224,11 +219,12 @@ impl InductiveDef {
                 }
                 self.extract_pred_args(func, pred_name, args);
                 // Non-predicate apps: recurse into both sides
-                if !matches!(func.as_ref(), Term::Const { name, .. } if name.as_ref() == pred_name) {
+                if !matches!(func.as_ref(), Term::Const { name, .. } if name.as_ref() == pred_name)
+                {
                     self.extract_pred_args(arg, pred_name, &mut Vec::new());
                 }
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 
@@ -241,10 +237,7 @@ impl InductiveDef {
         // Simplified: P x ==> (P x = exists args. intro1(args) ==> ...)
         // For now, generate a basic coinduction rule
         let x = Term::var("?x", 0, Typ::dummy());
-        let pred_x = Term::app(
-            Term::const_(self.name.as_str(), Typ::dummy()),
-            x.clone(),
-        );
+        let pred_x = Term::app(Term::const_(self.name.as_str(), Typ::dummy()), x.clone());
 
         // Coinduction: if we can show P(x), then P(x) holds.
         // This is essentially a reflexivity-like rule for the predicate.
@@ -265,10 +258,7 @@ impl InductiveDef {
 
         let mut cases: Vec<Term> = Vec::new();
         let x = Term::var("?x", 0, Typ::dummy());
-        let pred_x = Term::app(
-            Term::const_(self.name.as_str(), Typ::dummy()),
-            x.clone(),
-        );
+        let pred_x = Term::app(Term::const_(self.name.as_str(), Typ::dummy()), x.clone());
 
         for (_name, intro) in &self.intros {
             let (prems, _concl) = crate::core::logic::Pure::strip_imp_prems(intro);
@@ -276,10 +266,7 @@ impl InductiveDef {
 
             let mut case_prem = case_concl.clone();
             for p in prems.iter().rev() {
-                case_prem = crate::core::logic::Pure::mk_implies(
-                    (*p).clone(),
-                    case_prem,
-                );
+                case_prem = crate::core::logic::Pure::mk_implies((*p).clone(), case_prem);
             }
 
             // Wrap with universal quantifiers for the variables
@@ -334,10 +321,8 @@ mod tests {
 
     fn make_even_def() -> InductiveDef {
         // even 0
-        let even0 = Term::app(
-            Term::const_("even", Typ::dummy()),
-            Term::const_("0", Typ::base("nat")),
-        );
+        let even0 =
+            Term::app(Term::const_("even", Typ::dummy()), Term::const_("0", Typ::base("nat")));
         // even n ==> even (Suc (Suc n))
         let n = Term::var("n", 0, Typ::base("nat"));
         let even_n = Term::app(Term::const_("even", Typ::dummy()), n.clone());
@@ -382,12 +367,10 @@ mod tests {
 
         // Should be a Pure.all application wrapping an implication chain
         match &induct {
-            Term::App { func, .. } => {
-                match func.as_ref() {
-                    Term::Const { name, .. } if name.as_ref() == "Pure.all" => {}
-                    _ => panic!("Expected Pure.all, got {:?}", func),
-                }
-            }
+            Term::App { func, .. } => match func.as_ref() {
+                Term::Const { name, .. } if name.as_ref() == "Pure.all" => {},
+                _ => panic!("Expected Pure.all, got {:?}", func),
+            },
             _ => panic!("Expected App(Pure.all, ...), got {:?}", induct),
         }
     }

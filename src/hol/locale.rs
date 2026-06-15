@@ -25,11 +25,13 @@
 //!   → Interpretation     — locale activation
 //! ```
 
-use crate::core::term::Term;
-use crate::core::thm::{CTerm, ThmKernel};
-use crate::core::types::Typ;
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
+
+use crate::core::{
+    term::Term,
+    thm::{CTerm, ThmKernel},
+    types::Typ,
+};
 
 // =========================================================================
 // Locale Definition
@@ -169,12 +171,7 @@ pub struct Interpretation {
 impl Interpretation {
     /// Create a new interpretation.
     pub fn new(locale: String) -> Self {
-        Interpretation {
-            name: None,
-            locale,
-            params: HashMap::new(),
-            type_params: HashMap::new(),
-        }
+        Interpretation { name: None, locale, params: HashMap::new(), type_params: HashMap::new() }
     }
 
     /// Set the prefix name for this interpretation.
@@ -207,21 +204,15 @@ impl Interpretation {
 /// Substitute a parameter name with a concrete term in a given term.
 fn substitute_param(term: &Term, param_name: &str, replacement: &Term) -> Term {
     match term {
-        Term::Free { name, typ } if name.as_ref() == param_name => {
-            replacement.clone()
-        }
-        Term::Free { .. } | Term::Const { .. } | Term::Bound(_) | Term::Var { .. } => {
-            term.clone()
-        }
+        Term::Free { name, typ } if name.as_ref() == param_name => replacement.clone(),
+        Term::Free { .. } | Term::Const { .. } | Term::Bound(_) | Term::Var { .. } => term.clone(),
         Term::Abs { name, typ, body } => {
             Term::abs(name.clone(), typ.clone(), substitute_param(body, param_name, replacement))
-        }
-        Term::App { func, arg } => {
-            Term::app(
-                substitute_param(func, param_name, replacement),
-                substitute_param(arg, param_name, replacement),
-            )
-        }
+        },
+        Term::App { func, arg } => Term::app(
+            substitute_param(func, param_name, replacement),
+            substitute_param(arg, param_name, replacement),
+        ),
     }
 }
 
@@ -248,11 +239,8 @@ pub fn parse_locales(source: &str) -> Vec<LocaleDef> {
         let (name, extends) = if let Some(eq_pos) = rest.find('=') {
             let name = rest[..eq_pos].trim().to_string();
             let after = rest[eq_pos + 1..].trim();
-            let extends: Vec<String> = after
-                .split('+')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect();
+            let extends: Vec<String> =
+                after.split('+').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
             (name, extends)
         } else {
             (rest.to_string(), Vec::new())
@@ -317,13 +305,7 @@ pub fn parse_locales(source: &str) -> Vec<LocaleDef> {
             i += 1;
         }
 
-        results.push(LocaleDef {
-            name,
-            extends,
-            fixes,
-            assumes,
-            is_typeclass: false,
-        });
+        results.push(LocaleDef { name, extends, fixes, assumes, is_typeclass: false });
     }
 
     results

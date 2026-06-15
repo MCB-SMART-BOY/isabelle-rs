@@ -6,9 +6,7 @@
 //!
 //! This is the first step towards Sledgehammer integration.
 
-use crate::core::term::Term;
-use crate::core::thm::Thm;
-use crate::core::logic::Pure;
+use crate::core::{logic::Pure, term::Term, thm::Thm};
 
 /// Export a goal to TPTP FOF format.
 pub fn goal_to_tptp_fof(thm: &Thm, name: &str) -> String {
@@ -78,9 +76,9 @@ pub fn term_to_tptp(term: &Term, buf: &mut String) {
                     // Sanitize name for TPTP
                     let clean = n.replace('.', "_").replace('\'', "");
                     buf.push_str(&clean);
-                }
+                },
             }
-        }
+        },
         Term::Free { name, .. } | Term::Var { name, .. } => {
             // TPTP variables start with uppercase
             let s = name.as_ref();
@@ -88,10 +86,10 @@ pub fn term_to_tptp(term: &Term, buf: &mut String) {
             let rest: String = s.chars().skip(1).collect();
             buf.push_str(&first);
             buf.push_str(&rest);
-        }
+        },
         Term::Bound(i) => {
             buf.push_str(&format!("BOUND_{i}"));
-        }
+        },
         Term::App { func, arg } => {
             match func.as_ref() {
                 Term::Const { name, .. } => {
@@ -105,13 +103,13 @@ pub fn term_to_tptp(term: &Term, buf: &mut String) {
                             // Need to get the second arg — but App only has one arg
                             buf.push_str("/* rhs */");
                             buf.push(')');
-                        }
+                        },
                         "HOL.Not" => {
                             buf.push('~');
                             buf.push('(');
                             term_to_tptp(arg, buf);
                             buf.push(')');
-                        }
+                        },
                         // Quantifiers: ! [X] : body
                         "HOL.All" | "Pure.all" => {
                             if let Term::Abs { name, body, .. } = arg.as_ref() {
@@ -125,7 +123,7 @@ pub fn term_to_tptp(term: &Term, buf: &mut String) {
                                 buf.push_str(" [X] : ");
                                 term_to_tptp(arg, buf);
                             }
-                        }
+                        },
                         "HOL.Ex" => {
                             if let Term::Abs { name, body, .. } = arg.as_ref() {
                                 buf.push('?');
@@ -138,7 +136,7 @@ pub fn term_to_tptp(term: &Term, buf: &mut String) {
                                 buf.push_str(" [X] : ");
                                 term_to_tptp(arg, buf);
                             }
-                        }
+                        },
                         _ => {
                             // Binary application: check if it's an infix
                             if let Term::App { func: inner, arg: left } = func.as_ref() {
@@ -164,25 +162,25 @@ pub fn term_to_tptp(term: &Term, buf: &mut String) {
                             buf.push('(');
                             term_to_tptp(arg, buf);
                             buf.push(')');
-                        }
+                        },
                     }
-                }
+                },
                 _ => {
                     // Plain application
                     term_to_tptp(func, buf);
                     buf.push('(');
                     term_to_tptp(arg, buf);
                     buf.push(')');
-                }
+                },
             }
-        }
+        },
         Term::Abs { name, body, .. } => {
             buf.push('!');
             buf.push_str(" [");
             buf.push_str(name);
             buf.push_str("] : ");
             term_to_tptp(body, buf);
-        }
+        },
     }
 }
 
@@ -193,8 +191,10 @@ pub fn term_to_tptp(term: &Term, buf: &mut String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::thm::{CTerm, ThmKernel};
-    use crate::core::types::Typ;
+    use crate::core::{
+        thm::{CTerm, ThmKernel},
+        types::Typ,
+    };
 
     #[test]
     fn test_goal_to_tptp_simple() {

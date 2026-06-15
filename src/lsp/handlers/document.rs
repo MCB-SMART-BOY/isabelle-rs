@@ -10,7 +10,7 @@ pub fn handle_did_open(ctx: &mut HandlerContext, notif: JsonRpcNotification) {
         Err(e) => {
             tracing::info!("Bad didOpen params: {e}");
             return;
-        }
+        },
     };
 
     let uri = &params.text_document.uri;
@@ -27,17 +27,13 @@ pub fn handle_did_change(ctx: &mut HandlerContext, notif: JsonRpcNotification) {
         Err(e) => {
             tracing::info!("Bad didChange params: {e}");
             return;
-        }
+        },
     };
 
     let uri = &params.text_document.uri;
 
     let new_text = if let Some(change) = params.content_changes.first() {
-        if change.range.is_none() {
-            change.text.clone()
-        } else {
-            change.text.clone()
-        }
+        if change.range.is_none() { change.text.clone() } else { change.text.clone() }
     } else {
         return;
     };
@@ -53,7 +49,7 @@ pub fn handle_did_close(ctx: &mut HandlerContext, notif: JsonRpcNotification) {
         Err(e) => {
             tracing::info!("Bad didClose params: {e}");
             return;
-        }
+        },
     };
 
     tracing::info!("Closed: {}", params.text_document.uri);

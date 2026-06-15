@@ -2,8 +2,7 @@
 //! Shows theorem statement and type information.
 
 use super::HandlerContext;
-use crate::hol::hol_loader::HolTheoremDb;
-use crate::server::lsp_types::*;
+use crate::{hol::hol_loader::HolTheoremDb, server::lsp_types::*};
 
 pub fn handle_hover(ctx: &HandlerContext, req: JsonRpcRequest) {
     let params: TextDocumentPositionParams = match serde_json::from_value(req.params) {
@@ -11,7 +10,7 @@ pub fn handle_hover(ctx: &HandlerContext, req: JsonRpcRequest) {
         Err(e) => {
             ctx.send_error(req.id, JsonRpcError::new(-32602, format!("{e}")));
             return;
-        }
+        },
     };
 
     // Try fleche first (document-aware hover)
@@ -54,22 +53,23 @@ pub fn handle_hover(ctx: &HandlerContext, req: JsonRpcRequest) {
                 }),
                 range: None,
             };
-            ctx.send_result(
-                req.id,
-                serde_json::to_value(hover).expect("Serialization failed"),
-            );
-        }
+            ctx.send_result(req.id, serde_json::to_value(hover).expect("Serialization failed"));
+        },
         None => {
             ctx.send_result(req.id, serde_json::Value::Null);
-        }
+        },
     }
 }
 
 /// Extract the word at a character position in a line.
 fn extract_word_at(line: &str, char_pos: usize) -> Option<String> {
-    if char_pos >= line.len() { return None; }
+    if char_pos >= line.len() {
+        return None;
+    }
     let chars: Vec<char> = line.chars().collect();
-    if char_pos >= chars.len() { return None; }
+    if char_pos >= chars.len() {
+        return None;
+    }
 
     // Find word boundaries
     let mut start = char_pos;
@@ -77,13 +77,11 @@ fn extract_word_at(line: &str, char_pos: usize) -> Option<String> {
         start -= 1;
     }
     let mut end = char_pos;
-    while end < chars.len() && (chars[end].is_alphanumeric() || chars[end] == '_' || chars[end] == '.') {
+    while end < chars.len()
+        && (chars[end].is_alphanumeric() || chars[end] == '_' || chars[end] == '.')
+    {
         end += 1;
     }
 
-    if start < end {
-        Some(chars[start..end].iter().collect())
-    } else {
-        None
-    }
+    if start < end { Some(chars[start..end].iter().collect()) } else { None }
 }

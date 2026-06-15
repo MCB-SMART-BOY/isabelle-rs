@@ -22,14 +22,14 @@
 //!
 //! All other theories (HOL, FOL, ZF) are built on top of Pure.
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
-use super::sign::Signature;
-use super::term::Term;
-use super::thm::Thm;
-use super::types::Symbol;
-use super::types::Typ;
+use super::{
+    sign::Signature,
+    term::Term,
+    thm::Thm,
+    types::{Symbol, Typ},
+};
 
 // =========================================================================
 // Theory
@@ -162,10 +162,7 @@ impl Theory {
     /// The theorem must be unconditional (no hypotheses) and its propositions
     /// must be built from constants declared in this theory.
     pub fn add_theorem(&mut self, name: impl Into<Symbol>, thm: Thm) {
-        assert!(
-            thm.is_unconditional(),
-            "stored theorems must be unconditional"
-        );
+        assert!(thm.is_unconditional(), "stored theorems must be unconditional");
         self.theorems.insert(name.into(), Arc::new(thm));
     }
 
@@ -233,11 +230,7 @@ pub struct ProofContext {
 impl ProofContext {
     /// Create a new proof context from a theory.
     pub fn init(theory: &Arc<Theory>) -> Self {
-        ProofContext {
-            theory: Arc::clone(theory),
-            fixes: Vec::new(),
-            assumptions: Vec::new(),
-        }
+        ProofContext { theory: Arc::clone(theory), fixes: Vec::new(), assumptions: Vec::new() }
     }
 
     pub fn theory(&self) -> &Arc<Theory> {
@@ -276,8 +269,10 @@ impl ProofContext {
 
 #[cfg(test)]
 mod tests {
-    use super::super::thm::{CTerm, ThmKernel};
-    use super::*;
+    use super::{
+        super::thm::{CTerm, ThmKernel},
+        *,
+    };
 
     #[test]
     fn test_pure_theory() {

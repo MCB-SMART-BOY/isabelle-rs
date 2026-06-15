@@ -3,10 +3,9 @@
 
 #[cfg(test)]
 mod fast_verify {
+    use std::{path::Path, time::Instant};
+
     use isabelle_rs::theory::session_builder::SessionBuilder;
-    
-    use std::path::Path;
-    use std::time::Instant;
 
     #[test]
     fn test_fast_scan_and_classify() {
@@ -38,14 +37,30 @@ mod fast_verify {
         report.print();
 
         // Show tier 1 status
-        let tier1 = ["HOL", "Orderings", "Set", "Fun", "Product_Type", "Sum_Type", "Nat", "Int", "List", "Option"];
+        let tier1 = [
+            "HOL",
+            "Orderings",
+            "Set",
+            "Fun",
+            "Product_Type",
+            "Sum_Type",
+            "Nat",
+            "Int",
+            "List",
+            "Option",
+        ];
         eprintln!("\n=== Tier 1 Core Files ===");
         for name in &tier1 {
             if let Some(r) = report.results.iter().find(|r| r.name == *name) {
                 let icon = if r.status.has_verified() { "✅" } else { "❌" };
-                eprintln!("  {} {:>15} [{}] {:.0}% — {} thms",
-                    icon, name, r.status.label(),
-                    r.status.rate() * 100.0, r.theorem_count);
+                eprintln!(
+                    "  {} {:>15} [{}] {:.0}% — {} thms",
+                    icon,
+                    name,
+                    r.status.label(),
+                    r.status.rate() * 100.0,
+                    r.theorem_count
+                );
             }
         }
 

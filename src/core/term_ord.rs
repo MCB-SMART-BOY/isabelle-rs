@@ -4,12 +4,12 @@
 //!
 //! Isabelle uses several different orderings depending on context:
 //!
-//! - **fast_term_ord**: syntactic ordering (structure first, then atoms, then types)
-//!   Optimized for speed with pointer equality shortcuts. Used in discrimination nets,
-//!   table lookups, and any context where structural equality is needed.
+//! - **fast_term_ord**: syntactic ordering (structure first, then atoms, then types) Optimized for
+//!   speed with pointer equality shortcuts. Used in discrimination nets, table lookups, and any
+//!   context where structural equality is needed.
 //!
-//! - **term_ord**: size-based lexicographic ordering. Well-founded total order.
-//!   Used for sorting theorems and stable term presentation.
+//! - **term_ord**: size-based lexicographic ordering. Well-founded total order. Used for sorting
+//!   theorems and stable term presentation.
 //!
 //! - **typ_ord**: type ordering (constructor nr → name → arguments)
 //!
@@ -24,8 +24,10 @@
 
 use std::cmp::Ordering;
 
-use super::term::Term;
-use super::types::{Sort, Typ};
+use super::{
+    term::Term,
+    types::{Sort, Typ},
+};
 
 // =========================================================================
 // Variable index ordering
@@ -91,25 +93,20 @@ pub fn typ_ord(a: &Typ, b: &Typ) -> Ordering {
                         }
                     }
                     as_a.len().cmp(&bs_b.len())
-                }
+                },
                 ord => ord,
             }
-        }
+        },
         (Typ::TFree { name: na, sort: sa }, Typ::TFree { name: nb, sort: sb }) => {
             match na.as_ref().cmp(nb.as_ref()) {
                 Ordering::Equal => sort_ord(sa, sb),
                 ord => ord,
             }
-        }
-        (Typ::TVar {
-            name: na,
-            index: ia,
-            sort: sa,
-        }, Typ::TVar {
-            name: nb,
-            index: ib,
-            sort: sb,
-        }) => match fast_indexname_ord((na.as_ref(), *ia), (nb.as_ref(), *ib)) {
+        },
+        (
+            Typ::TVar { name: na, index: ia, sort: sa },
+            Typ::TVar { name: nb, index: ib, sort: sb },
+        ) => match fast_indexname_ord((na.as_ref(), *ia), (nb.as_ref(), *ib)) {
             Ordering::Equal => sort_ord(sa, sb),
             ord => ord,
         },
@@ -146,7 +143,7 @@ fn struct_ord(a: &Term, b: &Term) -> Ordering {
                 Ordering::Equal => struct_ord(aa, ab),
                 ord => ord,
             }
-        }
+        },
         (a, b) => term_cons_nr(a).cmp(&term_cons_nr(b)),
     }
 }
@@ -163,22 +160,14 @@ fn atoms_ord(a: &Term, b: &Term) -> Ordering {
                 Ordering::Equal => atoms_ord(aa, ab),
                 ord => ord,
             }
-        }
+        },
         (Term::Const { name: na, .. }, Term::Const { name: nb, .. }) => {
             na.as_ref().cmp(nb.as_ref())
-        }
-        (Term::Free { name: na, .. }, Term::Free { name: nb, .. }) => {
-            na.as_ref().cmp(nb.as_ref())
-        }
-        (Term::Var {
-            name: na,
-            index: ia,
-            ..
-        }, Term::Var {
-            name: nb,
-            index: ib,
-            ..
-        }) => fast_indexname_ord((na.as_ref(), *ia), (nb.as_ref(), *ib)),
+        },
+        (Term::Free { name: na, .. }, Term::Free { name: nb, .. }) => na.as_ref().cmp(nb.as_ref()),
+        (Term::Var { name: na, index: ia, .. }, Term::Var { name: nb, index: ib, .. }) => {
+            fast_indexname_ord((na.as_ref(), *ia), (nb.as_ref(), *ib))
+        },
         (Term::Bound(ia), Term::Bound(ib)) => ia.cmp(ib),
         _ => Ordering::Equal,
     }
@@ -195,13 +184,13 @@ fn types_ord(a: &Term, b: &Term) -> Ordering {
                 Ordering::Equal => types_ord(ba, bb),
                 ord => ord,
             }
-        }
+        },
         (Term::App { func: fa, arg: aa }, Term::App { func: fb, arg: ab }) => {
             match types_ord(fa, fb) {
                 Ordering::Equal => types_ord(aa, ab),
                 ord => ord,
             }
-        }
+        },
         (Term::Const { typ: ta, .. }, Term::Const { typ: tb, .. }) => typ_ord(ta, tb),
         (Term::Free { typ: ta, .. }, Term::Free { typ: tb, .. }) => typ_ord(ta, tb),
         (Term::Var { typ: ta, .. }, Term::Var { typ: tb, .. }) => typ_ord(ta, tb),
@@ -229,10 +218,7 @@ pub fn fast_term_ord(a: &Term, b: &Term) -> Ordering {
 /// Compute term size (number of nodes in the term tree).
 fn term_size(t: &Term) -> usize {
     match t {
-        Term::Const { .. }
-        | Term::Free { .. }
-        | Term::Var { .. }
-        | Term::Bound(_) => 1,
+        Term::Const { .. } | Term::Free { .. } | Term::Var { .. } | Term::Bound(_) => 1,
         Term::Abs { body, .. } => 1 + term_size(body),
         Term::App { func, arg } => 1 + term_size(func) + term_size(arg),
     }
@@ -244,9 +230,7 @@ fn dest_hd(t: &Term) -> ((String, usize), Typ, u8) {
     match t {
         Term::Const { name, typ } => ((name.as_ref().to_string(), 0), typ.clone(), 0),
         Term::Free { name, typ } => ((name.as_ref().to_string(), 0), typ.clone(), 1),
-        Term::Var { name, index, typ } => {
-            ((name.as_ref().to_string(), *index), typ.clone(), 2)
-        }
+        Term::Var { name, index, typ } => ((name.as_ref().to_string(), *index), typ.clone(), 2),
         Term::Bound(i) => ((String::new(), *i), Typ::dummy(), 3),
         Term::Abs { typ, .. } => ((String::new(), 0), typ.clone(), 4),
         Term::App { .. } => panic!("dest_hd: application"),
@@ -268,7 +252,7 @@ fn hd_ord(a: &Term, b: &Term) -> Ordering {
 
     // Compare depth first (longer application = larger)
     match n_a.cmp(&n_b) {
-        Ordering::Equal => {}
+        Ordering::Equal => {},
         ord => return ord,
     }
 
@@ -292,7 +276,7 @@ fn args_ord(a: &Term, b: &Term) -> Ordering {
                 Ordering::Equal => term_ord(aa, ab),
                 ord => ord,
             }
-        }
+        },
         _ => Ordering::Equal,
     }
 }
@@ -314,7 +298,7 @@ pub fn term_ord(a: &Term, b: &Term) -> Ordering {
                 Ordering::Equal => typ_ord(ta, tb),
                 ord => ord,
             }
-        }
+        },
         (a, b) => {
             // Compare sizes first
             let size_a = term_size(a);
@@ -331,10 +315,10 @@ pub fn term_ord(a: &Term, b: &Term) -> Ordering {
                         },
                         ord => ord,
                     }
-                }
+                },
                 ord => ord,
             }
-        }
+        },
     }
 }
 
@@ -366,15 +350,12 @@ pub fn term_lpo(prec: &dyn Fn(&Term) -> i32, s: &Term, t: &Term) -> Ordering {
         match hd_lpo_ord(prec, s_head, t_head) {
             Ordering::Greater => {
                 // LPO-2b: f > g and for all t_j, s > t_j
-                if t_args
-                    .iter()
-                    .all(|tj| lpo_inner(prec, s, tj) == Ordering::Greater)
-                {
+                if t_args.iter().all(|tj| lpo_inner(prec, s, tj) == Ordering::Greater) {
                     Ordering::Greater
                 } else {
                     Ordering::Less
                 }
-            }
+            },
             Ordering::Equal => {
                 // LPO-2a: f = g, compare arguments lexicographically
                 let n = usize::min(s_args.len(), t_args.len());
@@ -386,7 +367,7 @@ pub fn term_lpo(prec: &dyn Fn(&Term) -> i32, s: &Term, t: &Term) -> Ordering {
                 }
                 // Equal up to common prefix: shorter = smaller
                 s_args.len().cmp(&t_args.len())
-            }
+            },
             Ordering::Less => Ordering::Less,
         }
     }
@@ -414,7 +395,7 @@ fn hd_lpo_ord(prec: &dyn Fn(&Term) -> i32, f: &Term, g: &Term) -> Ordering {
                 Ordering::Equal => typ_ord(tf, tg),
                 ord => ord,
             }
-        }
+        },
         (f, g) => {
             let pf = prec(f);
             let pg = prec(g);
@@ -424,7 +405,7 @@ fn hd_lpo_ord(prec: &dyn Fn(&Term) -> i32, f: &Term, g: &Term) -> Ordering {
             } else {
                 pf.cmp(&pg)
             }
-        }
+        },
     }
 }
 
@@ -478,32 +459,32 @@ pub fn term_hash(t: &Term) -> u64 {
                 h.write_u8(0);
                 h.write_usize(name.as_ref().len());
                 hash_typ(typ, h);
-            }
+            },
             Term::Free { name, typ } => {
                 h.write_u8(1);
                 h.write_usize(name.as_ref().len());
                 hash_typ(typ, h);
-            }
+            },
             Term::Var { name, index, typ } => {
                 h.write_u8(2);
                 h.write_usize(name.as_ref().len());
                 h.write_usize(*index);
                 hash_typ(typ, h);
-            }
+            },
             Term::Bound(i) => {
                 h.write_u8(3);
                 h.write_usize(*i);
-            }
+            },
             Term::Abs { name: _, typ, body } => {
                 h.write_u8(4);
                 hash_typ(typ, h);
                 hash_term(body, h);
-            }
+            },
             Term::App { func, arg } => {
                 h.write_u8(5);
                 hash_term(func, h);
                 hash_term(arg, h);
-            }
+            },
         }
     }
 
@@ -515,16 +496,16 @@ pub fn term_hash(t: &Term) -> u64 {
                 for a in args {
                     hash_typ(a, h);
                 }
-            }
+            },
             Typ::TFree { name, .. } => {
                 h.write_u8(1);
                 h.write_usize(name.as_ref().len());
-            }
+            },
             Typ::TVar { name, index, .. } => {
                 h.write_u8(2);
                 h.write_usize(name.as_ref().len());
                 h.write_usize(*index);
-            }
+            },
         }
     }
 
@@ -555,18 +536,9 @@ mod tests {
 
     #[test]
     fn test_fast_indexname_ord() {
-        assert_eq!(
-            fast_indexname_ord(("x", 1), ("x", 1)),
-            Ordering::Equal
-        );
-        assert_eq!(
-            fast_indexname_ord(("x", 0), ("x", 1)),
-            Ordering::Less
-        );
-        assert_eq!(
-            fast_indexname_ord(("y", 0), ("x", 0)),
-            Ordering::Greater
-        );
+        assert_eq!(fast_indexname_ord(("x", 1), ("x", 1)), Ordering::Equal);
+        assert_eq!(fast_indexname_ord(("x", 0), ("x", 1)), Ordering::Less);
+        assert_eq!(fast_indexname_ord(("y", 0), ("x", 0)), Ordering::Greater);
     }
 
     #[test]
@@ -595,10 +567,7 @@ mod tests {
     fn test_term_ord_size() {
         // f(a) has size 2, a has size 1, so f(a) > a
         let a = const_("a", typ_base("bool"));
-        let fa = Term::app(
-            const_("f", Typ::arrow(typ_base("bool"), typ_base("bool"))),
-            a.clone(),
-        );
+        let fa = Term::app(const_("f", Typ::arrow(typ_base("bool"), typ_base("bool"))), a.clone());
         assert_eq!(term_ord(&fa, &a), Ordering::Greater);
     }
 
@@ -624,14 +593,8 @@ mod tests {
         };
 
         let a = const_("a", typ_base("bool"));
-        let fa = Term::app(
-            const_("f", Typ::arrow(typ_base("bool"), typ_base("bool"))),
-            a.clone(),
-        );
-        let ga = Term::app(
-            const_("g", Typ::arrow(typ_base("bool"), typ_base("bool"))),
-            a,
-        );
+        let fa = Term::app(const_("f", Typ::arrow(typ_base("bool"), typ_base("bool"))), a.clone());
+        let ga = Term::app(const_("g", Typ::arrow(typ_base("bool"), typ_base("bool"))), a);
 
         // f > g, so f(a) > g(a)
         assert_eq!(term_lpo(&prec, &fa, &ga), Ordering::Greater);
@@ -660,17 +623,11 @@ mod tests {
         let a = free("a", typ_base("bool"));
         let b = free("b", typ_base("bool"));
         let fab = Term::apps(
-            free("f", Typ::arrows(
-                vec![typ_base("bool"), typ_base("bool")],
-                typ_base("bool"),
-            )),
+            free("f", Typ::arrows(vec![typ_base("bool"), typ_base("bool")], typ_base("bool"))),
             vec![a.clone(), b.clone()],
         );
         let fac = Term::apps(
-            free("f", Typ::arrows(
-                vec![typ_base("bool"), typ_base("bool")],
-                typ_base("bool"),
-            )),
+            free("f", Typ::arrows(vec![typ_base("bool"), typ_base("bool")], typ_base("bool"))),
             vec![a, free("c", typ_base("bool"))],
         );
         assert!(fast_term_ord(&fab, &fac) != Ordering::Equal);

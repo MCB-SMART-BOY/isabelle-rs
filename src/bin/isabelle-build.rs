@@ -5,12 +5,13 @@
 //!   isabelle-build --dir theories/HOL/  # batch compile all .thy files in directory
 //!   isabelle-build --stats              # show compilation statistics
 
-use clap::Parser;
 use std::path::PathBuf;
 
-use isabelle_rs::core::theory::Theory;
-use isabelle_rs::theory::loader::TheoryProcessor;
-use isabelle_rs::theory::session_builder::SessionBuilder;
+use clap::Parser;
+use isabelle_rs::{
+    core::theory::Theory,
+    theory::{loader::TheoryProcessor, session_builder::SessionBuilder},
+};
 
 /// Isabelle-rs build tool — compile .thy files.
 #[derive(Parser)]
@@ -63,7 +64,7 @@ fn main() {
                 if !cli.quiet {
                     println!("✅ {} ({} theorems)", path.display(), thms);
                 }
-            }
+            },
             Err(errs) => {
                 total_fail += 1;
                 eprintln!("❌ {} ({} errors)", path.display(), errs.len());
@@ -72,32 +73,22 @@ fn main() {
                         eprintln!("   {}", err);
                     }
                 }
-            }
+            },
         }
     }
 
     if cli.stats || cli.files.len() > 1 {
-        println!(
-            "Total: {} ok, {} failed, {} theorems",
-            total_ok, total_fail, total_thms
-        );
+        println!("Total: {} ok, {} failed, {} theorems", total_ok, total_fail, total_thms);
     }
 }
 
 fn compile_file(path: &PathBuf) -> Result<usize, Vec<String>> {
     let parent = Theory::pure();
-    let file_name = path.file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("Unknown");
+    let file_name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("Unknown");
     let mut proc = TheoryProcessor::with_parent(parent, file_name);
-    let source = std::fs::read_to_string(path)
-        .map_err(|e| vec![format!("Cannot read: {e}")])?;
+    let source = std::fs::read_to_string(path).map_err(|e| vec![format!("Cannot read: {e}")])?;
     let _thy = proc.process_source(&source);
-    if proc.errors().is_empty() {
-        Ok(proc.theorem_count())
-    } else {
-        Err(proc.errors().to_vec())
-    }
+    if proc.errors().is_empty() { Ok(proc.theorem_count()) } else { Err(proc.errors().to_vec()) }
 }
 
 fn batch_compile(dir: &PathBuf, quiet: bool, accept_all: bool) {
@@ -132,10 +123,10 @@ fn batch_compile(dir: &PathBuf, quiet: bool, accept_all: bool) {
                     println!("  ... and {} more", result.error_messages.len() - 10);
                 }
             }
-        }
+        },
         Err(e) => {
             eprintln!("Failed to scan {}: {}", dir.display(), e);
             std::process::exit(1);
-        }
+        },
     }
 }

@@ -4,10 +4,10 @@
 //!
 //! Every Isar command has a **kind** that determines where it can appear:
 //!
-//! - **Theory-level**: `thy_begin`, `thy_end`, `thy_decl`, `thy_defn`, `thy_stmt`,
-//!   `thy_goal`, `thy_load`
-//! - **Proof-level**: `prf_goal`, `prf_block`, `prf_open`, `prf_close`, `prf_chain`,
-//!   `prf_decl`, `prf_asm`, `prf_asm_goal`, `prf_script`, `prf_script_goal`
+//! - **Theory-level**: `thy_begin`, `thy_end`, `thy_decl`, `thy_defn`, `thy_stmt`, `thy_goal`,
+//!   `thy_load`
+//! - **Proof-level**: `prf_goal`, `prf_block`, `prf_open`, `prf_close`, `prf_chain`, `prf_decl`,
+//!   `prf_asm`, `prf_asm_goal`, `prf_script`, `prf_script_goal`
 //! - **QED**: `qed`, `qed_script`, `qed_block`, `qed_global`
 //! - **Document**: `diag`, `document_heading`, `document_body`, `document_raw`
 //!
@@ -100,17 +100,11 @@ pub struct KeywordEntry {
 
 impl KeywordEntry {
     pub fn new(kind: &str) -> Self {
-        KeywordEntry {
-            kind: kind.to_string(),
-            tags: Vec::new(),
-        }
+        KeywordEntry { kind: kind.to_string(), tags: Vec::new() }
     }
 
     pub fn with_tags(kind: &str, tags: Vec<String>) -> Self {
-        KeywordEntry {
-            kind: kind.to_string(),
-            tags,
-        }
+        KeywordEntry { kind: kind.to_string(), tags }
     }
 }
 
@@ -346,8 +340,7 @@ impl Keywords {
 
     /// Add a command keyword.
     pub fn add_command(&mut self, name: &str, kind: &str) {
-        self.commands
-            .insert(name.to_string(), KeywordEntry::new(kind));
+        self.commands.insert(name.to_string(), KeywordEntry::new(kind));
     }
 
     /// Add a minor keyword.
@@ -393,18 +386,12 @@ impl Keywords {
 
     /// Check if a command has a given kind.
     pub fn is_kind(&self, name: &str, kind: &str) -> bool {
-        self.commands
-            .get(name)
-            .map(|e| e.kind == kind)
-            .unwrap_or(false)
+        self.commands.get(name).map(|e| e.kind == kind).unwrap_or(false)
     }
 
     /// Check if a command belongs to a set of kinds.
     fn is_one_of_kinds(&self, name: &str, kinds: &[&str]) -> bool {
-        self.commands
-            .get(name)
-            .map(|e| kinds.contains(&e.kind.as_str()))
-            .unwrap_or(false)
+        self.commands.get(name).map(|e| kinds.contains(&e.kind.as_str())).unwrap_or(false)
     }
 
     // ── Category predicates ──
@@ -490,13 +477,7 @@ impl Keywords {
     pub fn is_proof_open(&self, name: &str) -> bool {
         self.is_one_of_kinds(
             name,
-            &[
-                PRF_GOAL,
-                PRF_ASM_GOAL,
-                PRF_SCRIPT_GOAL,
-                PRF_SCRIPT_ASM_GOAL,
-                PRF_OPEN,
-            ],
+            &[PRF_GOAL, PRF_ASM_GOAL, PRF_SCRIPT_GOAL, PRF_SCRIPT_ASM_GOAL, PRF_OPEN],
         )
     }
 

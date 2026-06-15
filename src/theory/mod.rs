@@ -30,10 +30,10 @@ pub mod loader;
 pub mod local_theory;
 pub mod registry;
 pub mod session_builder;
+pub mod thy_header;
 pub mod verify_classifier;
 
-use std::collections::HashMap;
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
 // =========================================================================
 // Session description
@@ -75,9 +75,7 @@ pub struct SessionManager {
 
 impl SessionManager {
     pub fn new() -> Self {
-        SessionManager {
-            sessions: HashMap::new(),
-        }
+        SessionManager { sessions: HashMap::new() }
     }
 
     /// Register a session.

@@ -15,11 +15,13 @@
 
 use std::sync::Arc;
 
-use crate::core::sign::Signature;
-use crate::core::term::Term;
-use crate::core::theory::Theory;
-use crate::core::thm::{CTerm, Thm, ThmKernel};
-use crate::core::types::Typ;
+use crate::core::{
+    sign::Signature,
+    term::Term,
+    theory::Theory,
+    thm::{CTerm, Thm, ThmKernel},
+    types::Typ,
+};
 
 // =========================================================================
 // LocalTheory
@@ -103,7 +105,10 @@ impl LocalTheory {
         // Add the definition as an axiom: name == rhs
         let eq = Term::app(
             Term::app(
-                Term::const_("Pure.eq", Typ::arrows(vec![typ.clone(), typ.clone()], Typ::base("prop"))),
+                Term::const_(
+                    "Pure.eq",
+                    Typ::arrows(vec![typ.clone(), typ.clone()], Typ::base("prop")),
+                ),
                 Term::const_(name, typ.clone()),
             ),
             rhs,
@@ -134,11 +139,7 @@ impl LocalTheory {
     pub fn note_lemmas(&mut self, entries: Vec<(String, Vec<Arc<Thm>>)>) {
         for (name, thms) in entries {
             for (i, thm) in thms.into_iter().enumerate() {
-                let full_name = if i == 0 {
-                    name.clone()
-                } else {
-                    format!("{name}_{i}")
-                };
+                let full_name = if i == 0 { name.clone() } else { format!("{name}_{i}") };
                 self.new_theorems.push((full_name, thm));
             }
         }

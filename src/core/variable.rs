@@ -8,11 +8,9 @@
 //! - **Focus**: extract subgoals from a goal term
 //! - **Polymorphic**: generalize free variables
 
-use std::collections::BTreeSet;
-use std::sync::Arc;
+use std::{collections::BTreeSet, sync::Arc};
 
-use super::term::Term;
-use super::types::Symbol;
+use super::{term::Term, types::Symbol};
 
 // =========================================================================
 // Name context — tracks used names
@@ -27,9 +25,7 @@ pub struct NameContext {
 
 impl NameContext {
     pub fn new() -> Self {
-        NameContext {
-            used: BTreeSet::new(),
-        }
+        NameContext { used: BTreeSet::new() }
     }
 
     /// Declare a name as used.
@@ -96,13 +92,13 @@ fn collect_frees(term: &Term, frees: &mut BTreeSet<String>) {
     match term {
         Term::Free { name, .. } => {
             frees.insert(name.to_string());
-        }
+        },
         Term::Abs { body, .. } => collect_frees(body, frees),
         Term::App { func, arg } => {
             collect_frees(func, frees);
             collect_frees(arg, frees);
-        }
-        _ => {}
+        },
+        _ => {},
     }
 }
 
@@ -117,13 +113,13 @@ fn collect_svars(term: &Term, vars: &mut BTreeSet<(String, usize)>) {
     match term {
         Term::Var { name, index, .. } => {
             vars.insert((name.to_string(), *index));
-        }
+        },
         Term::Abs { body, .. } => collect_svars(body, vars),
         Term::App { func, arg } => {
             collect_svars(func, vars);
             collect_svars(arg, vars);
-        }
-        _ => {}
+        },
+        _ => {},
     }
 }
 // =========================================================================
@@ -161,13 +157,13 @@ fn replace_frees(term: &Term, mapping: &[(String, (Symbol, usize))]) -> Term {
                 }
             }
             term.clone()
-        }
+        },
         Term::Abs { name, typ, body } => {
             Term::abs(Arc::clone(name), typ.clone(), replace_frees(body, mapping))
-        }
+        },
         Term::App { func, arg } => {
             Term::app(replace_frees(func, mapping), replace_frees(arg, mapping))
-        }
+        },
         _ => term.clone(),
     }
 }
@@ -196,13 +192,13 @@ fn replace_svars(term: &Term, mapping: &[((Symbol, usize), String)]) -> Term {
                 }
             }
             term.clone()
-        }
+        },
         Term::Abs { name, typ, body } => {
             Term::abs(Arc::clone(name), typ.clone(), replace_svars(body, mapping))
-        }
+        },
         Term::App { func, arg } => {
             Term::app(replace_svars(func, mapping), replace_svars(arg, mapping))
-        }
+        },
         _ => term.clone(),
     }
 }
@@ -217,11 +213,7 @@ pub fn focus_goal(goal: &Term) -> (Vec<Term>, Term) {
     let mut prems = Vec::new();
     let mut body = goal;
     while let Term::App { func, arg } = body {
-        if let Term::App {
-            func: inner,
-            arg: a,
-        } = func.as_ref()
-        {
+        if let Term::App { func: inner, arg: a } = func.as_ref() {
             if let Term::Const { name, .. } = inner.as_ref() {
                 if name.as_ref() == "Pure.imp" {
                     prems.push(a.as_ref().clone());
@@ -256,7 +248,7 @@ fn replace_free_with_var(term: &Term, free_name: &str, var_idx: usize) -> Term {
     match term {
         Term::Free { name, typ } if name.as_ref() == free_name => {
             Term::var(Arc::clone(name), var_idx, typ.clone())
-        }
+        },
         Term::Abs { name, typ, body } => Term::abs(
             Arc::clone(name),
             typ.clone(),
@@ -303,7 +295,7 @@ mod tests {
         let t = Term::free("x", Typ::dummy());
         let imported = import_terms(&[t.clone()]);
         match &imported[0] {
-            Term::Var { .. } => { /* ok */ }
+            Term::Var { .. } => { /* ok */ },
             _ => panic!("expected Var after import"),
         }
         let exported = export_terms(&imported);
@@ -321,10 +313,7 @@ mod tests {
         let c = Term::const_("C", Typ::base("prop"));
         let imp = Term::app(
             Term::app(Term::const_("Pure.imp", Typ::dummy()), a.clone()),
-            Term::app(
-                Term::app(Term::const_("Pure.imp", Typ::dummy()), b.clone()),
-                c.clone(),
-            ),
+            Term::app(Term::app(Term::const_("Pure.imp", Typ::dummy()), b.clone()), c.clone()),
         );
         let (prems, conc) = focus_goal(&imp);
         assert_eq!(prems.len(), 2);
@@ -339,7 +328,7 @@ mod tests {
             Term::Var { name, index, .. } => {
                 assert_eq!(name.as_ref(), "x");
                 assert_eq!(*index, 11);
-            }
+            },
             _ => panic!("expected Var"),
         }
     }

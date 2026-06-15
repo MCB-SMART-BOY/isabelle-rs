@@ -11,8 +11,10 @@
 //!   → Kernel Term (kernel/term.rs)
 //! ```
 
-use crate::syntax::ast::Ast;
-use crate::syntax::parser::{ParseError, SyntaxTree};
+use crate::syntax::{
+    ast::Ast,
+    parser::{ParseError, SyntaxTree},
+};
 
 // =========================================================================
 // SyntaxPhases

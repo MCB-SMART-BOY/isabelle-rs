@@ -1,5 +1,3 @@
-use crate::core::types::Symbol;
-use crate::core::types::intern;
 // Isabelle tokenizer — lexical analysis of Isabelle theory files.
 //
 // Corresponds to `src/Pure/Isar/token.ML`.
@@ -15,8 +13,9 @@ use crate::core::types::intern;
 // - **Verbatim**: `{* ... *}`
 // - **Cartouches**: `‹...›`
 // - **Spaces, newlines, tabs**
-
 use std::fmt;
+
+use crate::core::types::{Symbol, intern};
 
 // =========================================================================
 // Token kinds
@@ -90,11 +89,7 @@ pub struct Token {
 
 impl Token {
     pub fn new(kind: TokenKind, source: String, offset: usize) -> Self {
-        Token {
-            kind,
-            source,
-            offset,
-        }
+        Token { kind, source, offset }
     }
 
     pub fn is_keyword(&self, kw: &str) -> bool {
@@ -219,11 +214,7 @@ pub struct Lexer {
 impl Lexer {
     /// Create a new lexer for the given input.
     pub fn new(input: &str) -> Self {
-        Lexer {
-            input: input.chars().collect(),
-            pos: 0,
-            offset: 0,
-        }
+        Lexer { input: input.chars().collect(), pos: 0, offset: 0 }
     }
 
     /// Tokenize the entire input.
@@ -259,13 +250,13 @@ impl Lexer {
             '(' if self.peek_n(1) == Some('*') => {
                 self.skip_comment();
                 self.next_token()
-            }
+            },
 
             // Semicolons
             ';' => {
                 self.advance();
                 Token::new(TokenKind::Semicolon, ";".into(), start_offset)
-            }
+            },
 
             // Isabelle symbol escapes: \<name> (e.g., \<in>, \<forall>, \<Longrightarrow>)
             '\\' if self.peek_n(1) == Some('<') => {
@@ -290,64 +281,64 @@ impl Lexer {
                 }
                 let text = format!("\\<{}>", inner);
                 Token::new(TokenKind::Symbol(intern(&text)), text, start_offset)
-            }
+            },
 
             // Symbols: try longest match first (==> before ==, =>)
             '=' if self.peek_n(1) == Some('=') && self.peek_n(2) == Some('>') => {
                 self.advance_by(3);
                 Token::new(TokenKind::Symbol(intern("==>")), "==>".into(), start_offset)
-            }
+            },
             '=' if self.peek_n(1) == Some('>') => {
                 self.advance_by(2);
                 Token::new(TokenKind::Symbol(intern("=>")), "=>".into(), start_offset)
-            }
+            },
             '=' if self.peek_n(1) == Some('=') => {
                 self.advance_by(2);
                 Token::new(TokenKind::Symbol(intern("==")), "==".into(), start_offset)
-            }
+            },
             '!' if self.peek_n(1) == Some('!') => {
                 self.advance_by(2);
                 Token::new(TokenKind::Symbol(intern("!!")), "!!".into(), start_offset)
-            }
+            },
             '-' if self.peek_n(1) == Some('-') && self.peek_n(2) == Some('>') => {
                 self.advance_by(3);
                 Token::new(TokenKind::Symbol(intern("-->")), "-->".into(), start_offset)
-            }
+            },
             '-' => {
                 self.advance();
                 Token::new(TokenKind::Symbol(intern("-")), '-'.into(), start_offset)
-            }
+            },
             '+' => {
                 self.advance();
                 Token::new(TokenKind::Symbol(intern("+")), '+'.into(), start_offset)
-            }
+            },
             '<' if self.peek_n(1) == Some('=') && self.peek_n(2) == Some('>') => {
                 self.advance_by(3);
                 Token::new(TokenKind::Symbol(intern("<=>")), "<=>".into(), start_offset)
-            }
+            },
             '<' if self.peek_n(1) == Some('-') && self.peek_n(2) == Some('>') => {
                 self.advance_by(3);
                 Token::new(TokenKind::Symbol(intern("<->")), "<->".into(), start_offset)
-            }
+            },
             '<' => {
                 self.advance();
                 Token::new(TokenKind::Symbol(intern("<")), '<'.into(), start_offset)
-            }
+            },
 
             // Bracketed assumptions: [| ... |]
             '[' if self.peek_n(1) == Some('|') => {
                 self.advance_by(2);
                 Token::new(TokenKind::Symbol(intern("[|")), "[|".into(), start_offset)
-            }
+            },
             '|' if self.peek_n(1) == Some(']') => {
                 self.advance_by(2);
                 Token::new(TokenKind::Symbol(intern("|]")), "|]".into(), start_offset)
-            }
+            },
             // Inequality: ~=
             '~' if self.peek_n(1) == Some('=') => {
                 self.advance_by(2);
                 Token::new(TokenKind::Symbol(intern("~=")), "~=".into(), start_offset)
-            }
+            },
 
             // Identifiers: start with letter, _, or type variable quote
             c if c.is_alphabetic() || c == '_' => self.lex_ident(),
@@ -359,81 +350,81 @@ impl Lexer {
             '.' => {
                 self.advance();
                 Token::new(TokenKind::Symbol(intern(".")), '.'.into(), start_offset)
-            }
+            },
             '%' => {
                 self.advance();
                 Token::new(TokenKind::Symbol(intern("%")), '%'.into(), start_offset)
-            }
+            },
             ':' if self.peek_n(1) == Some(':') => {
                 self.advance_by(2);
                 Token::new(TokenKind::Symbol(intern("::")), "::".into(), start_offset)
-            }
+            },
             // Single-character symbols
             ':' => {
                 self.advance();
                 Token::new(TokenKind::Symbol(intern(":")), ":".into(), start_offset)
-            }
+            },
             '&' => {
                 self.advance();
                 Token::new(TokenKind::Symbol(intern("&")), '&'.into(), start_offset)
-            }
+            },
             '|' => {
                 self.advance();
                 Token::new(TokenKind::Symbol(intern("|")), '|'.into(), start_offset)
-            }
+            },
             '~' => {
                 self.advance();
                 Token::new(TokenKind::Symbol(intern("~")), '~'.into(), start_offset)
-            }
+            },
             '(' => {
                 self.advance();
                 Token::new(TokenKind::Symbol(intern("(")), '('.into(), start_offset)
-            }
+            },
             ')' => {
                 self.advance();
                 Token::new(TokenKind::Symbol(intern(")")), ')'.into(), start_offset)
-            }
+            },
             '[' => {
                 self.advance();
                 Token::new(TokenKind::Symbol(intern("[")), '['.into(), start_offset)
-            }
+            },
             ']' => {
                 self.advance();
                 Token::new(TokenKind::Symbol(intern("]")), ']'.into(), start_offset)
-            }
+            },
             '{' => {
                 self.advance();
                 Token::new(TokenKind::Symbol(intern("{")), '{'.into(), start_offset)
-            }
+            },
             '}' => {
                 self.advance();
                 Token::new(TokenKind::Symbol(intern("}")), '}'.into(), start_offset)
-            }
+            },
             '=' => {
                 self.advance();
                 Token::new(TokenKind::Symbol(intern("=")), '='.into(), start_offset)
-            }
+            },
             '#' => {
                 self.advance();
                 Token::new(TokenKind::Symbol(intern("#")), '#'.into(), start_offset)
-            }
+            },
             '>' => {
                 self.advance();
                 Token::new(TokenKind::Symbol(intern(">")), '>'.into(), start_offset)
-            }
+            },
             '@' => {
                 self.advance();
                 Token::new(TokenKind::Symbol(intern("@")), '@'.into(), start_offset)
-            }
+            },
             '`' => {
                 self.advance();
                 Token::new(TokenKind::Symbol(intern("`")), '`'.into(), start_offset)
-            }
+            },
             // Error
             _ => {
                 self.advance();
                 Token::new(TokenKind::Error, ch.to_string(), start_offset)
-            }
+            },
         }
     }
 
@@ -444,12 +435,13 @@ impl Lexer {
             let ch = self.peek();
             if ch.is_alphanumeric() || ch == '_' || ch == '\'' || ch == '.' {
                 if ch == '.' {
-                    // Only include dot if it's part of a qualified name (next char is ident char, not another dot)
+                    // Only include dot if it's part of a qualified name (next char is ident char,
+                    // not another dot)
                     match self.peek_n(1) {
                         Some('.') => break, // don't eat ..
                         Some(c) if !c.is_alphanumeric() && c != '_' && c != '\'' => break,
                         None => break,
-                        _ => {} // dot followed by ident char => include it (qualified name)
+                        _ => {}, // dot followed by ident char => include it (qualified name)
                     }
                 }
                 self.advance();
@@ -482,11 +474,8 @@ impl Lexer {
         }
 
         let text: String = self.input[start..self.pos].iter().collect();
-        let kind = if text.starts_with("?'") {
-            TokenKind::SchematicTypeVar
-        } else {
-            TokenKind::TypeVar
-        };
+        let kind =
+            if text.starts_with("?'") { TokenKind::SchematicTypeVar } else { TokenKind::TypeVar };
         Token::new(kind, text, start_offset)
     }
 
@@ -530,14 +519,14 @@ impl Lexer {
                 '(' if self.peek_n(1) == Some('*') => {
                     self.advance_by(2);
                     depth += 1;
-                }
+                },
                 '*' if self.peek_n(1) == Some(')') => {
                     self.advance_by(2);
                     depth -= 1;
-                }
+                },
                 _ => {
                     self.advance();
-                }
+                },
             }
         }
     }
@@ -591,10 +580,7 @@ mod tests {
     }
 
     fn filter_tokens(tokens: &[Token]) -> Vec<&Token> {
-        tokens
-            .iter()
-            .filter(|t| !matches!(t.kind, TokenKind::EOF))
-            .collect()
+        tokens.iter().filter(|t| !matches!(t.kind, TokenKind::EOF)).collect()
     }
 
     #[test]

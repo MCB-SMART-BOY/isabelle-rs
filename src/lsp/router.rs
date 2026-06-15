@@ -38,50 +38,29 @@ impl Router {
         requests.insert(requests::INITIALIZE, handlers::lifecycle::handle_initialize);
         requests.insert(requests::SHUTDOWN, handlers::lifecycle::handle_shutdown);
         requests.insert(requests::TEXT_DOCUMENT_HOVER, handlers::hover::handle_hover);
-        requests.insert(
-            requests::TEXT_DOCUMENT_COMPLETION,
-            handlers::completion::handle_completion,
-        );
-        requests.insert(
-            requests::TEXT_DOCUMENT_DEFINITION,
-            handlers::definition::handle_definition,
-        );
+        requests
+            .insert(requests::TEXT_DOCUMENT_COMPLETION, handlers::completion::handle_completion);
+        requests
+            .insert(requests::TEXT_DOCUMENT_DEFINITION, handlers::definition::handle_definition);
         requests.insert(
             requests::TEXT_DOCUMENT_DOCUMENT_SYMBOL,
             handlers::symbols::handle_document_symbol,
         );
-        requests.insert(
-            requests::PROOF_GOALS,
-            handlers::proof_goals::handle_proof_goals,
-        );
+        requests.insert(requests::PROOF_GOALS, handlers::proof_goals::handle_proof_goals);
 
         // ── Notification handlers ──
-        notifications.insert(
-            notifications::INITIALIZED,
-            handlers::lifecycle::handle_initialized,
-        );
+        notifications.insert(notifications::INITIALIZED, handlers::lifecycle::handle_initialized);
         notifications.insert(notifications::EXIT, handlers::lifecycle::handle_exit);
-        notifications.insert(
-            notifications::TEXT_DOCUMENT_DID_OPEN,
-            handlers::document::handle_did_open,
-        );
-        notifications.insert(
-            notifications::TEXT_DOCUMENT_DID_CHANGE,
-            handlers::document::handle_did_change,
-        );
-        notifications.insert(
-            notifications::TEXT_DOCUMENT_DID_CLOSE,
-            handlers::document::handle_did_close,
-        );
-        notifications.insert(
-            notifications::TEXT_DOCUMENT_DID_SAVE,
-            handlers::document::handle_did_save,
-        );
+        notifications
+            .insert(notifications::TEXT_DOCUMENT_DID_OPEN, handlers::document::handle_did_open);
+        notifications
+            .insert(notifications::TEXT_DOCUMENT_DID_CHANGE, handlers::document::handle_did_change);
+        notifications
+            .insert(notifications::TEXT_DOCUMENT_DID_CLOSE, handlers::document::handle_did_close);
+        notifications
+            .insert(notifications::TEXT_DOCUMENT_DID_SAVE, handlers::document::handle_did_save);
 
-        Router {
-            requests,
-            notifications,
-        }
+        Router { requests, notifications }
     }
 
     /// Dispatch a JSON-RPC request to the registered handler.
@@ -93,7 +72,7 @@ impl Router {
             Some(handler) => {
                 handler(ctx, req);
                 true
-            }
+            },
             None => false,
         }
     }
@@ -112,7 +91,7 @@ impl Router {
             Some(handler) => {
                 handler(ctx, notif);
                 true
-            }
+            },
             None => false,
         }
     }
@@ -130,11 +109,13 @@ impl Default for Router {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, mpsc};
+
     use super::*;
-    use crate::fleche::engine::{Fleche, RealExecutor};
-    use crate::server::transport::OutgoingMessage;
-    use std::sync::Arc;
-    use std::sync::mpsc;
+    use crate::{
+        fleche::engine::{Fleche, RealExecutor},
+        server::transport::OutgoingMessage,
+    };
 
     fn make_ctx() -> HandlerContext {
         let fleche = Arc::new(Fleche::new(Arc::new(RealExecutor::new())));
@@ -151,11 +132,7 @@ mod tests {
     #[test]
     fn test_router_has_did_open_handler() {
         let router = Router::new();
-        assert!(
-            router
-                .notifications
-                .contains_key(notifications::TEXT_DOCUMENT_DID_OPEN)
-        );
+        assert!(router.notifications.contains_key(notifications::TEXT_DOCUMENT_DID_OPEN));
     }
 
     #[test]

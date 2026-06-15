@@ -8,14 +8,14 @@
 //! - **Bindings**: term and type variable bindings
 //! - **Syntax**: local syntax extensions
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
-use crate::core::term::Term;
-use crate::core::theory::{ProofContext as CoreProofContext, Theory};
-use crate::core::thm::Thm;
-use crate::core::types::Symbol;
-use crate::core::types::Typ;
+use crate::core::{
+    term::Term,
+    theory::{ProofContext as CoreProofContext, Theory},
+    thm::Thm,
+    types::{Symbol, Typ},
+};
 
 // =========================================================================
 // Case — a proof case from case analysis
@@ -46,9 +46,7 @@ pub struct LocalFacts {
 
 impl LocalFacts {
     pub fn new() -> Self {
-        LocalFacts {
-            facts: HashMap::new(),
-        }
+        LocalFacts { facts: HashMap::new() }
     }
 
     pub fn add(&mut self, name: &str, thms: Vec<Arc<Thm>>) {
@@ -231,9 +229,11 @@ impl IsarContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::theory::Theory;
-    use crate::core::thm::{CTerm, ThmKernel};
-    use crate::core::types::Typ;
+    use crate::core::{
+        theory::Theory,
+        thm::{CTerm, ThmKernel},
+        types::Typ,
+    };
 
     fn init_context() -> IsarContext {
         let pure = Theory::pure();

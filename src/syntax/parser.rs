@@ -165,12 +165,8 @@ impl CstBuilder {
     /// Build a CST from source text.
     fn build(source: &str) -> (GreenNode, Vec<ParseError>) {
         let tokens = Lexer::new(source).tokenize();
-        let mut builder = CstBuilder {
-            builder: GreenNodeBuilder::new(),
-            errors: Vec::new(),
-            tokens,
-            pos: 0,
-        };
+        let mut builder =
+            CstBuilder { builder: GreenNodeBuilder::new(), errors: Vec::new(), tokens, pos: 0 };
         builder.parse_root();
         let green = builder.builder.finish();
         (green, builder.errors)
@@ -251,10 +247,7 @@ impl CstBuilder {
     }
 
     fn at_ident(&self) -> bool {
-        matches!(
-            self.current_kind(),
-            Some(TokenKind::Ident | TokenKind::LongIdent)
-        )
+        matches!(self.current_kind(), Some(TokenKind::Ident | TokenKind::LongIdent))
     }
 
     fn at_string(&self) -> bool {
@@ -296,11 +289,7 @@ impl CstBuilder {
     fn error(&mut self, msg: &str) {
         let offset = self.current().map(|t| t.offset).unwrap_or(0);
         let length = self.current().map(|t| t.source.len()).unwrap_or(1);
-        self.errors.push(ParseError {
-            message: msg.to_string(),
-            offset,
-            length,
-        });
+        self.errors.push(ParseError { message: msg.to_string(), offset, length });
         // Insert error node and continue
         self.builder.start_node(SyntaxKind::ErrorNode.into());
         self.builder.token(SyntaxKind::TokenError.into(), msg);
@@ -336,13 +325,7 @@ impl SyntaxTree {
     /// Even with errors, the tree is complete (error recovery).
     pub fn parse(source: &str) -> (Self, Vec<ParseError>) {
         let (green, errors) = CstBuilder::build(source);
-        (
-            SyntaxTree {
-                green,
-                errors: errors.clone(),
-            },
-            errors,
-        )
+        (SyntaxTree { green, errors: errors.clone() }, errors)
     }
 
     /// Get the root syntax node.
@@ -377,9 +360,7 @@ mod tests {
         assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
         let root = tree.root();
         // Should have a TheoryHeader child
-        let header = root
-            .children()
-            .find(|c| c.kind() == SyntaxKind::TheoryHeader);
+        let header = root.children().find(|c| c.kind() == SyntaxKind::TheoryHeader);
         assert!(header.is_some(), "no theory header found");
     }
 
@@ -388,10 +369,7 @@ mod tests {
         let (tree, errors) = SyntaxTree::parse("lemma foo: \"A\"");
         assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
         let root = tree.root();
-        let lemmas: Vec<_> = root
-            .children()
-            .filter(|c| c.kind() == SyntaxKind::Lemma)
-            .collect();
+        let lemmas: Vec<_> = root.children().filter(|c| c.kind() == SyntaxKind::Lemma).collect();
         assert!(!lemmas.is_empty(), "no lemma found");
     }
 

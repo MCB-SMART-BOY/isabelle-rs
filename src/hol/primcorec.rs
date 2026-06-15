@@ -15,10 +15,13 @@
 //! - Defining equations as [simp] theorems
 //! - Corecursive call well-formedness check
 
-use crate::core::term::Term;
-use crate::core::thm::{CTerm, ThmKernel};
-use crate::core::types::Typ;
 use std::sync::Arc;
+
+use crate::core::{
+    term::Term,
+    thm::{CTerm, ThmKernel},
+    types::Typ,
+};
 
 /// A parsed primcorec definition.
 #[derive(Debug, Clone)]
@@ -56,12 +59,7 @@ pub fn parse_primcorecs(source: &str) -> Vec<PrimcorecDef> {
             });
 
         if !name.is_empty() {
-            results.push(PrimcorecDef {
-                name,
-                typ_str,
-                equations,
-                codatatype: None,
-            });
+            results.push(PrimcorecDef { name, typ_str, equations, codatatype: None });
         }
     }
 
@@ -118,11 +116,16 @@ fn parse_primcorec_header(
         }
 
         // Stop at next declaration
-        if t.starts_with("lemma ") || t.starts_with("theorem ")
-            || t.starts_with("fun ") || t.starts_with("primrec ")
-            || t.starts_with("primcorec ") || t.starts_with("datatype ")
-            || t.starts_with("codatatype ") || t == "end"
-            || t.starts_with("definition ") || t.starts_with("inductive ")
+        if t.starts_with("lemma ")
+            || t.starts_with("theorem ")
+            || t.starts_with("fun ")
+            || t.starts_with("primrec ")
+            || t.starts_with("primcorec ")
+            || t.starts_with("datatype ")
+            || t.starts_with("codatatype ")
+            || t == "end"
+            || t.starts_with("definition ")
+            || t.starts_with("inductive ")
         {
             break;
         }
@@ -211,10 +214,15 @@ impl PrimcorecDef {
         }
 
         // 3. Generate coinduction rule
-        // `R x y ==> (!!x y. R x y ==> head (f x) = head (g y) & R (tail (f x)) (tail (g y))) ==> f = g`
+        // `R x y ==> (!!x y. R x y ==> head (f x) = head (g y) & R (tail (f x)) (tail (g y))) ==> f
+        // = g`
         let coinduct_name = format!("{}.coinduct", self.name);
         let coinduct_term = self.build_coinduct_term();
-        results.push((coinduct_name, coinduct_term, vec!["coinduct".to_string(), "primcorec".to_string()]));
+        results.push((
+            coinduct_name,
+            coinduct_term,
+            vec!["coinduct".to_string(), "primcorec".to_string()],
+        ));
 
         // 4. Generate corecursive call rule
         let corec_name = format!("{}.corec", self.name);
@@ -274,7 +282,7 @@ fn parse_constructor_app(expr: &str) -> Option<(String, Vec<String>)> {
                 let args = split_args_preserving_parens(rest);
                 Some((ctor, args))
             }
-        }
+        },
     }
 }
 
@@ -290,20 +298,20 @@ fn split_args_preserving_parens(s: &str) -> Vec<String> {
             '(' => {
                 depth += 1;
                 current.push(ch);
-            }
+            },
             ')' => {
                 depth -= 1;
                 current.push(ch);
-            }
+            },
             ' ' if depth == 0 => {
                 if !current.is_empty() {
                     args.push(current.clone());
                     current.clear();
                 }
-            }
+            },
             _ => {
                 current.push(ch);
-            }
+            },
         }
     }
     if !current.is_empty() {
@@ -331,7 +339,7 @@ fn split_args(s: &str) -> Vec<String> {
             '(' => {
                 depth += 1;
                 current.push(c);
-            }
+            },
             ')' => {
                 if depth == 0 {
                     if !current.trim().is_empty() {
@@ -341,16 +349,16 @@ fn split_args(s: &str) -> Vec<String> {
                 }
                 depth -= 1;
                 current.push(c);
-            }
+            },
             ' ' if depth == 0 => {
                 if !current.trim().is_empty() {
                     args.push(current.trim().to_string());
                     current.clear();
                 }
-            }
+            },
             _ => {
                 current.push(c);
-            }
+            },
         }
         i += 1;
     }
@@ -417,9 +425,7 @@ mod tests {
         let def = PrimcorecDef {
             name: "nats".to_string(),
             typ_str: "nat => nat stream".to_string(),
-            equations: vec![
-                (None, "nats n".to_string(), "SCons n (nats (Suc n))".to_string()),
-            ],
+            equations: vec![(None, "nats n".to_string(), "SCons n (nats (Suc n))".to_string())],
             codatatype: Some("stream".to_string()),
         };
         let theorems = def.generate_theorems();
@@ -435,7 +441,8 @@ mod tests {
         assert!(has_simps, "Missing simp theorem");
 
         // Check that we have a coinduct theorem
-        let has_coind = theorems.iter().any(|(_, _, attrs)| attrs.contains(&"coinduct".to_string()));
+        let has_coind =
+            theorems.iter().any(|(_, _, attrs)| attrs.contains(&"coinduct".to_string()));
         assert!(has_coind, "Missing coinduct theorem");
     }
 

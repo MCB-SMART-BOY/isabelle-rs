@@ -53,18 +53,12 @@ pub struct Watchdog {
 impl Watchdog {
     /// Create a new watchdog with default heartbeat (1 second).
     pub fn new() -> Self {
-        Watchdog {
-            interval: Duration::from_secs(1),
-            _last_check: Instant::now(),
-        }
+        Watchdog { interval: Duration::from_secs(1), _last_check: Instant::now() }
     }
 
     /// Create a watchdog with a custom heartbeat interval.
     pub fn with_interval(interval: Duration) -> Self {
-        Watchdog {
-            interval,
-            _last_check: Instant::now(),
-        }
+        Watchdog { interval, _last_check: Instant::now() }
     }
 
     /// Check a worker's status.

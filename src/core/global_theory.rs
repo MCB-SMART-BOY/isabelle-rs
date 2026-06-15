@@ -7,8 +7,7 @@
 
 use std::sync::Arc;
 
-use super::theory::Theory;
-use super::thm::Thm;
+use super::{theory::Theory, thm::Thm};
 
 /// Add a named theorem to the global fact table.
 pub fn add_fact(theory: &mut Theory, name: &str, thms: Vec<Arc<Thm>>) {
@@ -32,9 +31,7 @@ pub fn all_named_thms(theory: &Theory) -> Vec<(String, Arc<Thm>)> {
         .all_theorem_names()
         .iter()
         .filter_map(|name| {
-            theory
-                .lookup_theorem(name)
-                .map(|thm| ((*name).to_string(), Arc::clone(thm)))
+            theory.lookup_theorem(name).map(|thm| ((*name).to_string(), Arc::clone(thm)))
         })
         .collect()
 }
@@ -46,9 +43,11 @@ pub fn all_named_thms(theory: &Theory) -> Vec<(String, Arc<Thm>)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::term::Term;
-    use crate::core::thm::{CTerm, ThmKernel};
-    use crate::core::types::Typ;
+    use crate::core::{
+        term::Term,
+        thm::{CTerm, ThmKernel},
+        types::Typ,
+    };
 
     #[test]
     fn test_all_named_thms() {

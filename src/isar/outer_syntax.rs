@@ -22,8 +22,10 @@
 //! | Proof | `prf_goal` (have, show) | Proof (subgoal) |
 //! | Proof | `prf_asm` (fix, assume) | Proof |
 
-use crate::isar::keyword::Keywords;
-use crate::isar::token::{Lexer, Token, TokenKind};
+use crate::isar::{
+    keyword::Keywords,
+    token::{Lexer, Token, TokenKind},
+};
 
 // =========================================================================
 // Command Span
@@ -104,11 +106,7 @@ impl OuterSyntax {
                     if self.keywords.is_command(s) {
                         // Flush the previous command
                         if let Some(name) = current_name.take() {
-                            let kind = self
-                                .keywords
-                                .command_kind(&name)
-                                .unwrap_or("")
-                                .to_string();
+                            let kind = self.keywords.command_kind(&name).unwrap_or("").to_string();
                             let body = current_tokens
                                 .iter()
                                 .skip(1) // skip the command name itself
@@ -126,15 +124,11 @@ impl OuterSyntax {
                         current_name = Some(s.clone());
                     }
                     current_tokens.push(tok.clone());
-                }
+                },
                 TokenKind::Semicolon => {
                     // Semicolon ends the current command
                     if let Some(name) = current_name.take() {
-                        let kind = self
-                            .keywords
-                            .command_kind(&name)
-                            .unwrap_or("")
-                            .to_string();
+                        let kind = self.keywords.command_kind(&name).unwrap_or("").to_string();
                         let body = current_tokens
                             .iter()
                             .skip(1)
@@ -148,15 +142,11 @@ impl OuterSyntax {
                             body,
                         ));
                     }
-                }
+                },
                 TokenKind::EOF => {
                     // Flush the last command
                     if let Some(name) = current_name.take() {
-                        let kind = self
-                            .keywords
-                            .command_kind(&name)
-                            .unwrap_or("")
-                            .to_string();
+                        let kind = self.keywords.command_kind(&name).unwrap_or("").to_string();
                         let body = current_tokens
                             .iter()
                             .skip(1)
@@ -170,10 +160,10 @@ impl OuterSyntax {
                             body,
                         ));
                     }
-                }
+                },
                 _ => {
                     current_tokens.push(tok.clone());
-                }
+                },
             }
         }
 
@@ -229,15 +219,13 @@ impl OuterSyntax {
                 self.keywords.is_theory(name)
                     && !self.keywords.is_qed(name)
                     && !self.keywords.is_qed_global(name)
-            }
+            },
             IsarMode::Proof => {
                 self.keywords.is_proof(name)
                     || self.keywords.is_qed(name)
                     || self.keywords.is_qed_global(name)
-            }
-            IsarMode::SkipProof => {
-                self.keywords.is_proof(name) || self.keywords.is_qed(name)
-            }
+            },
+            IsarMode::SkipProof => self.keywords.is_proof(name) || self.keywords.is_qed(name),
             IsarMode::Closed => false,
         }
     }
@@ -253,21 +241,21 @@ impl OuterSyntax {
                 } else {
                     IsarMode::Theory
                 }
-            }
+            },
             IsarMode::Proof => {
                 if self.keywords.is_qed(name) || self.keywords.is_qed_global(name) {
                     IsarMode::Theory
                 } else {
                     IsarMode::Proof
                 }
-            }
+            },
             IsarMode::SkipProof => {
                 if self.keywords.is_qed(name) || self.keywords.is_qed_global(name) {
                     IsarMode::Theory
                 } else {
                     IsarMode::SkipProof
                 }
-            }
+            },
             IsarMode::Closed => IsarMode::Closed,
         }
     }
@@ -369,28 +357,16 @@ mod tests {
         let syn = OuterSyntax::standard();
 
         // Theory → lemma → Proof
-        assert_eq!(
-            syn.transition("lemma", &IsarMode::Theory),
-            IsarMode::Proof
-        );
+        assert_eq!(syn.transition("lemma", &IsarMode::Theory), IsarMode::Proof);
 
         // Theory → definition → Theory
-        assert_eq!(
-            syn.transition("definition", &IsarMode::Theory),
-            IsarMode::Theory
-        );
+        assert_eq!(syn.transition("definition", &IsarMode::Theory), IsarMode::Theory);
 
         // Proof → done → Theory
-        assert_eq!(
-            syn.transition("done", &IsarMode::Proof),
-            IsarMode::Theory
-        );
+        assert_eq!(syn.transition("done", &IsarMode::Proof), IsarMode::Theory);
 
         // Theory → end → Closed
-        assert_eq!(
-            syn.transition("end", &IsarMode::Theory),
-            IsarMode::Closed
-        );
+        assert_eq!(syn.transition("end", &IsarMode::Theory), IsarMode::Closed);
     }
 
     #[test]

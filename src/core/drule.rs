@@ -16,10 +16,12 @@
 //! | `implies_elim_list` | Chain implies_elim over a list |
 //! | `zero_var_indexes` | Reset schematic variable indices |
 
-use super::error::KernelError;
-use super::logic::Pure;
-use super::thm::{CTerm, Thm, ThmKernel};
-use super::types::Typ;
+use super::{
+    error::KernelError,
+    logic::Pure,
+    thm::{CTerm, Thm, ThmKernel},
+    types::Typ,
+};
 
 // =========================================================================
 // forall_intr: (!!x. P(x)) introduction
@@ -79,11 +81,7 @@ pub fn compose(thm1: &Thm, thm2: &Thm, i: usize) -> Option<Result<Thm, KernelErr
     let prem = prems[i];
 
     // Match: thm1 ⊢ A, thm2 ⊢ A ==> B → Γ ∪ Δ ⊢ B
-    if thm1.prop().term() == prem {
-        Some(ThmKernel::implies_elim(thm2, thm1))
-    } else {
-        None
-    }
+    if thm1.prop().term() == prem { Some(ThmKernel::implies_elim(thm2, thm1)) } else { None }
 }
 
 // =========================================================================

@@ -32,8 +32,10 @@
 
 use std::sync::Arc;
 
-use super::thm::{CTerm, Thm, ThmKernel};
-use super::term::Term;
+use super::{
+    term::Term,
+    thm::{CTerm, Thm, ThmKernel},
+};
 
 // =========================================================================
 // Conversion type
@@ -71,11 +73,7 @@ pub fn rewr_conv(rule: Thm) -> Conv {
         // Try to match the conclusion against the left-hand side of the rule
         let rule_eq = rule.concl();
         if let Term::App { func, arg: _rhs } = &rule_eq {
-            if let Term::App {
-                func: eq_const,
-                arg: lhs,
-            } = func.as_ref()
-            {
+            if let Term::App { func: eq_const, arg: lhs } = func.as_ref() {
                 if is_hol_eq(eq_const) {
                     // If the term equals lhs, return reflexive equality
                     if t == **lhs {
@@ -141,7 +139,7 @@ pub fn repeat_conv(c: Conv) -> Conv {
                         return Some(current);
                     }
                     current = next;
-                }
+                },
                 None => return Some(current),
             }
         }
@@ -166,7 +164,7 @@ pub fn arg_conv(c: Conv) -> Conv {
                 // Build: ⊢ f arg ≡ f arg' using combination
                 let fun_refl = ThmKernel::reflexive(CTerm::certify(func.as_ref().clone()));
                 ThmKernel::combination(&fun_refl, &arg_eq).ok()
-            }
+            },
             _ => None,
         }
     })
@@ -184,7 +182,7 @@ pub fn fun_conv(c: Conv) -> Conv {
                 // fun_eq: ⊢ func ≡ func'
                 let arg_refl = ThmKernel::reflexive(CTerm::certify(arg.as_ref().clone()));
                 ThmKernel::combination(&fun_eq, &arg_refl).ok()
-            }
+            },
             _ => None,
         }
     })
@@ -201,12 +199,8 @@ pub fn abs_conv(c: Conv) -> Conv {
                 let body_eq = c(&body_thm)?;
                 // body_eq: ⊢ body ≡ body'
                 // Build: ⊢ (λx. body) ≡ (λx. body') using abstraction
-                ThmKernel::abstraction(
-                    name.as_ref(),
-                    typ.clone(),
-                    &body_eq,
-                ).ok()
-            }
+                ThmKernel::abstraction(name.as_ref(), typ.clone(), &body_eq).ok()
+            },
             _ => None,
         }
     })
@@ -224,7 +218,7 @@ pub fn sub_conv(c: Conv) -> Conv {
                 let c_fun = fun_conv(Arc::clone(&c));
                 let combined = then_conv(c_fun, c_arg);
                 combined(thm)
-            }
+            },
             Term::Abs { .. } => abs_conv(Arc::clone(&c))(thm),
             _ => c(thm),
         }
@@ -250,11 +244,11 @@ fn top_sweep_walk(c: Conv, thm: &Thm) -> Option<Thm> {
             let step = result.or_else(|| c_fun(thm));
             let step = step.or_else(|| c_arg(thm));
             step
-        }
+        },
         Term::Abs { .. } => {
             let c_abs = abs_conv(Arc::clone(&c));
             result.or_else(|| c_abs(thm))
-        }
+        },
         _ => result,
     }
 }
@@ -270,11 +264,11 @@ fn bottom_walk(c: Conv, thm: &Thm) -> Option<Thm> {
             // Try func first, then arg
             let after_fun = c_fun(thm).unwrap_or_else(|| thm.clone());
             c_arg(&after_fun).unwrap_or(after_fun)
-        }
+        },
         Term::Abs { .. } => {
             let c_abs = abs_conv(Arc::clone(&c));
             c_abs(thm).unwrap_or_else(|| thm.clone())
-        }
+        },
         _ => thm.clone(), // leaf: no subterms
     };
     // Now try applying c at the top of the rewritten term
@@ -289,16 +283,12 @@ fn bottom_walk(c: Conv, thm: &Thm) -> Option<Thm> {
 /// Uses iterative traversal with explicit term walking to avoid infinite recursion
 /// that would occur if we used Conv combinators recursively.
 pub fn top_sweep_conv(c: Conv) -> Conv {
-    Arc::new(move |thm: &Thm| {
-        top_sweep_walk(Arc::clone(&c), thm)
-    })
+    Arc::new(move |thm: &Thm| top_sweep_walk(Arc::clone(&c), thm))
 }
 
 /// Bottom-up sweep: recursively apply c to subterms first, then at top.
 pub fn bottom_conv(c: Conv) -> Conv {
-    Arc::new(move |thm: &Thm| {
-        bottom_walk(Arc::clone(&c), thm)
-    })
+    Arc::new(move |thm: &Thm| bottom_walk(Arc::clone(&c), thm))
 }
 
 /// Apply c exactly at the top of the term (no recursion).
@@ -328,8 +318,10 @@ pub fn depth_conv(depth: usize, c: Conv) -> Conv {
 fn is_hol_eq(term: &Term) -> bool {
     match term {
         Term::Const { name, .. } => {
-            name.as_ref() == "Pure.eq" || name.as_ref() == "HOL.eq" || name.as_ref().ends_with(".eq")
-        }
+            name.as_ref() == "Pure.eq"
+                || name.as_ref() == "HOL.eq"
+                || name.as_ref().ends_with(".eq")
+        },
         _ => false,
     }
 }
@@ -339,16 +331,13 @@ fn rhs_of_conv(thm: &Thm) -> Option<Term> {
     let concl = thm.concl();
     match &concl {
         Term::App { func, arg: rhs } => {
-            if let Term::App {
-                func: eq_const, ..
-            } = func.as_ref()
-            {
+            if let Term::App { func: eq_const, .. } = func.as_ref() {
                 if is_hol_eq(eq_const) {
                     return Some(rhs.as_ref().clone());
                 }
             }
             None
-        }
+        },
         _ => None,
     }
 }
@@ -360,66 +349,32 @@ fn match_term(pattern: &Term, target: &Term) -> Option<Vec<(Term, Term)>> {
         (Term::Var { name: _pn, index: _pi, typ: _pt }, _) => {
             // Pattern variable: bind it
             Some(vec![(pattern.clone(), target.clone())])
-        }
-        (Term::Const {
-            name: pn,
-            typ: pt,
-        }, Term::Const {
-            name: tn,
-            typ: tt,
-        }) => {
-            if pn == tn && pt == tt {
-                Some(vec![])
-            } else {
-                None
-            }
-        }
-        (Term::Free {
-            name: pn,
-            typ: pt,
-        }, Term::Free {
-            name: tn,
-            typ: tt,
-        }) => {
-            if pn == tn && pt == tt {
-                Some(vec![])
-            } else {
-                None
-            }
-        }
+        },
+        (Term::Const { name: pn, typ: pt }, Term::Const { name: tn, typ: tt }) => {
+            if pn == tn && pt == tt { Some(vec![]) } else { None }
+        },
+        (Term::Free { name: pn, typ: pt }, Term::Free { name: tn, typ: tt }) => {
+            if pn == tn && pt == tt { Some(vec![]) } else { None }
+        },
         (Term::Bound(pi), Term::Bound(ti)) => {
             if pi == ti {
                 Some(vec![])
             } else {
                 None
             }
-        }
-        (Term::Abs {
-            name: _,
-            typ: pt,
-            body: pb,
-        }, Term::Abs {
-            name: _,
-            typ: tt,
-            body: tb,
-        }) => {
+        },
+        (Term::Abs { name: _, typ: pt, body: pb }, Term::Abs { name: _, typ: tt, body: tb }) => {
             if pt == tt {
                 match_term(pb, tb)
             } else {
                 None
             }
-        }
-        (Term::App {
-            func: pf,
-            arg: pa,
-        }, Term::App {
-            func: tf,
-            arg: ta,
-        }) => {
+        },
+        (Term::App { func: pf, arg: pa }, Term::App { func: tf, arg: ta }) => {
             let mut bindings = match_term(pf, tf)?;
             bindings.extend(match_term(pa, ta)?);
             Some(bindings)
-        }
+        },
         _ => None,
     }
 }

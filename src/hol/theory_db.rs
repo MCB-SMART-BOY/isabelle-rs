@@ -6,10 +6,9 @@
 //!
 //! This prevents the global DB density overflow we were experiencing.
 
-use std::collections::HashMap;
-use std::sync::Arc;
-use crate::core::thm::Thm;
-use crate::hol::hol_loader::HolTheoremDb;
+use std::{collections::HashMap, sync::Arc};
+
+use crate::{core::thm::Thm, hol::hol_loader::HolTheoremDb};
 
 /// A theory-scoped database that mirrors Isabelle's architecture.
 #[derive(Default)]
@@ -114,10 +113,14 @@ impl TheoryDB {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::term::Term;
-    use crate::core::thm::{CTerm, ThmKernel};
-    use crate::core::types::Typ;
-    use crate::hol::hol_loader::ParsedLemma;
+    use crate::{
+        core::{
+            term::Term,
+            thm::{CTerm, ThmKernel},
+            types::Typ,
+        },
+        hol::hol_loader::ParsedLemma,
+    };
 
     fn make_lemma(name: &str, proof: &str) -> ParsedLemma {
         let term = Term::const_(name, Typ::base("prop"));

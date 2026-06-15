@@ -16,11 +16,14 @@
 //! instance nat :: semiring         → algebra.add_arity(nat, semiring, [])
 //! ```
 
-use crate::core::sorts::Algebra;
-use crate::core::term::Term;
-use crate::core::thm::{CTerm, ThmKernel};
-use crate::core::types::{Sort, Typ, Symbol};
 use std::sync::Arc;
+
+use crate::core::{
+    sorts::Algebra,
+    term::Term,
+    thm::{CTerm, ThmKernel},
+    types::{Sort, Symbol, Typ},
+};
 
 // =========================================================================
 // Class Instance
@@ -76,7 +79,8 @@ pub fn parse_instances(source: &str) -> Vec<InstanceDecl> {
             let (type_args, type_name) = if type_part.starts_with('(') {
                 if let Some(paren_end) = type_part.find(')') {
                     let args_str = &type_part[1..paren_end];
-                    let args: Vec<String> = args_str.split(',').map(|s| s.trim().to_string()).collect();
+                    let args: Vec<String> =
+                        args_str.split(',').map(|s| s.trim().to_string()).collect();
                     let name = type_part[paren_end + 1..].trim().to_string();
                     (args, name)
                 } else {
@@ -88,17 +92,15 @@ pub fn parse_instances(source: &str) -> Vec<InstanceDecl> {
 
             // Extract proof if present
             let (class_name, proof) = if let Some(by_pos) = class_part.find(" by ") {
-                (class_part[..by_pos].trim().to_string(), Some(class_part[by_pos + 4..].trim().to_string()))
+                (
+                    class_part[..by_pos].trim().to_string(),
+                    Some(class_part[by_pos + 4..].trim().to_string()),
+                )
             } else {
                 (class_part.to_string(), None)
             };
 
-            results.push(InstanceDecl {
-                type_name,
-                class_name,
-                type_args,
-                proof,
-            });
+            results.push(InstanceDecl { type_name, class_name, type_args, proof });
         }
     }
 
@@ -123,7 +125,7 @@ pub fn parse_subclasses(source: &str) -> Vec<SubclassDecl> {
             (rest[..by_pos].trim().to_string(), Some(rest[by_pos + 4..].trim().to_string()))
         } else if rest.ends_with("..") {
             // `subclass foo ..` — omit proof
-            (rest[..rest.len()-2].trim().to_string(), None)
+            (rest[..rest.len() - 2].trim().to_string(), None)
         } else {
             (rest.to_string(), None)
         };
@@ -143,9 +145,7 @@ pub fn parse_subclasses(source: &str) -> Vec<SubclassDecl> {
 // =========================================================================
 
 /// Generate theorems for a class instance.
-pub fn instance_to_lemmas(
-    decl: &InstanceDecl,
-) -> Vec<crate::hol::hol_loader::ParsedLemma> {
+pub fn instance_to_lemmas(decl: &InstanceDecl) -> Vec<crate::hol::hol_loader::ParsedLemma> {
     let mut lemmas = Vec::new();
 
     let instance_name = format!("instance_{}_{}", decl.type_name, decl.class_name);
@@ -165,9 +165,7 @@ pub fn instance_to_lemmas(
 }
 
 /// Generate theorems for a subclass relation.
-pub fn subclass_to_lemmas(
-    decl: &SubclassDecl,
-) -> Vec<crate::hol::hol_loader::ParsedLemma> {
+pub fn subclass_to_lemmas(decl: &SubclassDecl) -> Vec<crate::hol::hol_loader::ParsedLemma> {
     let mut lemmas = Vec::new();
 
     let subclass_name = format!("subclass_{}_subseteq_{}", decl.sub_class, decl.super_class);
@@ -217,15 +215,10 @@ impl ClassStore {
     /// Apply all class relations to the algebra.
     pub fn apply_to_algebra(&self, algebra: &mut Algebra) {
         for (sub, sup) in &self.classrels {
-            algebra.add_classrel(
-                &Symbol::from(sub.as_str()),
-                &Symbol::from(sup.as_str()),
-            );
+            algebra.add_classrel(&Symbol::from(sub.as_str()), &Symbol::from(sup.as_str()));
         }
         for inst in &self.instances {
-            let arg_sorts: Vec<Sort> = inst.type_args.iter()
-                .map(|_| Sort::top())
-                .collect();
+            let arg_sorts: Vec<Sort> = inst.type_args.iter().map(|_| Sort::top()).collect();
             algebra.add_arity(
                 &Symbol::from(inst.type_name.as_str()),
                 &Symbol::from(inst.class_name.as_str()),

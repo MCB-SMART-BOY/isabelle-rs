@@ -52,23 +52,55 @@ const INFIX_TABLE: &[InfixInfo] = &[
     InfixInfo { names: &["HOL.conj", "HOL.and"], symbol: "∧", prec: Precedence::LogicBin },
     InfixInfo { names: &["HOL.disj", "HOL.or"], symbol: "∨", prec: Precedence::LogicBin },
     InfixInfo { names: &["HOL.imp"], symbol: "⟶", prec: Precedence::Implication },
-    InfixInfo { names: &["HOL.iff", "HOL.eq_reflection"], symbol: "⟷", prec: Precedence::Relation },
+    InfixInfo {
+        names: &["HOL.iff", "HOL.eq_reflection"], symbol: "⟷", prec: Precedence::Relation
+    },
     // Equality / ordering
     InfixInfo { names: &["HOL.eq", "Pure.eq"], symbol: "=", prec: Precedence::Relation },
     InfixInfo { names: &["HOL.less", "HOL.ordLess"], symbol: "<", prec: Precedence::Relation },
-    InfixInfo { names: &["HOL.lessEq", "HOL.ordLessEq"], symbol: "≤", prec: Precedence::Relation },
-    InfixInfo { names: &["HOL.greater", "HOL.ordGreater"], symbol: ">", prec: Precedence::Relation },
-    InfixInfo { names: &["HOL.greaterEq", "HOL.ordGreaterEq"], symbol: "≥", prec: Precedence::Relation },
+    InfixInfo {
+        names: &["HOL.lessEq", "HOL.ordLessEq"], symbol: "≤", prec: Precedence::Relation
+    },
+    InfixInfo {
+        names: &["HOL.greater", "HOL.ordGreater"],
+        symbol: ">",
+        prec: Precedence::Relation,
+    },
+    InfixInfo {
+        names: &["HOL.greaterEq", "HOL.ordGreaterEq"],
+        symbol: "≥",
+        prec: Precedence::Relation,
+    },
     // Arithmetic
-    InfixInfo { names: &["HOL.plus", "Groups.plus", "HOL.groups_plus"], symbol: "+", prec: Precedence::Additive },
-    InfixInfo { names: &["HOL.minus", "Groups.minus", "HOL.groups_minus"], symbol: "-", prec: Precedence::Additive },
-    InfixInfo { names: &["HOL.times", "Groups.times"], symbol: "*", prec: Precedence::Multiplicative },
-    InfixInfo { names: &["HOL.divide", "HOL.inverse_divide"], symbol: "/", prec: Precedence::Multiplicative },
+    InfixInfo {
+        names: &["HOL.plus", "Groups.plus", "HOL.groups_plus"],
+        symbol: "+",
+        prec: Precedence::Additive,
+    },
+    InfixInfo {
+        names: &["HOL.minus", "Groups.minus", "HOL.groups_minus"],
+        symbol: "-",
+        prec: Precedence::Additive,
+    },
+    InfixInfo {
+        names: &["HOL.times", "Groups.times"],
+        symbol: "*",
+        prec: Precedence::Multiplicative,
+    },
+    InfixInfo {
+        names: &["HOL.divide", "HOL.inverse_divide"],
+        symbol: "/",
+        prec: Precedence::Multiplicative,
+    },
     // Set operations
     InfixInfo { names: &["HOL.member", "Set.member"], symbol: "∈", prec: Precedence::Relation },
     InfixInfo { names: &["HOL.subset", "Set.subset"], symbol: "⊆", prec: Precedence::Relation },
     InfixInfo { names: &["HOL.union", "Lattices.sup"], symbol: "∪", prec: Precedence::Additive },
-    InfixInfo { names: &["HOL.inter", "Lattices.inf"], symbol: "∩", prec: Precedence::Multiplicative },
+    InfixInfo {
+        names: &["HOL.inter", "Lattices.inf"],
+        symbol: "∩",
+        prec: Precedence::Multiplicative,
+    },
     // Lists
     InfixInfo { names: &["List.append", "HOL.append"], symbol: "@", prec: Precedence::Additive },
     InfixInfo { names: &["HOL.cons", "List.cons"], symbol: "#", prec: Precedence::Additive },
@@ -77,19 +109,12 @@ const INFIX_TABLE: &[InfixInfo] = &[
 ];
 
 /// Known binder constants.
-const BINDER_TABLE: &[(&str, &str)] = &[
-    ("Pure.all", "∀"),
-    ("HOL.All", "∀"),
-    ("HOL.Ex", "∃"),
-    ("HOL.Ex1", "∃!"),
-];
+const BINDER_TABLE: &[(&str, &str)] =
+    &[("Pure.all", "∀"), ("HOL.All", "∀"), ("HOL.Ex", "∃"), ("HOL.Ex1", "∃!")];
 
 /// Known unary/prefix operators.
-const PREFIX_TABLE: &[(&str, &str)] = &[
-    ("HOL.Not", "¬"),
-    ("HOL.uminus", "-"),
-    ("Groups.uminus", "-"),
-];
+const PREFIX_TABLE: &[(&str, &str)] =
+    &[("HOL.Not", "¬"), ("HOL.uminus", "-"), ("Groups.uminus", "-")];
 
 fn print_term_to(term: &Term, outer_prec: Precedence, buf: &mut String) {
     match term {
@@ -102,12 +127,16 @@ fn print_term_to(term: &Term, outer_prec: Precedence, buf: &mut String) {
                         if cname.as_ref() == *binder_name {
                             // ∀x. body
                             let need_paren = outer_prec < Precedence::Atomic;
-                            if need_paren { buf.push('('); }
+                            if need_paren {
+                                buf.push('(');
+                            }
                             buf.push_str(binder_sym);
                             buf.push_str(name);
                             buf.push_str(". ");
                             print_term_to(arg, Precedence::Top, buf);
-                            if need_paren { buf.push(')'); }
+                            if need_paren {
+                                buf.push(')');
+                            }
                             return;
                         }
                     }
@@ -118,7 +147,7 @@ fn print_term_to(term: &Term, outer_prec: Precedence, buf: &mut String) {
             buf.push_str(name);
             buf.push_str(". ");
             print_term_to(body, Precedence::Top, buf);
-        }
+        },
 
         // ── Application (potential infix / prefix) ──
         Term::App { func, arg } => {
@@ -128,13 +157,17 @@ fn print_term_to(term: &Term, outer_prec: Precedence, buf: &mut String) {
                     for info in INFIX_TABLE {
                         if info.names.contains(&name.as_ref()) {
                             let need_paren = outer_prec > info.prec;
-                            if need_paren { buf.push('('); }
+                            if need_paren {
+                                buf.push('(');
+                            }
                             print_term_to(left, info.prec, buf);
                             buf.push(' ');
                             buf.push_str(info.symbol);
                             buf.push(' ');
                             print_term_to(arg, info.prec, buf);
-                            if need_paren { buf.push(')'); }
+                            if need_paren {
+                                buf.push(')');
+                            }
                             return;
                         }
                     }
@@ -154,23 +187,27 @@ fn print_term_to(term: &Term, outer_prec: Precedence, buf: &mut String) {
 
             // Simple function application: f x
             let need_paren = outer_prec > Precedence::Application;
-            if need_paren { buf.push('('); }
+            if need_paren {
+                buf.push('(');
+            }
             print_term_to(func, Precedence::Application, buf);
             buf.push(' ');
             print_term_to(arg, Precedence::Atomic, buf);
-            if need_paren { buf.push(')'); }
-        }
+            if need_paren {
+                buf.push(')');
+            }
+        },
 
         // ── Constants ──
         Term::Const { name, .. } => {
             let short = short_name(name);
             buf.push_str(&short);
-        }
+        },
 
         // ── Free variables ──
         Term::Free { name, .. } => {
             buf.push_str(name);
-        }
+        },
 
         // ── Schematic variables ──
         Term::Var { name, index, .. } => {
@@ -180,24 +217,20 @@ fn print_term_to(term: &Term, outer_prec: Precedence, buf: &mut String) {
                 use std::fmt::Write;
                 write!(buf, ".{index}").unwrap();
             }
-        }
+        },
 
         // ── Bound variables ──
         Term::Bound(idx) => {
             buf.push_str("B");
             use std::fmt::Write;
             write!(buf, "{idx}").unwrap();
-        }
+        },
     }
 }
 
 /// Get the short (unqualified) name for a constant.
 fn short_name(name: &str) -> String {
-    if let Some(pos) = name.rfind('.') {
-        name[pos + 1..].to_string()
-    } else {
-        name.to_string()
-    }
+    if let Some(pos) = name.rfind('.') { name[pos + 1..].to_string() } else { name.to_string() }
 }
 
 // =========================================================================
@@ -207,8 +240,7 @@ fn short_name(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::term::Term;
-    use crate::core::types::Typ;
+    use crate::core::{term::Term, types::Typ};
 
     fn c(name: &str) -> Term {
         Term::const_(name, Typ::dummy())

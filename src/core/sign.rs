@@ -10,9 +10,12 @@
 //! - Applications respect function types
 //! - Propositions have type `prop`
 
-use super::term::Term;
-use super::types::{ClassAlgebra, Sort, Symbol, Typ};
 use std::collections::HashMap;
+
+use super::{
+    term::Term,
+    types::{ClassAlgebra, Sort, Symbol, Typ},
+};
 
 // =========================================================================
 // Type Declarations
@@ -63,7 +66,7 @@ impl TypeSignature {
                 } else {
                     false
                 }
-            }
+            },
             _ => true,
         }
     }
@@ -73,10 +76,7 @@ impl TypeSignature {
         match typ {
             Typ::Type { name, args } => {
                 if !self.types.contains_key(name) {
-                    return Err(format!(
-                        "Undeclared type constructor: {}",
-                        name.as_ref()
-                    ));
+                    return Err(format!("Undeclared type constructor: {}", name.as_ref()));
                 }
                 let expected_arity = match self.types.get(name) {
                     Some(TypeDecl::Logical { arity }) => *arity,
@@ -96,7 +96,7 @@ impl TypeSignature {
                     self.certify_type_detailed(arg)?;
                 }
                 Ok(())
-            }
+            },
             Typ::TFree { .. } | Typ::TVar { .. } => Ok(()),
         }
     }
@@ -140,24 +140,15 @@ impl Signature {
     // ── Construction ──
 
     pub fn empty() -> Self {
-        Signature {
-            consts: HashMap::new(),
-            tsig: TypeSignature::default(),
-        }
+        Signature { consts: HashMap::new(), tsig: TypeSignature::default() }
     }
 
     pub fn pure() -> Self {
         let mut sig = Signature::empty();
         let prop = Typ::base("prop");
         let a = Typ::free("'a", Sort::singleton("type"));
-        sig.declare(
-            "Pure.all",
-            Typ::arrow(Typ::arrow(a, prop.clone()), prop.clone()),
-        );
-        sig.declare(
-            "Pure.imp",
-            Typ::arrow(prop.clone(), Typ::arrow(prop.clone(), prop.clone())),
-        );
+        sig.declare("Pure.all", Typ::arrow(Typ::arrow(a, prop.clone()), prop.clone()));
+        sig.declare("Pure.imp", Typ::arrow(prop.clone(), Typ::arrow(prop.clone(), prop.clone())));
         let a = Typ::free("'a", Sort::singleton("type"));
         sig.declare("Pure.eq", Typ::arrow(a.clone(), Typ::arrow(a, prop)));
         sig
@@ -235,15 +226,15 @@ impl Signature {
                 }
                 self.tsig.certify_type_detailed(typ)?;
                 Ok(())
-            }
+            },
             Term::Free { name: _, typ } | Term::Var { name: _, index: _, typ } => {
                 self.tsig.certify_type_detailed(typ)
-            }
+            },
             Term::Bound(_) => Ok(()),
             Term::Abs { name: _, typ, body } => {
                 self.tsig.certify_type_detailed(typ)?;
                 self.certify_term(body)
-            }
+            },
             Term::App { func, arg } => {
                 self.certify_term(func)?;
                 self.certify_term(arg)?;
@@ -255,7 +246,7 @@ impl Signature {
                     ));
                 }
                 Ok(())
-            }
+            },
         }
     }
 
@@ -267,10 +258,7 @@ impl Signature {
         if is_prop_type(&inferred) {
             Ok(())
         } else {
-            Err(format!(
-                "Not a proposition: term has type {:?}, expected prop",
-                inferred
-            ))
+            Err(format!("Not a proposition: term has type {:?}, expected prop", inferred))
         }
     }
 
@@ -294,26 +282,26 @@ impl Signature {
                 } else {
                     Err(format!("Cannot infer type of undeclared constant: {}", name.as_ref()))
                 }
-            }
+            },
             Term::Free { typ, .. } => {
                 if typ.is_dummy() {
                     Err("Cannot infer type of free variable with dummy type".to_string())
                 } else {
                     Ok(typ.clone())
                 }
-            }
+            },
             Term::Var { typ, .. } => {
                 if typ.is_dummy() {
                     Err("Cannot infer type of schematic variable with dummy type".to_string())
                 } else {
                     Ok(typ.clone())
                 }
-            }
+            },
             Term::Bound(_) => Err("Cannot infer type of loose bound variable".to_string()),
             Term::Abs { typ, body, .. } => {
                 let body_typ = self.infer_type(body)?;
                 Ok(Typ::arrow(typ.clone(), body_typ))
-            }
+            },
             Term::App { func, arg } => {
                 let func_typ = self.infer_type(func)?;
                 let _arg_typ = self.infer_type(arg)?;
@@ -324,7 +312,7 @@ impl Signature {
                         func_typ, term
                     )),
                 }
-            }
+            },
         }
     }
 }
@@ -350,20 +338,11 @@ fn types_compatible(a: &Typ, b: &Typ) -> bool {
             na == nb
                 && aa.len() == bb.len()
                 && aa.iter().zip(bb.iter()).all(|(a, b)| types_compatible(a, b))
-        }
+        },
         (Typ::TFree { name: na, .. }, Typ::TFree { name: nb, .. }) => na == nb,
-        (
-            Typ::TVar {
-                name: na,
-                index: ia,
-                ..
-            },
-            Typ::TVar {
-                name: nb,
-                index: ib,
-                ..
-            },
-        ) => na == nb && ia == ib,
+        (Typ::TVar { name: na, index: ia, .. }, Typ::TVar { name: nb, index: ib, .. }) => {
+            na == nb && ia == ib
+        },
         _ => false,
     }
 }

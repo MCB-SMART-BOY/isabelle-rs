@@ -28,9 +28,7 @@
 
 use std::fmt;
 
-use super::term::Term;
-use super::thm::Derivation;
-use super::types::Typ;
+use super::{term::Term, thm::Derivation, types::Typ};
 
 // =========================================================================
 // Proof term
@@ -50,15 +48,9 @@ pub enum ProofTerm {
     /// Proof applied to a term: `proof(t)` (forall_elim).
     PAppt { proof: Box<ProofTerm>, term: Term },
     /// Proof applied to another proof: `proof1(proof2)` (implies_elim).
-    PAppP {
-        proof1: Box<ProofTerm>,
-        proof2: Box<ProofTerm>,
-    },
+    PAppP { proof1: Box<ProofTerm>, proof2: Box<ProofTerm> },
     /// Proof abstraction over a proposition: `[A] ==> proof` (implies_intr).
-    PAbsP {
-        hypothesis: Term,
-        body: Box<ProofTerm>,
-    },
+    PAbsP { hypothesis: Term, body: Box<ProofTerm> },
     /// A hypothesis marker (assume).
     PHyp { prop: Term },
     /// An oracle invocation (untrusted).
@@ -77,20 +69,15 @@ impl ProofTerm {
     /// Convert a kernel `Derivation` into a proof term.
     pub fn from_derivation(deriv: &Derivation, prop: &Term) -> Self {
         match deriv {
-            Derivation::Axiom { name } => ProofTerm::PAxm {
-                name: name.to_string(),
-                prop: prop.clone(),
+            Derivation::Axiom { name } => {
+                ProofTerm::PAxm { name: name.to_string(), prop: prop.clone() }
             },
-            Derivation::Oracle { name, prop: _ } => ProofTerm::POracle {
-                name: name.clone(),
-                prop: prop.clone(),
+            Derivation::Oracle { name, prop: _ } => {
+                ProofTerm::POracle { name: name.clone(), prop: prop.clone() }
             },
             Derivation::Rule { name, premises } => {
                 if premises.is_empty() {
-                    ProofTerm::PAxm {
-                        name: name.to_string(),
-                        prop: prop.clone(),
-                    }
+                    ProofTerm::PAxm { name: name.to_string(), prop: prop.clone() }
                 } else if premises.len() == 1 {
                     // Single-premise rule: apply to premise's proof
                     ProofTerm::PAppP {
@@ -101,12 +88,9 @@ impl ProofTerm {
                         proof2: Box::new(ProofTerm::PMin), // premise proof not available here
                     }
                 } else {
-                    ProofTerm::PAxm {
-                        name: name.to_string(),
-                        prop: prop.clone(),
-                    }
+                    ProofTerm::PAxm { name: name.to_string(), prop: prop.clone() }
                 }
-            }
+            },
         }
     }
 
@@ -117,12 +101,10 @@ impl ProofTerm {
             | ProofTerm::PThm { prop, .. }
             | ProofTerm::POracle { prop, .. }
             | ProofTerm::PHyp { prop, .. } => Some(prop.clone()),
-            ProofTerm::PClass { typ, class } => {
-                Some(Term::const_(
-                    format!("OFCLASS({},{})", typ, class).as_str(),
-                    Typ::base("prop"),
-                ))
-            }
+            ProofTerm::PClass { typ, class } => Some(Term::const_(
+                format!("OFCLASS({},{})", typ, class).as_str(),
+                Typ::base("prop"),
+            )),
             ProofTerm::PAppt { proof, .. } => proof.prop_of(),
             ProofTerm::PAppP { proof1, .. } => proof1.prop_of(),
             ProofTerm::PAbsP { body, .. } => body.prop_of(),
@@ -195,39 +177,37 @@ pub fn check_proof(proof: &ProofTerm, expected_prop: &Term) -> Result<(), String
         ProofTerm::PAxm { prop, .. } if prop == expected_prop => Ok(()),
         ProofTerm::PThm { prop, .. } if prop == expected_prop => Ok(()),
         ProofTerm::PHyp { prop } if prop == expected_prop => Ok(()),
-        
+
         // Type class: trusted (class membership is axiomatic in our kernel)
         ProofTerm::PClass { .. } => Ok(()),
-        
+
         // Oracle: untrusted, but accepted with warning
         ProofTerm::POracle { .. } => Ok(()),
-        
+
         // Minimal proof: cannot check
         ProofTerm::PMin => Err("minimal proof: cannot check".into()),
         ProofTerm::PBound(_) => Err("unbound proof variable".into()),
-        
+
         // Abstraction over proposition: [A] ==> B implies A ==> B
         ProofTerm::PAbsP { hypothesis, body } => {
             // The body proves something, and we wrap it with hypothesis → body
             if let Some(body_prop) = body.prop_of() {
-                let expected_imp = crate::core::logic::Pure::mk_implies(
-                    hypothesis.clone(),
-                    body_prop.clone(),
-                );
+                let expected_imp =
+                    crate::core::logic::Pure::mk_implies(hypothesis.clone(), body_prop.clone());
                 if &expected_imp == expected_prop {
                     return check_proof(body, &body_prop);
                 }
             }
             Err("PAbsP: proposition mismatch".into())
-        }
-        
+        },
+
         // Application to term: proof(t) — forall_elim
         ProofTerm::PAppt { proof, term: _ } => {
             // proof proves !!x.P(x), we apply it to term t to get P(t)
             // For now, trust the application
             check_proof(proof, expected_prop)
-        }
-        
+        },
+
         // Application to proof: proof1(proof2) — implies_elim (modus ponens)
         ProofTerm::PAppP { proof1, proof2 } => {
             // proof1 proves A ==> B, proof2 proves A, result is B
@@ -245,14 +225,14 @@ pub fn check_proof(proof: &ProofTerm, expected_prop: &Term) -> Result<(), String
                     } else {
                         Err("PAppP: proof1 is not an implication".into())
                     }
-                }
+                },
                 None => Err("PAppP: cannot determine proof1 proposition".into()),
             }
-        }
-        
+        },
+
         // Type abstraction: Λ'a. proof
         ProofTerm::PAbst { body, .. } => check_proof(body, expected_prop),
-        
+
         // Other axiom mismatches
         ProofTerm::PAxm { prop, name } => Err(format!(
             "axiom {name}: prop mismatch, expected {:?}, got {:?}",
@@ -262,9 +242,9 @@ pub fn check_proof(proof: &ProofTerm, expected_prop: &Term) -> Result<(), String
             "theorem {name}: prop mismatch, expected {:?}, got {:?}",
             expected_prop, prop
         )),
-        ProofTerm::PHyp { prop } => Err(format!(
-            "hypothesis mismatch, expected {:?}, got {:?}", expected_prop, prop
-        )),
+        ProofTerm::PHyp { prop } => {
+            Err(format!("hypothesis mismatch, expected {:?}, got {:?}", expected_prop, prop))
+        },
     }
 }
 
@@ -295,7 +275,9 @@ impl ProofBody {
     }
 
     pub fn check(&mut self, expected_prop: &Term) -> Result<(), String> {
-        if self.checked { return Ok(()); }
+        if self.checked {
+            return Ok(());
+        }
         check_proof(&self.proof, expected_prop)?;
         self.checked = true;
         Ok(())
@@ -303,7 +285,9 @@ impl ProofBody {
 }
 
 impl Default for ProofBody {
-    fn default() -> Self { Self::minimal() }
+    fn default() -> Self {
+        Self::minimal()
+    }
 }
 
 // =========================================================================
@@ -320,35 +304,23 @@ mod tests {
 
     #[test]
     fn test_axiom_proof() {
-        let p = ProofTerm::PAxm {
-            name: "refl".into(),
-            prop: prop("A"),
-        };
+        let p = ProofTerm::PAxm { name: "refl".into(), prop: prop("A") };
         assert_eq!(p.prop_of(), Some(prop("A")));
         assert!(p.is_closed());
     }
 
     #[test]
     fn test_check_axiom() {
-        let p = ProofTerm::PAxm {
-            name: "refl".into(),
-            prop: prop("A"),
-        };
+        let p = ProofTerm::PAxm { name: "refl".into(), prop: prop("A") };
         assert!(check_proof(&p, &prop("A")).is_ok());
         assert!(check_proof(&p, &prop("B")).is_err());
     }
 
     #[test]
     fn test_size() {
-        let inner = ProofTerm::PAxm {
-            name: "inner".into(),
-            prop: prop("A"),
-        };
+        let inner = ProofTerm::PAxm { name: "inner".into(), prop: prop("A") };
         let outer = ProofTerm::PAppP {
-            proof1: Box::new(ProofTerm::PAxm {
-                name: "outer".into(),
-                prop: prop("A"),
-            }),
+            proof1: Box::new(ProofTerm::PAxm { name: "outer".into(), prop: prop("A") }),
             proof2: Box::new(inner),
         };
         assert_eq!(outer.size(), 3);

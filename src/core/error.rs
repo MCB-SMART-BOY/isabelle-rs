@@ -50,17 +50,11 @@ pub enum KernelError {
 
     /// Type mismatch.
     #[error("type mismatch: expected {expected:?}, got {actual:?}")]
-    TypeMismatch {
-        expected: crate::core::types::Typ,
-        actual: crate::core::types::Typ,
-    },
+    TypeMismatch { expected: crate::core::types::Typ, actual: crate::core::types::Typ },
 
     /// Occurs check failed.
     #[error("occurs check: {var} occurs in {term:?}")]
-    OccursCheck {
-        var: String,
-        term: crate::core::term::Term,
-    },
+    OccursCheck { var: String, term: crate::core::term::Term },
 
     /// Hypothesis not found.
     #[error("hypothesis not found in assumptions")]
@@ -101,11 +95,7 @@ pub enum TypeError {
     #[error("type {0:?} not declared in signature")]
     UndeclaredType(String),
     #[error("arity mismatch for {name}: expected {expected}, got {actual}")]
-    ArityMismatch {
-        name: String,
-        expected: usize,
-        actual: usize,
-    },
+    ArityMismatch { name: String, expected: usize, actual: usize },
     #[error("sort mismatch: cannot satisfy {0:?}")]
     SortMismatch(crate::core::types::Sort),
 }

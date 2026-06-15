@@ -6,9 +6,11 @@
 //! conclusion against a goal, producing new subgoals from the rule's
 //! premises. Bi-resolution can work forward or backward.
 
-use super::envir::Envir;
-use super::thm::{Thm, ThmKernel};
-use super::unify::{self, UnifyConfig};
+use super::{
+    envir::Envir,
+    thm::{Thm, ThmKernel},
+    unify::{self, UnifyConfig},
+};
 
 /// Resolve a rule against a goal (backward chaining).
 /// The rule's conclusion is matched against the goal, and the
@@ -21,17 +23,9 @@ pub fn biresolution(
     // Simplified: just check if rule's conclusion matches goal's conclusion
     let config = UnifyConfig::default();
     let env = Envir::init();
-    unify::unifiers(
-        &env,
-        &[(_state.prop().term().clone(), _rule.prop().term().clone())],
-        &config,
-    )?;
+    unify::unifiers(&env, &[(_state.prop().term().clone(), _rule.prop().term().clone())], &config)?;
     // If they unify, the rule's hypotheses become subgoals
-    let subgoals: Vec<Thm> = _rule
-        .hyps()
-        .iter()
-        .map(|h| ThmKernel::assume(h.clone()))
-        .collect();
+    let subgoals: Vec<Thm> = _rule.hyps().iter().map(|h| ThmKernel::assume(h.clone())).collect();
     Some(subgoals)
 }
 
@@ -42,9 +36,7 @@ pub fn biresolution(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::term::Term;
-    use crate::core::thm::CTerm;
-    use crate::core::types::Typ;
+    use crate::core::{term::Term, thm::CTerm, types::Typ};
 
     fn prop(name: &str) -> CTerm {
         CTerm::certify(Term::const_(name, Typ::dummy()))

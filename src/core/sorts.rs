@@ -4,17 +4,17 @@
 //! ## Concepts
 //!
 //! - **Class**: A type class like `type`, `ord`, `order`, `ring`.
-//! - **Sort**: An intersection of classes, e.g., `{type}`, `{ord, order}`.
-//!   A type belongs to a sort if it belongs to ALL classes in the sort.
+//! - **Sort**: An intersection of classes, e.g., `{type}`, `{ord, order}`. A type belongs to a sort
+//!   if it belongs to ALL classes in the sort.
 //! - **Subclass**: `order ⊆ ord` means order is a subclass of ord.
-//! - **Arity**: `list :: (type) list` means `list` takes one type argument
-//!   and the result type class is `list` (a type-class-less declaration).
-//!   `list :: (ord) ord` means `'a list` is in `ord` if `'a` is in `ord`.
+//! - **Arity**: `list :: (type) list` means `list` takes one type argument and the result type
+//!   class is `list` (a type-class-less declaration). `list :: (ord) ord` means `'a list` is in
+//!   `ord` if `'a` is in `ord`.
 //! - **Sort checking** (`of_sort`): Can a type have a given sort?
 
-use std::collections::{HashMap, HashSet, BTreeSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
-use super::types::{Sort, Typ, Symbol};
+use super::types::{Sort, Symbol, Typ};
 
 // =========================================================================
 // Sort Algebra
@@ -36,10 +36,7 @@ pub struct Algebra {
 impl Algebra {
     /// Create an empty algebra.
     pub fn empty() -> Self {
-        Algebra {
-            class_graph: HashMap::new(),
-            arities: HashMap::new(),
-        }
+        Algebra { class_graph: HashMap::new(), arities: HashMap::new() }
     }
 
     /// Create the default Pure algebra with the `type` class.
@@ -61,20 +58,14 @@ impl Algebra {
 
     /// Add a subclass relation: `sub ≤ sup`.
     pub fn add_classrel(&mut self, sub: &Symbol, sup: &Symbol) {
-        self.class_graph
-            .entry(sub.clone())
-            .or_default()
-            .push(sup.clone());
+        self.class_graph.entry(sub.clone()).or_default().push(sup.clone());
         self.class_graph.entry(sup.clone()).or_default();
     }
 
     /// Add an arity: type constructor `t` has arity `(Ss) C`.
     /// `add_arity(t, C, [S1, S2])` means `t :: (S1, S2) C`.
     pub fn add_arity(&mut self, tycon: &Symbol, class: &Symbol, arg_sorts: Vec<Sort>) {
-        self.arities
-            .entry(tycon.clone())
-            .or_default()
-            .push((class.clone(), arg_sorts));
+        self.arities.entry(tycon.clone()).or_default().push((class.clone(), arg_sorts));
     }
 
     /// Get all classes in the graph.
@@ -120,9 +111,7 @@ impl Algebra {
     /// s1 ≤ s2 iff every class in s2 has a subclass in s1.
     /// In other words: s1 is "more specific" (has more constraints) than s2.
     pub fn sort_le(&self, s1: &Sort, s2: &Sort) -> bool {
-        s2.iter().all(|c2| {
-            s1.iter().any(|c1| self.class_le(c1, c2))
-        })
+        s2.iter().all(|c2| s1.iter().any(|c1| self.class_le(c1, c2)))
     }
 
     /// Check if two sorts are equivalent.
@@ -138,7 +127,7 @@ impl Algebra {
                 // A type variable has its declared sort s.
                 // It belongs to sort if s ≤ sort.
                 self.sort_le(s, sort)
-            }
+            },
             Typ::Type { name, args } => {
                 // A constructed type t(args) belongs to sort if
                 // there is an arity t :: (Ss) C with C ∈ sort
@@ -149,9 +138,11 @@ impl Algebra {
                             if args.len() != arg_sorts.len() {
                                 return false;
                             }
-                            if !args.iter().zip(arg_sorts.iter()).all(|(arg, s)| {
-                                self.of_sort(arg, s)
-                            }) {
+                            if !args
+                                .iter()
+                                .zip(arg_sorts.iter())
+                                .all(|(arg, s)| self.of_sort(arg, s))
+                            {
                                 return false;
                             }
                             return true;
@@ -160,7 +151,7 @@ impl Algebra {
                 }
                 // No arity found — fail
                 false
-            }
+            },
         }
     }
 
@@ -180,7 +171,7 @@ impl Algebra {
                 } else {
                     Sort::top()
                 }
-            }
+            },
         }
     }
 

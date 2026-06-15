@@ -4,4 +4,3 @@
 //! incremental checking state.
 
 pub mod document;
-

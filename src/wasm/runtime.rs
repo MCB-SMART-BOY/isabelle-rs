@@ -65,18 +65,11 @@ impl WasmRuntime {
         let module = Module::from_binary(&engine, wasm_bytes)
             .map_err(|e| format!("failed to compile WASM module: {e}"))?;
 
-        let mut store = Store::new(
-            &engine,
-            RuntimeState {
-                memory: None,
-                ctx: PluginContext::new(),
-            },
-        );
+        let mut store =
+            Store::new(&engine, RuntimeState { memory: None, ctx: PluginContext::new() });
 
         // Set fuel limit
-        store
-            .set_fuel(Self::DEFAULT_FUEL)
-            .map_err(|e| format!("failed to set fuel: {e}"))?;
+        store.set_fuel(Self::DEFAULT_FUEL).map_err(|e| format!("failed to set fuel: {e}"))?;
 
         // Create linker and define host functions
         let mut linker = Linker::new(&engine);
@@ -87,9 +80,8 @@ impl WasmRuntime {
             .map_err(|e| format!("failed to instantiate module: {e}"))?;
 
         // Get the exported memory
-        let memory = instance
-            .get_memory(&mut store, "memory")
-            .ok_or("plugin must export 'memory'")?;
+        let memory =
+            instance.get_memory(&mut store, "memory").ok_or("plugin must export 'memory'")?;
         store.data_mut().memory = Some(memory);
 
         // Get the exported function
@@ -97,13 +89,7 @@ impl WasmRuntime {
             .get_typed_func::<(i32, i32), i32>(&mut store, "apply_tactic")
             .map_err(|e| format!("plugin must export 'apply_tactic': {e}"))?;
 
-        Ok(WasmRuntime {
-            _engine: engine,
-            store,
-            _apply_func: apply_func,
-            name,
-            version,
-        })
+        Ok(WasmRuntime { _engine: engine, store, _apply_func: apply_func, name, version })
     }
 
     /// Define host functions callable from WASM.

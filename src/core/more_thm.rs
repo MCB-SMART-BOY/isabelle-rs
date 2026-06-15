@@ -4,11 +4,14 @@
 //!
 //! These are safe derived operations on theorems.
 
-use super::error::KernelError;
-use super::logic::Pure;
-use super::term::Term;
-use super::thm::{CTerm, Thm, ThmKernel};
 use std::sync::Arc;
+
+use super::{
+    error::KernelError,
+    logic::Pure,
+    term::Term,
+    thm::{CTerm, Thm, ThmKernel},
+};
 
 // =========================================================================
 // Equality reasoning
@@ -47,11 +50,11 @@ fn replace_in_term(term: &Term, from: &Term, to: &Term) -> Option<Term> {
                 f.unwrap_or_else(|| func.as_ref().clone()),
                 a.unwrap_or_else(|| func.as_ref().clone()),
             ))
-        }
+        },
         Term::Abs { name, typ, body } => {
             let b = replace_in_term(body, from, to)?;
             Some(Term::abs(Arc::clone(name), typ.clone(), b))
-        }
+        },
         _ => None,
     }
 }
@@ -87,11 +90,7 @@ pub struct AttributedThm {
 
 impl AttributedThm {
     pub fn new(thm: Thm, name: String) -> Self {
-        AttributedThm {
-            thm,
-            name,
-            attributes: vec![],
-        }
+        AttributedThm { thm, name, attributes: vec![] }
     }
 
     pub fn with_attr(mut self, attr: ThmAttribute) -> Self {
@@ -121,8 +120,7 @@ pub fn rs(thm1: &Thm, thm2: &Thm) -> Option<Result<Thm, KernelError>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::term::Term;
-    use crate::core::types::Typ;
+    use crate::core::{term::Term, types::Typ};
 
     fn prop(name: &str) -> CTerm {
         CTerm::certify(Term::const_(name, Typ::base("prop")))

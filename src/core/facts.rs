@@ -8,8 +8,7 @@
 //! - `[elim]` rules: elimination rules
 //! - Named theorems: `name: thm1 thm2 ...`
 
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use super::thm::Thm;
 
@@ -25,17 +24,12 @@ pub struct Facts {
 
 impl Facts {
     pub fn empty() -> Self {
-        Facts {
-            entries: BTreeMap::new(),
-        }
+        Facts { entries: BTreeMap::new() }
     }
 
     /// Add theorems to a named fact.
     pub fn add(&mut self, name: &str, thms: Vec<Arc<Thm>>) {
-        self.entries
-            .entry(name.to_string())
-            .or_default()
-            .extend(thms);
+        self.entries.entry(name.to_string()).or_default().extend(thms);
     }
 
     /// Get the theorems for a named fact.
@@ -99,14 +93,14 @@ impl Facts {
                 FactRef::Named(name) => {
                     let thms = self.get(name)?;
                     result.extend_from_slice(thms);
-                }
+                },
                 FactRef::Select { name, index } => {
                     let thms = self.get(name)?;
                     if *index >= thms.len() {
                         return None;
                     }
                     result.push(Arc::clone(&thms[*index]));
-                }
+                },
             }
         }
         Some(result)
@@ -126,9 +120,11 @@ impl Default for Facts {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::term::Term;
-    use crate::core::thm::{CTerm, ThmKernel};
-    use crate::core::types::Typ;
+    use crate::core::{
+        term::Term,
+        thm::{CTerm, ThmKernel},
+        types::Typ,
+    };
 
     fn dummy_thm() -> Arc<Thm> {
         let a = CTerm::certify(Term::const_("A", Typ::base("prop")));

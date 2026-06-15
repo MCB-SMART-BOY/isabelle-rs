@@ -29,12 +29,7 @@ pub struct RuleCase {
 
 impl RuleCase {
     pub fn new(name: impl Into<String>) -> Self {
-        RuleCase {
-            name: name.into(),
-            fixes: Vec::new(),
-            assumes: Vec::new(),
-            cases: Vec::new(),
-        }
+        RuleCase { name: name.into(), fixes: Vec::new(), assumes: Vec::new(), cases: Vec::new() }
     }
 }
 
@@ -118,16 +113,11 @@ pub fn parse_consumes(attrs: &[String]) -> usize {
 /// [| P Nil; !!x xs. P xs ==> P (Cons x xs) |] ==> P xs
 /// ```
 /// Creates cases: `[Nil, Cons]`
-pub fn make_cases_from_induct(
-    rule_premises: &[String],
-    case_names: &[String],
-) -> Vec<RuleCase> {
+pub fn make_cases_from_induct(rule_premises: &[String], case_names: &[String]) -> Vec<RuleCase> {
     let mut cases = Vec::new();
 
     for (i, prem) in rule_premises.iter().enumerate() {
-        let name = case_names.get(i)
-            .cloned()
-            .unwrap_or_else(|| format!("case_{}", i + 1));
+        let name = case_names.get(i).cloned().unwrap_or_else(|| format!("case_{}", i + 1));
 
         let mut case = RuleCase::new(name.clone());
 
@@ -160,7 +150,7 @@ fn extract_fixes_assumes(prem: &str) -> (Vec<String>, Vec<String>) {
                 fixes.push(b.to_string());
             }
             // The rest is the assumption
-            assumes.push(rest[dot_pos+1..].trim().to_string());
+            assumes.push(rest[dot_pos + 1..].trim().to_string());
         }
     } else {
         assumes.push(rest.to_string());
@@ -179,10 +169,7 @@ fn extract_fixes_assumes(prem: &str) -> (Vec<String>, Vec<String>) {
 /// - Fix variables x, xs
 /// - Assume induction hypothesis: P xs
 /// - Goal becomes: P (Cons x xs)
-pub fn apply_case(
-    _case: &RuleCase,
-    _proof_context: &mut crate::isar::proof_context::IsarContext,
-) {
+pub fn apply_case(_case: &RuleCase, _proof_context: &mut crate::isar::proof_context::IsarContext) {
     // Fix variables
     for fix in &_case.fixes {
         // Use a default type — actual type comes from the goal
@@ -221,10 +208,7 @@ mod tests {
 
     #[test]
     fn test_make_cases_from_induct() {
-        let prems = vec![
-            "P Nil".to_string(),
-            "!!x xs. P xs ==> P (Cons x xs)".to_string(),
-        ];
+        let prems = vec!["P Nil".to_string(), "!!x xs. P xs ==> P (Cons x xs)".to_string()];
         let cases = make_cases_from_induct(&prems, &["Nil".to_string(), "Cons".to_string()]);
         assert_eq!(cases.len(), 2);
         assert_eq!(cases[0].name, "Nil");
@@ -234,12 +218,10 @@ mod tests {
 
     #[test]
     fn test_case_info() {
-        let info = CaseInfo::new()
-            .with_consumes(1)
-            .with_cases(vec![
-                ("Nil".to_string(), vec![]),
-                ("Cons".to_string(), vec!["IH".to_string()]),
-            ]);
+        let info = CaseInfo::new().with_consumes(1).with_cases(vec![
+            ("Nil".to_string(), vec![]),
+            ("Cons".to_string(), vec!["IH".to_string()]),
+        ]);
         assert_eq!(info.consumes, 1);
         assert_eq!(info.case_name_list(), vec!["Nil", "Cons"]);
     }

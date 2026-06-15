@@ -51,10 +51,7 @@ pub enum PluginTerm {
     /// Lambda abstraction.
     Abs { name: String, body: Box<PluginTerm> },
     /// Application.
-    App {
-        func: Box<PluginTerm>,
-        arg: Box<PluginTerm>,
-    },
+    App { func: Box<PluginTerm>, arg: Box<PluginTerm> },
 }
 
 /// Result returned by the plugin.
@@ -86,9 +83,7 @@ mod tests {
     fn test_plugin_goal_serde() {
         let goal = PluginGoal {
             assumptions: vec![],
-            conclusion: PluginTerm::Const {
-                name: "True".into(),
-            },
+            conclusion: PluginTerm::Const { name: "True".into() },
         };
         let json = serde_json::to_string(&goal).unwrap();
         let decoded: PluginGoal = serde_json::from_str(&json).unwrap();
@@ -97,9 +92,7 @@ mod tests {
 
     #[test]
     fn test_plugin_result_serde() {
-        let result = PluginResult {
-            outcomes: vec![vec![]],
-        };
+        let result = PluginResult { outcomes: vec![vec![]] };
         let json = serde_json::to_string(&result).unwrap();
         let decoded: PluginResult = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.outcomes.len(), 1);

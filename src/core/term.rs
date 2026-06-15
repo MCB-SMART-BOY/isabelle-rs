@@ -1,70 +1,37 @@
 //! Isabelle lambda terms: the core data structure of the prover.
 //! Corresponds to src/Pure/term.ML.
-use super::types::{Symbol, Typ};
 use std::fmt;
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+use super::types::{Symbol, Typ};
+
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub enum Term {
-    Const {
-        name: Symbol,
-        typ: Typ,
-    },
-    Free {
-        name: Symbol,
-        typ: Typ,
-    },
-    Var {
-        name: Symbol,
-        index: usize,
-        typ: Typ,
-    },
+    Const { name: Symbol, typ: Typ },
+    Free { name: Symbol, typ: Typ },
+    Var { name: Symbol, index: usize, typ: Typ },
     Bound(usize),
-    Abs {
-        name: Symbol,
-        typ: Typ,
-        body: Box<Term>,
-    },
-    App {
-        func: Box<Term>,
-        arg: Box<Term>,
-    },
+    Abs { name: Symbol, typ: Typ, body: Box<Term> },
+    App { func: Box<Term>, arg: Box<Term> },
 }
 
 impl Term {
     pub fn const_(name: impl Into<Symbol>, typ: Typ) -> Self {
-        Term::Const {
-            name: name.into(),
-            typ,
-        }
+        Term::Const { name: name.into(), typ }
     }
     pub fn free(name: impl Into<Symbol>, typ: Typ) -> Self {
-        Term::Free {
-            name: name.into(),
-            typ,
-        }
+        Term::Free { name: name.into(), typ }
     }
     pub fn var(name: impl Into<Symbol>, index: usize, typ: Typ) -> Self {
-        Term::Var {
-            name: name.into(),
-            index,
-            typ,
-        }
+        Term::Var { name: name.into(), index, typ }
     }
     pub fn bound(index: usize) -> Self {
         Term::Bound(index)
     }
     pub fn abs(name: impl Into<Symbol>, typ: Typ, body: Term) -> Self {
-        Term::Abs {
-            name: name.into(),
-            typ,
-            body: Box::new(body),
-        }
+        Term::Abs { name: name.into(), typ, body: Box::new(body) }
     }
     pub fn app(func: Term, arg: Term) -> Self {
-        Term::App {
-            func: Box::new(func),
-            arg: Box::new(arg),
-        }
+        Term::App { func: Box::new(func), arg: Box::new(arg) }
     }
     pub fn apps(func: Term, args: impl IntoIterator<Item = Term>) -> Self {
         args.into_iter().fold(func, |acc, arg| Term::app(acc, arg))
@@ -124,7 +91,7 @@ impl Term {
                             changed = true;
                         }
                     }
-                }
+                },
                 Term::Free { name, typ } => {
                     if typ.is_dummy() {
                         if let Some(known) = env.const_type(name.as_ref()) {
@@ -135,23 +102,23 @@ impl Term {
                             changed = true;
                         }
                     }
-                }
+                },
                 Term::Var { typ, .. } => {
                     if typ.is_dummy() {
                         typ.annotate_from_env(env);
                     }
-                }
+                },
                 Term::Abs { name: _, typ, body } => {
                     if typ.is_dummy() {
                         typ.annotate_from_env(env);
                     }
                     stack.push(body);
-                }
+                },
                 Term::App { func, arg } => {
                     stack.push(arg);
                     stack.push(func);
-                }
-                Term::Bound(_) => {}
+                },
+                Term::Bound(_) => {},
             }
         }
         changed
@@ -202,23 +169,23 @@ fn subst_var_bound(depth: usize, var: &Term, term: &Term) -> Term {
                         stack.push(Frame::BuildApp);
                         stack.push(Frame::Process(d, arg.as_ref().clone()));
                         stack.push(Frame::Process(d, func.as_ref().clone()));
-                    }
+                    },
                     Term::Abs { name, typ, body } => {
                         stack.push(Frame::BuildAbs(name.clone(), typ.clone()));
                         stack.push(Frame::Process(d + 1, body.as_ref().clone()));
-                    }
+                    },
                     other => results.push(other.clone()),
                 }
-            }
+            },
             Frame::BuildApp => {
                 let arg = results.pop().unwrap_or_else(|| Term::bound(0));
                 let func = results.pop().unwrap_or_else(|| Term::bound(0));
                 results.push(Term::app(func, arg));
-            }
+            },
             Frame::BuildAbs(name, typ) => {
                 let body = results.pop().unwrap_or_else(|| Term::bound(0));
                 results.push(Term::abs(name, typ, body));
-            }
+            },
         }
     }
     results.pop().unwrap_or_else(|| term.clone())
@@ -245,22 +212,22 @@ fn incr_bound(depth: usize, term: &Term) -> Term {
                     stack.push(Frame::BuildApp);
                     stack.push(Frame::Process(d, arg.as_ref().clone()));
                     stack.push(Frame::Process(d, func.as_ref().clone()));
-                }
+                },
                 Term::Abs { name, typ, body } => {
                     stack.push(Frame::BuildAbs(name.clone(), typ.clone()));
                     stack.push(Frame::Process(d + 1, body.as_ref().clone()));
-                }
+                },
                 other => results.push(other.clone()),
             },
             Frame::BuildApp => {
                 let arg = results.pop().unwrap_or_else(|| Term::bound(0));
                 let func = results.pop().unwrap_or_else(|| Term::bound(0));
                 results.push(Term::app(func, arg));
-            }
+            },
             Frame::BuildAbs(name, typ) => {
                 let body = results.pop().unwrap_or_else(|| Term::bound(0));
                 results.push(Term::abs(name, typ, body));
-            }
+            },
         }
     }
     results.pop().unwrap_or_else(|| term.clone())
@@ -270,44 +237,64 @@ fn incr_bound(depth: usize, term: &Term) -> Term {
 fn same_var(a: &Term, b: &Term) -> bool {
     match (a, b) {
         (Term::Free { name: n1, .. }, Term::Free { name: n2, .. }) => n1 == n2,
-        (
-            Term::Var {
-                name: n1,
-                index: i1,
-                ..
-            },
-            Term::Var {
-                name: n2,
-                index: i2,
-                ..
-            },
-        ) => n1 == n2 && i1 == i2,
-        (
-            Term::Free { name: n1, .. },
-            Term::Var {
-                name: n2, index, ..
-            },
-        ) if *index == 0 => n1 == n2,
-        (
-            Term::Var {
-                name: n1, index, ..
-            },
-            Term::Free { name: n2, .. },
-        ) if *index == 0 => n1 == n2,
+        (Term::Var { name: n1, index: i1, .. }, Term::Var { name: n2, index: i2, .. }) => {
+            n1 == n2 && i1 == i2
+        },
+        (Term::Free { name: n1, .. }, Term::Var { name: n2, index, .. }) if *index == 0 => n1 == n2,
+        (Term::Var { name: n1, index, .. }, Term::Free { name: n2, .. }) if *index == 0 => n1 == n2,
         _ => false,
+    }
+}
+
+impl fmt::Debug for Term {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Delegate to iterative Display — avoids stack overflow on deep terms
+        write!(f, "{self}")
     }
 }
 
 impl fmt::Display for Term {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Term::Const { name, .. } => write!(f, "{name}"),
-            Term::Free { name, .. } => write!(f, "{name}"),
-            Term::Var { name, index, .. } => write!(f, "?{name}.{index}"),
-            Term::Bound(i) => write!(f, "B_{i}"),
-            Term::Abs { name, typ, body } => write!(f, "%{name}::{typ:?}. {body}"),
-            Term::App { func, arg } => write!(f, "({func} {arg})"),
+        /// Iterative term formatter — avoids stack overflow on deeply nested terms.
+        /// Uses an explicit stack of formatting frames instead of recursive write! calls.
+        fn fmt_iter(term: &Term, f: &mut fmt::Formatter<'_>, depth_limit: usize) -> fmt::Result {
+            enum FmtFrame {
+                Term(Term, usize),
+                Text(String),
+            }
+            let mut stack: Vec<FmtFrame> = vec![FmtFrame::Term(term.clone(), 0)];
+            while let Some(frame) = stack.pop() {
+                match frame {
+                    FmtFrame::Text(s) => write!(f, "{s}")?,
+                    FmtFrame::Term(t, depth) => {
+                        if depth > depth_limit {
+                            write!(f, "<...>")?;
+                            continue;
+                        }
+                        match &t {
+                            Term::Const { name, .. } => write!(f, "{name}")?,
+                            Term::Free { name, .. } => write!(f, "{name}")?,
+                            Term::Var { name, index, .. } => write!(f, "?{name}.{index}")?,
+                            Term::Bound(i) => write!(f, "B_{i}")?,
+                            Term::Abs { name, typ, body } => {
+                                // Push in reverse order for correct output
+                                stack.push(FmtFrame::Term((**body).clone(), depth + 1));
+                                stack.push(FmtFrame::Text(format!("%{name}::{typ:?}. ")));
+                            },
+                            Term::App { func, arg } => {
+                                stack.push(FmtFrame::Text(")".to_string()));
+                                stack.push(FmtFrame::Term((**arg).clone(), depth + 1));
+                                stack.push(FmtFrame::Text(" ".to_string()));
+                                stack.push(FmtFrame::Term((**func).clone(), depth + 1));
+                                stack.push(FmtFrame::Text("(".to_string()));
+                            },
+                        }
+                    },
+                }
+            }
+            Ok(())
         }
+        fmt_iter(self, f, 64)
     }
 }
 

@@ -7,10 +7,10 @@
 
 use std::sync::Arc;
 
-use crate::core::term::Term;
-use crate::core::theory::Theory;
-use crate::core::types::Typ;
-use crate::isar::proof::IsarProof;
+use crate::{
+    core::{term::Term, theory::Theory, types::Typ},
+    isar::proof::IsarProof,
+};
 
 // =========================================================================
 // Toplevel State
@@ -54,7 +54,7 @@ impl ToplevelState {
         match self {
             ToplevelState::Theory { theorems, .. } => theorems.push((name.to_string(), thm)),
             ToplevelState::Proof { theorems, .. } => theorems.push((name.to_string(), thm)),
-            _ => {}
+            _ => {},
         }
     }
 
@@ -80,9 +80,7 @@ pub struct Toplevel {
 impl Toplevel {
     /// Create a new toplevel from a theory.
     pub fn new(theory: Arc<Theory>) -> Self {
-        Toplevel {
-            state: ToplevelState::init(theory),
-        }
+        Toplevel { state: ToplevelState::init(theory) }
     }
 
     /// Execute a single command.
@@ -101,7 +99,7 @@ impl Toplevel {
             "lemmas" | "theorems" => self.exec_lemmas(trimmed),
             "fun" | "datatype" | "inductive" => {
                 Ok(format!("ok: {first_word} (not yet implemented)"))
-            }
+            },
 
             // ── Proof-level commands ──
             "proof" => self.exec_proof(),
@@ -111,18 +109,33 @@ impl Toplevel {
             "have" | "show" | "hence" | "thus" => self.exec_have_show(trimmed),
             "fix" => self.exec_fix(trimmed),
             "assume" => self.exec_assume(trimmed),
-            "obtain" => { self.exec_obtain(trimmed); Ok("obtain: ok".into()) }
+            "obtain" => {
+                self.exec_obtain(trimmed);
+                Ok("obtain: ok".into())
+            },
             "let" | "from" | "with" | "using" | "note" => Ok(format!("ok: {first_word}")),
             "next" | "case" => Ok(format!("ok: {first_word}")),
-            "also" => { self.exec_also(); Ok("also".into()) }
-            "finally" => { self.exec_finally(); Ok("finally".into()) }
-            "moreover" => { self.exec_moreover(); Ok("moreover".into()) }
-            "ultimately" => { self.exec_ultimately(); Ok("ultimately".into()) }
+            "also" => {
+                self.exec_also();
+                Ok("also".into())
+            },
+            "finally" => {
+                self.exec_finally();
+                Ok("finally".into())
+            },
+            "moreover" => {
+                self.exec_moreover();
+                Ok("moreover".into())
+            },
+            "ultimately" => {
+                self.exec_ultimately();
+                Ok("ultimately".into())
+            },
             "induct" => self.exec_induct(trimmed),
             "cases" => self.exec_cases(trimmed),
             "text" | "txt" | "section" | "subsection" | "subsubsection" | "chapter" => {
                 Ok(String::new()) // document markup — no effect
-            }
+            },
             "end" => Ok("theory closed".into()),
 
             _ => Ok(format!("unknown command: {first_word}")),
@@ -146,13 +159,10 @@ impl Toplevel {
                 let mut isar = IsarProof::init(Arc::clone(&theory));
                 isar.lemma(name, parsed);
 
-                self.state = ToplevelState::Proof {
-                    theory,
-                    theorems: Vec::new(),
-                    proof: Box::new(isar),
-                };
+                self.state =
+                    ToplevelState::Proof { theory, theorems: Vec::new(), proof: Box::new(isar) };
                 Ok(format!("lemma {name} stated"))
-            }
+            },
             _ => Err("not in theory mode".into()),
         }
     }
@@ -162,7 +172,7 @@ impl Toplevel {
             ToplevelState::Proof { proof, .. } => {
                 proof.proof();
                 Ok("proof started".into())
-            }
+            },
             _ => Err("not in proof mode".into()),
         }
     }
@@ -173,7 +183,7 @@ impl Toplevel {
             ToplevelState::Proof { proof, .. } => {
                 let remaining = proof.apply(method_name);
                 Ok(format!("apply {method_name} ({remaining} subgoals)"))
-            }
+            },
             _ => Err("not in proof mode".into()),
         }
     }
@@ -187,7 +197,7 @@ impl Toplevel {
                 let theorems = theorems.clone();
                 self.state = ToplevelState::Theory { theory, theorems };
                 Ok(format!("by {method_name}"))
-            }
+            },
             _ => Err("not in proof mode".into()),
         }
     }
@@ -200,7 +210,7 @@ impl Toplevel {
                 let theorems = theorems.clone();
                 self.state = ToplevelState::Theory { theory, theorems };
                 Ok("qed".into())
-            }
+            },
             _ => Err("not in proof mode".into()),
         }
     }
@@ -214,10 +224,11 @@ impl Toplevel {
                     .split_whitespace()
                     .filter(|s| *s != "::" && !s.is_empty())
                     .collect();
-                let var_types: Vec<(&str, Typ)> = vars.iter().map(|v| (*v, Typ::base("nat"))).collect();
+                let var_types: Vec<(&str, Typ)> =
+                    vars.iter().map(|v| (*v, Typ::base("nat"))).collect();
                 proof.fix(&var_types);
                 Ok("fix: ok".into())
-            }
+            },
             _ => Err("not in proof mode".into()),
         }
     }
@@ -225,16 +236,12 @@ impl Toplevel {
     fn exec_assume(&mut self, cmd: &str) -> Result<String, String> {
         match &mut self.state {
             ToplevelState::Proof { proof, .. } => {
-                let stmt = cmd
-                    .strip_prefix("assume ")
-                    .unwrap_or(cmd)
-                    .trim()
-                    .trim_matches('"');
+                let stmt = cmd.strip_prefix("assume ").unwrap_or(cmd).trim().trim_matches('"');
                 let term = crate::isar::term_parser::parse_term(stmt)
                     .unwrap_or_else(|| Term::const_(stmt, Typ::base("prop")));
                 proof.assume(&[term]);
                 Ok(format!("assume: {stmt}"))
-            }
+            },
             _ => Err("not in proof mode".into()),
         }
     }
@@ -245,11 +252,8 @@ impl Toplevel {
                 let first = cmd.split_whitespace().next().unwrap_or("");
                 let is_show = first == "show" || first == "thus";
                 let name = cmd.split_whitespace().nth(1).unwrap_or("unnamed");
-                let stmt = cmd
-                    .split(':')
-                    .nth(1)
-                    .map(|s| s.trim().trim_matches('"'))
-                    .unwrap_or("True");
+                let stmt =
+                    cmd.split(':').nth(1).map(|s| s.trim().trim_matches('"')).unwrap_or("True");
                 let term = crate::isar::term_parser::parse_term(stmt)
                     .unwrap_or_else(|| Term::const_(stmt, Typ::base("prop")));
                 if is_show {
@@ -258,7 +262,7 @@ impl Toplevel {
                     proof.have(name, term);
                 }
                 Ok(format!("{}: {stmt}", first))
-            }
+            },
             _ => Err("not in proof mode".into()),
         }
     }
@@ -305,7 +309,7 @@ impl Toplevel {
             ToplevelState::Proof { proof, .. } => {
                 proof.induct(var);
                 Ok(format!("induct {var}"))
-            }
+            },
             _ => Err("not in proof mode".into()),
         }
     }
@@ -316,7 +320,7 @@ impl Toplevel {
             ToplevelState::Proof { proof, .. } => {
                 proof.cases(var);
                 Ok(format!("cases {var}"))
-            }
+            },
             _ => Err("not in proof mode".into()),
         }
     }
@@ -340,11 +344,12 @@ impl Toplevel {
         let rest = cmd.strip_prefix("lemmas ").unwrap_or(cmd);
         let parts: Vec<&str> = rest.splitn(2, '=').collect();
         let name = parts[0].trim();
-        self.state.add_theorem(name, std::sync::Arc::new(
-            crate::core::thm::ThmKernel::assume(
-                crate::core::thm::CTerm::certify(Term::const_("True", Typ::base("prop")))
-            )
-        ));
+        self.state.add_theorem(
+            name,
+            std::sync::Arc::new(crate::core::thm::ThmKernel::assume(
+                crate::core::thm::CTerm::certify(Term::const_("True", Typ::base("prop"))),
+            )),
+        );
         Ok(format!("lemmas {name} ({} theorems)", self.state.theorem_count()))
     }
 }

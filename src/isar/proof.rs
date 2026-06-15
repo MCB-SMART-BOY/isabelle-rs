@@ -27,11 +27,15 @@
 
 use std::sync::Arc;
 
-use crate::core::term::Term;
-use crate::core::theory::Theory;
-use crate::core::thm::{CTerm, Thm, ThmKernel};
-use crate::core::types::Typ;
-use crate::isar::proof_context::IsarContext;
+use crate::{
+    core::{
+        term::Term,
+        theory::Theory,
+        thm::{CTerm, Thm, ThmKernel},
+        types::Typ,
+    },
+    isar::proof_context::IsarContext,
+};
 
 // =========================================================================
 // Proof Mode
@@ -87,13 +91,7 @@ impl Goal {
     pub fn init(kind: &str, stmt: Term) -> Self {
         let stmt_ct = CTerm::certify_annotated(stmt.clone());
         let goal_thm = ThmKernel::assume(stmt_ct);
-        Goal {
-            kind: kind.to_string(),
-            statement: stmt,
-            using: Vec::new(),
-            goal_thm,
-            refines: None,
-        }
+        Goal { kind: kind.to_string(), statement: stmt, using: Vec::new(), goal_thm, refines: None }
     }
 
     /// Number of remaining subgoals.
@@ -147,10 +145,7 @@ impl ProofNode {
 
     /// Take the current facts (consuming them).
     pub fn take_facts(&mut self) -> Vec<Thm> {
-        self.facts
-            .take()
-            .map(|(f, _)| f)
-            .unwrap_or_default()
+        self.facts.take().map(|(f, _)| f).unwrap_or_default()
     }
 
     /// Is this node in chain mode?
@@ -181,10 +176,7 @@ impl IsarProof {
     /// Initialize a proof state from a theory context.
     pub fn init(theory: Arc<Theory>) -> Self {
         let ctx = IsarContext::init(&theory);
-        IsarProof {
-            stack: vec![ProofNode::new(ctx)],
-            theory,
-        }
+        IsarProof { stack: vec![ProofNode::new(ctx)], theory }
     }
 
     /// The proof level (number of nested blocks).
@@ -234,10 +226,7 @@ impl IsarProof {
     pub fn assert_mode(&self, mode: ProofMode) {
         let current = self.mode();
         if current != mode {
-            panic!(
-                "Illegal application of proof command in {} mode (expected {})",
-                current, mode
-            );
+            panic!("Illegal application of proof command in {} mode (expected {})", current, mode);
         }
     }
 
@@ -471,10 +460,10 @@ impl IsarProof {
                             parent_goal.goal_thm = closed;
                         }
                     }
-                }
+                },
                 None => {
                     // have: result accumulates as facts, no parent refinement
-                }
+                },
             }
         }
     }
@@ -567,25 +556,27 @@ impl IsarProof {
                             goal.goal_thm = closed;
                         }
                     }
-                }
+                },
                 "this" | "skip" => {
                     let stmt_ct = CTerm::certify(goal.statement.clone());
                     if let Ok(closed) = ThmKernel::trivial(stmt_ct) {
                         goal.goal_thm = closed;
                     }
-                }
+                },
                 _ => {
                     // Dispatch to the actual method engine
                     crate::isar::method::AUTO_DEPTH.with(|c| c.set(0));
                     crate::isar::method::AUTO_LIMIT.with(|c| c.set(50));
                     let results = crate::isar::method::exec_single_method(
-                        &goal.goal_thm, method_name, &premises,
+                        &goal.goal_thm,
+                        method_name,
+                        &premises,
                     );
                     if let Some(thm) = results.into_iter().find(|r| r.nprems() == 0) {
                         goal.goal_thm = thm;
                     }
                     // If method fails, leave goal unchanged (proof fails)
-                }
+                },
             }
             goal.nprems()
         } else {
@@ -758,7 +749,12 @@ impl IsarProof {
 
     /// Dispatch to the actual proof method system.
     /// This connects `apply`/`by` to the method implementations in `method.rs`.
-    pub fn apply_method(&mut self, _method_name: &str, _state: &Thm, _premises: &[Thm]) -> Vec<Thm> {
+    pub fn apply_method(
+        &mut self,
+        _method_name: &str,
+        _state: &Thm,
+        _premises: &[Thm],
+    ) -> Vec<Thm> {
         // In a real implementation, this would:
         // 1. Look up the method by name
         // 2. Call Method::from_name(method_name).execute(state, premises)
@@ -771,7 +767,8 @@ impl IsarProof {
         self.assert_forward();
         let case_data = self.top().context.find_case(name).cloned();
         if let Some(case) = case_data {
-            let vars: Vec<(&str, Typ)> = case.fixes.iter().map(|(n, t)| (n.as_str(), t.clone())).collect();
+            let vars: Vec<(&str, Typ)> =
+                case.fixes.iter().map(|(n, t)| (n.as_str(), t.clone())).collect();
             let assumes = case.assumes.clone();
             if !vars.is_empty() {
                 self.fix(&vars);
@@ -787,15 +784,9 @@ impl IsarProof {
     pub fn induct(&mut self, var: &str) {
         self.assert_backward();
         // Collect induction rule names before borrowing
-        let induct_names = vec![
-            format!("{var}.induct"),
-            format!("{var}_induct"),
-            var.to_string(),
-        ];
+        let induct_names = vec![format!("{var}.induct"), format!("{var}_induct"), var.to_string()];
         // Look up rules (immutable borrow)
-        let rules: Vec<Option<Thm>> = induct_names.iter()
-            .map(|n| self.lookup_theorem(n))
-            .collect();
+        let rules: Vec<Option<Thm>> = induct_names.iter().map(|n| self.lookup_theorem(n)).collect();
 
         // Apply rule (mutable borrow)
         if let Some(goal) = self.find_goal_mut() {
@@ -838,9 +829,7 @@ impl IsarProof {
             format!("{var}_induct"),
             var.to_string(),
         ];
-        let rules: Vec<Option<Thm>> = case_names.iter()
-            .map(|n| self.lookup_theorem(n))
-            .collect();
+        let rules: Vec<Option<Thm>> = case_names.iter().map(|n| self.lookup_theorem(n)).collect();
 
         if let Some(goal) = self.find_goal_mut() {
             for rule_opt in &rules {
@@ -858,7 +847,6 @@ impl IsarProof {
             }
         }
     }
-
 }
 
 // =========================================================================

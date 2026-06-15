@@ -13,10 +13,13 @@
 //! );
 //! ```
 
+use std::{
+    path::Path,
+    time::{SystemTime, UNIX_EPOCH},
+};
+
 use rusqlite::{Connection, params};
 use sha2::{Digest, Sha256};
-use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 // =========================================================================
 // Cache entry
@@ -115,16 +118,16 @@ impl TheoryCache {
         let theorems_json =
             serde_json::to_string(&entry.theorems).map_err(|e| format!("json error: {e}"))?;
 
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
 
-        self.db.execute(
-            "INSERT OR REPLACE INTO theory_cache (path, source_hash, compiled_at, theorems, blob)
+        self.db
+            .execute(
+                "INSERT OR REPLACE INTO theory_cache (path, source_hash, compiled_at, theorems, \
+                 blob)
              VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![entry.path, entry.source_hash, now, theorems_json, entry.blob],
-        ).map_err(|e| format!("store failed: {e}"))?;
+                params![entry.path, entry.source_hash, now, theorems_json, entry.blob],
+            )
+            .map_err(|e| format!("store failed: {e}"))?;
 
         Ok(())
     }

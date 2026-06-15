@@ -6,8 +6,9 @@
 //! - Lean 4's Server implementation
 //! - Coq-lsp's protocol extensions
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
 
 // =========================================================================
 // JSON-RPC 2.0 Base Types
@@ -62,27 +63,15 @@ pub struct JsonRpcError {
 
 impl JsonRpcError {
     pub fn new(code: i32, message: impl Into<String>) -> Self {
-        JsonRpcError {
-            code,
-            message: message.into(),
-            data: None,
-        }
+        JsonRpcError { code, message: message.into(), data: None }
     }
 
     pub fn method_not_found(method: &str) -> Self {
-        JsonRpcError {
-            code: -32601,
-            message: format!("Method not found: {method}"),
-            data: None,
-        }
+        JsonRpcError { code: -32601, message: format!("Method not found: {method}"), data: None }
     }
 
     pub fn internal_error(msg: impl Into<String>) -> Self {
-        JsonRpcError {
-            code: -32603,
-            message: msg.into(),
-            data: None,
-        }
+        JsonRpcError { code: -32603, message: msg.into(), data: None }
     }
 }
 

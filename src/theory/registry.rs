@@ -4,8 +4,7 @@
 //! theory database (`Thy_Info`). When a theory imports another,
 //! the registry provides the parent theory.
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use crate::core::theory::Theory;
 

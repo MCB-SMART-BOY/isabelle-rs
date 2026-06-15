@@ -27,10 +27,13 @@
 //!   → Vec<ParsedLemma>   — theorems to add to DB
 //! ```
 
-use crate::core::term::Term;
-use crate::core::thm::{CTerm, ThmKernel};
-use crate::core::types::Typ;
 use std::sync::Arc;
+
+use crate::core::{
+    term::Term,
+    thm::{CTerm, ThmKernel},
+    types::Typ,
+};
 
 // =========================================================================
 // Function Definition
@@ -52,7 +55,11 @@ pub struct FunDef {
 
 impl FunDef {
     /// Create a new FunDef and detect recursion.
-    pub fn new(name: String, typ_str: String, equations: Vec<(Option<String>, String, String)>) -> Self {
+    pub fn new(
+        name: String,
+        typ_str: String,
+        equations: Vec<(Option<String>, String, String)>,
+    ) -> Self {
         let is_recursive = equations.iter().any(|(_, _, rhs)| rhs.contains(&name));
         FunDef { name, typ_str, equations, is_recursive }
     }
@@ -79,9 +86,7 @@ impl FunDef {
         // 1. Generate equation theorems (.simps)
         for (label, lhs, rhs) in &self.equations {
             if let Some(term) = self.parse_equation(lhs, rhs) {
-                let eq_name = label.clone().unwrap_or_else(|| {
-                    format!("{}.simps", self.name)
-                });
+                let eq_name = label.clone().unwrap_or_else(|| format!("{}.simps", self.name));
                 results.push((eq_name, term, vec!["simp".to_string(), "fun_simp".to_string()]));
             }
         }
@@ -89,11 +94,7 @@ impl FunDef {
         // 2. Generate induction rule (only for recursive functions)
         if self.is_recursive {
             if let Some(induct) = self.gen_induction_rule() {
-                results.push((
-                    format!("{}.induct", self.name),
-                    induct,
-                    vec!["induct".to_string()],
-                ));
+                results.push((format!("{}.induct", self.name), induct, vec!["induct".to_string()]));
             }
         }
 
@@ -206,15 +207,15 @@ impl FunDef {
                     if !vars.contains(&s) {
                         vars.push(s);
                     }
-                }
+                },
                 Term::App { func, arg } => {
                     stack.push(arg);
                     stack.push(func);
-                }
+                },
                 Term::Abs { body, .. } => {
                     stack.push(body);
-                }
-                _ => {}
+                },
+                _ => {},
             }
         }
     }
@@ -230,7 +231,8 @@ impl FunDef {
         let mut cases: Vec<Term> = Vec::new();
 
         for (_label, lhs, rhs) in &self.equations {
-            let eq_term = self.parse_equation(lhs, rhs)
+            let eq_term = self
+                .parse_equation(lhs, rhs)
                 .unwrap_or_else(|| Term::const_("True", Typ::base("prop")));
 
             let (prems, _concl) = crate::core::logic::Pure::strip_imp_prems(&eq_term);
@@ -306,7 +308,11 @@ mod tests {
             "nat => nat => nat".to_string(),
             vec![
                 (None, "add 0 n".to_string(), "n".to_string()),
-                (Some("add_Suc".to_string()), "add (Suc m) n".to_string(), "Suc (add m n)".to_string()),
+                (
+                    Some("add_Suc".to_string()),
+                    "add (Suc m) n".to_string(),
+                    "Suc (add m n)".to_string(),
+                ),
             ],
         )
     }

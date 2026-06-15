@@ -2,11 +2,14 @@
 //!
 //! ## Library structure
 //!
-//! - `kernel` — Trusted LCF kernel (types, terms, theorems)
+//! - `core` — Trusted LCF kernel (types, terms, theorems, unification, tactics)
+//! - `isar` — Isar proof engine (methods, state machine, term parser)
+//! - `hol` — HOL object logic (theory loading, BNF, Ctr_Sugar, Transfer)
+//! - `theory` — Theory processing pipeline (loader, session builder, thy_header)
+//! - `tools` — Proof automation (simp, metis, sledgehammer, tptp, reconstruct)
+//! - `server` / `lsp` — LSP server (transport + 8 handlers)
 //! - `session` — Session actor + FileWorker + Watchdog
-//! - `isar` — Isar structured proof language
-//! - `lsp` — LSP server (tower-based handlers)
-//! - `syntax` — Rowan CST-based incremental parser
+//! - `syntax` — Rowan CST-based incremental parser + Pretty Printer
 //! - `wasm` — WASM plugin system
 
 // Allow dead code and unused variables/imports for API surface not yet integrated
@@ -21,7 +24,6 @@ pub mod document;
 pub mod fleche;
 pub mod hol;
 pub mod isar;
-pub mod kernel;
 pub mod lsp;
 pub mod server;
 pub mod session;

@@ -31,18 +31,10 @@ pub fn ident() -> Parser<String> {
 /// Match a string literal (strips quotes).
 pub fn string() -> Parser<String> {
     Box::new(|tokens: &[Token]| match tokens.first() {
-        Some(Token {
-            kind: TokenKind::String,
-            source,
-            ..
-        }) => {
-            let inner = if source.len() >= 2 {
-                &source[1..source.len() - 1]
-            } else {
-                ""
-            };
+        Some(Token { kind: TokenKind::String, source, .. }) => {
+            let inner = if source.len() >= 2 { &source[1..source.len() - 1] } else { "" };
             Some((inner.to_string(), tokens[1..].to_vec()))
-        }
+        },
         _ => None,
     })
 }
@@ -51,11 +43,9 @@ pub fn string() -> Parser<String> {
 pub fn symbol(sym: &str) -> Parser<String> {
     let sym = sym.to_string();
     Box::new(move |tokens: &[Token]| match tokens.first() {
-        Some(Token {
-            kind: TokenKind::Symbol(s),
-            source,
-            ..
-        }) if s.as_ref() == &sym => Some((source.clone(), tokens[1..].to_vec())),
+        Some(Token { kind: TokenKind::Symbol(s), source, .. }) if s.as_ref() == &sym => {
+            Some((source.clone(), tokens[1..].to_vec()))
+        },
         _ => None,
     })
 }
@@ -133,13 +123,7 @@ pub fn lemma_stmt() -> Parser<LemmaStmt> {
         let (name, rest) = ident()(&rest)?;
         let (_, rest) = symbol(":")(&rest)?;
         let (stmt, rest) = string()(&rest)?;
-        Some((
-            LemmaStmt {
-                name,
-                statement: stmt,
-            },
-            rest,
-        ))
+        Some((LemmaStmt { name, statement: stmt }, rest))
     })
 }
 
@@ -149,8 +133,7 @@ pub fn lemma_stmt() -> Parser<LemmaStmt> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::token::Lexer;
-    use super::*;
+    use super::{super::token::Lexer, *};
 
     fn tok(s: &str) -> Vec<Token> {
         Lexer::new(s).tokenize()

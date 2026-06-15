@@ -14,12 +14,12 @@
 //!   `{?P := λz. f(y), ?x := y}`
 //! This environment is then applied to normalize both terms.
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
-use super::term::Term;
-use super::types::Symbol;
-use super::types::{Sort, Typ};
+use super::{
+    term::Term,
+    types::{Sort, Symbol, Typ},
+};
 
 // =========================================================================
 // Type alias for variable indices
@@ -54,11 +54,7 @@ impl Envir {
 
     /// Create an empty environment with the given maxidx.
     pub fn empty(maxidx: usize) -> Self {
-        Envir {
-            maxidx,
-            tenv: HashMap::new(),
-            tyenv: HashMap::new(),
-        }
+        Envir { maxidx, tenv: HashMap::new(), tyenv: HashMap::new() }
     }
 
     /// The initial environment (maxidx = 0, empty).
@@ -100,10 +96,7 @@ impl Envir {
 
     /// Generate multiple fresh variables from a list of types.
     pub fn genvars(&mut self, name: &str, types: &[Typ]) -> Vec<Term> {
-        types
-            .iter()
-            .map(|typ| self.genvar(name, typ.clone()))
-            .collect()
+        types.iter().map(|typ| self.genvar(name, typ.clone())).collect()
     }
 
     // =================================================================
@@ -127,21 +120,13 @@ impl Envir {
 
     /// Bind a term variable. Panics if the index exceeds maxidx.
     pub fn update(&mut self, name: Symbol, index: usize, typ: Typ, term: Term) {
-        assert!(
-            index <= self.maxidx,
-            "Envir.update: index {index} > maxidx {}",
-            self.maxidx
-        );
+        assert!(index <= self.maxidx, "Envir.update: index {index} > maxidx {}", self.maxidx);
         self.tenv.insert((name, index), (typ, term));
     }
 
     /// Bind a type variable.
     pub fn update_type(&mut self, name: Symbol, index: usize, sort: Sort, typ: Typ) {
-        assert!(
-            index <= self.maxidx,
-            "Envir.update_type: index {index} > maxidx {}",
-            self.maxidx
-        );
+        assert!(index <= self.maxidx, "Envir.update_type: index {index} > maxidx {}", self.maxidx);
         self.tyenv.insert((name, index), (sort, typ));
     }
 
@@ -152,21 +137,16 @@ impl Envir {
     /// Normalize a type: replace all bound TVars with their assignments.
     pub fn norm_type(&self, typ: &Typ) -> Typ {
         match typ {
-            Typ::TVar {
-                name,
-                index,
-                sort: _,
-            } => {
+            Typ::TVar { name, index, sort: _ } => {
                 if let Some((_, assigned)) = self.tyenv.get(&(Arc::clone(name), *index)) {
                     self.norm_type(assigned) // recursive — assigned type may contain TVars
                 } else {
                     typ.clone()
                 }
-            }
-            Typ::Type { name, args } => Typ::apply(
-                Arc::clone(name),
-                args.iter().map(|a| self.norm_type(a)).collect(),
-            ),
+            },
+            Typ::Type { name, args } => {
+                Typ::apply(Arc::clone(name), args.iter().map(|a| self.norm_type(a)).collect())
+            },
             Typ::TFree { .. } => typ.clone(),
         }
     }
@@ -201,29 +181,29 @@ impl Envir {
                         } else {
                             results.push(Term::var(Arc::clone(name), *index, norm_typ));
                         }
-                    }
+                    },
                     Term::Const { name, typ } => {
                         results.push(Term::const_(Arc::clone(name), self.norm_type(typ)));
-                    }
+                    },
                     Term::Free { name, typ } => {
                         results.push(Term::free(Arc::clone(name), self.norm_type(typ)));
-                    }
+                    },
                     Term::Bound(i) => results.push(Term::bound(*i)),
                     Term::Abs { name, typ, body } => {
                         let norm_typ = self.norm_type(typ);
                         stack.push(StackItem::BuildAbs(Arc::clone(name), norm_typ));
                         stack.push(StackItem::Process(body.as_ref().clone()));
-                    }
+                    },
                     Term::App { func, arg } => {
                         stack.push(StackItem::BuildApp);
                         stack.push(StackItem::Process(arg.as_ref().clone()));
                         stack.push(StackItem::Process(func.as_ref().clone()));
-                    }
+                    },
                 },
                 StackItem::BuildAbs(name, typ) => {
                     let body = results.pop().unwrap_or_else(|| Term::bound(0));
                     results.push(Term::abs(name, typ, body));
-                }
+                },
                 StackItem::BuildApp => {
                     let arg = results.pop().unwrap_or_else(|| Term::bound(0));
                     let func = results.pop().unwrap_or_else(|| Term::bound(0));
@@ -234,7 +214,7 @@ impl Envir {
                     } else {
                         results.push(Term::app(func, arg));
                     }
-                }
+                },
             }
         }
 

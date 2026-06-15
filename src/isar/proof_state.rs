@@ -9,10 +9,13 @@
 //! This is a simplified version that handles the most common patterns
 //! found in .thy file proofs without implementing the full Isar language.
 
-use crate::core::term::Term;
-use crate::core::thm::{CTerm, Thm, ThmKernel};
-use crate::core::types::Typ;
 use std::sync::Arc;
+
+use crate::core::{
+    term::Term,
+    thm::{CTerm, Thm, ThmKernel},
+    types::Typ,
+};
 
 /// The proof state during a structured Isar proof.
 #[derive(Debug, Clone)]
@@ -69,12 +72,7 @@ impl ProofState {
 
     /// Set subgoals from an induction/cases application.
     pub fn set_subgoals(&mut self, new_subgoals: Vec<Thm>) {
-        if let ProofState::Proving {
-            subgoals,
-            current_subgoal,
-            ..
-        } = self
-        {
+        if let ProofState::Proving { subgoals, current_subgoal, .. } = self {
             *subgoals = new_subgoals;
             *current_subgoal = 0;
         }
@@ -83,11 +81,7 @@ impl ProofState {
     /// Get the current subgoal (if any).
     pub fn get_current_subgoal(&self) -> Option<&Thm> {
         match self {
-            ProofState::Proving {
-                subgoals,
-                current_subgoal,
-                ..
-            } => subgoals.get(*current_subgoal),
+            ProofState::Proving { subgoals, current_subgoal, .. } => subgoals.get(*current_subgoal),
             _ => None,
         }
     }
@@ -100,7 +94,7 @@ impl ProofState {
     }
 
     /// Define a local abbreviation (Isar `let x = t` or `let x be "prop"`).
-    /// 
+    ///
     /// Store the binding so that subsequent commands can expand `x` to `t`.
     pub fn let_def(&mut self, name: &str, term: Term) {
         if let ProofState::Proving { let_bindings, .. } = self {
@@ -111,7 +105,7 @@ impl ProofState {
     }
 
     /// Expand all `let` abbreviations in a term.
-    /// 
+    ///
     /// Replaces `Const(name)` nodes that match a `let` binding with the bound term.
     pub fn expand_lets(&self, term: &Term) -> Term {
         let bindings = match self {
@@ -137,16 +131,16 @@ impl ProofState {
                     }
                 }
                 term.clone()
-            }
+            },
             Term::App { func, arg } => {
                 let new_func = Self::expand_lets_rec(func, bindings);
                 let new_arg = Self::expand_lets_rec(arg, bindings);
                 Term::app(new_func, new_arg)
-            }
+            },
             Term::Abs { name, typ, body } => {
                 let new_body = Self::expand_lets_rec(body, bindings);
                 Term::abs(name.clone(), typ.clone(), new_body)
-            }
+            },
             _ => term.clone(),
         }
     }
@@ -174,11 +168,8 @@ impl ProofState {
         all_premises: &[Arc<Thm>],
     ) -> Option<Arc<Thm>> {
         let goal = ThmKernel::assume(CTerm::certify(stmt.clone()));
-        let mut combined_prems: Vec<Arc<Thm>> = all_premises
-            .iter()
-            .chain(self.get_premises().iter())
-            .cloned()
-            .collect();
+        let mut combined_prems: Vec<Arc<Thm>> =
+            all_premises.iter().chain(self.get_premises().iter()).cloned().collect();
         // Include chained fact if present
         if let Some(chained) = self.take_chained() {
             combined_prems.push(chained);
@@ -196,11 +187,8 @@ impl ProofState {
     pub fn show(&mut self, stmt: &Term, method: &str, all_premises: &[Arc<Thm>]) -> Option<Thm> {
         let actual_stmt = self.resolve_case_stmt(stmt);
         let goal = ThmKernel::assume(CTerm::certify(actual_stmt));
-        let mut combined_prems: Vec<Arc<Thm>> = all_premises
-            .iter()
-            .chain(self.get_premises().iter())
-            .cloned()
-            .collect();
+        let mut combined_prems: Vec<Arc<Thm>> =
+            all_premises.iter().chain(self.get_premises().iter()).cloned().collect();
         // Include chained fact if present
         if let Some(chained) = self.take_chained() {
             combined_prems.push(chained);
@@ -234,24 +222,13 @@ impl ProofState {
 
     /// Get and clear the chained fact.
     fn take_chained(&mut self) -> Option<Arc<Thm>> {
-        if let ProofState::Proving { chained_fact, .. } = self {
-            chained_fact.take()
-        } else {
-            None
-        }
+        if let ProofState::Proving { chained_fact, .. } = self { chained_fact.take() } else { None }
     }
 
     /// Set up a case context (`case Nil` or `case (Cons x xs)`).
     /// Selects the appropriate subgoal for the named case.
     pub fn case_(&mut self, case_name: &str) {
-        if let ProofState::Proving {
-            subgoals,
-            current_subgoal,
-            facts,
-            chained_fact,
-            ..
-        } = self
-        {
+        if let ProofState::Proving { subgoals, current_subgoal, facts, chained_fact, .. } = self {
             *chained_fact = None;
             // Try to find the matching subgoal by name/index
             let clean_name = case_name
@@ -267,7 +244,7 @@ impl ProofState {
                 _ => {
                     // Try to find by scanning subgoals
                     *current_subgoal
-                }
+                },
             };
             if idx < subgoals.len() {
                 *current_subgoal = idx;
@@ -279,14 +256,7 @@ impl ProofState {
 
     /// Move to the next subgoal (`next`).
     pub fn next(&mut self) {
-        if let ProofState::Proving {
-            subgoals,
-            current_subgoal,
-            facts,
-            chained_fact,
-            ..
-        } = self
-        {
+        if let ProofState::Proving { subgoals, current_subgoal, facts, chained_fact, .. } = self {
             *chained_fact = None;
             if *current_subgoal + 1 < subgoals.len() {
                 *current_subgoal += 1;
@@ -307,14 +277,7 @@ impl ProofState {
     /// Returns the final theorem if all subgoals are solved.
     pub fn qed(&mut self) -> Option<Thm> {
         match self {
-            ProofState::Proving {
-                subgoals,
-                goal,
-                fixes,
-                facts,
-                show_result,
-                ..
-            } => {
+            ProofState::Proving { subgoals, goal, fixes, facts, show_result, .. } => {
                 // Priority 1: use the show_result if available
                 let base_result = if let Some(result) = show_result {
                     result.clone()
@@ -336,11 +299,7 @@ impl ProofState {
                     .iter()
                     .filter_map(|f| {
                         let cterm = CTerm::certify(f.prop().term().clone());
-                        if current.hyps().contains(&cterm) {
-                            Some(cterm)
-                        } else {
-                            None
-                        }
+                        if current.hyps().contains(&cterm) { Some(cterm) } else { None }
                     })
                     .collect();
                 for assum in local_assumptions.iter().rev() {
@@ -359,7 +318,7 @@ impl ProofState {
 
                 *self = ProofState::Done(current.clone());
                 Some(current)
-            }
+            },
             ProofState::Ready { goal } => {
                 if goal.nprems() == 0 {
                     let result = goal.clone();
@@ -368,7 +327,7 @@ impl ProofState {
                 } else {
                     None
                 }
-            }
+            },
             ProofState::Done(thm) => Some(thm.clone()),
         }
     }
@@ -631,9 +590,7 @@ pub fn interpret_proof_script(
             let rest = t.strip_prefix("note ").unwrap_or("").trim();
             if let Some(eq_pos) = rest.find('=') {
                 let _name = rest[..eq_pos].trim();
-                let thm_names: Vec<&str> = rest[eq_pos + 1..]
-                    .split_whitespace()
-                    .collect();
+                let thm_names: Vec<&str> = rest[eq_pos + 1..].split_whitespace().collect();
                 let db = crate::hol::hol_loader::HolTheoremDb::get();
                 for thm_name in &thm_names {
                     if let Some(thm) = db.by_name.get(*thm_name) {
@@ -825,10 +782,7 @@ fn parse_and_exec_obtain(
     // Parse: `vars where "prop" by method`
     // or: `vars where "prop"` with by method on next line
     let (vars, prop_and_method) = if let Some(where_pos) = rest.find(" where ") {
-        (
-            rest[..where_pos].trim().to_string(),
-            rest[where_pos + 7..].trim().to_string(),
-        )
+        (rest[..where_pos].trim().to_string(), rest[where_pos + 7..].trim().to_string())
     } else {
         return false;
     };
@@ -837,17 +791,11 @@ fn parse_and_exec_obtain(
     let (prop_str, method) = if let Some(by_pos) = prop_and_method.find(" by ") {
         let prop_part = &prop_and_method[..by_pos].trim();
         let method_part = &prop_and_method[by_pos + 4..].trim();
-        (
-            prop_part.trim_matches('"').to_string(),
-            method_part.to_string(),
-        )
+        (prop_part.trim_matches('"').to_string(), method_part.to_string())
     } else if let Some(by_pos) = prop_and_method.find(" by(") {
         let prop_part = &prop_and_method[..by_pos].trim();
         let method_part = &prop_and_method[by_pos + 1..].trim();
-        (
-            prop_part.trim_matches('"').to_string(),
-            method_part.to_string(),
-        )
+        (prop_part.trim_matches('"').to_string(), method_part.to_string())
     } else {
         // Check next line for "by method"
         let prop_part = prop_and_method.trim_matches('"').to_string();
@@ -942,15 +890,9 @@ impl ProofState {
     /// Get the current goal being proved.
     pub fn get_current_goal(&self) -> Option<Thm> {
         match self {
-            ProofState::Proving {
-                subgoals,
-                current_subgoal,
-                goal,
-                ..
-            } => subgoals
-                .get(*current_subgoal)
-                .cloned()
-                .or_else(|| Some(goal.clone())),
+            ProofState::Proving { subgoals, current_subgoal, goal, .. } => {
+                subgoals.get(*current_subgoal).cloned().or_else(|| Some(goal.clone()))
+            },
             ProofState::Ready { goal } => Some(goal.clone()),
             ProofState::Done(_) => None,
         }
@@ -958,12 +900,7 @@ impl ProofState {
 
     /// Set the current goal (update the current subgoal).
     pub fn set_current_goal(&mut self, new_goal: Thm) {
-        if let ProofState::Proving {
-            subgoals,
-            current_subgoal,
-            ..
-        } = self
-        {
+        if let ProofState::Proving { subgoals, current_subgoal, .. } = self {
             if *current_subgoal < subgoals.len() {
                 subgoals[*current_subgoal] = new_goal;
             }
@@ -973,12 +910,15 @@ impl ProofState {
 
 #[cfg(test)]
 mod isar_tests {
-    use super::*;
-    use crate::core::logic::Pure;
-    use crate::core::term::Term;
-    use crate::core::thm::{CTerm, ThmKernel};
-    use crate::core::types::Typ;
     use std::sync::Arc;
+
+    use super::*;
+    use crate::core::{
+        logic::Pure,
+        term::Term,
+        thm::{CTerm, ThmKernel},
+        types::Typ,
+    };
 
     #[test]
     fn test_structured_have_show() {
@@ -1038,7 +978,8 @@ mod isar_tests {
         let (name, _) = parse_let_binding("x = a").expect("should parse let x = a");
         assert_eq!(name, "x");
 
-        let (name2, _) = parse_let_binding("prop be \"A ==> B\"").expect("should parse let prop be ...");
+        let (name2, _) =
+            parse_let_binding("prop be \"A ==> B\"").expect("should parse let prop be ...");
         assert_eq!(name2, "prop");
     }
 
@@ -1062,12 +1003,15 @@ mod isar_tests {
 
 #[cfg(test)]
 mod induction_tests {
-    use super::*;
-    use crate::core::logic::Pure;
-    use crate::core::term::Term;
-    use crate::core::thm::{CTerm, ThmKernel};
-    use crate::core::types::Typ;
     use std::sync::Arc;
+
+    use super::*;
+    use crate::core::{
+        logic::Pure,
+        term::Term,
+        thm::{CTerm, ThmKernel},
+        types::Typ,
+    };
 
     #[test]
     fn test_induction_subgoals() {
