@@ -18,9 +18,9 @@
 | Transfer/Lifting | Transfer rule generation + rel_fun/rel_set + quotient type theorems |
 | Attributes | Full pipeline: parse_attrs → classify → DB categories → apply_attributes |
 | Combinators | THEN / ORELSE (`\|`) / REPEAT |
-| **hologic** | HOL abstract syntax: ~40 mk_*/dest_*/is_* functions (Phase 49: consolidate) |
-| **simpdata** | HOL simpset init: `init_hol_simpset()`, `mksimps_pairs()` (Phase 50: expand) |
-| **args** | Method arg parsing: partial `Args::parse_modifiers()` (Phase 51: complete) |
+| **hologic** | HOL abstract syntax: ~40 mk_*/dest_*/is_* functions (Phase 49 complete) |
+| **simpdata** | HOL simpset init: 28 built-in rules, `init_hol_simpset()` (Phase 50 complete) |
+| **args** | Method arg parsing: `Args::parse_modifiers()` wired into `exec_simp` (Phase 51 partial) |
 | **defs** | Definition consistency checking: cycle detection, type arg validation |
 | **spec** | Enhanced: Definition, Axiomatization, Abbreviation, TypeAbbrev parsers (Phase 52-54: deepen) |
 | Code | ~54K Rust LOC, 124 files |
