@@ -1,0 +1,15 @@
+# Local settings — never commit
+settings.local.json
+
+# Runtime session data
+sessions/
+transcripts/
+*.log
+
+# Memory — auto-generated, don't track
+memory/*.md
+!memory/.gitkeep
+
+# Cached data
+cache/
+state/

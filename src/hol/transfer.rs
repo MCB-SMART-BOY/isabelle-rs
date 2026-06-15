@@ -33,6 +33,7 @@ use std::sync::Arc;
 use crate::core::term::Term;
 use crate::core::thm::{CTerm, Thm, ThmKernel};
 use crate::core::types::Typ;
+use crate::hol::hologic;
 
 // =========================================================================
 // Transfer rule

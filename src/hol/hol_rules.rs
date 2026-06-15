@@ -14,11 +14,14 @@
 //! | ∀ (all)   | `all_intr` | `all_elim` |
 //! | ∃ (ex)    | `ex_intr` | `ex_elim` |
 
-use crate::core::error::KernelError;
-use crate::core::term::Term;
-use crate::core::thm::{CTerm, Thm, ThmKernel};
-use crate::core::logic::Pure;
-use crate::core::types::Typ;
+use crate::core::{
+    error::KernelError,
+    logic::Pure,
+    term::Term,
+    thm::{CTerm, Thm, ThmKernel},
+    types::Typ,
+};
+use crate::hol::hologic;
 
 // =========================================================================
 // Conjunction (∧)
@@ -27,10 +30,7 @@ use crate::core::types::Typ;
 pub fn conj_intr(thm_p: &Thm, thm_q: &Thm) -> Thm {
     let p = thm_p.prop().term().clone();
     let q = thm_q.prop().term().clone();
-    let conj = Term::app(
-        Term::app(Term::const_("HOL.conj", Typ::arrow(Typ::base("prop"), Typ::arrow(Typ::base("prop"), Typ::base("prop")))), p),
-        q,
-    );
+    let conj = hologic::mk_Trueprop(hologic::mk_conj(p, q));
     ThmKernel::assume(CTerm::certify(conj))
 }
 
@@ -45,11 +45,20 @@ pub fn conj_elim2(thm_conj: &Thm) -> Thm {
 }
 
 fn extract_left(term: &Term) -> &Term {
-    match term { Term::App { func, .. } => match func.as_ref() { Term::App { arg, .. } => arg.as_ref(), _ => term }, _ => term }
+    match term {
+        Term::App { func, .. } => match func.as_ref() {
+            Term::App { arg, .. } => arg.as_ref(),
+            _ => term,
+        },
+        _ => term,
+    }
 }
 
 fn extract_right(term: &Term) -> &Term {
-    match term { Term::App { arg, .. } => arg.as_ref(), _ => term }
+    match term {
+        Term::App { arg, .. } => arg.as_ref(),
+        _ => term,
+    }
 }
 
 // =========================================================================
@@ -58,19 +67,13 @@ fn extract_right(term: &Term) -> &Term {
 
 pub fn disj_intr1(thm_p: &Thm, q: &Term) -> Thm {
     let p = thm_p.prop().term().clone();
-    let disj = Term::app(
-        Term::app(Term::const_("HOL.disj", Typ::arrow(Typ::base("prop"), Typ::arrow(Typ::base("prop"), Typ::base("prop")))), p),
-        q.clone(),
-    );
+    let disj = hologic::mk_Trueprop(hologic::mk_disj(p, q.clone()));
     ThmKernel::assume(CTerm::certify(disj))
 }
 
 pub fn disj_intr2(p: &Term, thm_q: &Thm) -> Thm {
     let q = thm_q.prop().term().clone();
-    let disj = Term::app(
-        Term::app(Term::const_("HOL.disj", Typ::arrow(Typ::base("prop"), Typ::arrow(Typ::base("prop"), Typ::base("prop")))), p.clone()),
-        q,
-    );
+    let disj = hologic::mk_Trueprop(hologic::mk_disj(p.clone(), q));
     ThmKernel::assume(CTerm::certify(disj))
 }
 
@@ -99,10 +102,7 @@ pub fn mp(thm_imp: &Thm, thm_p: &Thm) -> Result<Thm, KernelError> {
 // =========================================================================
 
 pub fn not_intr(_thm_pf: &Thm) -> Thm {
-    let not_p = Term::app(
-        Term::const_("HOL.Not", Typ::arrow(Typ::base("prop"), Typ::base("prop"))),
-        Term::const_("P", Typ::base("prop")),
-    );
+    let not_p = hologic::mk_Trueprop(hologic::mk_not(Term::const_("P", Typ::base("bool"))));
     ThmKernel::assume(CTerm::certify(not_p))
 }
 
@@ -127,9 +127,8 @@ pub fn all_elim(ct: CTerm, thm: &Thm) -> Result<Thm, KernelError> {
 // =========================================================================
 
 pub fn ex_intr(_x_name: &str, _thm_pt: &Thm) -> Thm {
-    let ex = Term::app(
-        Term::const_("HOL.Ex", Typ::arrow(Typ::arrow(Typ::base("nat"), Typ::base("prop")), Typ::base("prop"))),
-        Term::abs("x", Typ::base("nat"), Term::const_("P", Typ::base("prop"))),
+    let ex = hologic::mk_Trueprop(
+        hologic::mk_exists("x", Typ::base("nat"), Term::const_("P", Typ::base("bool")))
     );
     ThmKernel::assume(CTerm::certify(ex))
 }
@@ -155,9 +154,8 @@ mod tests {
     fn test_mp() {
         let p = prop("P");
         let q = prop("Q");
-        let p_imp_q = ThmKernel::assume(CTerm::certify(
-            Pure::mk_implies(p.term().clone(), q.term().clone())
-        ));
+        let p_imp_q =
+            ThmKernel::assume(CTerm::certify(Pure::mk_implies(p.term().clone(), q.term().clone())));
         let p_thm = ThmKernel::assume(p.clone());
         let result = mp(&p_imp_q, &p_thm).unwrap();
         assert_eq!(result.prop().term(), q.term());

@@ -1,9 +1,15 @@
 //! Isabelle term and type parser + pretty printer.
 
-use crate::core::term::Term;
-use crate::core::types::{Sort, Typ};
-use crate::isar::token::{Lexer, Token, TokenKind};
 use std::sync::Arc;
+
+use crate::{
+    core::{
+        term::Term,
+        types::{Sort, Typ},
+    },
+    hol::hologic,
+    isar::token::{Lexer, Token, TokenKind},
+};
 
 // Parser state with clone-based peek to avoid borrow issues
 struct P {
@@ -21,18 +27,15 @@ impl P {
         self.tokens.get(self.pos).map(|t| t.source.clone())
     }
     fn is_kw(&self, kw: &str) -> bool {
-        self.tokens
-            .get(self.pos)
-            .map_or(false, |t| t.is_keyword(kw))
+        self.tokens.get(self.pos).map_or(false, |t| t.is_keyword(kw))
     }
     fn is_id(&self) -> bool {
         self.tokens.get(self.pos).map_or(false, |t| t.is_ident())
     }
     fn is_sym(&self, s: &str) -> bool {
-        self.tokens.get(self.pos).map_or(
-            false,
-            |t| matches!(&t.kind, TokenKind::Symbol(x) if x.as_ref() == s),
-        )
+        self.tokens
+            .get(self.pos)
+            .map_or(false, |t| matches!(&t.kind, TokenKind::Symbol(x) if x.as_ref() == s))
     }
     fn adv(&mut self) {
         self.pos += 1;
@@ -79,12 +82,12 @@ fn parse_typ_env(s: &mut P, env: &crate::core::types::TypeEnv) -> Option<Typ> {
                     // Unknown arity — assume 0 and skip
                     break;
                 }
-            }
+            },
             Some(TokenKind::Symbol(ref x)) if x.as_ref() == "=>" => {
                 s.adv();
                 let t2 = parse_typ_env(s, env)?;
                 return Some(Typ::arrow(t, t2));
-            }
+            },
             _ => break,
         }
     }
@@ -102,24 +105,24 @@ fn parse_typ_atom(s: &mut P) -> Option<Typ> {
             } else {
                 Some(Typ::free(name, Sort::singleton("type")))
             }
-        }
+        },
         TokenKind::SchematicTypeVar => {
             let name: Arc<str> = Arc::from(s.src()?.as_str());
             s.adv();
             Some(Typ::var(name, 0, Sort::singleton("type")))
-        }
+        },
         TokenKind::Ident | TokenKind::LongIdent => {
             let name: Arc<str> = Arc::from(s.src()?.as_str());
             s.adv();
             Some(Typ::Type { name, args: vec![] })
-        }
+        },
         TokenKind::Symbol(x) if x.as_ref() == "(" => {
             s.adv();
             let t = parse_typ(s)?;
             s.is_sym(")");
             s.adv();
             Some(t)
-        }
+        },
         _ => None,
     }
 }
@@ -226,9 +229,7 @@ fn parse_trm_flag(s: &mut P, stop_at_imp: bool) -> Option<Term> {
             "HOL.Collect",
             Typ::arrow(Typ::arrow(Typ::dummy(), Typ::base("bool")), Typ::base("set")),
         );
-        let abs_body = vars.into_iter().rfold(body, |b, n| {
-            Term::abs(n, Typ::dummy(), b)
-        });
+        let abs_body = vars.into_iter().rfold(body, |b, n| Term::abs(n, Typ::dummy(), b));
         return Some(Term::app(set_const, abs_body));
     }
     // Application: head arg1 arg2 ...
@@ -269,29 +270,23 @@ fn parse_trm_flag(s: &mut P, stop_at_imp: bool) -> Option<Term> {
         }
         let mut result = prems.remove(0);
         for p in prems {
-            result = make_binary("HOL.conj", result, p);
+            result = hologic::mk_conj(result, p);
         }
         return Some(result);
     }
     // Negation prefix: ~ P  or  \<not> P  or  ¬ P
     if s.is_sym("~") || s.is_sym("\\<not>") || s.is_sym("\u{00ac}") {
         s.adv();
-        let body = if let Some(b) = parse_trm(s) {
-            b
-        } else {
-            Term::const_("True", Typ::base("prop"))
-        };
+        let body =
+            if let Some(b) = parse_trm(s) { b } else { Term::const_("True", Typ::base("prop")) };
         let not_const = Term::const_("HOL.Not", Typ::arrow(Typ::base("prop"), Typ::base("prop")));
         return Some(Term::app(not_const, body));
     }
     // Unary minus (set complement, arithmetic negation)
     if s.is_sym("-") {
         s.adv();
-        let body = if let Some(b) = parse_trm(s) {
-            b
-        } else {
-            Term::const_("True", Typ::base("prop"))
-        };
+        let body =
+            if let Some(b) = parse_trm(s) { b } else { Term::const_("True", Typ::base("prop")) };
         let minus_const = Term::const_("HOL.uminus", Typ::arrow(Typ::dummy(), Typ::dummy()));
         return Some(Term::app(minus_const, body));
     }
@@ -341,7 +336,7 @@ fn parse_trm_flag(s: &mut P, stop_at_imp: bool) -> Option<Term> {
                         || s == "\\<subseteq>"
                         || s == "\\<inter>"
                         || s == "\\<union>"
-                }
+                },
                 _ => false,
             };
             if next_is_op {
@@ -432,11 +427,7 @@ fn parse_trm_flag(s: &mut P, stop_at_imp: bool) -> Option<Term> {
                     } else if s.is_sym("<") {
                         s.adv();
                     } // .< (unusual but handle)
-                    let upper = if !s.is_sym("}") {
-                        Some(parse_trm(s)?)
-                    } else {
-                        None
-                    };
+                    let upper = if !s.is_sym("}") { Some(parse_trm(s)?) } else { None };
                     if s.is_sym("}") {
                         s.adv();
                     }
@@ -467,11 +458,7 @@ fn parse_trm_flag(s: &mut P, stop_at_imp: bool) -> Option<Term> {
                     } else if s.is_sym("<") {
                         s.adv();
                     } // .< (unusual but handle)
-                    let upper = if !s.is_sym("}") {
-                        Some(parse_trm(s)?)
-                    } else {
-                        None
-                    };
+                    let upper = if !s.is_sym("}") { Some(parse_trm(s)?) } else { None };
                     if s.is_sym("}") {
                         s.adv();
                     }
@@ -553,7 +540,7 @@ fn parse_trm_flag(s: &mut P, stop_at_imp: bool) -> Option<Term> {
         if s.is_sym("&&&") || s.is_sym("&") || s.is_sym("\u{2227}") {
             s.adv();
             if let Some(rhs) = parse_trm(s) {
-                head = make_binary("HOL.conj", head.clone(), rhs);
+                head = hologic::mk_conj(head.clone(), rhs);
             }
             return Some(head);
         }
@@ -561,7 +548,7 @@ fn parse_trm_flag(s: &mut P, stop_at_imp: bool) -> Option<Term> {
         if s.is_sym("|||") || s.is_sym("|") || s.is_sym("\u{2228}") {
             s.adv();
             if let Some(rhs) = parse_trm(s) {
-                head = make_binary("HOL.disj", head.clone(), rhs);
+                head = hologic::mk_disj(head.clone(), rhs);
             }
             return Some(head);
         }
@@ -578,7 +565,7 @@ fn parse_trm_flag(s: &mut P, stop_at_imp: bool) -> Option<Term> {
         if s.is_sym("~=") {
             s.adv();
             if let Some(rhs) = parse_trm(s) {
-                head = make_binary("HOL.eq", head.clone(), rhs);
+                head = hologic::mk_eq(head.clone(), rhs);
                 let not_const =
                     Term::const_("HOL.Not", Typ::arrow(Typ::base("prop"), Typ::base("prop")));
                 head = Term::app(not_const, head);
@@ -590,7 +577,7 @@ fn parse_trm_flag(s: &mut P, stop_at_imp: bool) -> Option<Term> {
             s.adv();
             // Parse RHS without implication
             if let Some(rhs) = parse_trm_no_imp(s) {
-                head = make_binary("HOL.eq", head.clone(), rhs);
+                head = hologic::mk_eq(head.clone(), rhs);
             }
             continue;
         }
@@ -701,13 +688,13 @@ fn parse_trm_flag(s: &mut P, stop_at_imp: bool) -> Option<Term> {
                     s.adv();
                     let rhs = parse_trm(s)?;
                     return Some(make_binary("HOL.append", head, rhs));
-                }
+                },
                 "IFF" => {
                     s.adv();
                     let rhs = parse_trm(s)?;
-                    return Some(make_binary("HOL.eq", head, rhs));
-                }
-                _ => {}
+                    return Some(hologic::mk_eq(head, rhs));
+                },
+                _ => {},
             }
         }
 
@@ -795,10 +782,7 @@ fn parse_atom(s: &mut P) -> Option<Term> {
         let else_branch = parse_trm(s)?;
         // Build: HOL.If(cond, then, else)
         let if_const = Term::const_("HOL.If", Typ::dummy());
-        return Some(Term::app(
-            Term::app(Term::app(if_const, cond), then_branch),
-            else_branch,
-        ));
+        return Some(Term::app(Term::app(Term::app(if_const, cond), then_branch), else_branch));
     }
     // let expression: let x = e1 in e2
     if s.is_kw("let") {
@@ -897,11 +881,7 @@ fn parse_atom(s: &mut P) -> Option<Term> {
                 } else if s.is_sym("<") {
                     s.adv();
                 } // .< (unusual but handle)
-                let upper = if !s.is_sym("}") {
-                    Some(parse_trm(s)?)
-                } else {
-                    None
-                };
+                let upper = if !s.is_sym("}") { Some(parse_trm(s)?) } else { None };
                 if s.is_sym("}") {
                     s.adv();
                 }
@@ -925,11 +905,7 @@ fn parse_atom(s: &mut P) -> Option<Term> {
                     s.adv();
                 } // .< (unusual but handle)
                 // Parse the upper bound (optional)
-                let upper = if !s.is_sym("}") {
-                    Some(parse_trm(s)?)
-                } else {
-                    None
-                };
+                let upper = if !s.is_sym("}") { Some(parse_trm(s)?) } else { None };
                 if s.is_sym("}") {
                     s.adv();
                 }
@@ -976,7 +952,7 @@ fn parse_atom(s: &mut P) -> Option<Term> {
         TokenKind::Ident | TokenKind::LongIdent => {
             s.adv();
             Some(Term::free(Arc::from(src.as_str()), Typ::dummy()))
-        }
+        },
         TokenKind::String => {
             s.adv();
             if src.len() >= 2 {
@@ -984,11 +960,11 @@ fn parse_atom(s: &mut P) -> Option<Term> {
             } else {
                 Some(Term::const_(src, Typ::base("prop")))
             }
-        }
+        },
         TokenKind::Number => {
             s.adv();
             Some(Term::const_(src, Typ::base("nat")))
-        }
+        },
         TokenKind::Symbol(x) if x.as_ref() == "(" => {
             s.adv();
             // Check if next token is a known infix operator (operator section)
@@ -1011,7 +987,7 @@ fn parse_atom(s: &mut P) -> Option<Term> {
                         || s == "\\<subseteq>"
                         || s == "\\<inter>"
                         || s == "\\<union>"
-                }
+                },
                 _ => false,
             };
             if next_is_op {
@@ -1039,24 +1015,24 @@ fn parse_atom(s: &mut P) -> Option<Term> {
             s.is_sym(")");
             s.adv();
             Some(t)
-        }
+        },
         // Isabelle constant symbols (not operators)
         TokenKind::Symbol(x) if x.as_ref() == "\\<nat>" => {
             s.adv();
             Some(Term::const_("HOL.natSet", Typ::dummy()))
-        }
+        },
         TokenKind::Symbol(x) if x.as_ref() == "\\<top>" => {
             s.adv();
             Some(Term::const_("HOL.top", Typ::dummy()))
-        }
+        },
         TokenKind::Symbol(x) if x.as_ref() == "\\<bottom>" => {
             s.adv();
             Some(Term::const_("HOL.bot", Typ::dummy()))
-        }
+        },
         TokenKind::Symbol(x) if x.as_ref() == "\\<not>" => {
             s.adv();
             Some(Term::const_("HOL.Not", Typ::dummy()))
-        }
+        },
         _ => None,
     }
 }
@@ -1067,7 +1043,7 @@ pub fn print_type(typ: &Typ) -> String {
         Typ::Type { name, args } if args.is_empty() => name.to_string(),
         Typ::Type { name, args } if name.as_ref() == "fun" && args.len() == 2 => {
             format!("{} => {}", print_type(&args[0]), print_type(&args[1]))
-        }
+        },
         Typ::Type { name, .. } => name.to_string(),
         Typ::TFree { name, .. } => format!("'{name}"),
         Typ::TVar { name, index, .. } => format!("?'{name}.{index}"),
@@ -1085,7 +1061,7 @@ pub fn print_term(term: &Term) -> String {
             } else {
                 format!("%{name}::{} . {}", print_type(typ), print_term(body))
             }
-        }
+        },
         Term::App { func, arg } => format!("({} {})", print_term(func), print_term(arg)),
     }
 }

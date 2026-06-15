@@ -1,0 +1,221 @@
+# Isabelle-rs Skills Registry
+# ============================
+# Central manifest for all Claude Code skills.
+# Each skill entry defines its identity, triggers, dependencies,
+# permissions, and lifecycle status.
+
+[registry]
+version = "2.0.0"
+project = "isabelle-rs"
+updated = "2026-06-03"
+
+# =============================================================================
+# Skill Categories
+# =============================================================================
+#
+# verification  — lemma verification, test running, failure diagnosis
+# debugging     — stack overflow, performance, build errors
+# safety        — kernel audits, type safety, LCF invariants
+# development   — adding methods, commands, porting from ML
+# theory        — theory building, DB search, parse debugging
+# release       — version bumps, changelog, doc sync
+# meta          — benchmarks, test matrices
+
+# =============================================================================
+# Skill Definitions
+# =============================================================================
+
+[[skills]]
+id = "verify"
+name = "Verify Lemma"
+description = "Verify lemma(s) through the six-layer fallback architecture. Run tests, diagnose failures, debug proof search."
+category = "verification"
+status = "active"
+version = "2.0.0"
+triggers = ["lemma verification", "proof failure", "test failure", "this lemma doesn't prove", "verify fails"]
+permissions = ["Bash:cargo test", "Bash:cargo run", "Read", "Grep"]
+depends_on = [".claude/rules/testing.md", ".claude/rules/proof-methods.md", ".claude/rules/kernel.md"]
+related_skills = ["debug-overflow", "audit-kernel"]
+lifecycle = { created = "2026-06-03", last_reviewed = "2026-06-03", review_interval_days = 30 }
+
+[[skills]]
+id = "debug-overflow"
+name = "Debug Stack Overflow"
+description = "Diagnose stack overflow errors and select the right iterative conversion pattern (stack, worklist, continuation frames, iterative deepening)."
+category = "debugging"
+status = "active"
+version = "2.0.0"
+triggers = ["stack overflow", "overflowed its stack", "SIGABRT", "recursion too deep", "stack overflow at"]
+permissions = ["Bash:cargo test", "Bash:RUST_MIN_STACK", "Read"]
+depends_on = [".claude/rules/iterative.md"]
+related_skills = ["verify", "bench"]
+lifecycle = { created = "2026-06-03", last_reviewed = "2026-06-03", review_interval_days = 60 }
+
+[[skills]]
+id = "audit-kernel"
+name = "Audit Kernel"
+description = "Audit kernel code for safety violations: Typ::dummy() presence, Thm field initialization, tpairs/shyps propagation, CTerm invariants."
+category = "safety"
+status = "active"
+version = "2.0.0"
+triggers = ["kernel change", "thm.rs", "logic.rs", "drule.rs", "more_thm.rs", "new inference rule", "kernel safety"]
+permissions = ["Bash:rg", "Bash:cargo test", "Read"]
+depends_on = [".claude/rules/kernel.md"]
+related_skills = ["verify", "refactor"]
+lifecycle = { created = "2026-06-03", last_reviewed = "2026-06-03", review_interval_days = 60 }
+
+[[skills]]
+id = "add-method"
+name = "Add Proof Method"
+description = "Add a new proof method following the 4-step pattern: enum variant → execute dispatch → implementation → name resolution."
+category = "development"
+status = "active"
+version = "2.0.0"
+triggers = ["add proof method", "new search strategy", "port method from Isabelle", "add tactic"]
+permissions = ["Bash:cargo test", "Bash:cargo check", "Read", "Edit"]
+depends_on = [".claude/rules/proof-methods.md"]
+related_skills = ["add-isar-command", "port-isabelle", "verify"]
+lifecycle = { created = "2026-06-03", last_reviewed = "2026-06-03", review_interval_days = 60 }
+
+[[skills]]
+id = "add-isar-command"
+name = "Add Isar Command"
+description = "Add a new Isar proof language command to the three-mode state machine (Forward/Chain/Backward) with proper goal refinement."
+category = "development"
+status = "active"
+version = "2.0.0"
+triggers = ["add Isar command", "proof language", "state machine", "have/show", "fix/assume", "qed"]
+permissions = ["Bash:cargo test", "Bash:cargo check", "Read", "Edit"]
+depends_on = [".claude/rules/isar.md"]
+related_skills = ["add-method", "verify"]
+lifecycle = { created = "2026-06-03", last_reviewed = "2026-06-03", review_interval_days = 60 }
+
+[[skills]]
+id = "port-isabelle"
+name = "Port from Isabelle"
+description = "Port a function or module from Isabelle/ML to isabelle-rs Rust. Map ML types to Rust, translate patterns, add LCF kernel integration."
+category = "development"
+status = "active"
+version = "2.0.0"
+triggers = ["port from Isabelle", "Isabelle ML", "ML to Rust", "new module from Isabelle", "port ML"]
+permissions = ["Bash:cargo test", "Bash:cargo check", "Read", "Edit", "Grep"]
+depends_on = [".claude/rules/kernel.md", ".claude/rules/api-design.md", "docs/GAP_ANALYSIS.md"]
+related_skills = ["add-method", "refactor", "audit-kernel"]
+lifecycle = { created = "2026-06-03", last_reviewed = "2026-06-03", review_interval_days = 60 }
+
+[[skills]]
+id = "refactor"
+name = "Safe Refactor"
+description = "Safely refactor isabelle-rs code. Project-specific patterns: kernel safety constraints, method dispatch, theory pipeline, attribute classification."
+category = "development"
+status = "active"
+version = "2.0.0"
+triggers = ["refactor", "extract module", "rename", "restructure", "code smell", "clean up"]
+permissions = ["Bash:cargo test", "Bash:cargo clippy", "Bash:cargo fmt", "Read", "Edit", "Grep"]
+depends_on = [".claude/rules/refactoring.md", ".claude/rules/api-design.md"]
+related_skills = ["audit-kernel", "add-method", "build-theory"]
+lifecycle = { created = "2026-06-03", last_reviewed = "2026-06-03", review_interval_days = 90 }
+
+[[skills]]
+id = "build-theory"
+name = "Build Theory"
+description = "Build and verify .thy theory files through the TheoryProcessor pipeline. Parse, compile, debug parse failures, generate verification reports."
+category = "theory"
+status = "active"
+version = "2.0.0"
+triggers = ["theory loading", ".thy file", "parse failure", "batch compile", "session build", "load theory"]
+permissions = ["Bash:cargo test", "Bash:cargo run", "Read"]
+depends_on = [".claude/rules/theory-loading.md", ".claude/rules/isar.md"]
+related_skills = ["verify", "search-db"]
+lifecycle = { created = "2026-06-03", last_reviewed = "2026-06-03", review_interval_days = 60 }
+
+[[skills]]
+id = "search-db"
+name = "Search Theorem Database"
+description = "Quick reference for navigating the HolTheoremDb (42K+ theorems) by name, type convention, pattern (net), or attribute category."
+category = "theory"
+status = "active"
+version = "2.0.0"
+triggers = ["find theorem", "lookup rule", "search database", "theorem by name", "where is"]
+permissions = ["Read", "Grep"]
+depends_on = []
+related_skills = ["build-theory", "verify"]
+lifecycle = { created = "2026-06-03", last_reviewed = "2026-06-03", review_interval_days = 90 }
+
+[[skills]]
+id = "bench"
+name = "Run Benchmarks"
+description = "Run the complete test matrix at appropriate stack sizes. Check which suites pass and identify regressions."
+category = "meta"
+status = "active"
+version = "2.0.0"
+triggers = ["benchmark", "performance", "test all", "regression test", "run all tests"]
+permissions = ["Bash:cargo test", "Bash:RUST_MIN_STACK"]
+depends_on = [".claude/rules/testing.md", ".claude/rules/performance.md"]
+related_skills = ["verify", "debug-overflow"]
+lifecycle = { created = "2026-06-03", last_reviewed = "2026-06-03", review_interval_days = 60 }
+
+[[skills]]
+id = "release"
+name = "Release Phase"
+description = "Complete a development phase release: summarize changes, verify correctness, bump version, sync 12 documentation files."
+category = "release"
+status = "active"
+version = "2.0.0"
+triggers = ["release", "version bump", "phase complete", "changelog", "cut release"]
+permissions = ["Bash:cargo test", "Bash:cargo check", "Bash:cargo clippy", "Read", "Edit", "Bash:git"]
+depends_on = [".claude/rules/phase-sop.md", ".claude/rules/release.md"]
+related_skills = ["verify", "bench"]
+lifecycle = { created = "2026-06-03", last_reviewed = "2026-06-03", review_interval_days = 90 }
+
+[[skills]]
+id = "run-isabelle-rs"
+name = "Run Isabelle-rs"
+description = "Build, run, test, or verify isabelle-rs. Launch the demo, compile .thy files, run the LSP server, test a change, or verify the kernel is operational."
+category = "development"
+status = "active"
+version = "1.0.0"
+triggers = ["run", "start", "build", "screenshot", "demo", "compile", "launch"]
+permissions = ["Bash:cargo build", "Bash:cargo run", "Bash:cargo test", "Bash:RUST_MIN_STACK"]
+depends_on = ["CLAUDE.md"]
+related_skills = ["verify", "bench", "build-theory"]
+lifecycle = { created = "2026-06-16", last_reviewed = "2026-06-16", review_interval_days = 60 }
+
+[[skills]]
+id = "sync-docs"
+name = "Sync Documentation"
+description = "Sync docs/ and .claude/ after code changes. Run after modifying src/, adding features, or changing APIs. Keeps ARCHITECTURE.md, GAP_ANALYSIS.md, ROADMAP.md, DEVELOPMENT.md, CLAUDE.md, and skills in sync with the code."
+category = "maintenance"
+status = "active"
+version = "1.0.0"
+triggers = ["sync docs", "update docs", "doc sync", "stale docs", "after code change", "update documentation"]
+permissions = ["Read", "Write", "Edit", "Bash:git", "Bash:cargo"]
+depends_on = [".claude/rules/phase-sop.md", ".claude/rules/documentation.md"]
+related_skills = ["release", "refactor"]
+lifecycle = { created = "2026-06-16", last_reviewed = "2026-06-16", review_interval_days = 60 }
+
+# =============================================================================
+# Skill Lifecycle States
+# =============================================================================
+#
+# active       — in regular use, maintained
+# experimental — new, not yet fully validated
+# deprecated   — superseded, will be removed
+# retired      — removed, kept for reference
+
+# =============================================================================
+# Permission Categories
+# =============================================================================
+#
+# Bash:cargo test    — run test suites
+# Bash:cargo check   — compile checks
+# Bash:cargo clippy  — lint checks
+# Bash:cargo fmt     — format checks
+# Bash:cargo run     — run CLI binaries
+# Bash:rg            — ripgrep searches
+# Bash:git           — git operations
+# Bash:RUST_MIN_STACK — needs stack env var
+# Read               — read source files
+# Edit               — modify source files
+# Grep               — content search
+# Write              — create new files

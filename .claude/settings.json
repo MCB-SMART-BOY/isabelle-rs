@@ -1,0 +1,115 @@
+{
+  "project": {
+    "name": "isabelle-rs",
+    "description": "Rust reimplementation of the Isabelle proof assistant kernel",
+    "language": "rust",
+    "buildCommand": "cargo build",
+    "testCommand": "cargo test",
+    "stackRequirement": "RUST_MIN_STACK=268435456"
+  },
+
+  "permissions": {
+    "allow": [
+      "Bash:cargo build",
+      "Bash:cargo bench",
+      "Bash:cargo check",
+      "Bash:cargo test",
+      "Bash:cargo run --bin isabelle-build",
+      "Bash:cargo clippy",
+      "Bash:cargo fmt",
+      "Bash:cargo fix",
+      "Bash:rg *",
+      "Read",
+      "Write",
+      "Edit",
+      "Glob",
+      "Grep"
+    ],
+    "deny": [
+      "Bash:rm -rf /*",
+      "Bash:git push --force",
+      "Bash:gh pr merge",
+      "WebSearch",
+      "WebFetch"
+    ],
+    "ask": [
+      "Bash:git commit",
+      "Bash:git push",
+      "Bash:gh pr create",
+      "Bash:gh release create",
+      "Bash:RUST_MIN_STACK=* cargo test test_verify_all_core_files"
+    ]
+  },
+
+  "model": {
+    "preferred": "sonnet",
+    "fallback": "haiku"
+  },
+
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo \"Editing file: $CLAUDE_TOOL_FILE_PATH\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'EDITED=\"$CLAUDE_TOOL_FILE_PATH\"; if echo \"$EDITED\" | grep -q \"^src/\"; then SRC_CHANGES=$(git diff --name-only HEAD -- src/ 2>/dev/null | wc -l); if [ \"$SRC_CHANGES\" -gt 10 ]; then echo \"[doc-sync] ⚠ $SRC_CHANGES src files changed. Docs may be stale. Use /sync-docs to update docs/ and .claude/\"; fi; fi'"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": []
+      }
+    ]
+  },
+
+  "rules": {
+    "rulesDir": ".claude/rules",
+    "docsDir": "docs",
+    "isabelleSourceDir": "isabelle-source",
+    "theoriesDir": "theories"
+  },
+
+  "environments": {
+    "default": {
+      "RUST_BACKTRACE": "1",
+      "RUST_MIN_STACK": "268435456"
+    },
+    "debug": {
+      "RUST_BACKTRACE": "full",
+      "RUST_MIN_STACK": "268435456"
+    },
+    "release": {
+      "RUST_MIN_STACK": "268435456"
+    }
+  },
+
+  "commands": {
+    "verifyAll": {
+      "command": "RUST_MIN_STACK=268435456 cargo test test_verify_all_core_files -- --nocapture",
+      "description": "Run full core verification (5 files, needs 256MB stack)"
+    },
+    "benchAll": {
+      "command": "RUST_MIN_STACK=268435456 cargo test --lib",
+      "description": "Run all lib tests with required stack"
+    },
+    "quickTest": {
+      "command": "cargo test --lib core::thm core::unify tools::metis",
+      "description": "Fast kernel + metis tests (32MB stack)"
+    }
+  }
+}
