@@ -27,15 +27,17 @@
 | Verification | **Core 5/5 files 100% (125/125)**, Tier2 6/20 files 100% |
 | isabelle-source | ✅ Isabelle 2025 full distribution (364MB, 1,473 .thy files) |
 
-## Active Strategy: Route A — Stability First
+## Active Strategy: Route A → v1.9.0
 
 ```
 1. ✅ Fix 5 failing tests
 2. ✅ Fix OOM/stack overflow root causes
-3. 🔄 Expand Tier2 verification (tmux session 'tier2': 6/19 files 100% so far)
-4. ✅ Complete attribute system integration (begin_lemma + lemmas + declare + attrs prop)
-5. 🔄 Full documentation sync (current)
+3. ✅ Tier2 verification: 6/16 files 100% (Fields/Num bottleneck identified)
+4. ✅ Complete attribute system (class assumes + attrs_index)
+5. ✅ Full documentation sync
 ```
+
+**Next: `.claude/rules/next-phase.md`** — Phase 3.1-3.3 plan for v1.9.0
 
 ## Known Issues
 
