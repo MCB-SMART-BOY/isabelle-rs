@@ -41,10 +41,11 @@
 
 | Issue | Severity | Detail |
 |-------|:--------:|--------|
-| Fields.thy prover bottleneck | 🟡 Medium | Arithmetic lemmas cause memory growth (373MB+); needs field_simps optimization |
-| Tier2 verification in progress | 🟡 Medium | tmux 'tier2': 6/19 files 100% ✅ (Fun→Rings), Fields running |
+| Fields.thy prover bottleneck | 🟡 Medium | 根因: `by (simp add: field_simps)` → named_theorems 无法解析 → exec_proof fallback 链触发 auto/blast 深度搜索. 已加 deadline 保护, 但单个 simplifier rewrite 仍需优化 |
+| Num.thy prover bottleneck | 🟡 Medium | 354 simp calls, same root cause as Fields |
+| Tier2 verification in progress | 🟡 Medium | tmux 'tier2': 6/18 files 100% ✅ (Fun→Rings) |
+| ctr_sugar split pop bug | ✅ Fixed | 3处 empty Vec pop().unwrap() → is_empty 检查 |
 | LazyLock DB init slow | 🟡 Medium | First HolTheoremDb::get() loads all 1,473 .thy files; should be on-demand |
-| ctr_sugar test_verify_systematic | 🟢 Low | disj_parts.pop().unwrap() pre-existing bug |
 | hologic constants (3 remaining) | 🟢 Low | Intentional: prop eq, term_builder, comment |
 
 
@@ -67,6 +68,7 @@
 15. **After every task completion, audit the changed code** — 每次完成任何任务/Phase/功能后，必须审计变更的代码：(a) 内核变更 → `/audit-kernel`, (b) 证明方法变更 → `/verify` + 回归测试, (c) 任何 src/ 变更 → `cargo check --lib` + `cargo test --lib` (相关模块), (d) 检查是否有新的 `Typ::dummy()`、裸 `Term::const_("HOL.xxx")` 绕过 hologic、重复实现。
 16. **At the end of EVERY conversation, update .claude/** — `.claude/rules/README.md` (状态表/已知问题), `.claude/rules/phase-sop.md` (完成清单), `CLAUDE.md` (项目状态). This ensures the next session starts with accurate state. Don't wait for the user to ask.
 17. **Commit messages in Chinese, NO Co-Authored-By** — 提交信息用中文。禁止添加 `Co-Authored-By:` 或任何形式的 AI 署名。所有 commit 由 MCB-SMART-BOY 提交。See `## Commit Rules` below.
+18. **All proof method entry points must check VERIFY_DEADLINE** — `auto_exec`, `exec_simp`, `exec_proof` fallback chains, and any function that triggers deep recursive proof search must check `VERIFY_DEADLINE` at entry. This prevents single slow lemmas (e.g., `by (simp add: field_simps)` without matched named_theorems) from hanging the entire verification. See `src/isar/method.rs` VERIFY_DEADLINE checks.
 
 ## Architecture
 
