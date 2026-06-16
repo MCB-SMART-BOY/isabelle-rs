@@ -1245,7 +1245,13 @@ pub fn exec_proof(state: &Thm, proof_script: &str, premises: &[Arc<Thm>]) -> Opt
                 next_states.extend(results);
             }
             if next_states.is_empty() {
-                // Fallback: try auto/blast on previous states
+                // Fallback: try auto/blast on previous states (with deadline check)
+                let expired = VERIFY_DEADLINE.with(|c| {
+                    c.get().map_or(false, |d| std::time::Instant::now() >= d)
+                });
+                if expired {
+                    return None;
+                }
                 for s in &current_states {
                     for r in Method::Auto.execute(s, premises) {
                         if r.nprems() == 0 {
@@ -1273,9 +1279,17 @@ pub fn exec_proof(state: &Thm, proof_script: &str, premises: &[Arc<Thm>]) -> Opt
             return Some(r);
         }
         // Fallback chain: solve_by_assumption → premise-unify → auto → blast
+        // Each phase checks VERIFY_DEADLINE to prevent unbounded search.
         if let Some(best) = best {
             if let Some(solved) = solve_by_assumption(&best, premises) {
                 return Some(solved);
+            }
+            // Check deadline before expensive premise unification loop
+            let expired = VERIFY_DEADLINE.with(|c| {
+                c.get().map_or(false, |d| std::time::Instant::now() >= d)
+            });
+            if expired {
+                return None;
             }
             // Try bicompose with each premise (unification) to close schematic subgoals
             let mut current = best.clone();
@@ -1297,10 +1311,23 @@ pub fn exec_proof(state: &Thm, proof_script: &str, premises: &[Arc<Thm>]) -> Opt
             if current.nprems() == 0 {
                 return Some(current);
             }
+            // Check deadline before auto/blast (expensive deep search)
+            let expired = VERIFY_DEADLINE.with(|c| {
+                c.get().map_or(false, |d| std::time::Instant::now() >= d)
+            });
+            if expired {
+                return None;
+            }
             for r in Method::Auto.execute(&current, premises) {
                 if r.nprems() == 0 {
                     return Some(r);
                 }
+            }
+            let expired = VERIFY_DEADLINE.with(|c| {
+                c.get().map_or(false, |d| std::time::Instant::now() >= d)
+            });
+            if expired {
+                return None;
             }
             for r in Method::Blast.execute(&current, premises) {
                 if r.nprems() == 0 {
