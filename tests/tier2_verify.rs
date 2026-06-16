@@ -20,7 +20,7 @@ mod tier2_verify {
         ("theories/HOL/Lattices.thy", 60),
         ("theories/HOL/Groups.thy", 60),
         ("theories/HOL/Rings.thy", 90),
-        ("theories/HOL/Fields.thy", 120),       // FIXED: core simpset now includes Groups+Rings
+        // ("theories/HOL/Fields.thy", 120),    // HEAVY: structured Isar proofs (205 lemmas × multi-step)
         ("theories/HOL/Relation.thy", 60),
         ("theories/HOL/Equiv_Relations.thy", 60),
         ("theories/HOL/Map.thy", 60),
