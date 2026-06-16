@@ -33,6 +33,20 @@ mod tier2_verify {
         ("theories/HOL/Transitive_Closure.thy", 60),  // Phase 3.2: memory-bounded search
         // ("theories/HOL/Partial_Function.thy", 60), // BLOCKED: memory explosion
         // ("theories/HOL/Divides.thy", 90),    // NOT FOUND in theories/HOL/
+        // ── Tier2+ Expansion (Phase 4) ──
+        ("theories/HOL/Option.thy", 60),
+        ("theories/HOL/Boolean_Algebras.thy", 60),
+        ("theories/HOL/Complete_Partial_Order.thy", 60),
+        ("theories/HOL/Order_Relation.thy", 60),
+        ("theories/HOL/Factorial.thy", 60),
+        ("theories/HOL/Semiring_Normalization.thy", 60),
+        ("theories/HOL/Groups_List.thy", 60),
+        ("theories/HOL/Wfrec.thy", 60),
+        ("theories/HOL/Inductive.thy", 60),
+        ("theories/HOL/Typedef.thy", 60),
+        ("theories/HOL/Parity.thy", 90),
+        ("theories/HOL/Lattices_Big.thy", 90),
+        ("theories/HOL/Conditionally_Complete_Lattices.thy", 90),
     ];
 
     #[test]
