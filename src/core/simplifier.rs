@@ -192,10 +192,13 @@ impl Simplifier {
         None
     }
 
+    /// Maximum rewrite depth (aligned with Isabelle's simp_depth_limit = 40).
+    const MAX_REWRITE_DEPTH: usize = 40;
+
     /// Repeatedly rewrite a term until no rule applies.
     pub fn rewrite_all(&self, term: &Term) -> Term {
         let mut current = term.clone();
-        loop {
+        for _ in 0..Self::MAX_REWRITE_DEPTH {
             match self.rewrite(&current) {
                 Some((next, _)) if next != current => current = next,
                 Some(_) => break,
@@ -213,7 +216,7 @@ impl Simplifier {
     /// rewrites body and lifts via `ThmKernel::abstraction`.
     pub fn rewrite_deep(&self, term: &Term) -> Option<(Term, Thm)> {
         // Step 1: bottom-up — rewrite subterms first
-        let (inner_term, inner_thm_opt) = self.rewrite_subterms(term);
+        let (inner_term, inner_thm_opt) = self.rewrite_subterms(term, 0);
 
         // Step 2: try top-level rewrite on the (possibly already rewritten) term
         if let Some((result, thm)) = self.rewrite(&inner_term) {
@@ -232,11 +235,15 @@ impl Simplifier {
     }
 
     /// Rewrite immediate subterms, returning the new term and an optional equality proof.
-    fn rewrite_subterms(&self, term: &Term) -> (Term, Option<Thm>) {
+    /// `depth` tracks recursion depth; capped at MAX_REWRITE_DEPTH.
+    fn rewrite_subterms(&self, term: &Term, depth: usize) -> (Term, Option<Thm>) {
+        if depth > Self::MAX_REWRITE_DEPTH {
+            return (term.clone(), None);
+        }
         match term {
             Term::App { func, arg } => {
-                let (new_func, func_thm) = self.rewrite_subterms(func);
-                let (new_arg, arg_thm) = self.rewrite_subterms(arg);
+                let (new_func, func_thm) = self.rewrite_subterms(func, depth + 1);
+                let (new_arg, arg_thm) = self.rewrite_subterms(arg, depth + 1);
 
                 let func_changed = func_thm.is_some();
                 let arg_changed = arg_thm.is_some();
@@ -259,7 +266,7 @@ impl Simplifier {
                 }
             },
             Term::Abs { name, typ, body } => {
-                let (new_body, body_thm) = self.rewrite_subterms(body);
+                let (new_body, body_thm) = self.rewrite_subterms(body, depth + 1);
                 if let Some(thm) = body_thm {
                     let new_term = Term::abs(Arc::clone(name), typ.clone(), new_body);
                     if let Ok(abs_thm) = ThmKernel::abstraction(name, typ.clone(), &thm) {
