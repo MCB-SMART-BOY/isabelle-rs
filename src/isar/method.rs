@@ -2737,6 +2737,13 @@ fn exec_arith(state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
 }
 
 fn exec_simp(method_str: &str, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
+    // Check soft deadline — avoid expensive rewrite on expired budget
+    let expired = VERIFY_DEADLINE.with(|c| {
+        c.get().map_or(false, |d| std::time::Instant::now() >= d)
+    });
+    if expired {
+        return vec![];
+    }
     let db = HolTheoremDb::get();
     let rest = if method_str == "simp" { "" } else { &method_str[4..] };
     let rest = rest.trim();

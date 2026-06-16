@@ -71,9 +71,14 @@ mod tier2_verify {
             let lemma_count =
                 source.matches("lemma ").count() + source.matches("theorem ").count();
             let auto_limit = if lemma_count > 400 {
-                8
+                5
             } else if lemma_count > 200 {
-                12
+                // Arithmetic-heavy files (>200 lemmas): very aggressive limit
+                if name == "Fields" || name == "Num" {
+                    3
+                } else {
+                    10
+                }
             } else if lemma_count > 100 {
                 20
             } else {
