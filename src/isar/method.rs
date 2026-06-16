@@ -28,6 +28,10 @@ thread_local! {
     pub(crate) static LOCAL_THEOREM_INDEX: std::cell::RefCell<std::collections::HashMap<String, Arc<Thm>>> = std::cell::RefCell::new(std::collections::HashMap::new());
     /// Soft deadline for verify_file — when exceeded, verification returns partial results.
     pub(crate) static VERIFY_DEADLINE: Cell<Option<std::time::Instant>> = Cell::new(None);
+    /// Proof search budget — tracks remaining branch-expansion allowance.
+    /// Starts at a high value; decremented on each auto_exec entry.
+    /// When zero, auto_exec returns immediately without expanding branches.
+    pub(crate) static PROOF_SEARCH_BUDGET: Cell<usize> = Cell::new(200);
 }
 
 // =========================================================================
@@ -1030,9 +1034,23 @@ impl Method {
         if expired {
             return vec![state.clone()];
         }
+        // Check search budget — each recursive auto_exec entry costs 1
+        let budget_left = PROOF_SEARCH_BUDGET.with(|c| {
+            let b = c.get();
+            if b > 0 {
+                c.set(b - 1);
+            }
+            b
+        });
+        if budget_left == 0 {
+            return vec![state.clone()];
+        }
         if depth > 15 || state.nprems() == 0 {
             return vec![state.clone()];
         }
+
+        // Depth-based branch limit: shallow = explore more, deep = prune aggressively
+        let branch_limit = if depth > 10 { 3 } else if depth > 5 { 8 } else { 25 };
 
         // 0. Safe rules: apply safe intro/elim rules exhaustively via nets
         let current = Self::apply_safe_rules(state, premises);
@@ -1048,14 +1066,19 @@ impl Method {
             }
         }
 
-        // 2. Safe: simp on first subgoal
+        // 2. Safe: simp on first subgoal (with branch limit)
         let db = HolTheoremDb::get();
         let simp_rules: Vec<RewriteRule> =
             db.simps.iter().filter_map(|t| RewriteRule::from_thm(Arc::clone(t))).collect();
         let simp = Simplifier::new(simp_rules);
         let simp_results = tactic::simp_tac(simp, 0)(&current);
+        let mut simp_branches = 0usize;
         for r in &simp_results {
             if r.nprems() != current.nprems() {
+                if simp_branches >= branch_limit / 2 {
+                    break; // Prune simp branches
+                }
+                simp_branches += 1;
                 let sub = Self::auto_exec(r, depth + 1, premises);
                 for s in &sub {
                     if s.nprems() == 0 {
@@ -1092,10 +1115,15 @@ impl Method {
         };
 
         let mut all_solved = Vec::new();
+        let mut branch_count = 0usize;
         for r in resolve_results.iter().chain(eresolve_results.iter()) {
             if r.nprems() == 0 {
                 all_solved.push(r.clone());
             } else if r.nprems() < current.nprems() + 5 {
+                if branch_count >= branch_limit {
+                    break; // Prune: too many branches at this depth
+                }
+                branch_count += 1;
                 let sub = Self::auto_exec(r, depth + 1, premises);
                 for s in &sub {
                     if s.nprems() == 0 {
@@ -3185,6 +3213,13 @@ pub fn clear_verify_deadline() {
     VERIFY_DEADLINE.with(|c| c.set(None));
 }
 
+/// Set the proof search budget — maximum number of recursive auto_exec entries allowed.
+/// When exhausted, auto_exec returns immediately without expanding more branches.
+/// Use higher values (200-500) for complex files, lower (50-100) for fast scans.
+pub fn set_search_budget(budget: usize) {
+    PROOF_SEARCH_BUDGET.with(|c| c.set(budget));
+}
+
 /// Verify a single .thy file using a local DB — no global LazyLock init.
 /// Returns (verified_count, attempted_count).
 /// Uses 3-phase approach: parse with empty DB → build local DB → verify with override.
@@ -3203,6 +3238,8 @@ pub fn verify_file(source: &str) -> (usize, usize) {
         200
     };
     AUTO_LIMIT.with(|c| c.set(auto_max));
+    // Reset per-file search budget (controls memory via branch pruning)
+    PROOF_SEARCH_BUDGET.with(|c| c.set(200));
     HolTheoremDb::with_override(&local_db, || verify_lemmas_batch(&lemmas))
 }
 
