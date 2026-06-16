@@ -24,7 +24,7 @@
 | **spec** | ✅ Definition/Axiomatization/Abbreviation/TypeAbbrev/Typedecl parsers integrated (Phase 52-54 done) |
 | Code | ~54K Rust LOC, 124 files |
 | Tests | 714 (638 lib + 76 integration) |
-| Verification | **Core 5/5 files 100% (125/125)**, Tier2 6/20 files 100% |
+| Verification | **Core 5/5 files 100% (125/125)**, **Tier2 24/24 files 100% (2671/2671)** |
 | isabelle-source | ✅ Isabelle 2025 full distribution (364MB, 1,473 .thy files) |
 
 ## Active Strategy: v1.9.0 Released
