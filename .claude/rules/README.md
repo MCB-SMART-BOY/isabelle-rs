@@ -64,25 +64,29 @@ updated: 2026-06-16
 | Ctr_Sugar | case/disc/sel/split/cong/nchotomy/size 定理生成 |
 | Meson | Model elimination prover — 1st-class proof method |
 | Transfer/Lifting | Transfer rule generation + rel_fun/rel_set + quotient type theorems |
-| 属性系统 | attrib.rs ✅ Route A 补完: begin_lemma + lemmas + declare + attrs存储 |
-| 方法组合子 | THEN/ORELSE/REPEAT |
+| 属性系统 | ✅ class assumes + attrs_index + lemmas + declare (Route A 完整) |
+| 核心 simpset | ✅ 8 基础理论 (HOL→Groups→Rings), OnceLock 缓存 |
+| 内存限界 | ✅ PROOF_SEARCH_BUDGET + 深度分支剪枝 |
+| VERIFY_DEADLINE | ✅ 7 检查点全覆盖 |
 | 模块 | core (33), isar (19), hol (22), theory (8) + tools (7) + server/lsp/session/syntax (30) |
 | Isar 命令 | 30+ 种 |
 | 理论命令 | locale/class/instance/interpretation/typedef/record/datatype/fun/inductive |
 | 代码 | ~54K Rust LOC, 124 files |
-| 测试 | 714 (638 lib + 76 integration) |
-| 验证 | Core 5/5 files 125/125 (100%), Tier2 6/20 files 100% |
-| 路线图 | Phase 0-54 完成, Route A 进行中 |
+| 测试 | 700+ (638 lib + 76 integration) |
+| 验证 | **Core 5/5 files 125/125 (100%), Tier2 36/36 files 2959/2959 (100%)** |
+| 速度 | Tier2 513s (8.5 min); Rings 14s (曾 56s, 4x 加速) |
+| 路线图 | v1.9.0 发布, Route A 完成, Phase 3 完成 |
 
 ## 已知问题
 
 | 问题 | 严重度 | 详情 |
 |------|:--:|------|
-| Fields/Num 算术瓶颈 | 🟡 中 | 根因: `by (simp add: field_simps)` → named_theorems 无法解析 → exec_proof fallback 链触发 auto/blast 深度搜索. VERIFY_DEADLINE 已保护 fallback 链 |
-| Tier2 验证进行中 | 🟡 中 | tmux 'tier2': 6/18 files 100% ✅ (Fun→Rings), Fields/Num AUTO_LIMIT=3 |
-| HolTheoremDb LazyLock 初始化 | 🟡 中 | 首次 `get()` 加载全部 1,473 .thy files, 需按需加载 |
-| ctr_sugar split pop bug | ✅ 已修复 | 3 处 empty Vec pop().unwrap() → is_empty 检查 |
-| hologic 常量残留 (3 处) | 🟢 低 | hol_loader prop eq + term_builder unused + comment — 有意保留 |
+| Fields/Num — 结构化 Isar 证明回放 | 🟡 中 | 205 lemmas × multi-step proofs, Isar 引擎瓶颈 (非数据流) |
+| Hilbert_Choice/Transitive_Closure — auto/blast 密集 | 🟡 中 | 内存预算保护但极慢 |
+| Finite_Set — 大文件 | 🟡 中 | 281 lemmas, 372 simp, 3h+ |
+| Partial_Function — 内存爆炸 | 🟡 中 | 25GB+ OOM |
+| HolTheoremDb LazyLock 初始化 | 🟡 中 | 首次 `get()` 加载全部 1,473 .thy files |
+| hologic 常量残留 (3 处) | 🟢 低 | 有意保留 |
 
 ## 架构
 

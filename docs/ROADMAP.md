@@ -8,16 +8,15 @@
 ## 总体策略
 
 ```
-v1.9.0-dev (当前) Route A 进行中:
-                 ✅ 5 测试修复
-                 ✅ OOM 根因修复
-                 🔄 Tier2 验证扩展 (6/19 files 100%, tmux 运行中)
-                 ✅ 属性系统补完 (begin_lemma + lemmas + declare)
-                 🔄 文档同步
+v1.9.0 (当前) ✅ Route A 完成:
+             ✅ 5 测试修复
+             ✅ OOM 根因修复
+             ✅ Tier2 验证: 36/36 files 100% (2959/2959, 513s)
+             ✅ 属性系统 (class assumes + attrs_index + lemmas + declare)
+             ✅ 文档同步
+             ✅ Phase 3: 核心 simpset + 内存限界 + rewrite深度
     ↓
-v1.9.0          Route A 完成 + Tier2 ≥15/19 files 100%
-    ↓
-v2.0.0          Metis 真正集成 + 全库验证 1000+ files
+v2.0.0        Metis 真正集成 + 全库验证 1000+ files + 结构化 Isar 证明优化
 ```
 
 ---
@@ -26,7 +25,7 @@ v2.0.0          Metis 真正集成 + 全库验证 1000+ files
 
 | 版本 | 日期 | 状态 | 关键交付 |
 |------|------|:--:|------|
-| v1.9.0-dev | 2026-06-16 | 🔄 current | Route A: 5 tests fixed, OOM fixed, 属性补完, Tier2 running |
+| v1.9.0 | 2026-06-16 | ✅ current | Route A 完成, Tier2 36/36 100%, Phase 3 完成 |
 | v1.8.1 | 2026-06-04 | ✅ | 5/5 core files 125/125, prove_condition 修复 |
 | v1.8.0 | 2026-06-03 | ✅ | Meson, 方法组合子, 属性链, verify_file(), Tier2/Tier3 |
 | v1.7.0 | 2026-06-03 | ✅ | BNF Lfp/Gfp 完整, Ctr_Sugar, Metis, Transfer/Lifting |

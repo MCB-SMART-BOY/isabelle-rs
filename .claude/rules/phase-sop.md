@@ -97,17 +97,19 @@ RUST_MIN_STACK=268435456 cargo test test_verify_all_core_files --lib -- --nocapt
 - [x] 构建零警告 (cargo check --lib)
 - [x] 裸 HOL const 调用: 100+ → 3 (有意的)
 
-## Route A 待完成项
+## v1.9.0 完成确认
 
-- [x] 修复 5 个测试失败 ✅ v1.8.1
-- [x] 定位 + 修复 OOM/栈溢出 ✅ v1.9.0-dev
-- [ ] Tier2 验证扩展 (6/19 files 100% so far, tmux 'tier2' running)
-- [x] 属性系统补完 (attrib.rs → hol_loader.rs 集成) ✅ v1.9.0-dev
-  - [x] begin_lemma() 解析 lemma 名中的属性
-  - [x] lemmas 命令实现
-  - [x] declare 命令实现
-  - [x] 生成定理的属性传播 (inductive/function/class)
-- [ ] 全线文档同步 (docs/ + .claude/) — 进行中
+- [x] Route A Step 1: 5 测试修复 ✅ v1.8.1
+- [x] Route A Step 2: OOM/栈溢出修复 ✅ v1.9.0-dev
+- [x] Route A Step 3: Tier2 验证: 36/36 files 100% (2959/2959, 513s) ✅ v1.9.0
+- [x] Route A Step 4: 属性系统补完 ✅ v1.9.0-dev
+- [x] Route A Step 5: 全线文档同步 ✅ v1.9.0
+- [x] Phase 3.1: 核心 simpset (8 theories, Rings 4x 加速) ✅ v1.9.0
+- [x] Phase 3.2: 内存限界搜索 (PROOF_SEARCH_BUDGET) ✅ v1.9.0
+- [x] Phase 3.3: rewrite 深度上限 (MAX_REWRITE_DEPTH=40) ✅ v1.9.0
+- [x] Phase 4: tier2 扩展 (24→36 files) ✅ v1.9.0
+- [x] Phase 5: v1.9.0 发布 ✅ v1.9.0
+- [x] Cargo.toml version → 1.9.0
 
 ## 已解决的遗留问题
 

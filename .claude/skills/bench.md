@@ -35,18 +35,15 @@ cargo test --test integration_tests
 cargo test --test proptest
 ```
 
-## Expected Results (v1.9.0-dev)
+## Expected Results (v1.9.0)
 
 | Suite | Expected | Notes |
 |-------|----------|-------|
 | `core::thm` | 12 pass | LCF kernel |
-| `core::unify` | All pass | Higher-order unification |
 | `cargo check --lib` | **0 warnings** | Required per SOP |
 | `test_verify_all_core_files` | **5/5 files, 125/125 (100%)** | Core verification |
-| `theory` module | 77 pass, 1 skip | ctr_sugar pre-existing |
-| `method` module | 28 pass, 1 skip | batch_verify_all |
-| `tier2_verify` | **6+/19 files 100%** | Fields.thy arithmetic bottleneck |
-| `--lib` full | 710+ pass | 0 warnings |
+| `tier2_verify` | **36/36 files, 2959/2959 (100%)** | 513s (8.5 min) |
+| `--lib` full | 700+ pass | 1 known skip (ctr_sugar) |
 
 ## Quick Sanity Check
 

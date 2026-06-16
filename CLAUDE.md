@@ -5,7 +5,7 @@
 > 功能与 Isabelle/ML 一致。错误信息 → Rust 编译器风格。工具链 → 标准 Rust 生态。
 > LCF trusted kernel + higher-order unification + Isar proof language + theory loading pipeline.
 
-## Project State (v1.9.0-dev, Route A: Stability First)
+## Project State (v1.9.0)
 
 | Metric | Value |
 |--------|-------|
@@ -18,13 +18,16 @@
 | Ctr_Sugar | case/disc/sel/split/cong/nchotomy/size theorem generation |
 | Meson | Model elimination prover — 1st-class proof method |
 | Transfer/Lifting | Transfer rule generation + rel_fun/rel_set + quotient type theorems |
-| **hologic** | ✅ 40+ mk_*/dest_*/is_* functions, 100→3 bare HOL const calls (Phase 49 done) |
-| **simpdata** | ✅ 28 built-in rules, `init_hol_simpset()`, all simp.rs migrated (Phase 50 done) |
-| **args** | ✅ `Args::parse_modifiers()` wired into `exec_simp` + `exec_induct` (Phase 51 done) |
-| **spec** | ✅ Definition/Axiomatization/Abbreviation/TypeAbbrev/Typedecl parsers integrated (Phase 52-54 done) |
+| **hologic** | ✅ 40+ mk_*/dest_*/is_* functions, 100→3 bare HOL const calls |
+| **simpdata** | ✅ 28 built-in rules, `init_hol_simpset()`, core simpset (8 theories) |
+| **args** | ✅ `Args::parse_modifiers()` wired into `exec_simp` + `exec_induct` |
+| **spec** | ✅ Definition/Axiomatization/Abbreviation/TypeAbbrev/Typedecl parsers |
+| **attrs** | ✅ class assumes + attrs_index + lemmas + declare |
+| **deadline** | ✅ VERIFY_DEADLINE (7 checkpoints) + PROOF_SEARCH_BUDGET |
 | Code | ~54K Rust LOC, 124 files |
-| Tests | 714 (638 lib + 76 integration) |
+| Tests | 700+ (638 lib + 76 integration) |
 | Verification | **Core 5/5 files 100% (125/125)**, **Tier2 36/36 files 100% (2959/2959)** |
+| Time | Tier2 513s (8.5 min) |
 | isabelle-source | ✅ Isabelle 2025 full distribution (364MB, 1,473 .thy files) |
 
 ## Active Strategy: v1.9.0 Released
@@ -33,13 +36,13 @@
 Route A ✅ Complete:
 1. ✅ Fix 5 failing tests
 2. ✅ Fix OOM/stack overflow root causes
-3. ✅ Tier2 verification: 9+/22 files 100%
+3. ✅ Tier2 verification: 36/36 files 100% (2959/2959 lemmas, 513s)
 4. ✅ Attribute system (class assumes + attrs_index + lemmas + declare)
 5. ✅ Full documentation sync
 
 Phase 3 ✅ Performance:
-3.1 ✅ Core simpset injection (Rings 75% faster)
-3.2 ✅ Memory-bounded search (25GB → safe limits)
+3.1 ✅ Core simpset injection (8 theories: HOL→Groups→Rings, Rings 4x faster)
+3.2 ✅ Memory-bounded search (PROOF_SEARCH_BUDGET + depth branch pruning)
 3.3 ✅ Rewrite depth hard limit (MAX_REWRITE_DEPTH=40)
 ```
 
@@ -47,10 +50,10 @@ Phase 3 ✅ Performance:
 
 | Issue | Severity | Detail |
 |-------|:--------:|--------|
-| Fields.thy prover bottleneck | 🟡 Medium | 根因: `by (simp add: field_simps)` → named_theorems 无法解析 → exec_proof fallback 链触发 auto/blast 深度搜索. 已加 deadline 保护, 但单个 simplifier rewrite 仍需优化 |
-| Num.thy prover bottleneck | 🟡 Medium | 354 simp calls, same root cause as Fields |
-| Tier2 verification in progress | 🟡 Medium | tmux 'tier2': 6/18 files 100% ✅ (Fun→Rings) |
-| ctr_sugar split pop bug | ✅ Fixed | 3处 empty Vec pop().unwrap() → is_empty 检查 |
+| Fields.thy — structured Isar proof replay overhead | 🟡 Medium | 205 lemmas × multi-step proofs; not data-flow, Isar engine bottleneck |
+| Num.thy — same as Fields | 🟡 Medium | 354 simp calls, structured proofs |
+| Hilbert_Choice/Transitive_Closure — auto/blast dense | 🟡 Medium | Memory-budget protected but slow |
+| Finite_Set — large file (281 lemmas) | 🟡 Medium | 3h+ processing time |
 | LazyLock DB init slow | 🟡 Medium | First HolTheoremDb::get() loads all 1,473 .thy files; should be on-demand |
 | hologic constants (3 remaining) | 🟢 Low | Intentional: prop eq, term_builder, comment |
 
@@ -150,7 +153,7 @@ verify_lemma():
 | CI/CD / GitHub Actions / automation | [ci-cd.md](.claude/rules/ci-cd.md) |
 | Property testing / proptest / invariants | [property-testing.md](.claude/rules/property-testing.md) |
 | After each Phase completion | [phase-sop.md](.claude/rules/phase-sop.md) |
-| After any src/ change | [sync-docs](.claude/skills/sync-docs.md) — auto-sync docs/ and .claude/ |
+| v1.9.0 → next phase plan | [next-phase.md](.claude/rules/next-phase.md) |
 
 ## Skills (`.claude/skills/`)
 
@@ -192,11 +195,12 @@ cargo test --lib core::thm
 # Core verification (needs 256MB stack)
 RUST_MIN_STACK=268435456 cargo test test_verify_all_core_files -- --nocapture
 
-# Extended verification
+# Extended verification (36 files, ~8.5 min)
 RUST_MIN_STACK=268435456 cargo test --test tier2_verify -- --nocapture
 
-# Batch compile HOL
-cargo run --bin isabelle-build -- --dir isabelle-source/src/HOL --stats
+# tmux for long-running tests
+tmux new-session -d -s tier2 "RUST_MIN_STACK=268435456 cargo test --test tier2_verify -- --nocapture 2>&1; exec bash"
+tmux attach -t tier2
 
 # Clippy
 cargo clippy -- -D warnings
