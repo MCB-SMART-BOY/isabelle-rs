@@ -3226,14 +3226,22 @@ pub fn set_search_budget(budget: usize) {
 /// Load simp rules from core theories (HOL, Orderings, Set, Nat, Fun, Lattices).
 /// Uses with_override to avoid triggering the global LazyLock DB initialization.
 /// Cached after first call — returns Arc'd rules that can be shared across verify_file calls.
-fn load_core_simps() -> &'static Vec<Arc<Thm>> {
+/// Cached core simpset + attrs_index from foundational theories.
+struct CoreSimpset {
+    simps: Vec<Arc<Thm>>,
+    attrs_index: std::collections::HashMap<String, Vec<Arc<Thm>>>,
+}
+
+fn load_core_simpset() -> &'static CoreSimpset {
     use std::sync::OnceLock;
-    static CACHE: OnceLock<Vec<Arc<Thm>>> = OnceLock::new();
+    static CACHE: OnceLock<CoreSimpset> = OnceLock::new();
     CACHE.get_or_init(|| {
         use crate::hol::hol_loader::HolTheoremDb;
         let empty_db = HolTheoremDb::new();
-        let mut rules = Vec::new();
+        let mut simps = Vec::new();
+        let mut attrs_index = std::collections::HashMap::new();
         // Core theories in dependency order (imports-first)
+        // Groups + Rings added to supply algebra_simps/ac_simps named_theorems
         let core_thys: &[&str] = &[
             include_str!("../../theories/HOL/HOL.thy"),
             include_str!("../../theories/HOL/Orderings.thy"),
@@ -3241,6 +3249,8 @@ fn load_core_simps() -> &'static Vec<Arc<Thm>> {
             include_str!("../../theories/HOL/Nat.thy"),
             include_str!("../../theories/HOL/Fun.thy"),
             include_str!("../../theories/HOL/Lattices.thy"),
+            include_str!("../../theories/HOL/Groups.thy"),
+            include_str!("../../theories/HOL/Rings.thy"),
         ];
         for source in core_thys {
             let lemmas =
@@ -3248,12 +3258,21 @@ fn load_core_simps() -> &'static Vec<Arc<Thm>> {
                     crate::hol::hol_loader::parse_lemmas(source)
                 });
             for lem in &lemmas {
+                let thm = Arc::clone(&lem.theorem);
+                // Collect [simp] rules for the simpset
                 if lem.attributes.iter().any(|a| a == "simp") {
-                    rules.push(Arc::clone(&lem.theorem));
+                    simps.push(Arc::clone(&thm));
+                }
+                // Build attrs_index for named_theorems expansion
+                for attr in &lem.attributes {
+                    attrs_index
+                        .entry(attr.clone())
+                        .or_insert_with(Vec::new)
+                        .push(Arc::clone(&thm));
                 }
             }
         }
-        rules
+        CoreSimpset { simps, attrs_index }
     })
 }
 
@@ -3264,11 +3283,20 @@ pub fn verify_file(source: &str) -> (usize, usize) {
         HolTheoremDb::with_override(&empty_db, || crate::hol::hol_loader::parse_lemmas(source));
     let mut local_db = HolTheoremDb::from_lemmas(&lemmas);
     HolTheoremDb::add_builtins(&mut local_db);
-    // Inject core simpset rules from parent theories
-    // (HOL, Orderings, Set, Nat, Fun, Lattices — loaded once and cached)
-    // These provide the [simp] rules that Isabelle's simpset accumulates from imports.
-    for thm in load_core_simps() {
+    // Inject core simpset + attrs_index from parent theories
+    // (HOL, Orderings, Set, Nat, Fun, Lattices, Groups, Rings — OnceLock cached)
+    let core = load_core_simpset();
+    for thm in &core.simps {
         local_db.simps.push(Arc::clone(thm));
+    }
+    // Merge core attrs_index into local DB for named_theorems expansion
+    // (e.g., algebra_simps, ac_simps, field_simps from Groups/Rings)
+    for (attr, thms) in &core.attrs_index {
+        local_db
+            .attrs_index
+            .entry(attr.clone())
+            .or_default()
+            .extend(thms.iter().map(Arc::clone));
     }
     let auto_max = if lemmas.len() > 500 {
         50
