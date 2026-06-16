@@ -135,3 +135,4 @@ updated: 2026-06-16
 | CI/CD / GitHub Actions / 自动化 | [ci-cd.md](ci-cd.md) |
 | 属性测试 / proptest / 不变量 | [property-testing.md](property-testing.md) |
 | 每个 Phase/任务完成后的流程 | [phase-sop.md](phase-sop.md) |
+| **下一步计划 (v1.9.0-dev → v1.9.0)** | [next-phase.md](next-phase.md) |
