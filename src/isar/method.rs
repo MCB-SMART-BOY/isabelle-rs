@@ -1292,8 +1292,17 @@ pub fn exec_proof(state: &Thm, proof_script: &str, premises: &[Arc<Thm>]) -> Opt
                 return None;
             }
             // Try bicompose with each premise (unification) to close schematic subgoals
+            // Check deadline periodically inside this potentially expensive loop
             let mut current = best.clone();
-            for _ in 0..current.nprems() + 5 {
+            for i in 0..current.nprems() + 5 {
+                if i % 3 == 0 {
+                    let expired = VERIFY_DEADLINE.with(|c| {
+                        c.get().map_or(false, |d| std::time::Instant::now() >= d)
+                    });
+                    if expired {
+                        return None;
+                    }
+                }
                 let mut any = false;
                 for prem in premises {
                     if let Some(ns) = ThmKernel::bicompose(true, prem, &current, 0) {
