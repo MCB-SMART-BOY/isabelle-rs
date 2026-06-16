@@ -3223,6 +3223,40 @@ pub fn set_search_budget(budget: usize) {
 /// Verify a single .thy file using a local DB — no global LazyLock init.
 /// Returns (verified_count, attempted_count).
 /// Uses 3-phase approach: parse with empty DB → build local DB → verify with override.
+/// Load simp rules from core theories (HOL, Orderings, Set, Nat, Fun, Lattices).
+/// Uses with_override to avoid triggering the global LazyLock DB initialization.
+/// Cached after first call — returns Arc'd rules that can be shared across verify_file calls.
+fn load_core_simps() -> &'static Vec<Arc<Thm>> {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<Vec<Arc<Thm>>> = OnceLock::new();
+    CACHE.get_or_init(|| {
+        use crate::hol::hol_loader::HolTheoremDb;
+        let empty_db = HolTheoremDb::new();
+        let mut rules = Vec::new();
+        // Core theories in dependency order (imports-first)
+        let core_thys: &[&str] = &[
+            include_str!("../../theories/HOL/HOL.thy"),
+            include_str!("../../theories/HOL/Orderings.thy"),
+            include_str!("../../theories/HOL/Set.thy"),
+            include_str!("../../theories/HOL/Nat.thy"),
+            include_str!("../../theories/HOL/Fun.thy"),
+            include_str!("../../theories/HOL/Lattices.thy"),
+        ];
+        for source in core_thys {
+            let lemmas =
+                HolTheoremDb::with_override(&empty_db, || {
+                    crate::hol::hol_loader::parse_lemmas(source)
+                });
+            for lem in &lemmas {
+                if lem.attributes.iter().any(|a| a == "simp") {
+                    rules.push(Arc::clone(&lem.theorem));
+                }
+            }
+        }
+        rules
+    })
+}
+
 pub fn verify_file(source: &str) -> (usize, usize) {
     use crate::hol::hol_loader::HolTheoremDb;
     let empty_db = HolTheoremDb::new();
@@ -3230,6 +3264,12 @@ pub fn verify_file(source: &str) -> (usize, usize) {
         HolTheoremDb::with_override(&empty_db, || crate::hol::hol_loader::parse_lemmas(source));
     let mut local_db = HolTheoremDb::from_lemmas(&lemmas);
     HolTheoremDb::add_builtins(&mut local_db);
+    // Inject core simpset rules from parent theories
+    // (HOL, Orderings, Set, Nat, Fun, Lattices — loaded once and cached)
+    // These provide the [simp] rules that Isabelle's simpset accumulates from imports.
+    for thm in load_core_simps() {
+        local_db.simps.push(Arc::clone(thm));
+    }
     let auto_max = if lemmas.len() > 500 {
         50
     } else if lemmas.len() > 200 {
