@@ -47,6 +47,19 @@ mod tier2_verify {
         ("theories/HOL/Parity.thy", 90),
         ("theories/HOL/Lattices_Big.thy", 90),
         ("theories/HOL/Conditionally_Complete_Lattices.thy", 90),
+        // ── Tier2++ Expansion (Phase 4.2) ──
+        ("theories/HOL/Hull.thy", 60),
+        ("theories/HOL/Groebner_Basis.thy", 60),
+        ("theories/HOL/Binomial_Plus.thy", 60),
+        ("theories/HOL/Fun_Def.thy", 60),
+        ("theories/HOL/Numeral_Simprocs.thy", 60),
+        ("theories/HOL/Basic_BNFs.thy", 60),
+        ("theories/HOL/Basic_BNF_LFPs.thy", 60),
+        ("theories/HOL/Record.thy", 60),
+        ("theories/HOL/Meson.thy", 60),
+        ("theories/HOL/Metis.thy", 60),
+        ("theories/HOL/Presburger.thy", 90),
+        ("theories/HOL/Lifting_Set.thy", 90),
     ];
 
     #[test]
