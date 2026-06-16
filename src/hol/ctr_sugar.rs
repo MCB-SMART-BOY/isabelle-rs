@@ -717,7 +717,13 @@ impl CtrSugar {
             parts.push(forall_term);
         }
 
-        let split_formula = if parts.len() == 1 {
+        let split_formula = if parts.is_empty() {
+            // No cases → trivially P ==> P
+            Pure::mk_implies(
+                Term::free("P", Typ::base("bool")),
+                Term::free("P", Typ::base("bool")),
+            )
+        } else if parts.len() == 1 {
             parts.pop().unwrap()
         } else {
             let mut conj = parts.pop().unwrap();
@@ -1188,7 +1194,13 @@ impl CtrSugar {
             disj_parts.push(forall);
         }
 
-        let split_formula = if disj_parts.len() == 1 {
+        let split_formula = if disj_parts.is_empty() {
+            // No constructors → split is trivially true
+            Pure::mk_implies(
+                Term::free("P", Typ::base("bool")),
+                Term::free("P", Typ::base("bool")),
+            )
+        } else if disj_parts.len() == 1 {
             disj_parts.pop().unwrap()
         } else {
             let mut conj = disj_parts.pop().unwrap();
@@ -1318,7 +1330,10 @@ impl CtrSugar {
             disj_parts.push(eq);
         }
 
-        let nchotomy = if disj_parts.len() == 1 {
+        let nchotomy = if disj_parts.is_empty() {
+            // No constructors → nchotomy is trivially true
+            Term::const_("HOL.True", Typ::base("bool"))
+        } else if disj_parts.len() == 1 {
             disj_parts.pop().unwrap()
         } else {
             let mut disj = disj_parts.pop().unwrap();
