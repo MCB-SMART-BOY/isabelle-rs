@@ -2774,11 +2774,19 @@ fn exec_simp(method_str: &str, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
         rules.extend(HolSimplifier::builtin_rules());
     }
 
-    // Add named theorems
+    // Add named theorems — first try by_name (single theorem), then attrs_index (named_theorems collection)
     for name in &parsed.add_names {
         if let Some(thm) = db.by_name.get(name.as_str()) {
             if let Some(rule) = RewriteRule::from_thm(Arc::clone(thm)) {
                 rules.push(rule);
+            }
+        } else if let Some(thms) = db.attrs_index.get(name.as_str()) {
+            // Named_theorems collection — expand to all tagged theorems
+            // e.g., "field_simps" → all theorems with [field_simps] attribute
+            for thm in thms {
+                if let Some(rule) = RewriteRule::from_thm(Arc::clone(thm)) {
+                    rules.push(rule);
+                }
             }
         }
     }

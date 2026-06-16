@@ -2271,6 +2271,9 @@ pub struct HolTheoremDb {
     elim_net: std::sync::OnceLock<crate::core::net::Net<crate::core::thm::Thm>>,
     safe_intro_net: std::sync::OnceLock<crate::core::net::Net<crate::core::thm::Thm>>,
     safe_elim_net: std::sync::OnceLock<crate::core::net::Net<crate::core::thm::Thm>>,
+    /// Reverse index: attribute name → theorems with that attribute.
+    /// Used to resolve named_theorems (e.g., `field_simps` → all [field_simps] theorems).
+    pub attrs_index: std::collections::HashMap<String, Vec<Arc<crate::core::thm::Thm>>>,
 }
 
 impl HolTheoremDb {
@@ -2290,6 +2293,7 @@ impl HolTheoremDb {
             elim_net: std::sync::OnceLock::new(),
             safe_intro_net: std::sync::OnceLock::new(),
             safe_elim_net: std::sync::OnceLock::new(),
+            attrs_index: std::collections::HashMap::new(),
         }
     }
 
@@ -2444,6 +2448,13 @@ impl HolTheoremDb {
             if cats.contains("simp") {
                 self.simps.push(Arc::clone(&thm));
             }
+            // Populate reverse attribute index (for named_theorems resolution)
+            for attr in attrs {
+                self.attrs_index
+                    .entry(attr.clone())
+                    .or_default()
+                    .push(Arc::clone(&thm));
+            }
         }
         // Apply new by-name entries
         for (name, thm) in new_by_name {
@@ -2497,6 +2508,8 @@ impl HolTheoremDb {
         let mut all = Vec::new();
         let mut by_name = std::collections::HashMap::new();
         let mut def_index = std::collections::HashMap::new();
+        let mut attrs_index: std::collections::HashMap<String, Vec<Arc<crate::core::thm::Thm>>> =
+            std::collections::HashMap::new();
         for lem in lemmas {
             let thm = Arc::clone(&lem.theorem);
             all.push(Arc::clone(&thm));
@@ -2526,6 +2539,13 @@ impl HolTheoremDb {
             if attrs.iter().any(|a| a.contains("simp") || a.contains("iff")) {
                 simps.push(Arc::clone(&thm));
             }
+            // Populate reverse attribute index (for named_theorems resolution)
+            for attr in attrs {
+                attrs_index
+                    .entry(attr.clone())
+                    .or_default()
+                    .push(Arc::clone(&thm));
+            }
         }
         // Resolve aliases from `lemmas` commands (second pass)
         for lem in lemmas {
@@ -2546,6 +2566,12 @@ impl HolTheoremDb {
                         }
                         if attrs.iter().any(|a| a.contains("simp") || a.contains("iff")) {
                             simps.push(Arc::clone(&thm));
+                        }
+                        for attr in attrs {
+                            attrs_index
+                                .entry(attr.clone())
+                                .or_default()
+                                .push(Arc::clone(&thm));
                         }
                         break; // Use first found alias target
                     }
@@ -2578,6 +2604,7 @@ impl HolTheoremDb {
             elim_net: std::sync::OnceLock::new(),
             safe_intro_net: std::sync::OnceLock::new(),
             safe_elim_net: std::sync::OnceLock::new(),
+            attrs_index,
         }
     }
 
@@ -4336,6 +4363,9 @@ pub struct ClassDef {
     pub name: String,
     pub superclasses: Vec<String>,
     pub fixes: Vec<(String, String)>, // (name, type_string)
+    /// Assumptions: (name, proposition_string, attributes)
+    /// e.g., ("divide_inverse", "a / b = a * inverse b", [])
+    pub assumes: Vec<(String, String, Vec<String>)>,
 }
 
 /// Parse all `class` declarations from source.
@@ -4420,7 +4450,38 @@ fn parse_one_class(lines: &[&str], start: usize) -> Option<(ClassDef, usize)> {
     // Parse fixes if present
     let fixes = if !fixes_part.is_empty() { parse_class_fixes(&fixes_part) } else { Vec::new() };
 
-    Some((ClassDef { name, superclasses, fixes }, i))
+    // Parse assumes if present (after the main header loop)
+    let mut assumes = Vec::new();
+    if i < lines.len() {
+        let t = lines[i].trim();
+        if t.starts_with("assumes ") {
+            // Collect all assumes lines (may have "and" continuations on separate lines)
+            let mut assumes_lines = vec![t.to_string()];
+            i += 1;
+            while i < lines.len() {
+                let lt = lines[i].trim();
+                if lt == "begin"
+                    || lt == "{"
+                    || lt.starts_with("fixes ")
+                    || lt.starts_with("subclass ")
+                    || lt.starts_with("class ")
+                    || lt.starts_with("lemma ")
+                    || lt.starts_with("theorem ")
+                    || lt.starts_with("instance ")
+                    || lt.starts_with("subsection ")
+                {
+                    break;
+                }
+                if !lt.is_empty() {
+                    assumes_lines.push(lt.to_string());
+                }
+                i += 1;
+            }
+            assumes = parse_class_assumes_lines(&assumes_lines);
+        }
+    }
+
+    Some((ClassDef { name, superclasses, fixes, assumes }, i))
 }
 
 pub fn parse_class_header(s: &str) -> Option<(String, Vec<String>)> {
@@ -4455,6 +4516,47 @@ pub fn parse_class_fixes(s: &str) -> Vec<(String, String)> {
         }
     }
     fixes
+}
+
+/// Parse class assumes from collected lines.
+/// Each line: "assumes name[attrs]: \"prop\"" or "and name[attrs]: \"prop\""
+/// Returns Vec of (name, proposition_string, attributes).
+pub fn parse_class_assumes_lines(lines: &[String]) -> Vec<(String, String, Vec<String>)> {
+    let mut assumes = Vec::new();
+    for line in lines {
+        let t = line.trim();
+        if t.is_empty() {
+            continue;
+        }
+        // Strip "assumes " or "and " prefix
+        let rest = if let Some(r) = t.strip_prefix("assumes ") {
+            r.trim()
+        } else if let Some(r) = t.strip_prefix("and ") {
+            r.trim()
+        } else {
+            continue;
+        };
+        if rest.is_empty() {
+            continue;
+        }
+        // Parse "name[attrs]: \"prop\"" or "name: \"prop\""
+        let (name_attrs, prop) = if let Some(colon) = rest.find(':') {
+            let na = rest[..colon].trim();
+            let p = rest[colon + 1..].trim().trim_matches('"');
+            (na, p)
+        } else {
+            continue;
+        };
+        // Parse name and attributes from name_attrs
+        let (name, attrs) = parse_name_attrs(name_attrs);
+        if name.is_empty() {
+            continue;
+        }
+        // Convert Isabelle symbols in proposition
+        let prop = convert_syntax(prop);
+        assumes.push((name.to_string(), prop, attrs));
+    }
+    assumes
 }
 
 fn split_by_and_outside_parens(s: &str) -> Vec<String> {
@@ -4551,14 +4653,36 @@ pub fn parse_class_assumes(s: &str) -> Vec<(String, String)> {
 
 /// Generate synthetic constant declarations from class fixes.
 pub fn generate_class_lemmas(def: &ClassDef) -> Vec<ParsedLemma> {
-    // Use AxClass system (class = locale + algebra) for richer theorems
+    let mut lemmas = Vec::new();
+
+    // 1. Create ParsedLemma for each class assumption (e.g., divide_inverse)
+    //    These are axioms — proof_script is None, so they're accepted without verification.
+    for (name, prop, attrs) in &def.assumes {
+        let term = match crate::isar::term_parser::parse_term(prop) {
+            Some(t) => t,
+            None => Term::const_(prop.as_str(), Typ::base("prop")),
+        };
+        let thm = ThmKernel::assume(CTerm::certify(term));
+        lemmas.push(ParsedLemma {
+            name: name.clone(),
+            attributes: attrs.clone(),
+            theorem: Arc::new(thm),
+            proof_script: None,
+            alias_for: None,
+            source_loc: None,
+        });
+    }
+
+    // 2. Use AxClass system (class = locale + algebra) for richer class-def theorems
     let cls = super::axclass::AxClass {
         name: def.name.clone(),
         superclasses: def.superclasses.clone(),
         fixes: def.fixes.clone(),
-        assumes: vec![],
+        assumes: def.assumes.iter().map(|(n, p, _)| (n.clone(), p.clone())).collect(),
     };
-    super::axclass::axclass_to_lemmas(&cls)
+    lemmas.extend(super::axclass::axclass_to_lemmas(&cls));
+
+    lemmas
 }
 
 #[cfg(test)]
