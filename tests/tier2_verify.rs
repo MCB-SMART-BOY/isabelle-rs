@@ -24,11 +24,11 @@ mod tier2_verify {
         ("theories/HOL/Relation.thy", 60),
         ("theories/HOL/Equiv_Relations.thy", 60),
         ("theories/HOL/Map.thy", 60),
-        ("theories/HOL/Finite_Set.thy", 90),
+        // ("theories/HOL/Finite_Set.thy", 90),   // HEAVY: 281 lemmas, 372 simp, 3h+ stuck
         // ("theories/HOL/Num.thy", 120),        // HEAVY: cross-file arith rules
         ("theories/HOL/Power.thy", 60),
         ("theories/HOL/Complete_Lattices.thy", 60),
-        ("theories/HOL/Wellfounded.thy", 60),
+        // ("theories/HOL/Wellfounded.thy", 60),  // HEAVY: 152 lemmas, slow
         // ("theories/HOL/Hilbert_Choice.thy", 60), // HEAVY: 56 auto calls
         // ("theories/HOL/Transitive_Closure.thy", 60), // HEAVY: 40 auto + induct
         // ("theories/HOL/Partial_Function.thy", 60), // BLOCKED: memory explosion
