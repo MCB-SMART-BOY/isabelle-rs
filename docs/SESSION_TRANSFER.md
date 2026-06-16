@@ -1,45 +1,37 @@
-# isabelle-rs v1.9.0-dev 项目状态
+# isabelle-rs v1.9.0 项目状态
 
-> 当前会话：2026-06-16 | 状态：Route A 稳定性优先，Tier2 验证进行中
+> 当前会话：2026-06-16 | 状态：v1.9.0 发布，Route A + Phase 3 完成
 
 ---
 
 ## 一、项目概况
 
-isabelle-rs v1.9.0-dev — Isabelle 证明助手内核的 Rust 移植。
+isabelle-rs v1.9.0 — Isabelle 证明助手内核的 Rust 移植。
 - LCF 可信内核 (15 ops + tpairs/shyps) + 高阶合一 + Isar 证明语言
-- ~54K Rust LOC, 124 files, 714 tests (638 lib + 76 integration)
-- Core 5/5 files 125/125 (100%), Tier2 6/19 files 100% (running in tmux)
+- ~54K Rust LOC, 124 files, 700+ tests
+- Core 5/5 files 125/125 (100%), Tier2 9+/23 files 100%
+- 核心 simpset 注入机制（Phase 3.1）
+- 内存限界证明搜索（Phase 3.2）
 
-## 二、Route A 完成状态
+## 二、v1.9.0 新特性
 
-| Step | 内容 | 状态 |
-|------|------|:--:|
-| 1 | 5 测试修复 | ✅ |
-| 2 | OOM 根因修复 (repeat_conv + stack) | ✅ |
-| 3 | Tier2 验证扩展 | 🔄 tmux 'tier2': 6/19 ✅, Fields running |
-| 4 | 属性系统补完 | ✅ begin_lemma + lemmas + declare + attrs propagation |
-| 5 | 文档同步 | ✅ .claude/ + docs/ 已更新 |
+| 特性 | 描述 |
+|------|------|
+| class assumes 解析 | 类假设（如 divide_inverse）自动进入 by_name |
+| attrs_index 反向索引 | field_simps 等 named_theorems 自动展开 |
+| 核心 simpset | 6 个基础理论的 [simp] 规则注入（OnceLock 缓存） |
+| 内存限界搜索 | PROOF_SEARCH_BUDGET + 深度分支剪枝 |
+| VERIFY_DEADLINE | 7 检查点全覆盖 |
+| rewrite 深度上限 | MAX_REWRITE_DEPTH=40 |
 
-## 三、关键架构
+## 三、已知瓶颈
 
-```
-.thy → OuterSyntax::parse_spans() → CommandSpan[]
-  → TheoryProcessor::process_span()
-    ├─ lemma → begin_lemma() → parse_name_attrs() [NEW: 属性解析]
-    ├─ lemmas → process_lemmas_cmd() [NEW]
-    ├─ declare → process_declare_cmd() [NEW]
-    └─ ...
-  → HolTheoremDb::extend() → compute_db_categories() [属性分类]
-```
-
-## 四、已知问题
-
-| 问题 | 严重度 |
+| 问题 | 状态 |
 |------|:--:|
-| Fields.thy 证明搜索慢 (360 simp calls, arithmetic-heavy) | 🟡 |
-| HolTheoremDb LazyLock 首次加载全部 1,473 .thy files | 🟡 |
-| ctr_sugar test_verify_systematic (disj_parts unwrap) | 🟢 |
+| Fields/Num — 跨文件 named_theorems (algebra_simps 等) | 🟡 待父理论加载 |
+| Hilbert_Choice/Transitive_Closure — auto/blast 密集 | 🟡 内存预算保护但慢 |
+| Finite_Set — 372 simp 调用 | 🟡 处理极慢 |
+| HolTheoremDb LazyLock 首次加载 | 🟡 待优化 |
 
 ## 五、常用命令
 

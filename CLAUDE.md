@@ -27,17 +27,21 @@
 | Verification | **Core 5/5 files 100% (125/125)**, Tier2 6/20 files 100% |
 | isabelle-source | ✅ Isabelle 2025 full distribution (364MB, 1,473 .thy files) |
 
-## Active Strategy: Route A → v1.9.0
+## Active Strategy: v1.9.0 Released
 
 ```
+Route A ✅ Complete:
 1. ✅ Fix 5 failing tests
 2. ✅ Fix OOM/stack overflow root causes
-3. ✅ Tier2 verification: 6/16 files 100% (Fields/Num bottleneck identified)
-4. ✅ Complete attribute system (class assumes + attrs_index)
+3. ✅ Tier2 verification: 9+/22 files 100%
+4. ✅ Attribute system (class assumes + attrs_index + lemmas + declare)
 5. ✅ Full documentation sync
-```
 
-**Next: `.claude/rules/next-phase.md`** — Phase 3.1-3.3 plan for v1.9.0
+Phase 3 ✅ Performance:
+3.1 ✅ Core simpset injection (Rings 75% faster)
+3.2 ✅ Memory-bounded search (25GB → safe limits)
+3.3 ✅ Rewrite depth hard limit (MAX_REWRITE_DEPTH=40)
+```
 
 ## Known Issues
 

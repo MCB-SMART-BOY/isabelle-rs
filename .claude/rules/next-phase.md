@@ -1,9 +1,19 @@
 ---
-description: Route A 完成后的下一步计划 — 浅层导入 + 内存限界 + rewrite深度 + tier2扩展
-version: 1.0
+description: v1.9.0 发布后的下一步计划
+version: 2.0
 created: 2026-06-16
-updated: 2026-06-16
+updated: 2026-06-16 (Phase 3.1-3.3 ✅, Phase 5 🔄)
 ---
+
+## 完成状态
+
+| Phase | 内容 | 状态 |
+|:-----:|------|:--:|
+| 3.1 | 浅层导入 (核心 simpset) | ✅ |
+| 3.2 | 内存限界搜索 | ✅ |
+| 3.3 | rewrite 深度上限 | ✅ |
+| 4 | tier2 扩展 | ✅ (23 files, 9+ 100%) |
+| 5 | v1.9.0 发布 | 🔄 |
 
 # 下一步计划：v1.9.0-dev → v1.9.0
 
