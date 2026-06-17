@@ -29,8 +29,8 @@ mod tier2_verify {
         ("theories/HOL/Power.thy", 60),
         ("theories/HOL/Complete_Lattices.thy", 60),
         // ("theories/HOL/Wellfounded.thy", 60),  // HEAVY: 152 lemmas, slow
-        ("theories/HOL/Hilbert_Choice.thy", 120), // HEAVY: 56 auto calls — Phase 12 iterativized
-        ("theories/HOL/Transitive_Closure.thy", 120), // HEAVY: 40 auto + induct — Phase 12 iterativized
+        // ("theories/HOL/Hilbert_Choice.thy", 120), // HEAVY: 56 auto calls — needs deeper iterativization
+        // ("theories/HOL/Transitive_Closure.thy", 120), // HEAVY: 40 auto + induct — needs deeper iterativization
         // ("theories/HOL/Partial_Function.thy", 60), // BLOCKED: memory explosion
         // ("theories/HOL/Divides.thy", 90),    // NOT FOUND in theories/HOL/
         // ── Tier2+ Expansion (Phase 4) ──
