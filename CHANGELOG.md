@@ -2,6 +2,23 @@
 
 All notable changes to isabelle-rs.
 
+## [2.1.5] — 2026-06-17
+
+### Added
+- **Phase 17: Tier2 Library expansion** — 27 new Library files verified at 100%
+- 31 candidate files copied to `theories/HOL/Library/`, 27 verified (3821/3821 lemmas)
+- Library coverage: Case_Converter, Centered_Division, Code_Bit_Shifts_for_Arithmetic,
+  Code_Target_Int, Conditional_Parametricity, Confluence, Debug, Fraction_Field,
+  Group_Closure, Groups_Big_Fun, ListVector, Order_Relation_More, Order_Union,
+  Parallel, Rewrite, Signed_Division, Stirling, Transposition, Uprod,
+  Diagonal_Subsequence, Fib, Going_To_Filter, Infinite_Typeclass, Nonpos_Ints,
+  Periodic_Fun, Real_Mod, Code_Abstract_Char
+- Tier2: 70→97 files, 3261→3821 lemmas, 154s→178s, 100% verified
+
+### Known Issues
+- 4 Library files pending: Product_Order (instantiation hang), Quotient_List,
+  Sorted_Less (antiquotation), State_Monad (datatype hang)
+
 ## [1.8.1] — 2026-06-04
 
 ### Added

@@ -1,7 +1,7 @@
-# 架构设计 v23.0 (v1.9.0-dev)
+# 架构设计 v25.0 (v2.1.5)
 
-> LCF 内核：15 ops + tpairs/shyps · 27 methods · FM 算术 · HOL 简化器 · Meson + Metis · Route A 稳定性优先
-> 验证：5/5 core files 125/125 (100%) · 0 kernel errors · prove_condition 已修复
+> LCF 内核：15 ops + tpairs/shyps · 27 methods · FM 算术 · HOL 简化器 · Meson + Metis · Tier2 97 files
+> 验证：Core 5/5 files 125/125 (100%) · Tier2 97/97 files 3821/3821 (100%) · 178s
 > 性能：179ns-12μs (release mode, criterion 实测)
 
 ## 状态标记说明

@@ -1,8 +1,8 @@
-# 开发者指南 v3.0 (v1.96.0-dev)
+# 开发者指南 v3.1 (v2.1.5)
 
 ## 环境要求
 
-- Rust stable (edition 2024)
+- Rust 1.96.0 stable (edition 2024)
 - cargo
 - 推荐: 256MB+ stack (`RUST_MIN_STACK=268435456`)
 - tmux (并行运行长时间测试)

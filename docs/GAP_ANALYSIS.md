@@ -1,8 +1,8 @@
-# isabelle-rs vs Isabelle 完整差距分析 v5.0
+# isabelle-rs vs Isabelle 完整差距分析 v5.1
 
-> v1.9.0-dev | 2026-06-16 | Route A 稳定性优先
-> **总体覆盖: 核心内核 ~95%, 整体 ~25%**
-> **isabelle-rs**: ~54K Rust LOC (124 .rs) | **Isabelle**: ~317K ML + ~90K Scala
+> v2.1.5 | 2026-06-17 | Tier2 97 files verified
+> **总体覆盖: 核心内核 ~95%, 整体 ~40%**
+> **isabelle-rs**: ~55K Rust LOC (124+ .rs) | **Isabelle**: ~317K ML + ~90K Scala
 
 ---
 
@@ -13,7 +13,7 @@
 | Pure 内核 (ML) | 60 files, ~27K LOC | 34 Rust files, ~14,500 LOC | **~55%** |
 | Pure/Isar (ML) | 41 files | 18 Rust files, ~12,300 LOC | **~40%** |
 | HOL Tools (ML) | 258 files, ~126K LOC | 18 Rust files, ~14,000 LOC | **~10%** |
-| HOL .thy files | 1,473 | 5 verified 100%, ~30 accept_all | **~2%** |
+| HOL .thy files | 1,473 | 97 verified 100% (3821 lemmas), ~30 accept_all | **~7%** |
 | Scala (PIDE/Build) | ~68K LOC | 0 (Rust 替代) | N/A |
 | 其他逻辑 (FOL/ZF/...) | 8 logics | 0 | **0%** |
 
