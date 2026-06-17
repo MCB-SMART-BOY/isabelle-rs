@@ -53,7 +53,7 @@ Sync these 12 files:
 | `docs/DEVELOPMENT.md` | Benchmarks, stats, known issues |
 | `docs/GAP_ANALYSIS.md` | Complete gap analysis (ISABELLE_COMPARISON merged) |
 | `.claude/rules/README.md` | Status table, known issues |
-| `.claude/rules/phase-sop.md` | Completion checklist |
+| `.claude/rules/post-session.md` | Completion checklist |
 | `.claude/skills/*.md` | Commands/workflows if changed |
 
 ## Step 5: FINALIZE
@@ -93,12 +93,12 @@ vX.Y.Z: <short summary>
 □ docs/DEVELOPMENT.md: stats synced
 □ docs/GAP_ANALYSIS.md: coverage updated (merged ISABELLE_COMPARISON)
 □ .claude/rules/README.md: status synced
-□ .claude/rules/phase-sop.md: checklist verified
+□ .claude/rules/post-session.md: checklist verified
 ```
 
 ## Related
 
-- `.claude/rules/phase-sop.md` — Full SOP details
+- `.claude/rules/post-session.md` — Full SOP details
 - `.claude/rules/release.md` — Semver rules
 - `.claude/skills/verify.md` — Pre-release verification
 - `.claude/skills/bench.md` — Performance baseline

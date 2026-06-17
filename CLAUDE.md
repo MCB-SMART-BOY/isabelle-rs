@@ -5,7 +5,7 @@
 > 功能与 Isabelle/ML 一致。错误信息 → Rust 编译器风格。工具链 → 标准 Rust 生态。
 > LCF trusted kernel + higher-order unification + Isar proof language + theory loading pipeline.
 
-## Project State (v2.1.0)
+## Project State (v2.1.2)
 
 | Metric | Value |
 |--------|-------|
@@ -27,11 +27,11 @@
 | **deadline** | ✅ VERIFY_DEADLINE (7 checkpoints) + PROOF_SEARCH_BUDGET |
 | Code | ~55K Rust LOC, 124+ files |
 | Tests | 700+ (638 lib + 76 integration) |
-| Verification | **Core 5/5 files 100% (125/125)**, **Tier2 61/61 files 100% (3247/3247)** |
-| Time | Tier2 548s (9.1 min) |
+| Verification | **Core 5/5 files 100% (125/125)**, **Tier2 70/70 files 100% (3261/3261)** |
+| Time | Tier2 551s (9.2 min) |
 | isabelle-source | ✅ Isabelle 2025 full distribution (364MB, 1,473 .thy files) |
 
-## Active Strategy: v2.1.0 Released
+## Active Strategy: v2.1.2 Released
 
 ```
 Route A ✅ Complete:
@@ -46,12 +46,12 @@ Phase 3 ✅ Performance:
 3.2 ✅ Memory-bounded search (PROOF_SEARCH_BUDGET + depth branch pruning)
 3.3 ✅ Rewrite depth hard limit (MAX_REWRITE_DEPTH=40)
 
-Phase 6-8 ✅ v2.1.0:
+Phase 6-8 ✅ v2.1.2:
 6. ✅ Tier2 expansion: 36→57 files (21 new from Library/Data_Structures, +236 lemmas)
 7. ✅ Isar engine optimizations (get_premises ref, cached Simplifier, Conv Box→Arc)
 8a. ✅ Metis HOL.eq paramodulation (dest_hol_equals)
-8b. ⏭️ Skolemization deferred to v2.1.0
-8c. ⏭️ ATP TSTP capture deferred to v2.1.0
+8b. ⏭️ Skolemization deferred to v2.1.2
+8c. ⏭️ ATP TSTP capture deferred to v2.1.2
 ```
 
 ## Known Issues
@@ -62,9 +62,9 @@ Phase 6-8 ✅ v2.1.0:
 | Num.thy — same as Fields | 🟡 Medium | 354 simp calls, structured proofs |
 | Hilbert_Choice/Transitive_Closure — auto/blast dense | 🟡 Medium | Memory-budget protected but slow; needs iterativized auto_exec |
 | Finite_Set — large file (281 lemmas) | 🟡 Medium | 3h+ processing time; needs proof_state.rs caching |
-| Partial_Function — memory explosion | 🟡 Medium | Deep fixpoint constructions; needs v2.1.0 |
+| Partial_Function — memory explosion | 🟡 Medium | Deep fixpoint constructions; needs v2.1.2 |
 | LazyLock DB init slow | 🟡 Medium | First HolTheoremDb::get() loads all 1,473 .thy files; should be on-demand |
-| Metis skolemization missing | 🟡 Medium | CNF conversion lacks ∃-Skolemization; deferred to v2.1.0 |
+| Metis skolemization missing | 🟡 Medium | CNF conversion lacks ∃-Skolemization; deferred to v2.1.2 |
 | hologic constants (3 remaining) | 🟢 Low | Intentional: prop eq, term_builder, comment |
 
 
@@ -83,9 +83,9 @@ Phase 6-8 ✅ v2.1.0:
 11. **Theorem construction uses `CTerm::certify_annotated`** — auto-annotates types from TypeEnv
 12. **`prove_condition` must NOT call `self.rewrite()` or `self.rewrite_deep()`** — this creates unbounded mutual recursion through `rewrite → try_rule → prove_condition`. Isabelle's `simple_prover` only does `ALLGOALS (resolve_tac ctxt (prems_of ctxt))`. Only trivial `True` + external `condition_solver` are safe. See `src/core/simplifier.rs:317-340`.
 13. **After any src/ change, sync docs and .claude/** — run `/sync-docs` to update `docs/` (ARCHITECTURE, GAP_ANALYSIS, ROADMAP, DEVELOPMENT) and `.claude/` (CLAUDE.md, skills, settings). Any commit that touches src/ should also touch the relevant doc files.
-14. **After every task completion, update ALL project documentation** — 每次完成任何任务/Phase/功能后，必须更新所有文档：`docs/` (ARCHITECTURE, GAP_ANALYSIS, ROADMAP, DEVELOPMENT) 和 `.claude/` (CLAUDE.md, skills, settings, phase-sop)。这不是可选的。文档必须反映代码的最新状态。
+14. **After every task completion, update ALL project documentation** — 每次完成任何任务/Phase/功能后，必须更新所有文档：`docs/` (ARCHITECTURE, GAP_ANALYSIS, ROADMAP, DEVELOPMENT) 和 `.claude/` (CLAUDE.md, rules/README.md, skills, settings)。文档必须反映代码的最新状态。见 `.claude/hooks/post-session.md`。
 15. **After every task completion, audit the changed code** — 每次完成任何任务/Phase/功能后，必须审计变更的代码：(a) 内核变更 → `/audit-kernel`, (b) 证明方法变更 → `/verify` + 回归测试, (c) 任何 src/ 变更 → `cargo check --lib` + `cargo test --lib` (相关模块), (d) 检查是否有新的 `Typ::dummy()`、裸 `Term::const_("HOL.xxx")` 绕过 hologic、重复实现。
-16. **At the end of EVERY conversation, update .claude/** — `.claude/rules/README.md` (状态表/已知问题), `.claude/rules/phase-sop.md` (完成清单), `CLAUDE.md` (项目状态). This ensures the next session starts with accurate state. Don't wait for the user to ask.
+16. **At the end of EVERY conversation, update .claude/** — `.claude/rules/README.md` (状态表/已知问题, SOF), `.claude/hooks/post-session.md` (完成检查清单), `CLAUDE.md` (项目状态). This ensures the next session starts with accurate state. Don't wait for the user to ask.
 17. **Commit messages in Chinese, NO Co-Authored-By** — 提交信息用中文。禁止添加 `Co-Authored-By:` 或任何形式的 AI 署名。所有 commit 由 MCB-SMART-BOY 提交。See `## Commit Rules` below.
 18. **All proof method entry points must check VERIFY_DEADLINE** — `auto_exec`, `exec_simp`, `exec_proof` fallback chains, and any function that triggers deep recursive proof search must check `VERIFY_DEADLINE` at entry. This prevents single slow lemmas (e.g., `by (simp add: field_simps)` without matched named_theorems) from hanging the entire verification. See `src/isar/method.rs` VERIFY_DEADLINE checks.
 
@@ -162,8 +162,8 @@ verify_lemma():
 | Adding documentation / rustdoc / ADR | [documentation.md](.claude/rules/documentation.md) |
 | CI/CD / GitHub Actions / automation | [ci-cd.md](.claude/rules/ci-cd.md) |
 | Property testing / proptest / invariants | [property-testing.md](.claude/rules/property-testing.md) |
-| After each Phase completion | [phase-sop.md](.claude/rules/phase-sop.md) |
-| v1.9.0 → next phase plan | [next-phase.md](.claude/rules/next-phase.md) |
+| After each Phase completion | [post-session.md](.claude/hooks/post-session.md) |
+| Next phase plan | `/root/.claude/plans/` |
 
 ## Skills (`.claude/skills/`)
 
@@ -187,7 +187,7 @@ verify_lemma():
 - **[release](.claude/skills/release.md)** — Phase SOP: summarize → verify → version → sync 12 docs → finalize
 
 ### Maintenance
-- **[run-isabelle-rs](.claude/skills/run-isabelle-rs/)** — Build, run demo, run tests, compile .thy files, verify kernel
+- **[run-isabelle-rs](.claude/skills/run-isabelle-rs.md)** — Build, run demo, run tests, compile .thy files, verify kernel
 - **[sync-docs](.claude/skills/sync-docs.md)** — Sync docs/ and .claude/ after code changes. Run after any src/ change.
 
 ## Common Commands

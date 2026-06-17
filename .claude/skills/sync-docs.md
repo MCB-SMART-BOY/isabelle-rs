@@ -113,7 +113,7 @@ And the known issues table, module map table, and common commands.
 
 ### Step 7: Update .claude/skills/
 
-- New skills added → `skills.toml` + `SKILL.md` (master index)
+- New skills added → `skills.toml` + `README.md` (master index)
 - Commands changed → update the relevant skill
 
 ### Step 8: Verify
@@ -126,5 +126,5 @@ git diff --stat            # review all doc changes
 ## Related
 
 - `/release` — Full phase release pipeline (includes this step)
-- `.claude/rules/phase-sop.md` — Phase completion SOP
+- `.claude/rules/post-session.md` — Phase completion SOP
 - `.claude/rules/documentation.md` — Documentation standards

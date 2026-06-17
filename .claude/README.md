@@ -1,83 +1,38 @@
-# .claude — Isabelle-rs Project Configuration
+# .claude — Isabelle-rs 工程配置
 
-Claude Code project configuration for the isabelle-rs proof assistant reimplementation.
+Claude Code 项目配置。遵循 **Rules → Skills → Commands** 分层架构。
 
-## Directory Structure
+## 架构
 
 ```
+CLAUDE.md                     ← 项目入口 (状态 + 铁律 + 快速命令)
+
 .claude/
-├── README.md               # This file
-├── settings.json           # Project-wide settings (permissions, hooks, env)
-├── settings.local.json     # User-local overrides (gitignored)
-├── .gitignore              # Local files to exclude from git
-│
-├── commands/               # Custom slash commands
-│   ├── verify-all.md       # /verify-all — full verification suite
-│   ├── audit.md            # /audit — kernel safety audit
-│   ├── bench.md            # /bench — test matrix benchmarks
-│   └── fix.md              # /fix — auto-fix common issues
-│
-├── skills/                 # Domain-specific workflows
-│   ├── skills.toml         # Central registry (all skill metadata)
-│   ├── SKILL.md            # Architecture + lifecycle documentation
-│   ├── verify.md           # Verify lemma(s) through 6-layer architecture
-│   ├── debug-overflow.md   # Diagnose and fix stack overflows
-│   ├── audit-kernel.md     # Kernel safety audit
-│   ├── add-method.md       # Add proof method (4-step pattern)
-│   ├── add-isar-command.md # Add Isar command (3-mode state machine)
-│   ├── port-isabelle.md    # Port from Isabelle/ML to Rust
-│   ├── refactor.md         # Safe refactoring (project-specific)
-│   ├── build-theory.md     # Build and verify .thy files
-│   ├── search-db.md        # Navigate HolTheoremDb (42K+ theorems)
-│   ├── bench.md            # Run test matrix at correct stack sizes
-│   └── release.md          # Phase SOP + doc sync
-│
-├── agents/                 # Custom subagent types
-│   ├── kernel-reviewer.md  # LCF kernel code review specialist
-│   ├── theory-parser.md    # Theory file parsing debugger
-│   └── port-reviewer.md    # Isabelle/ML → Rust porting reviewer
-│
-├── memory/                 # Project-level persistent memory
-│   └── .gitkeep
-│
-└── hooks/                  # Custom automation hooks
-    └── README.md           # Hooks documentation
+├── settings.json             ← 权限 + 环境 + hooks
+├── rules/                    ← 领域约束 (globs 触发)
+│   └── README.md             ← SOF: 项目状态 + 铁律 + 规则索引
+├── skills/                   ← 可执行工作流 (自然语言触发)
+│   └── skills.toml           ← SOF: 技能元数据
+├── commands/                 ← 斜杠命令 (薄包装 → skills)
+├── agents/                   ← 专用审查子代理
+├── hooks/                    ← 自动化钩子
+├── memory/                   ← 持久化会话记忆
+└── templates/                ← 标准化模板
 ```
 
-## Quick Reference
+## 分层原则
 
-### Commands
-| Command | Purpose |
-|---------|---------|
-| `/verify-all` | Run full verification test suite |
-| `/audit` | Quick kernel safety scan |
-| `/bench` | Run benchmark/test matrix |
-| `/fix` | Auto-fix formatting, clippy, cargo fix |
+| 层 | 职责 | 触发方式 |
+|----|------|---------|
+| **rules** | 领域约束 + 铁律 | `globs` 文件匹配 |
+| **skills** | 可执行工作流 | 自然语言触发词 |
+| **commands** | 快速入口 | `/command` |
+| **agents** | 专用审查 | 手动指定 |
+| **hooks** | 自动化 | 事件驱动 |
 
-### Skills
-| Skill | Trigger |
-|-------|---------|
-| `verify` | Lemma verification failure, test failure |
-| `debug-overflow` | Stack overflow, SIGABRT |
-| `audit-kernel` | Kernel change, new inference rule |
-| `add-method` | Add new proof method |
-| `add-isar-command` | Add new Isar command |
-| `port-isabelle` | Port ML code to Rust |
-| `refactor` | Refactor ≥3 files |
-| `build-theory` | .thy parse failure, batch compile |
-| `search-db` | Find theorem by name/type/pattern |
-| `bench` | Run tests, check regressions |
-| `release` | Version bump, doc sync |
+## 维护指南
 
-### Agents
-| Agent | Use Case |
-|-------|----------|
-| `kernel-reviewer` | Review kernel code changes |
-| `theory-parser` | Debug theory file parsing |
-| `port-reviewer` | Review ML→Rust ported code |
-
-## Related
-
-- `../CLAUDE.md` — Project entry point and skill index
-- `../.claude/rules/` — Domain and engineering rules
-- `../docs/` — Architecture, roadmap, gap analysis
+1. **规则新增**: 使用 `templates/rule-template.md` 模板
+2. **技能新增**: 使用 `templates/skill-template.md` 模板，在 `skills.toml` 注册
+3. **Phase 计划**: 使用 `templates/phase-plan-template.md`，写入 `/root/.claude/plans/`
+4. **会话结束**: 执行 `hooks/post-session.md` 检查清单

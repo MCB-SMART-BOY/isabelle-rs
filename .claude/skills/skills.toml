@@ -164,7 +164,7 @@ status = "active"
 version = "2.0.0"
 triggers = ["release", "version bump", "phase complete", "changelog", "cut release"]
 permissions = ["Bash:cargo test", "Bash:cargo check", "Bash:cargo clippy", "Read", "Edit", "Bash:git"]
-depends_on = [".claude/rules/phase-sop.md", ".claude/rules/release.md"]
+depends_on = [".claude/rules/post-session.md", ".claude/rules/release.md"]
 related_skills = ["verify", "bench"]
 lifecycle = { created = "2026-06-03", last_reviewed = "2026-06-03", review_interval_days = 90 }
 
@@ -190,7 +190,7 @@ status = "active"
 version = "1.0.0"
 triggers = ["sync docs", "update docs", "doc sync", "stale docs", "after code change", "update documentation"]
 permissions = ["Read", "Write", "Edit", "Bash:git", "Bash:cargo"]
-depends_on = [".claude/rules/phase-sop.md", ".claude/rules/documentation.md"]
+depends_on = [".claude/rules/post-session.md", ".claude/rules/documentation.md"]
 related_skills = ["release", "refactor"]
 lifecycle = { created = "2026-06-16", last_reviewed = "2026-06-16", review_interval_days = 60 }
 

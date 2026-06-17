@@ -69,7 +69,7 @@
 
   "sessionRules": {
     "updateClaudeDir": true,
-    "description": "At end of every conversation, update .claude/rules/README.md, .claude/rules/phase-sop.md, and CLAUDE.md with current state. The user should never need to repeat preferences."
+    "description": "At end of every conversation, update .claude/rules/README.md, .claude/rules/post-session.md, and CLAUDE.md with current state. The user should never need to repeat preferences."
   },
 
   "hooks": {
