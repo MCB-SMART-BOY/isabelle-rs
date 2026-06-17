@@ -13,9 +13,9 @@ categories = ["science", "development-tools"]
 exclude = [
     "isabelle-source/**",
     "target/**",
-    ".rules/**",
     ".git/**",
     "*.bak",
+    "tests/proptest.proptest-regressions",
 ]
 
 [features]
