@@ -3,7 +3,7 @@
 > **用 Rust 重写 Isabelle — 打造更程序员友好的证明助手**
 >
 > LCF trusted kernel · 27 proof methods · Isar proof language · Metis skolemization
-> **0 warnings · Core 125/125 · Tier2 70/70 3261/3261 (100%) · 154s**
+> **CI 26/26 ✅ · Rust 1.96.0 stable · Core 125/125 · Tier2 70/70 3261/3261 (100%) · 154s**
 
 ---
 
@@ -93,7 +93,7 @@ Presburger, Quotient_Option/Sum/Product/Set, +44 Library/Data_Structures 文件
 
 | 指标 | 值 |
 |------|-----|
-| 版本 | v2.1.2 |
+| 版本 | v2.1.4 |
 | Rust 代码 | ~55K LOC, 124 文件 |
 | 测试 | 700+ (638 lib + 76 integration) |
 | 编译警告 | **0** |

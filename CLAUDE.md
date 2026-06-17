@@ -5,7 +5,7 @@
 > 功能与 Isabelle/ML 一致。错误信息 → Rust 编译器风格。工具链 → 标准 Rust 生态。
 > LCF trusted kernel + higher-order unification + Isar proof language + theory loading pipeline.
 
-## Project State (v2.1.3)
+## Project State (v2.1.4)
 
 | Metric | Value |
 |--------|-------|
@@ -29,10 +29,10 @@
 | Toolchain | Rust 1.96.0 stable (edition 2024) |
 | Tests | 700+ (638 lib + 76 integration) |
 | Verification | **Core 5/5 files 100% (125/125)**, **Tier2 70/70 files 100% (3261/3261)** |
-| Time | Tier2 154s (2.6 min) |
+| Time | Tier2 154s (2.6 min) — CI 26/26 ✅ |
 | isabelle-source | ✅ Isabelle 2025 full distribution (364MB, 1,473 .thy files) |
 
-## Active Strategy: v2.1.3 Released
+## Active Strategy: v2.1.4 Released
 
 ```
 Route A ✅ Complete:
@@ -47,12 +47,12 @@ Phase 3 ✅ Performance:
 3.2 ✅ Memory-bounded search (PROOF_SEARCH_BUDGET + depth branch pruning)
 3.3 ✅ Rewrite depth hard limit (MAX_REWRITE_DEPTH=40)
 
-Phase 6-16 ✅ v2.1.3:
+Phase 6-16 ✅ v2.1.4:
 6. ✅ Tier2 expansion: 36→57 files (21 new from Library/Data_Structures, +236 lemmas)
 7. ✅ Isar engine optimizations (get_premises ref, cached Simplifier, Conv Box→Arc)
 8a. ✅ Metis HOL.eq paramodulation (dest_hol_equals)
-8b. ⏭️ Skolemization deferred to v2.1.3
-8c. ⏭️ ATP TSTP capture deferred to v2.1.3
+8b. ⏭️ Skolemization deferred to v2.1.4
+8c. ⏭️ ATP TSTP capture deferred to v2.1.4
 ```
 
 ## Known Issues
@@ -63,9 +63,8 @@ Phase 6-16 ✅ v2.1.3:
 | Num.thy — same as Fields | 🟡 Medium | 354 simp calls, structured proofs |
 | Hilbert_Choice/Transitive_Closure — auto/blast dense | 🟡 Medium | Memory-budget protected but slow; needs iterativized auto_exec |
 | Finite_Set — large file (281 lemmas) | 🟡 Medium | 3h+ processing time; needs proof_state.rs caching |
-| Partial_Function — memory explosion | 🟡 Medium | Deep fixpoint constructions; needs v2.1.3 |
-| LazyLock DB init slow | 🟡 Medium | First HolTheoremDb::get() loads all 1,473 .thy files; should be on-demand |
-| Metis skolemization missing | 🟡 Medium | CNF conversion lacks ∃-Skolemization; deferred to v2.1.3 |
+| Partial_Function — memory explosion | 🟡 Medium | Deep fixpoint constructions |
+| LazyLock DB init slow | 🟡 Medium | First HolTheoremDb::get() loads all 1,473 .thy files |
 | hologic constants (3 remaining) | 🟢 Low | Intentional: prop eq, term_builder, comment |
 
 
