@@ -82,6 +82,7 @@ pub enum ElimModifier {
 
 /// Classification of a theorem based on its attributes and structure.
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct AttrClass {
     /// Whether this theorem should be in the safe intro set.
     pub safe_intro: bool,
@@ -103,21 +104,6 @@ pub struct AttrClass {
     pub cong: bool,
 }
 
-impl Default for AttrClass {
-    fn default() -> Self {
-        AttrClass {
-            safe_intro: false,
-            unsafe_intro: false,
-            safe_elim: false,
-            elim: false,
-            dest: false,
-            simp: false,
-            induct: false,
-            split: false,
-            cong: false,
-        }
-    }
-}
 
 // =========================================================================
 // Attribute parser

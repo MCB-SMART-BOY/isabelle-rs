@@ -25,7 +25,7 @@ pub fn goal_to_tptp_fof(thm: &Thm, name: &str) -> String {
     buf.push_str(", conjecture,\n    ");
 
     let (_prems, concl) = Pure::strip_imp_prems(thm.prop().term());
-    term_to_tptp(&concl, &mut buf);
+    term_to_tptp(concl, &mut buf);
 
     buf.push_str(").\n");
     buf
@@ -53,7 +53,7 @@ pub fn goal_with_prems_to_tptp(thm: &Thm, name: &str) -> String {
     buf.push_str("fof(");
     buf.push_str(name);
     buf.push_str(", conjecture,\n    ");
-    term_to_tptp(&concl, &mut buf);
+    term_to_tptp(concl, &mut buf);
     buf.push_str(").\n");
 
     buf
@@ -142,8 +142,8 @@ pub fn term_to_tptp(term: &Term, buf: &mut String) {
                         },
                         _ => {
                             // Binary application: check if it's an infix
-                            if let Term::App { func: inner, arg: left } = func.as_ref() {
-                                if let Term::Const { name: op_name, .. } = inner.as_ref() {
+                            if let Term::App { func: inner, arg: left } = func.as_ref()
+                                && let Term::Const { name: op_name, .. } = inner.as_ref() {
                                     let op = match op_name.as_ref() {
                                         "HOL.conj" | "HOL.and" => " & ",
                                         "HOL.disj" | "HOL.or" => " | ",
@@ -159,7 +159,6 @@ pub fn term_to_tptp(term: &Term, buf: &mut String) {
                                         return;
                                     }
                                 }
-                            }
                             // Plain function application
                             term_to_tptp(func, buf);
                             buf.push('(');

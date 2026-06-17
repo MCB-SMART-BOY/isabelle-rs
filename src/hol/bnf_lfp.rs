@@ -71,8 +71,8 @@ fn parse_typ_string(s: &str) -> Typ {
 
     // Arrow type: left => right
     if let Some(pos) = find_arrow_pos(s) {
-        let left = parse_typ_string(&s[..pos].trim());
-        let right = parse_typ_string(&s[pos + 2..].trim());
+        let left = parse_typ_string(s[..pos].trim());
+        let right = parse_typ_string(s[pos + 2..].trim());
         return Typ::arrow(left, right);
     }
 
@@ -82,7 +82,7 @@ fn parse_typ_string(s: &str) -> Typ {
         let after = &s[pos + 1..].trim();
         // Only treat as application if 'after' looks like a type constructor name
         // (starts with lowercase letter, not arrow, not parentheses)
-        if after.chars().next().map_or(false, |c| c.is_alphabetic() && c.is_lowercase()) {
+        if after.chars().next().is_some_and(|c| c.is_alphabetic() && c.is_lowercase()) {
             let arg = parse_typ_string(before);
             return Typ::apply(*after, vec![arg]);
         }
@@ -113,10 +113,10 @@ fn find_arrow_pos(s: &str) -> Option<usize> {
 fn is_recursive_arg(dt_name: &str, typ_str: &str) -> bool {
     // Split on spaces and arrows to check individual type components
     let components: Vec<&str> = typ_str
-        .split(|c: char| c == ' ' || c == '=' || c == '>')
+        .split([' ', '=', '>'])
         .filter(|s| !s.is_empty())
         .collect();
-    components.iter().any(|c| *c == dt_name)
+    components.contains(&dt_name)
 }
 
 /// Build the constructor term application: `C a1 a2 ... an`.
@@ -690,7 +690,7 @@ impl BnfLfp {
 
         let cases_disj = disj_cases
             .into_iter()
-            .reduce(|acc, c| hol_disj(acc, c))
+            .reduce(hol_disj)
             .unwrap_or_else(|| Term::const_("False", Typ::base("bool")));
 
         let coind_prem = Pure::mk_implies(r_x_y.clone(), cases_disj);
@@ -1259,7 +1259,7 @@ impl BnfLfp {
                 let with_quote = format!("'{}", tp.trim_start_matches('\''));
                 tp == arg_type_str || arg_type_str == with_quote.as_str()
             });
-            if let Some(_) = tp_index {
+            if tp_index.is_some() {
                 p_applications.push(Term::app(p.clone(), var.clone()));
             }
             arg_vars.push(var);

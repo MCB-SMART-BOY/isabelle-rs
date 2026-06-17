@@ -164,7 +164,7 @@ impl Algebra {
             Typ::Type { name, args: _ } => {
                 if let Some(arities) = self.arities.get(name) {
                     if let Some((class, _)) = arities.first() {
-                        Sort::singleton(&class)
+                        Sort::singleton(class)
                     } else {
                         Sort::top()
                     }

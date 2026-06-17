@@ -105,12 +105,11 @@ fn parse_primcorec_header(
 
         if !found_where {
             // Still in header — check if "where" is on this line
-            if t.contains("where ") {
-                if let Some(pos) = t.find("where ") {
+            if t.contains("where ")
+                && let Some(pos) = t.find("where ") {
                     parse_primcorec_equations(&t[pos + 6..], &mut equations);
                     found_where = true;
                 }
-            }
             *i += 1;
             continue;
         }
@@ -269,7 +268,7 @@ fn parse_constructor_app(expr: &str) -> Option<(String, Vec<String>)> {
     }
 
     // Find the first space or parenthesis to split constructor from args
-    let split_pos = expr.find(|c: char| c == ' ' || c == '(');
+    let split_pos = expr.find([' ', '(']);
     match split_pos {
         None => Some((expr.to_string(), vec![])),
         Some(pos) => {

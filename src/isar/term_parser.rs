@@ -27,15 +27,15 @@ impl P {
         self.tokens.get(self.pos).map(|t| t.source.clone())
     }
     fn is_kw(&self, kw: &str) -> bool {
-        self.tokens.get(self.pos).map_or(false, |t| t.is_keyword(kw))
+        self.tokens.get(self.pos).is_some_and(|t| t.is_keyword(kw))
     }
     fn is_id(&self) -> bool {
-        self.tokens.get(self.pos).map_or(false, |t| t.is_ident())
+        self.tokens.get(self.pos).is_some_and(|t| t.is_ident())
     }
     fn is_sym(&self, s: &str) -> bool {
         self.tokens
             .get(self.pos)
-            .map_or(false, |t| matches!(&t.kind, TokenKind::Symbol(x) if x.as_ref() == s))
+            .is_some_and(|t| matches!(&t.kind, TokenKind::Symbol(x) if x.as_ref() == s))
     }
     fn adv(&mut self) {
         self.pos += 1;
@@ -128,7 +128,7 @@ fn parse_typ_atom(s: &mut P) -> Option<Typ> {
 }
 
 thread_local! {
-    static PARSE_DEPTH: std::cell::Cell<usize> = std::cell::Cell::new(0);
+    static PARSE_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 const MAX_PARSE_DEPTH: usize = 200;
 
@@ -410,7 +410,7 @@ fn parse_trm_flag(s: &mut P, stop_at_imp: bool) -> Option<Term> {
 
             // Check for set range starting with .. or ..<: {..n}, {..<n}
             if s.is_sym(".") {
-                let next_is_dot_or_lt = s.tokens.get(s.pos + 1).map_or(false, |t| {
+                let next_is_dot_or_lt = s.tokens.get(s.pos + 1).is_some_and(|t| {
                     matches!(&t.kind, TokenKind::Symbol(s) if s.as_ref() == "." || s.as_ref() == "<")
                 });
                 if next_is_dot_or_lt {
@@ -441,7 +441,7 @@ fn parse_trm_flag(s: &mut P, stop_at_imp: bool) -> Option<Term> {
 
             // Check for set range with lower bound: {a..b}, {a..}, {a..<b}
             if s.is_sym(".") {
-                let next_is_dot_or_lt = s.tokens.get(s.pos + 1).map_or(false, |t| {
+                let next_is_dot_or_lt = s.tokens.get(s.pos + 1).is_some_and(|t| {
                     matches!(&t.kind, TokenKind::Symbol(s) if s.as_ref() == "." || s.as_ref() == "<")
                 });
                 if next_is_dot_or_lt {
@@ -691,12 +691,11 @@ fn parse_trm_flag(s: &mut P, stop_at_imp: bool) -> Option<Term> {
         }
 
         // Application by juxtaposition
-        if s.is_id() || matches!(s.kind(), Some(TokenKind::String | TokenKind::Number)) {
-            if let Some(a) = parse_atom(s) {
+        if (s.is_id() || matches!(s.kind(), Some(TokenKind::String | TokenKind::Number)))
+            && let Some(a) = parse_atom(s) {
                 head = Term::app(head, a);
                 continue;
             }
-        }
         break;
     }
     Some(head)
@@ -857,8 +856,8 @@ fn parse_atom(s: &mut P) -> Option<Term> {
         return Some(result);
     }
     // Set comprehension or enumeration: {x. P x} or {a, b, c}
-    if let Some(TokenKind::Symbol(x)) = s.kind() {
-        if x.as_ref() == "{" {
+    if let Some(TokenKind::Symbol(x)) = s.kind()
+        && x.as_ref() == "{" {
             s.adv();
             if s.is_sym("}") {
                 s.adv();
@@ -939,7 +938,6 @@ fn parse_atom(s: &mut P) -> Option<Term> {
             }
             return Some(result);
         }
-    }
     let kind = s.kind()?;
     let src = s.src()?;
     match &kind {

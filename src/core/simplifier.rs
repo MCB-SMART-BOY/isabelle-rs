@@ -220,12 +220,11 @@ impl Simplifier {
         let (inner_term, inner_thm_opt) = self.rewrite_subterms(term, 0);
 
         // Step 2: try top-level rewrite on the (possibly already rewritten) term
-        if let Some((result, thm)) = self.rewrite(&inner_term) {
-            if result != inner_term {
+        if let Some((result, thm)) = self.rewrite(&inner_term)
+            && result != inner_term {
                 // Compose: inner_thm (term ≡ inner_term) THEN rewrite_thm (inner_term ≡ result)
                 return Some((result, self.compose_equalities(inner_thm_opt.as_ref(), &thm)));
             }
-        }
 
         // Step 3: no top-level rewrite — return subterm result if changed
         inner_thm_opt.map(|thm| {
@@ -332,11 +331,10 @@ impl Simplifier {
     /// unbounded mutual recursion prove_condition → rewrite → try_rule → prove_condition.
     pub fn prove_condition(&self, cond: &Term, _depth: usize) -> bool {
         // Trivial case: condition is 'True'
-        if let Term::Const { name, .. } = cond {
-            if name.as_ref() == "True" {
+        if let Term::Const { name, .. } = cond
+            && name.as_ref() == "True" {
                 return true;
             }
-        }
         // Delegate to external solver (ArithSolver, AsmSolver, etc.)
         if let Some(ref solver) = self.condition_solver {
             return solver(cond);

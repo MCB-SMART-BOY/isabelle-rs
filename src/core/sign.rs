@@ -214,8 +214,8 @@ impl Signature {
                 if !self.is_declared(name.as_ref()) {
                     return Err(format!("Undeclared constant: {}", name.as_ref()));
                 }
-                if let Some(declared_type) = self.const_type(name.as_ref()) {
-                    if !types_compatible(typ, declared_type) {
+                if let Some(declared_type) = self.const_type(name.as_ref())
+                    && !types_compatible(typ, declared_type) {
                         return Err(format!(
                             "Type mismatch for constant {}: expected {:?}, got {:?}",
                             name.as_ref(),
@@ -223,7 +223,6 @@ impl Signature {
                             typ
                         ));
                     }
-                }
                 self.tsig.certify_type_detailed(typ)?;
                 Ok(())
             },

@@ -15,6 +15,7 @@ use crate::{
 // =========================================================================
 
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct CheckContext {
     pub proof_state: Option<ProofState>,
     pub context_hash: u64,
@@ -22,11 +23,6 @@ pub struct CheckContext {
     pub proof_depth: u32,
 }
 
-impl Default for CheckContext {
-    fn default() -> Self {
-        CheckContext { proof_state: None, context_hash: 0, in_proof: false, proof_depth: 0 }
-    }
-}
 
 // =========================================================================
 // CommandExecutor trait
@@ -43,6 +39,12 @@ pub trait CommandExecutor: Send + Sync {
 
 pub struct RealExecutor {
     theory: Arc<Theory>,
+}
+
+impl Default for RealExecutor {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl RealExecutor {

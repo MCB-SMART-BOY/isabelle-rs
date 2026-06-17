@@ -203,13 +203,11 @@ impl ProofState {
 
     /// Resolve ?case/?thesis to the current subgoal's conclusion.
     fn resolve_case_stmt(&self, stmt: &Term) -> Term {
-        if let Term::Const { name, .. } = stmt {
-            if name.as_ref() == "?case" || name.as_ref() == "?thesis" {
-                if let Some(subgoal) = self.get_current_subgoal() {
+        if let Term::Const { name, .. } = stmt
+            && (name.as_ref() == "?case" || name.as_ref() == "?thesis")
+                && let Some(subgoal) = self.get_current_subgoal() {
                     return subgoal.prop().term().clone();
                 }
-            }
-        }
         stmt.clone()
     }
 
@@ -393,9 +391,9 @@ pub fn interpret_proof_script(
                 if inner.starts_with("(induct") || inner.starts_with("(induction") {
                     // Extract induction variable and optional rule, strip arbitrary:
                     let induct_body = if inner.starts_with("(induct ") {
-                        &inner[8..].trim_end_matches(')')
+                        inner[8..].trim_end_matches(')')
                     } else if inner.starts_with("(induction ") {
-                        &inner[12..].trim_end_matches(')')
+                        inner[12..].trim_end_matches(')')
                     } else {
                         inner.trim_matches(|c| c == '(' || c == ')')
                     };
@@ -533,11 +531,10 @@ pub fn interpret_proof_script(
         }
         // `}` — end nested block: restore outer context
         if t == "}" {
-            if let ProofState::Proving { block_depth, .. } = state {
-                if *block_depth > 0 {
+            if let ProofState::Proving { block_depth, .. } = state
+                && *block_depth > 0 {
                     *block_depth -= 1;
                 }
-            }
             i += 1;
             continue;
         }
@@ -559,11 +556,10 @@ pub fn interpret_proof_script(
             let db = crate::hol::hol_loader::HolTheoremDb::get();
             for name in names.split_whitespace() {
                 let name = name.trim();
-                if !name.is_empty() {
-                    if let Some(thm) = db.by_name.get(name) {
+                if !name.is_empty()
+                    && let Some(thm) = db.by_name.get(name) {
                         state.chain_fact(Arc::clone(thm));
                     }
-                }
             }
             i += 1;
             continue;
@@ -575,11 +571,10 @@ pub fn interpret_proof_script(
             let db = crate::hol::hol_loader::HolTheoremDb::get();
             for name in names.split_whitespace() {
                 let name = name.trim();
-                if !name.is_empty() {
-                    if let Some(thm) = db.by_name.get(name) {
+                if !name.is_empty()
+                    && let Some(thm) = db.by_name.get(name) {
                         state.add_fact(Arc::clone(thm));
                     }
-                }
             }
             i += 1;
             continue;
@@ -614,11 +609,10 @@ pub fn interpret_proof_script(
             let db = crate::hol::hol_loader::HolTheoremDb::get();
             for name in names.split_whitespace() {
                 let name = name.trim().trim_matches(',');
-                if !name.is_empty() {
-                    if let Some(thm) = db.by_name.get(name) {
+                if !name.is_empty()
+                    && let Some(thm) = db.by_name.get(name) {
                         state.add_fact(Arc::clone(thm));
                     }
-                }
             }
             i += 1;
             continue;
@@ -630,11 +624,10 @@ pub fn interpret_proof_script(
             let db = crate::hol::hol_loader::HolTheoremDb::get();
             for name in names.split_whitespace() {
                 let name = name.trim();
-                if !name.is_empty() {
-                    if let Some(thm) = db.by_name.get(name) {
+                if !name.is_empty()
+                    && let Some(thm) = db.by_name.get(name) {
                         state.chain_fact(Arc::clone(thm));
                     }
-                }
             }
             i += 1;
             continue;
@@ -745,7 +738,7 @@ fn parse_and_exec_have_show(
 
     // Extract statement (skip optional name label)
     let stmt_str = if let Some(colon_pos) = stmt_part.find(": \"") {
-        &stmt_part[colon_pos + 2..].trim_end_matches('"')
+        stmt_part[colon_pos + 2..].trim_end_matches('"')
     } else if stmt_part.starts_with('"') {
         stmt_part.trim_matches('"')
     } else {
@@ -838,8 +831,8 @@ fn parse_and_exec_obtain(
     state.add_fact(Arc::new(assume_thm));
 
     // Try to verify the existential using the method (if not empty)
-    if !method.is_empty() {
-        if let Some(goal) = state.get_current_goal() {
+    if !method.is_empty()
+        && let Some(goal) = state.get_current_goal() {
             let results = crate::isar::method::exec_single_method(&goal, &method, premises);
             if results.iter().any(|r| r.nprems() == 0) {
                 // Method proved it, update the goal
@@ -849,7 +842,6 @@ fn parse_and_exec_obtain(
             }
         }
         // Even if method fails, we keep the obtained fact (it's an assumption)
-    }
     true
 }
 
@@ -877,11 +869,10 @@ fn parse_let_binding(rest: &str) -> Option<(String, Term)> {
     if let Some(be_pos) = rest.find(" be ") {
         let name = rest[..be_pos].trim().to_string();
         let rhs = rest[be_pos + 4..].trim().trim_matches('"');
-        if !name.is_empty() && !rhs.is_empty() {
-            if let Some(term) = crate::isar::term_parser::parse_term(rhs) {
+        if !name.is_empty() && !rhs.is_empty()
+            && let Some(term) = crate::isar::term_parser::parse_term(rhs) {
                 return Some((name, term));
             }
-        }
     }
     None
 }
@@ -900,11 +891,10 @@ impl ProofState {
 
     /// Set the current goal (update the current subgoal).
     pub fn set_current_goal(&mut self, new_goal: Thm) {
-        if let ProofState::Proving { subgoals, current_subgoal, .. } = self {
-            if *current_subgoal < subgoals.len() {
+        if let ProofState::Proving { subgoals, current_subgoal, .. } = self
+            && *current_subgoal < subgoals.len() {
                 subgoals[*current_subgoal] = new_goal;
             }
-        }
     }
 }
 

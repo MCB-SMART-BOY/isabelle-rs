@@ -150,7 +150,7 @@ impl InductiveDef {
 
         // Extract conclusion args from P(args)
         let mut concl_args: Vec<Term> = Vec::new();
-        self.extract_pred_args(&concl, pred_name, &mut concl_args);
+        self.extract_pred_args(concl, pred_name, &mut concl_args);
 
         let pred_concl =
             Term::apps(Term::const_(pred_name, Typ::dummy()), concl_args.iter().cloned());
@@ -179,24 +179,22 @@ impl InductiveDef {
         while let Some(t) = stack.pop() {
             match t {
                 Term::App { func, arg } => {
-                    if let Term::Const { name, .. } = func.as_ref() {
-                        if name.as_ref() == pred_name
-                            || name.as_ref().ends_with(&format!(".{}", pred_name))
+                    if let Term::Const { name, .. } = func.as_ref()
+                        && (name.as_ref() == pred_name
+                            || name.as_ref().ends_with(&format!(".{}", pred_name)))
                         {
                             let args = vec![arg.as_ref().clone()];
                             // Collect additional args from nested apps
                             let mut current = func.as_ref();
                             while let Term::App { func: f, arg: _a } = current {
-                                if let Term::Const { name: n, .. } = f.as_ref() {
-                                    if n.as_ref() == pred_name {
+                                if let Term::Const { name: n, .. } = f.as_ref()
+                                    && n.as_ref() == pred_name {
                                         break;
                                     }
-                                }
                                 current = f.as_ref();
                             }
                             args_list.push(args);
                         }
-                    }
                     stack.push(arg);
                     stack.push(func);
                 },
@@ -210,21 +208,17 @@ impl InductiveDef {
 
     /// Extract the arguments of a predicate application.
     fn extract_pred_args(&self, term: &Term, pred_name: &str, args: &mut Vec<Term>) {
-        match term {
-            Term::App { func, arg } => {
-                if let Term::Const { name, .. } = func.as_ref() {
-                    if name.as_ref() == pred_name {
-                        args.push(arg.as_ref().clone());
-                    }
+        if let Term::App { func, arg } = term {
+            if let Term::Const { name, .. } = func.as_ref()
+                && name.as_ref() == pred_name {
+                    args.push(arg.as_ref().clone());
                 }
-                self.extract_pred_args(func, pred_name, args);
-                // Non-predicate apps: recurse into both sides
-                if !matches!(func.as_ref(), Term::Const { name, .. } if name.as_ref() == pred_name)
-                {
-                    self.extract_pred_args(arg, pred_name, &mut Vec::new());
-                }
-            },
-            _ => {},
+            self.extract_pred_args(func, pred_name, args);
+            // Non-predicate apps: recurse into both sides
+            if !matches!(func.as_ref(), Term::Const { name, .. } if name.as_ref() == pred_name)
+            {
+                self.extract_pred_args(arg, pred_name, &mut Vec::new());
+            }
         }
     }
 

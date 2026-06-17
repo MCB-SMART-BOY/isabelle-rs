@@ -213,15 +213,13 @@ pub fn focus_goal(goal: &Term) -> (Vec<Term>, Term) {
     let mut prems = Vec::new();
     let mut body = goal;
     while let Term::App { func, arg } = body {
-        if let Term::App { func: inner, arg: a } = func.as_ref() {
-            if let Term::Const { name, .. } = inner.as_ref() {
-                if name.as_ref() == "Pure.imp" {
+        if let Term::App { func: inner, arg: a } = func.as_ref()
+            && let Term::Const { name, .. } = inner.as_ref()
+                && name.as_ref() == "Pure.imp" {
                     prems.push(a.as_ref().clone());
                     body = arg;
                     continue;
                 }
-            }
-        }
         break;
     }
     (prems, body.clone())

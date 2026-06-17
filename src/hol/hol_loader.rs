@@ -42,26 +42,22 @@ pub fn load_hol_theory(hol_thy: &str) -> Theory {
     for block in &find_blocks(hol_thy, "axiomatization") {
         for const_decl in block.split(" and ") {
             let decl = const_decl.trim();
-            if let Some((name, typ_str)) = parse_const_decl(decl) {
-                if let Some(typ) = parse_hol_type(typ_str) {
-                    if !thy.is_declared(&format!("HOL.{name}")) {
+            if let Some((name, typ_str)) = parse_const_decl(decl)
+                && let Some(typ) = parse_hol_type(typ_str)
+                    && !thy.is_declared(&format!("HOL.{name}")) {
                         thy.declare_const(format!("HOL.{name}"), typ);
                     }
-                }
-            }
         }
     }
 
     // Definitions: `definition True :: bool where "True == ..."`
     for block in &find_blocks(hol_thy, "definition") {
         let decl = block.trim();
-        if let Some((name, typ_str, _defn)) = parse_definition(decl) {
-            if let Some(typ) = parse_hol_type(typ_str) {
-                if !thy.is_declared(&format!("HOL.{name}")) {
+        if let Some((name, typ_str, _defn)) = parse_definition(decl)
+            && let Some(typ) = parse_hol_type(typ_str)
+                && !thy.is_declared(&format!("HOL.{name}")) {
                     thy.declare_const(format!("HOL.{name}"), typ);
                 }
-            }
-        }
     }
 
     thy
@@ -263,15 +259,13 @@ pub fn parse_datatypes(source: &str) -> Vec<DatatypeDef> {
             defs.append(&mut defs_batch);
             continue;
         }
-        if t.starts_with("old_rep_datatype ") || t.starts_with("rep_datatype ") {
-            if !is_false_positive {
-                if let Some((def, consumed)) = parse_old_rep_datatype(&lines, i) {
+        if (t.starts_with("old_rep_datatype ") || t.starts_with("rep_datatype "))
+            && !is_false_positive
+                && let Some((def, consumed)) = parse_old_rep_datatype(&lines, i) {
                     defs.push(def);
                     i = consumed;
                     continue;
                 }
-            }
-        }
         i += 1;
     }
     defs
@@ -346,11 +340,7 @@ fn parse_one_datatype(lines: &[&str], start: usize) -> Option<(DatatypeDef, usiz
             // Strip the keyword prefix
             if let Some(rest) = header.strip_prefix("datatype ") {
                 rest
-            } else if let Some(rest) = header.strip_prefix("codatatype ") {
-                rest
-            } else {
-                return None;
-            }
+            } else { header.strip_prefix("codatatype ")? }
         }
     } else if header.starts_with("datatype ") {
         header.strip_prefix("datatype ")?.trim()
@@ -389,14 +379,13 @@ fn parse_one_datatype(lines: &[&str], start: usize) -> Option<(DatatypeDef, usiz
         combined.push_str(t);
         i += 1;
         // Stop if line ends a constructor and next line starts new declaration
-        if !t.ends_with('|') {
-            if i < lines.len() {
+        if !t.ends_with('|')
+            && i < lines.len() {
                 let next = lines[i].trim();
                 if !next.starts_with('|') {
                     break;
                 }
             }
-        }
     }
 
     let combined = combined.trim();
@@ -1069,18 +1058,17 @@ fn parse_inductives(source: &str) -> Vec<ParsedLemma> {
                     i += 1;
                     continue;
                 }
-                if !cont.starts_with(' ') && !cont.starts_with('\t') {
-                    if cont_trim.starts_with("lemma ")
+                if !cont.starts_with(' ') && !cont.starts_with('\t')
+                    && (cont_trim.starts_with("lemma ")
                         || cont_trim.starts_with("theorem ")
                         || cont_trim.starts_with("inductive ")
                         || cont_trim.starts_with("coinductive ")
                         || cont_trim.starts_with("fun ")
                         || cont_trim.starts_with("primrec ")
-                        || cont_trim.starts_with("definition ")
+                        || cont_trim.starts_with("definition "))
                     {
                         break;
                     }
-                }
                 where_lines.push(cont_trim.to_string());
                 i += 1;
             }
@@ -1918,12 +1906,11 @@ fn extract_terms_from_clause(clause: &str) -> Vec<String> {
     // First, check if there's a name prefix: `name:`
     if let Some(colon_pos) = remaining.find(':') {
         // Check if colon is before any quote — it's a name prefix
-        if let Some(quote_pos) = remaining.find('"') {
-            if colon_pos < quote_pos {
+        if let Some(quote_pos) = remaining.find('"')
+            && colon_pos < quote_pos {
                 // There's a name: prefix — strip it
                 remaining = remaining[colon_pos + 1..].trim();
             }
-        }
     }
 
     // Now extract quoted strings and bare terms
@@ -1961,15 +1948,13 @@ fn extract_terms_from_clause(clause: &str) -> Vec<String> {
 /// Returns (name, statement).
 fn parse_named_or_bare(clause: &str) -> Option<(String, String)> {
     let clause = clause.trim();
-    if let Some(colon_pos) = clause.find(':') {
-        if let Some(quote_pos) = clause.find('"') {
-            if colon_pos < quote_pos {
+    if let Some(colon_pos) = clause.find(':')
+        && let Some(quote_pos) = clause.find('"')
+            && colon_pos < quote_pos {
                 let name = clause[..colon_pos].trim().to_string();
                 let stmt = extract_quoted(&clause[colon_pos + 1..])?;
                 return Some((name, stmt));
             }
-        }
-    }
     // No name prefix — extract the quoted string or take the whole thing
     if let Some(stmt) = extract_quoted(clause) {
         Some((String::new(), stmt))
@@ -2074,9 +2059,9 @@ fn extract_attr_base(s: &str) -> String {
 
     // Find the first whitespace or '(' that maps to an argument separator
     // But be careful: "intro!" has no space, "simp add:" has space before add:
-    let base_end = s.find(|c: char| c == ' ' || c == '(').unwrap_or(s.len());
+    let base_end = s.find([' ', '(']).unwrap_or(s.len());
 
-    let base = s[..base_end].trim_end_matches(|c: char| c == '(' || c == '[');
+    let base = s[..base_end].trim_end_matches(['(', '[']);
 
     // Also handle the case where the attribute is just `add: th1 th2` (no base name)
     if base.is_empty() || base == "add" || base == "del" || base == "only" {
@@ -2192,11 +2177,10 @@ fn merge_multiline_quotes(block: &str) -> Vec<String> {
             results.push(t.to_string());
         }
     }
-    if let Some(ref acc) = buf {
-        if let Some(stmt) = extract_quoted(acc) {
+    if let Some(ref acc) = buf
+        && let Some(stmt) = extract_quoted(acc) {
             results.push(stmt);
         }
-    }
     results
 }
 
@@ -2363,7 +2347,7 @@ impl HolTheoremDb {
         let term = thm.prop().term();
         let (prems, _) = crate::core::logic::Pure::strip_imp_prems(term);
         // Safe elim rules have a major premise that is a "safe" connective
-        prems.first().map_or(false, |p| Self::is_safe_connective(p))
+        prems.first().is_some_and(|p| Self::is_safe_connective(p))
     }
 
     /// Check if a term's head is a "safe" connective (conj, imp, all, True, False, disj for elim,
@@ -2420,11 +2404,10 @@ impl HolTheoremDb {
                 new_by_name.push((lem.name.clone(), Arc::clone(&thm)));
             }
             // Populate definition index
-            if !lem.name.is_empty() && !self.def_index.contains_key(&lem.name) {
-                if let Some(ref loc) = lem.source_loc {
+            if !lem.name.is_empty() && !self.def_index.contains_key(&lem.name)
+                && let Some(ref loc) = lem.source_loc {
                     self.def_index.insert(lem.name.clone(), loc.clone());
                 }
-            }
             let attrs = &lem.attributes;
             // Use the new attribute system for proper classification
             let is_eq = crate::core::logic::Pure::dest_equals(thm.prop().term()).is_some();
@@ -2486,11 +2469,10 @@ impl HolTheoremDb {
         for lem in lemmas {
             let thm = Arc::clone(&lem.theorem);
             match lem.name.as_str() {
-                "sym" | "trans" | "refl" | "arg_cong" | "fun_cong" | "iffD1" | "iffD2" => {
-                    if !self.simps.iter().any(|t| Arc::ptr_eq(t, &thm)) {
+                "sym" | "trans" | "refl" | "arg_cong" | "fun_cong" | "iffD1" | "iffD2"
+                    if !self.simps.iter().any(|t| Arc::ptr_eq(t, &thm)) => {
                         self.simps.push(thm);
-                    }
-                },
+                    },
                 _ => {},
             }
         }
@@ -2515,11 +2497,10 @@ impl HolTheoremDb {
                 by_name.insert(lem.name.clone(), Arc::clone(&thm));
             }
             // Populate definition index for go-to-definition
-            if !lem.name.is_empty() && !def_index.contains_key(&lem.name) {
-                if let Some(ref loc) = lem.source_loc {
+            if !lem.name.is_empty() && !def_index.contains_key(&lem.name)
+                && let Some(ref loc) = lem.source_loc {
                     def_index.insert(lem.name.clone(), loc.clone());
                 }
-            }
             let attrs = &lem.attributes;
             if attrs.iter().any(|a| a.contains("intro")) {
                 intros.push(Arc::clone(&thm));
@@ -2573,11 +2554,10 @@ impl HolTheoremDb {
         for lem in lemmas {
             let thm = Arc::clone(&lem.theorem);
             match lem.name.as_str() {
-                "sym" | "trans" | "refl" | "arg_cong" | "fun_cong" | "iffD1" | "iffD2" => {
-                    if !simps.iter().any(|t| Arc::ptr_eq(t, &thm)) {
+                "sym" | "trans" | "refl" | "arg_cong" | "fun_cong" | "iffD1" | "iffD2"
+                    if !simps.iter().any(|t| Arc::ptr_eq(t, &thm)) => {
                         simps.push(thm);
-                    }
-                },
+                    },
                 _ => {},
             }
         }
@@ -2635,8 +2615,8 @@ impl HolTheoremDb {
         for block in &find_blocks(source, "axiomatization") {
             for const_decl in block.split(" and ") {
                 let decl = const_decl.trim();
-                if let Some((name, typ_str)) = parse_const_decl(decl) {
-                    if let Some(typ) = parse_hol_type_with_env(typ_str, &env) {
+                if let Some((name, typ_str)) = parse_const_decl(decl)
+                    && let Some(typ) = parse_hol_type_with_env(typ_str, &env) {
                         let full_name = if name.contains('.') {
                             name.to_string()
                         } else {
@@ -2644,19 +2624,17 @@ impl HolTheoremDb {
                         };
                         env.declare_const(&full_name, typ);
                     }
-                }
             }
         }
         // Parse definition blocks for constant type signatures
         for block in &find_blocks(source, "definition") {
             let decl = block.trim();
-            if let Some((name, typ_str, _defn)) = parse_definition(decl) {
-                if let Some(typ) = parse_hol_type_with_env(typ_str, &env) {
+            if let Some((name, typ_str, _defn)) = parse_definition(decl)
+                && let Some(typ) = parse_hol_type_with_env(typ_str, &env) {
                     let full_name =
                         if name.contains('.') { name.to_string() } else { format!("HOL.{}", name) };
                     env.declare_const(&full_name, typ);
                 }
-            }
         }
         env
     }
@@ -3261,7 +3239,7 @@ impl HolTheoremDb {
                 // During initialization of HOL_THEOREMS, return a temporary
                 // empty DB to break the circular dependency.
                 static EMPTY_DB: std::sync::LazyLock<HolTheoremDb> =
-                    std::sync::LazyLock::new(|| HolTheoremDb::new());
+                    std::sync::LazyLock::new(HolTheoremDb::new);
                 &EMPTY_DB
             } else {
                 &HOL_THEOREMS
@@ -3283,7 +3261,7 @@ impl HolTheoremDb {
             for thm in &self.intros {
                 let term = thm.prop().term();
                 let (_, concl) = crate::core::logic::Pure::strip_imp_prems(term);
-                net.insert(&concl, Arc::clone(thm));
+                net.insert(concl, Arc::clone(thm));
             }
             net
         })
@@ -3311,7 +3289,7 @@ impl HolTheoremDb {
             for thm in &self.safe_intros {
                 let term = thm.prop().term();
                 let (_, concl) = crate::core::logic::Pure::strip_imp_prems(term);
-                net.insert(&concl, Arc::clone(thm));
+                net.insert(concl, Arc::clone(thm));
             }
             net
         })
@@ -3349,10 +3327,10 @@ impl HolTheoremDb {
 }
 
 thread_local! {
-    static DB_OVERRIDE: std::cell::RefCell<Option<*const HolTheoremDb>> = std::cell::RefCell::new(None);
+    static DB_OVERRIDE: std::cell::RefCell<Option<*const HolTheoremDb>> = const { std::cell::RefCell::new(None) };
     /// Set to true while HOL_THEOREMS is being initialized, to prevent
     /// recursive deadlocks when CTerm::certify calls HolTheoremDb::get().
-    static DB_INIT_IN_PROGRESS: std::cell::Cell<bool> = std::cell::Cell::new(false);
+    static DB_INIT_IN_PROGRESS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 // =========================================================================
@@ -3419,7 +3397,7 @@ pub fn scan_theory_files(dir: &str) -> Vec<String> {
             let path = entry.path();
             if path.is_dir() {
                 files.extend(scan_theory_files(&path.to_string_lossy()));
-            } else if path.extension().map_or(false, |e| e == "thy") {
+            } else if path.extension().is_some_and(|e| e == "thy") {
                 files.push(path.to_string_lossy().to_string());
             }
         }
@@ -4104,13 +4082,12 @@ pub fn parse_primrecs(source: &str) -> Vec<PrimrecDef> {
     let mut i = 0;
     while i < lines.len() {
         let t = lines[i].trim();
-        if t.starts_with("primrec ") || t.starts_with("fun ") || t.starts_with("function ") {
-            if let Some((def, consumed)) = parse_one_primrec(&lines, i) {
+        if (t.starts_with("primrec ") || t.starts_with("fun ") || t.starts_with("function "))
+            && let Some((def, consumed)) = parse_one_primrec(&lines, i) {
                 defs.push(def);
                 i = consumed;
                 continue;
             }
-        }
         i += 1;
     }
     defs
@@ -4159,7 +4136,7 @@ fn parse_one_primrec(lines: &[&str], start: usize) -> Option<(PrimrecDef, usize)
                 continue;
             }
             if t == "where" || t.starts_with("where ") {
-                let after_where = if t == "where" { "" } else { &t[5..].trim() };
+                let after_where = if t == "where" { "" } else { t[5..].trim() };
                 if !after_where.is_empty() {
                     where_line_remainder = Some(after_where.to_string());
                 }
@@ -4369,13 +4346,12 @@ pub fn parse_classes(source: &str) -> Vec<ClassDef> {
     let mut i = 0;
     while i < lines.len() {
         let t = lines[i].trim();
-        if t.starts_with("class ") {
-            if let Some((def, consumed)) = parse_one_class(&lines, i) {
+        if t.starts_with("class ")
+            && let Some((def, consumed)) = parse_one_class(&lines, i) {
                 defs.push(def);
                 i = consumed;
                 continue;
             }
-        }
         i += 1;
     }
     defs

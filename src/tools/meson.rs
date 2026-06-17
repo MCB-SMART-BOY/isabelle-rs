@@ -51,7 +51,7 @@ fn to_cnf_clauses(term: &Term) -> Vec<Vec<Term>> {
     let nnf = to_nnf(term);
     let cnf = distribute_cnf(&nnf);
     let conjuncts = split_conjuncts(&cnf);
-    conjuncts.iter().map(|c| split_disjuncts(c)).collect()
+    conjuncts.iter().map(split_disjuncts).collect()
 }
 
 fn to_nnf(term: &Term) -> Term {
@@ -144,6 +144,12 @@ fn split_disjuncts(term: &Term) -> Vec<Term> {
 pub struct MesonProver {
     clauses: Vec<Clause>,
     max_depth: usize,
+}
+
+impl Default for MesonProver {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MesonProver {

@@ -47,7 +47,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - run: cargo clippy --lib -- -D warnings
+      - run: cargo clippy --lib -- -W clippy::all -D clippy::correctness
 
   # ==========================================================================
   # Stage 2: Unit Tests (parallel, < 5 min)

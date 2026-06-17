@@ -228,26 +228,22 @@ fn term_to_lin_expr(term: &Term) -> Option<LinExpr> {
             Some(LinExpr::var(name.as_ref().to_string()))
         },
         Term::App { func, arg } => {
-            if let Term::Const { name, .. } = func.as_ref() {
-                if name.as_ref() == "HOL.Suc" || name.as_ref() == "Nat.Suc" {
-                    if let Some(inner) = term_to_lin_expr(arg) {
+            if let Term::Const { name, .. } = func.as_ref()
+                && (name.as_ref() == "HOL.Suc" || name.as_ref() == "Nat.Suc")
+                    && let Some(inner) = term_to_lin_expr(arg) {
                         return Some(inner.add(&LinExpr::constant(1)));
                     }
-                }
-            }
             // x + y: nested App(App(plus, x), y)
             if let Term::App { func: inner_func, arg: lhs } = func.as_ref() {
-                if is_plus(inner_func) {
-                    if let (Some(a), Some(b)) = (term_to_lin_expr(lhs), term_to_lin_expr(arg)) {
+                if is_plus(inner_func)
+                    && let (Some(a), Some(b)) = (term_to_lin_expr(lhs), term_to_lin_expr(arg)) {
                         return Some(a.add(&b));
                     }
-                }
                 // Subtraction (x - y)
-                if is_minus(inner_func) {
-                    if let (Some(a), Some(b)) = (term_to_lin_expr(lhs), term_to_lin_expr(arg)) {
+                if is_minus(inner_func)
+                    && let (Some(a), Some(b)) = (term_to_lin_expr(lhs), term_to_lin_expr(arg)) {
                         return Some(a.sub(&b));
                     }
-                }
             }
             None
         },
@@ -384,25 +380,21 @@ fn mk_less_eq(a: Term, b: Term) -> Term {
 
 /// Extract an atomic formula from a term if it's linear.
 fn term_to_atom(term: &Term) -> Option<Atom> {
-    if let Term::App { func, arg: rhs } = term {
-        if let Term::App { func: rel_const, arg: lhs } = func.as_ref() {
-            if is_hol_eq(rel_const) {
-                if let (Some(a), Some(b)) = (term_to_lin_expr(lhs), term_to_lin_expr(rhs)) {
+    if let Term::App { func, arg: rhs } = term
+        && let Term::App { func: rel_const, arg: lhs } = func.as_ref() {
+            if is_hol_eq(rel_const)
+                && let (Some(a), Some(b)) = (term_to_lin_expr(lhs), term_to_lin_expr(rhs)) {
                     return Some(Atom::Eq(a, b));
                 }
-            }
-            if is_less_than(rel_const) {
-                if let (Some(a), Some(b)) = (term_to_lin_expr(lhs), term_to_lin_expr(rhs)) {
+            if is_less_than(rel_const)
+                && let (Some(a), Some(b)) = (term_to_lin_expr(lhs), term_to_lin_expr(rhs)) {
                     return Some(Atom::Lt(a, b));
                 }
-            }
-            if is_less_eq(rel_const) {
-                if let (Some(a), Some(b)) = (term_to_lin_expr(lhs), term_to_lin_expr(rhs)) {
+            if is_less_eq(rel_const)
+                && let (Some(a), Some(b)) = (term_to_lin_expr(lhs), term_to_lin_expr(rhs)) {
                     return Some(Atom::Le(a, b));
                 }
-            }
         }
-    }
     None
 }
 
@@ -727,13 +719,12 @@ impl LinArithSolver {
         typ: ArithType,
     ) -> Option<Thm> {
         // Strategy 1: Reflexive equality
-        if let Atom::Eq(a, b) = goal {
-            if a == b {
+        if let Atom::Eq(a, b) = goal
+            && a == b {
                 let goal_term = goal.to_term(typ)?;
                 let refl_thm = ThmKernel::reflexive(CTerm::certify(goal_term));
                 return self.discharge_premises(state, &refl_thm);
             }
-        }
 
         // Strategy 2: Transitivity (x < y, y < z |- x < z)
         if let Some(thm) = self.try_transitivity(state, goal, typ) {
@@ -746,11 +737,10 @@ impl LinArithSolver {
         }
 
         // Strategy 4: Single premise direct match
-        if state.nprems() == 1 {
-            if let Some(thm) = self.try_direct_entailment(state, goal, typ) {
+        if state.nprems() == 1
+            && let Some(thm) = self.try_direct_entailment(state, goal, typ) {
                 return Some(thm);
             }
-        }
 
         // Strategy 5: Resolution-based proof
         if let Some(thm) = self.try_resolution_proof(state, goal, typ) {
@@ -802,8 +792,8 @@ impl LinArithSolver {
 
         // Try to resolve using the transitivity theorem
         for i in 0..state.nprems() {
-            if let Some(result) = ThmKernel::bicompose(true, trans_thm, state, i) {
-                if result.nprems() < state.nprems() {
+            if let Some(result) = ThmKernel::bicompose(true, trans_thm, state, i)
+                && result.nprems() < state.nprems() {
                     // Made progress; if fully solved, return
                     if result.nprems() == 0 {
                         return Some(result);
@@ -813,7 +803,6 @@ impl LinArithSolver {
                         return Some(final_result);
                     }
                 }
-            }
         }
 
         None
@@ -832,11 +821,10 @@ impl LinArithSolver {
         let mono_thm = db.by_name.get(mono_name)?;
 
         for i in 0..state.nprems() {
-            if let Some(result) = ThmKernel::bicompose(true, mono_thm, state, i) {
-                if result.nprems() == 0 {
+            if let Some(result) = ThmKernel::bicompose(true, mono_thm, state, i)
+                && result.nprems() == 0 {
                     return Some(result);
                 }
-            }
         }
 
         None
@@ -895,11 +883,10 @@ impl LinArithSolver {
         if state.nprems() == 1 {
             let prem_term = state.prem(0)?;
             let assume_thm = ThmKernel::assume(CTerm::certify(prem_term));
-            if let Some(result) = ThmKernel::bicompose(false, &assume_thm, state, 0) {
-                if result.nprems() == 0 {
+            if let Some(result) = ThmKernel::bicompose(false, &assume_thm, state, 0)
+                && result.nprems() == 0 {
                     return Some(result);
                 }
-            }
         }
 
         None
@@ -941,11 +928,10 @@ pub fn arith_tac(state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
         "Suc_less_eq",
         "le_refl",
     ] {
-        if let Some(thm) = db.by_name.get(*name) {
-            if let Some(rule) = RewriteRule::from_thm(Arc::clone(thm)) {
+        if let Some(thm) = db.by_name.get(*name)
+            && let Some(rule) = RewriteRule::from_thm(Arc::clone(thm)) {
                 simp_rules.push(rule);
             }
-        }
     }
 
     // Phase 2: Extract linear atoms from goal
@@ -962,19 +948,17 @@ pub fn arith_tac(state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
         let mut premise_atoms: Vec<Atom> = Vec::new();
         // State premise index 0 is the goal (subgoal), other prems are hypotheses
         for i in 1..state.nprems() {
-            if let Some(prem_term) = state.prem(i) {
-                if let Some(atom) = term_to_atom(&prem_term) {
+            if let Some(prem_term) = state.prem(i)
+                && let Some(atom) = term_to_atom(&prem_term) {
                     premise_atoms.push(atom);
                 }
-            }
         }
 
         let solver = LinArithSolver::new();
-        if let Some(result) = solver.solve(&premise_atoms, goal_atom, ArithType::Nat, state) {
-            if result.nprems() == 0 {
+        if let Some(result) = solver.solve(&premise_atoms, goal_atom, ArithType::Nat, state)
+            && result.nprems() == 0 {
                 return vec![result];
             }
-        }
     }
 
     // Phase 4: Fallback - simplification
@@ -1028,13 +1012,11 @@ pub fn arith_tac(state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
 // =========================================================================
 
 fn is_trivial_false(term: &Term) -> bool {
-    if let Term::App { func, arg: rhs } = term {
-        if let Term::App { func: eq_c, arg: lhs } = func.as_ref() {
-            if is_hol_eq(eq_c) {
+    if let Term::App { func, arg: rhs } = term
+        && let Term::App { func: eq_c, arg: lhs } = func.as_ref()
+            && is_hol_eq(eq_c) {
                 return (is_zero(lhs) && is_suc(rhs)) || (is_suc(lhs) && is_zero(rhs));
             }
-        }
-    }
     false
 }
 

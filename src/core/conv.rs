@@ -73,9 +73,9 @@ pub fn rewr_conv(rule: Thm) -> Conv {
         let t = thm.concl();
         // Try to match the conclusion against the left-hand side of the rule
         let rule_eq = rule.concl();
-        if let Term::App { func, arg: _rhs } = &rule_eq {
-            if let Term::App { func: eq_const, arg: lhs } = func.as_ref() {
-                if is_hol_eq(eq_const) {
+        if let Term::App { func, arg: _rhs } = &rule_eq
+            && let Term::App { func: eq_const, arg: lhs } = func.as_ref()
+                && is_hol_eq(eq_const) {
                     // If the term equals lhs, return reflexive equality
                     if t == **lhs {
                         // We have: rule ⊢ lhs ≡ rhs
@@ -90,8 +90,6 @@ pub fn rewr_conv(rule: Thm) -> Conv {
                         return Some(inst_rule);
                     }
                 }
-            }
-        }
         None
     })
 }
@@ -112,7 +110,7 @@ pub fn then_conv(c1: Conv, c2: Conv) -> Conv {
         let r2 = c2(&u_thm)?;
 
         // Combine: ⊢ t ≡ u  and  ⊢ u ≡ v  →  ⊢ t ≡ v
-        Some(ThmKernel::transitive(&r1, &r2).unwrap_or_else(|_| r1))
+        Some(ThmKernel::transitive(&r1, &r2).unwrap_or(r1))
     })
 }
 
@@ -257,8 +255,8 @@ fn top_sweep_walk(c: Conv, thm: &Thm) -> Option<Thm> {
             let c_arg = arg_conv(Arc::clone(&c));
             // Try top-level first, then descend
             let step = result.or_else(|| c_fun(thm));
-            let step = step.or_else(|| c_arg(thm));
-            step
+            
+            step.or_else(|| c_arg(thm))
         },
         Term::Abs { .. } => {
             let c_abs = abs_conv(Arc::clone(&c));
@@ -346,11 +344,10 @@ fn rhs_of_conv(thm: &Thm) -> Option<Term> {
     let concl = thm.concl();
     match &concl {
         Term::App { func, arg: rhs } => {
-            if let Term::App { func: eq_const, .. } = func.as_ref() {
-                if is_hol_eq(eq_const) {
+            if let Term::App { func: eq_const, .. } = func.as_ref()
+                && is_hol_eq(eq_const) {
                     return Some(rhs.as_ref().clone());
                 }
-            }
             None
         },
         _ => None,

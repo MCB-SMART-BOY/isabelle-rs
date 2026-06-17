@@ -92,22 +92,20 @@ impl FunDef {
         }
 
         // 2. Generate induction rule (only for recursive functions)
-        if self.is_recursive {
-            if let Some(induct) = self.gen_induction_rule() {
+        if self.is_recursive
+            && let Some(induct) = self.gen_induction_rule() {
                 results.push((format!("{}.induct", self.name), induct, vec!["induct".to_string()]));
             }
-        }
 
         // 3. Generate cases rule
-        if self.equations.len() > 1 {
-            if let Some(cases) = self.gen_cases_rule() {
+        if self.equations.len() > 1
+            && let Some(cases) = self.gen_cases_rule() {
                 results.push((
                     format!("{}.cases", self.name),
                     cases,
                     vec!["elim".to_string(), "cases".to_string()],
                 ));
             }
-        }
 
         results
     }

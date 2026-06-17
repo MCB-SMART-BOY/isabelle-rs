@@ -239,10 +239,10 @@ impl TheoryProcessor {
                 }
             },
             CommandCategory::TheoryGoal => {
-                self.begin_lemma(&span);
+                self.begin_lemma(span);
             },
             CommandCategory::TheoryBody => {
-                self.process_theory_body(&span);
+                self.process_theory_body(span);
             },
             CommandCategory::TheoryEnd => {
                 // `end` — will trigger finalize
@@ -253,19 +253,19 @@ impl TheoryProcessor {
             },
             CommandCategory::ProofGoal => {
                 // `have`, `show`
-                self.process_goal(&span);
+                self.process_goal(span);
             },
             CommandCategory::ProofAsm => {
                 // `fix`, `assume`
-                self.process_asm(&span);
+                self.process_asm(span);
             },
             CommandCategory::ProofScript => {
                 // `apply`, `defer`, `prefer`
-                self.process_script(&span);
+                self.process_script(span);
             },
             CommandCategory::ProofChain => {
                 // `also`, `finally`, `then`, `from`, `with`
-                self.process_chain(&span);
+                self.process_chain(span);
             },
             CommandCategory::ProofDecl => {
                 // `let`, `note`, `using`, `unfolding`
@@ -275,11 +275,11 @@ impl TheoryProcessor {
             },
             CommandCategory::Qed | CommandCategory::QedGlobal => {
                 // `done`, `by`, `sorry`
-                self.process_qed(&span);
+                self.process_qed(span);
             },
             CommandCategory::ProofClose => {
                 // `qed`, `}`
-                self.process_proof_close(&span);
+                self.process_proof_close(span);
             },
             CommandCategory::Vacuous => {
                 // `section`, `text`, `print_*`
@@ -785,7 +785,7 @@ impl TheoryProcessor {
         for line in rest.lines() {
             let trimmed = line.trim();
             // Stop at next command keyword
-            if trimmed.starts_with("lemma ")
+            if (trimmed.starts_with("lemma ")
                 || trimmed.starts_with("theorem ")
                 || trimmed.starts_with("fun ")
                 || trimmed.starts_with("datatype ")
@@ -794,12 +794,10 @@ impl TheoryProcessor {
                 || trimmed == "end"
                 || trimmed == "qed"
                 || trimmed == "done"
-                || trimmed.starts_with("by ")
-            {
-                if !result.is_empty() {
+                || trimmed.starts_with("by "))
+                && !result.is_empty() {
                     break;
                 }
-            }
             if !result.is_empty() {
                 result.push(' ');
             }
@@ -862,9 +860,9 @@ impl TheoryProcessor {
     // process_proof with catch_unwind is defined below
 
     fn process_goal(&mut self, span: &CommandSpan) {
-        let name = span.body.trim().split_whitespace().next().unwrap_or("goal");
+        let name = span.body.split_whitespace().next().unwrap_or("goal");
         let is_show = span.name == "show" || span.name == "thus";
-        let _ = catch_unwind_silent(|| {
+        catch_unwind_silent(|| {
             if let Some(ref mut proof) = self.proof {
                 if proof.mode() == crate::isar::proof::ProofMode::Backward {
                     proof.proof();
@@ -880,7 +878,7 @@ impl TheoryProcessor {
     }
 
     fn process_asm(&mut self, span: &CommandSpan) {
-        let _ = catch_unwind_silent(|| {
+        catch_unwind_silent(|| {
             if let Some(ref mut proof) = self.proof {
                 if proof.mode() == crate::isar::proof::ProofMode::Backward {
                     proof.proof();
@@ -904,7 +902,7 @@ impl TheoryProcessor {
     }
 
     fn process_script(&mut self, span: &CommandSpan) {
-        let _ = catch_unwind_silent(|| {
+        catch_unwind_silent(|| {
             if let Some(ref mut proof) = self.proof {
                 proof.apply(span.body.trim());
             }
@@ -912,7 +910,7 @@ impl TheoryProcessor {
     }
 
     fn process_chain(&mut self, span: &CommandSpan) {
-        let _ = catch_unwind_silent(|| {
+        catch_unwind_silent(|| {
             if let Some(ref mut proof) = self.proof {
                 if proof.mode() == crate::isar::proof::ProofMode::Backward {
                     proof.proof();
@@ -943,7 +941,7 @@ impl TheoryProcessor {
             }
             return;
         }
-        let _ = catch_unwind_silent(|| {
+        catch_unwind_silent(|| {
             if let Some(ref mut proof) = self.proof {
                 if span.name == "done" {
                     proof.done();
@@ -957,31 +955,29 @@ impl TheoryProcessor {
                     if let Some((name, thm)) = proof.extract_theorem() {
                         let attrs = std::mem::take(&mut self.pending_attributes);
                         self.add_theorem_with_attrs(name, Arc::clone(&thm), attrs);
-                    } else if self.accept_all {
-                        if let Some(ref pending_name) = self.pending_lemma {
+                    } else if self.accept_all
+                        && let Some(ref pending_name) = self.pending_lemma {
                             let stmt = Term::const_("True", Typ::base("prop"));
                             let thm = Arc::new(ThmKernel::assume(CTerm::certify_annotated(stmt)));
                             let attrs = std::mem::take(&mut self.pending_attributes);
                             self.add_theorem_with_attrs(pending_name.clone(), thm, attrs);
                         }
-                    }
                 }
             }
         });
     }
 
     fn process_proof_close(&mut self, span: &CommandSpan) {
-        let _ = catch_unwind_silent(|| {
-            if let Some(ref mut proof) = self.proof {
-                if span.name == "qed" {
+        catch_unwind_silent(|| {
+            if let Some(ref mut proof) = self.proof
+                && span.name == "qed" {
                     proof.qed();
                 }
-            }
         });
     }
 
     fn process_proof(&mut self) {
-        let _ = catch_unwind_silent(|| {
+        catch_unwind_silent(|| {
             if let Some(ref mut proof) = self.proof {
                 proof.proof();
             }

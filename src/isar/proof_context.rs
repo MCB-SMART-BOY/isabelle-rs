@@ -44,6 +44,12 @@ pub struct LocalFacts {
     facts: HashMap<String, Vec<Arc<Thm>>>,
 }
 
+impl Default for LocalFacts {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LocalFacts {
     pub fn new() -> Self {
         LocalFacts { facts: HashMap::new() }

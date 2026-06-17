@@ -551,11 +551,10 @@ impl IsarProof {
             match method_name {
                 "assumption" | "." => {
                     let stmt_ct = CTerm::certify(goal.statement.clone());
-                    if goal.goal_thm.hyps().contains(&stmt_ct) {
-                        if let Ok(closed) = ThmKernel::trivial(stmt_ct) {
+                    if goal.goal_thm.hyps().contains(&stmt_ct)
+                        && let Ok(closed) = ThmKernel::trivial(stmt_ct) {
                             goal.goal_thm = closed;
                         }
-                    }
                 },
                 "this" | "skip" => {
                     let stmt_ct = CTerm::certify(goal.statement.clone());
@@ -784,7 +783,7 @@ impl IsarProof {
     pub fn induct(&mut self, var: &str) {
         self.assert_backward();
         // Collect induction rule names before borrowing
-        let induct_names = vec![format!("{var}.induct"), format!("{var}_induct"), var.to_string()];
+        let induct_names = [format!("{var}.induct"), format!("{var}_induct"), var.to_string()];
         // Look up rules (immutable borrow)
         let rules: Vec<Option<Thm>> = induct_names.iter().map(|n| self.lookup_theorem(n)).collect();
 
@@ -792,13 +791,12 @@ impl IsarProof {
         if let Some(goal) = self.find_goal_mut() {
             let mut applied = false;
             for rule_opt in &rules {
-                if let Some(rule) = rule_opt {
-                    if let Some(refined) = ThmKernel::bicompose(false, rule, &goal.goal_thm, 0) {
+                if let Some(rule) = rule_opt
+                    && let Some(refined) = ThmKernel::bicompose(false, rule, &goal.goal_thm, 0) {
                         goal.goal_thm = refined;
                         applied = true;
                         break;
                     }
-                }
             }
             if !applied {
                 let stmt_ct = CTerm::certify(goal.statement.clone());
@@ -833,12 +831,11 @@ impl IsarProof {
 
         if let Some(goal) = self.find_goal_mut() {
             for rule_opt in &rules {
-                if let Some(rule) = rule_opt {
-                    if let Some(refined) = ThmKernel::bicompose(false, rule, &goal.goal_thm, 0) {
+                if let Some(rule) = rule_opt
+                    && let Some(refined) = ThmKernel::bicompose(false, rule, &goal.goal_thm, 0) {
                         goal.goal_thm = refined;
                         return;
                     }
-                }
             }
             // Fallback: close goal
             let stmt_ct = CTerm::certify(goal.statement.clone());

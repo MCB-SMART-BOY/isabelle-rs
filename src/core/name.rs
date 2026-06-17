@@ -200,11 +200,11 @@ impl NameContext {
     /// Returns true if the name was newly declared.
     pub fn declare(&mut self, name: &str) -> bool {
         let clean = clean_name(name).to_string();
-        if self.declared.contains_key(&clean) {
-            false
-        } else {
-            self.declared.insert(clean, None);
+        if let std::collections::btree_map::Entry::Vacant(e) = self.declared.entry(clean) {
+            e.insert(None);
             true
+        } else {
+            false
         }
     }
 

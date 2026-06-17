@@ -121,8 +121,8 @@ fn print_term_to(term: &Term, outer_prec: Precedence, buf: &mut String) {
         // ── Binders ──
         Term::Abs { name, body, .. } => {
             // Check if the abstraction body has a known binder pattern
-            if let Term::App { func, arg } = body.as_ref() {
-                if let Term::Const { name: cname, .. } = func.as_ref() {
+            if let Term::App { func, arg } = body.as_ref()
+                && let Term::Const { name: cname, .. } = func.as_ref() {
                     for (binder_name, binder_sym) in BINDER_TABLE {
                         if cname.as_ref() == *binder_name {
                             // ∀x. body
@@ -141,9 +141,8 @@ fn print_term_to(term: &Term, outer_prec: Precedence, buf: &mut String) {
                         }
                     }
                 }
-            }
             // Plain lambda
-            buf.push_str("λ");
+            buf.push('λ');
             buf.push_str(name);
             buf.push_str(". ");
             print_term_to(body, Precedence::Top, buf);
@@ -152,8 +151,8 @@ fn print_term_to(term: &Term, outer_prec: Precedence, buf: &mut String) {
         // ── Application (potential infix / prefix) ──
         Term::App { func, arg } => {
             // Check for: App(App(Const(name), left), right) — infix operator
-            if let Term::App { func: inner, arg: left } = func.as_ref() {
-                if let Term::Const { name, .. } = inner.as_ref() {
+            if let Term::App { func: inner, arg: left } = func.as_ref()
+                && let Term::Const { name, .. } = inner.as_ref() {
                     for info in INFIX_TABLE {
                         if info.names.contains(&name.as_ref()) {
                             let need_paren = outer_prec > info.prec;
@@ -172,7 +171,6 @@ fn print_term_to(term: &Term, outer_prec: Precedence, buf: &mut String) {
                         }
                     }
                 }
-            }
 
             // Check for: App(Const(name), arg) — prefix operator
             if let Term::Const { name, .. } = func.as_ref() {
@@ -211,7 +209,7 @@ fn print_term_to(term: &Term, outer_prec: Precedence, buf: &mut String) {
 
         // ── Schematic variables ──
         Term::Var { name, index, .. } => {
-            buf.push_str("?");
+            buf.push('?');
             buf.push_str(name);
             if *index > 0 {
                 use std::fmt::Write;
@@ -221,7 +219,7 @@ fn print_term_to(term: &Term, outer_prec: Precedence, buf: &mut String) {
 
         // ── Bound variables ──
         Term::Bound(idx) => {
-            buf.push_str("B");
+            buf.push('B');
             use std::fmt::Write;
             write!(buf, "{idx}").unwrap();
         },

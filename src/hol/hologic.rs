@@ -706,7 +706,7 @@ pub fn mk_numeral(n: usize) -> Option<Term> {
     fn build(n: usize) -> Term {
         if n == 1 {
             one_const()
-        } else if n % 2 == 0 {
+        } else if n.is_multiple_of(2) {
             Term::app(bit0_const(), build(n / 2))
         } else {
             Term::app(bit1_const(), build(n / 2))

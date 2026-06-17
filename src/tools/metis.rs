@@ -123,7 +123,7 @@ impl ClauseEntry {
     /// Compute heuristic weight: smaller = lighter = higher priority.
     /// Light clauses (few symbols, few premises) are prioritized.
     fn compute_weight(premises: &[Term], conclusion: &Term) -> usize {
-        let symbol_count: usize = premises.iter().map(|t| Self::count_symbols(t)).sum::<usize>()
+        let symbol_count: usize = premises.iter().map(Self::count_symbols).sum::<usize>()
             + Self::count_symbols(conclusion);
         symbol_count + premises.len() * 10
     }
@@ -246,7 +246,7 @@ struct ClauseSignature {
 
 impl ClauseSignature {
     fn from_entry(entry: &ClauseEntry) -> Self {
-        let mut hashes: Vec<u64> = entry.premises.iter().map(|t| hash_term(t)).collect();
+        let mut hashes: Vec<u64> = entry.premises.iter().map(hash_term).collect();
         hashes.sort();
         ClauseSignature { premise_hash: hashes, conclusion_hash: hash_term(&entry.conclusion) }
     }
@@ -405,21 +405,19 @@ impl MetisProver {
         let neg_goal_prop = Pure::mk_implies(goal_prop.clone(), false_c);
         let neg_goal_ct = CTerm::certify(neg_goal_prop);
 
-        if contra_thm.hyps().contains(&neg_goal_ct) {
-            if let Ok(discharged) = ThmKernel::implies_intr(&neg_goal_ct, &contra_thm) {
+        if contra_thm.hyps().contains(&neg_goal_ct)
+            && let Ok(discharged) = ThmKernel::implies_intr(&neg_goal_ct, &contra_thm) {
                 return Some(Arc::new(discharged));
             }
-        }
 
         // Try each negated goal sub-clause
         for clause_lits in &negated_clauses {
             if let Some(clause_thm) = Self::clause_to_thm(clause_lits) {
                 let ct = CTerm::certify(clause_thm.prop().term().clone());
-                if contra_thm.hyps().contains(&ct) {
-                    if let Ok(discharged) = ThmKernel::implies_intr(&ct, &contra_thm) {
+                if contra_thm.hyps().contains(&ct)
+                    && let Ok(discharged) = ThmKernel::implies_intr(&ct, &contra_thm) {
                         return Some(Arc::new(discharged));
                     }
-                }
             }
         }
 
@@ -687,7 +685,7 @@ impl MetisProver {
     /// Check if a clause is "trivial" (tautology): conclusion equals a premise.
     fn is_trivial_clause(thm: &Arc<Thm>) -> bool {
         let (prems, concl) = Pure::strip_imp_prems(thm.prop().term());
-        prems.iter().any(|p| *p == concl)
+        prems.contains(&concl)
     }
 }
 
@@ -1007,8 +1005,8 @@ fn distribute_cnf(term: &Term) -> Vec<Vec<Term>> {
     for prem_term in &literals {
         if let Some((a, b)) = Pure::dest_implies(prem_term) {
             // This premise is itself an implication A ==> B
-            if let Term::Const { name, .. } = concl {
-                if name.as_ref() == "HOL.False" || name.as_ref() == "False" {
+            if let Term::Const { name, .. } = concl
+                && (name.as_ref() == "HOL.False" || name.as_ref() == "False") {
                     // (A ==> B) ==> False
                     // → clauses: [A] and [B, False]
                     // where [A] means: no premises, conclusion = A (i.e., A is true)
@@ -1016,7 +1014,6 @@ fn distribute_cnf(term: &Term) -> Vec<Vec<Term>> {
                     sub_clauses.push(vec![a.clone()]);
                     sub_clauses.push(vec![b.clone(), hologic::false_const()]);
                 }
-            }
         }
     }
 
@@ -1067,15 +1064,14 @@ fn skolemize_rec(term: &Term, counter: &mut usize) -> Term {
         // HOL.Ex $ Abs(x, ty, body) → body[sko/x]
         Term::App { func, arg } => {
             if let Term::Const { name, .. } = func.as_ref() {
-                if name.as_ref() == "HOL.Ex" {
-                    if let Term::Abs { name: _, typ: body_ty, body } = arg.as_ref() {
+                if name.as_ref() == "HOL.Ex"
+                    && let Term::Abs { name: _, typ: body_ty, body } = arg.as_ref() {
                         let sko_name = format!("_sko{}", *counter);
                         *counter += 1;
                         let sko = Term::free(sko_name.as_str(), body_ty.clone());
                         let reduced = crate::core::term_subst::subst_bounds(&[sko], body);
                         return skolemize_rec(&reduced, counter);
                     }
-                }
                 // HOL.All: do NOT descend (universals stay atomic)
                 if name.as_ref() == "HOL.All" {
                     return term.clone();
@@ -1241,14 +1237,12 @@ pub fn hol_to_cnf(term: &Term) -> Vec<Vec<i32>> {
             // Negation: ~A
             _ => {
                 // Check for explicit Not
-                if let Term::App { func, arg } = term {
-                    if let Term::Const { name, .. } = func.as_ref() {
-                        if name.as_ref() == "HOL.Not" || name.as_ref() == "Not" {
+                if let Term::App { func, arg } = term
+                    && let Term::Const { name, .. } = func.as_ref()
+                        && (name.as_ref() == "HOL.Not" || name.as_ref() == "Not") {
                             // ~A: flip polarity
                             return term_to_cnf_clauses(arg, atom_map, next_id, !polarity);
                         }
-                    }
-                }
                 // Atomic
                 let id = assign_atom_id(term, atom_map, next_id);
                 vec![vec![lit(id, polarity)]]
@@ -1313,8 +1307,8 @@ pub fn tseitin_transform(term: &Term) -> Vec<Vec<i32>> {
             // A ==> B: v ↔ (a → b)
             Term::App { func, arg } => {
                 // Check for explicit negation first
-                if let Term::Const { name, .. } = func.as_ref() {
-                    if name.as_ref() == "HOL.Not" || name.as_ref() == "Not" {
+                if let Term::Const { name, .. } = func.as_ref()
+                    && (name.as_ref() == "HOL.Not" || name.as_ref() == "Not") {
                         let va = tseitin_rec(arg, clauses, atom_map, next_id);
                         let v = get_or_create_var(term, atom_map, next_id);
                         // v ↔ ~a  ≡  (~v ∨ ~a) ∧ (v ∨ a)
@@ -1322,7 +1316,6 @@ pub fn tseitin_transform(term: &Term) -> Vec<Vec<i32>> {
                         clauses.push(vec![v, va]);
                         return v;
                     }
-                }
 
                 match func.as_ref() {
                     Term::App { func: inner, arg: a } => {
@@ -1590,11 +1583,10 @@ fn find_contradiction_and_prove(prover: &MetisProver, goal: &Thm) -> Option<Arc<
     let neg_goal_prop = Pure::mk_implies(goal_prop, false_c);
     let neg_goal_ct = CTerm::certify(neg_goal_prop);
 
-    if contra_thm.hyps().contains(&neg_goal_ct) {
-        if let Ok(discharged) = ThmKernel::implies_intr(&neg_goal_ct, &contra_thm) {
+    if contra_thm.hyps().contains(&neg_goal_ct)
+        && let Ok(discharged) = ThmKernel::implies_intr(&neg_goal_ct, &contra_thm) {
             return Some(Arc::new(discharged));
         }
-    }
 
     Some(contra_thm)
 }
@@ -1841,7 +1833,7 @@ impl MetisReplay {
         let (prems, concl) = Pure::strip_imp_prems(thm.prop().term());
 
         // Try: if goal is among premises, derive by discharging others
-        for (_i, prem) in prems.iter().enumerate() {
+        for prem in prems.iter() {
             if **prem == *goal_term {
                 let ct = CTerm::certify(goal_term.clone());
                 let goal_assume = ThmKernel::assume(ct);

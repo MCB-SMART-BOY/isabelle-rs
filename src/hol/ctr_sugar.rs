@@ -133,7 +133,7 @@ impl CtrSugar {
             // Selectors: one per argument
             let mut ctor_sels = Vec::new();
             let mut ctor_defaults = Vec::new();
-            for (_i, (sel_opt, _arg_typ)) in args.iter().enumerate() {
+            for (sel_opt, _arg_typ) in args.iter() {
                 let sel_name = sel_opt
                     .clone()
                     .unwrap_or_else(|| format!("sel_{}_{}", def.name, ctor_sels.len() + 1));
@@ -513,8 +513,8 @@ impl CtrSugar {
                                 }
                             }
                             // Line above is messy. Let me use a clean approach.
-                            let clean_selector = self.mk_selector_lambda(args_k.len(), j);
-                            clean_selector
+                            
+                            self.mk_selector_lambda(args_k.len(), j)
                         }
                     } else {
                         // Non-matching: return some dummy value

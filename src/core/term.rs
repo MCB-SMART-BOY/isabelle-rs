@@ -34,7 +34,7 @@ impl Term {
         Term::App { func: Box::new(func), arg: Box::new(arg) }
     }
     pub fn apps(func: Term, args: impl IntoIterator<Item = Term>) -> Self {
-        args.into_iter().fold(func, |acc, arg| Term::app(acc, arg))
+        args.into_iter().fold(func, Term::app)
     }
     pub fn is_const(&self) -> bool {
         matches!(self, Term::Const { .. })
@@ -85,12 +85,11 @@ impl Term {
         while let Some(term) = stack.pop() {
             match term {
                 Term::Const { name, typ } => {
-                    if typ.is_dummy() {
-                        if let Some(known) = env.const_type(name.as_ref()) {
+                    if typ.is_dummy()
+                        && let Some(known) = env.const_type(name.as_ref()) {
                             *typ = known.clone();
                             changed = true;
                         }
-                    }
                 },
                 Term::Free { name, typ } => {
                     if typ.is_dummy() {

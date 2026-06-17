@@ -43,7 +43,7 @@ pub fn string() -> Parser<String> {
 pub fn symbol(sym: &str) -> Parser<String> {
     let sym = sym.to_string();
     Box::new(move |tokens: &[Token]| match tokens.first() {
-        Some(Token { kind: TokenKind::Symbol(s), source, .. }) if s.as_ref() == &sym => {
+        Some(Token { kind: TokenKind::Symbol(s), source, .. }) if s.as_ref() == sym => {
             Some((source.clone(), tokens[1..].to_vec()))
         },
         _ => None,

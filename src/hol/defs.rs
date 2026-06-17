@@ -125,8 +125,8 @@ impl Defs {
         // 1. Check for duplicate definitions with incompatible type arguments
         if let Some(existing_specs) = self.specs.get(&item) {
             for existing in existing_specs {
-                if !Self::disjoint_args(&lhs, &existing.lhs) {
-                    if let Some(ref def_name) = existing.def {
+                if !Self::disjoint_args(&lhs, &existing.lhs)
+                    && let Some(ref def_name) = existing.def {
                         return Err(format!(
                             "Conflicting type arguments for {} '{}': already defined in '{}'",
                             if item.kind == ItemKind::Const { "constant" } else { "type" },
@@ -134,7 +134,6 @@ impl Defs {
                             def_name,
                         ));
                     }
-                }
             }
         }
 

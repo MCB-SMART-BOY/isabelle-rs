@@ -71,15 +71,14 @@ impl LocaleDef {
         }
 
         // Generate locale intro rules
-        if !self.assumes.is_empty() {
-            if let Some(intro) = self.gen_intro_rule() {
+        if !self.assumes.is_empty()
+            && let Some(intro) = self.gen_intro_rule() {
                 results.push((
                     format!("{}.intro", self.name),
                     intro,
                     vec!["intro".to_string(), "locale_intro".to_string()],
                 ));
             }
-        }
 
         results
     }

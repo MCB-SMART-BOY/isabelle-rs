@@ -29,8 +29,8 @@ pub fn handle_hover(ctx: &HandlerContext, req: JsonRpcRequest) {
         let word = extract_word_at(line, params.position.character as usize);
 
         // Try to find the theorem by name
-        if let Some(word) = word {
-            if let Some(thm) = db.by_name.get(&word) {
+        if let Some(word) = word
+            && let Some(thm) = db.by_name.get(&word) {
                 let prop = format!("{:?}", thm.prop().term());
                 let nprems = thm.nprems();
                 let info = if nprems == 0 {
@@ -40,7 +40,6 @@ pub fn handle_hover(ctx: &HandlerContext, req: JsonRpcRequest) {
                 };
                 return Some(info);
             }
-        }
         None
     });
 

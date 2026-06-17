@@ -50,7 +50,7 @@ impl Typedecl {
         // Skip type parameters like 'a, 'b to get the actual type name
         let words: Vec<&str> = source.split_whitespace().collect();
         // The type name is the last word, type params are the ones starting with '
-        let name = words.iter().filter(|w| !w.starts_with('\'')).last()?.to_string();
+        let name = words.iter().rfind(|w| !w.starts_with('\''))?.to_string();
         let arity = words.iter().filter(|w| w.starts_with('\'')).count();
         Some(Typedecl { name, arity })
     }
@@ -465,7 +465,7 @@ impl TypeAbbrev {
         let tokens: Vec<&str> = lhs.split_whitespace().collect();
         let args: Vec<String> =
             tokens.iter().filter(|t| t.starts_with('\'')).map(|t| t.to_string()).collect();
-        let name = tokens.iter().filter(|t| !t.starts_with('\'')).last()?.to_string();
+        let name = tokens.iter().rfind(|t| !t.starts_with('\''))?.to_string();
 
         Some(TypeAbbrev { name, args, rhs: rhs.to_string() })
     }
@@ -551,11 +551,10 @@ pub fn parse_spec_commands(source: &str) -> Vec<ParsedLemma> {
             if let Some(abbr) = Abbreviation::parse(t) {
                 lemmas.push(abbr.generate_theorem());
             }
-        } else if t.starts_with("def ") {
-            if let Some(def) = LocalDef::parse(t) {
+        } else if t.starts_with("def ")
+            && let Some(def) = LocalDef::parse(t) {
                 lemmas.push(def.generate_theorem());
             }
-        }
 
         i += 1;
     }
