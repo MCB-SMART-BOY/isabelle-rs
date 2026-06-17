@@ -1045,12 +1045,12 @@ impl Method {
         if PROOF_SEARCH_BUDGET.with(|c| c.get()) == 0 && depth > 0 {
             return vec![state.clone()];
         }
-        if depth > 15 || state.nprems() == 0 {
+        if depth > 8 || state.nprems() == 0 { // Isabelle: auto uses blast(4)+classical(2), effective depth ~4-6
             return vec![state.clone()];
         }
 
         let db = HolTheoremDb::get();
-        let branch_limit = if depth > 10 { 3 } else if depth > 5 { 8 } else { 25 };
+        let branch_limit = if depth > 6 { 3 } else if depth > 3 { 8 } else { 25 };
 
         // ── Phase 0: Safe rules ──
         let current = Self::apply_safe_rules(state, premises);
@@ -1169,7 +1169,7 @@ impl Method {
                 c.get().map_or(false, |d| std::time::Instant::now() >= d)
             });
             if expired { continue; }
-            if child_depth > 15 { continue; }
+            if child_depth > 8 { continue; }
 
             // Apply safe rules to child
             let child = Self::apply_safe_rules(&child_state, premises);
@@ -1185,7 +1185,7 @@ impl Method {
                 }
             }
 
-            let child_branch_limit = if child_depth > 10 { 3 } else if child_depth > 5 { 8 } else { 25 };
+            let child_branch_limit = if child_depth > 6 { 3 } else if child_depth > 3 { 8 } else { 25 };
 
             // Simp on child — use cached simplifier
             let child_simp_results = tactic::simp_tac(get_cached_simplifier(), 0)(&child);
@@ -3431,7 +3431,6 @@ pub fn verify_lemmas_batch(lemmas: &[ParsedLemma]) -> (usize, usize) {
 
 pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
     AUTO_DEPTH.with(|c| c.set(0));
-    PROOF_SEARCH_BUDGET.with(|c| c.set(200)); // Per-lemma reset — prevents early lemmas starving later ones
 
     // If a built-in Var-override exists, use it directly (skip proof replay).
     // This covers lemmas whose proofs use complex patterns (multi-method chains,
