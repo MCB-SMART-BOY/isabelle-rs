@@ -182,19 +182,20 @@ impl InductiveDef {
                     if let Term::Const { name, .. } = func.as_ref()
                         && (name.as_ref() == pred_name
                             || name.as_ref().ends_with(&format!(".{}", pred_name)))
-                        {
-                            let args = vec![arg.as_ref().clone()];
-                            // Collect additional args from nested apps
-                            let mut current = func.as_ref();
-                            while let Term::App { func: f, arg: _a } = current {
-                                if let Term::Const { name: n, .. } = f.as_ref()
-                                    && n.as_ref() == pred_name {
-                                        break;
-                                    }
-                                current = f.as_ref();
+                    {
+                        let args = vec![arg.as_ref().clone()];
+                        // Collect additional args from nested apps
+                        let mut current = func.as_ref();
+                        while let Term::App { func: f, arg: _a } = current {
+                            if let Term::Const { name: n, .. } = f.as_ref()
+                                && n.as_ref() == pred_name
+                            {
+                                break;
                             }
-                            args_list.push(args);
+                            current = f.as_ref();
                         }
+                        args_list.push(args);
+                    }
                     stack.push(arg);
                     stack.push(func);
                 },
@@ -210,13 +211,13 @@ impl InductiveDef {
     fn extract_pred_args(&self, term: &Term, pred_name: &str, args: &mut Vec<Term>) {
         if let Term::App { func, arg } = term {
             if let Term::Const { name, .. } = func.as_ref()
-                && name.as_ref() == pred_name {
-                    args.push(arg.as_ref().clone());
-                }
+                && name.as_ref() == pred_name
+            {
+                args.push(arg.as_ref().clone());
+            }
             self.extract_pred_args(func, pred_name, args);
             // Non-predicate apps: recurse into both sides
-            if !matches!(func.as_ref(), Term::Const { name, .. } if name.as_ref() == pred_name)
-            {
+            if !matches!(func.as_ref(), Term::Const { name, .. } if name.as_ref() == pred_name) {
                 self.extract_pred_args(arg, pred_name, &mut Vec::new());
             }
         }

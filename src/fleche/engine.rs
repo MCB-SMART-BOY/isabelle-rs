@@ -14,15 +14,13 @@ use crate::{
 // Checking Context
 // =========================================================================
 
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct CheckContext {
     pub proof_state: Option<ProofState>,
     pub context_hash: u64,
     pub in_proof: bool,
     pub proof_depth: u32,
 }
-
 
 // =========================================================================
 // CommandExecutor trait

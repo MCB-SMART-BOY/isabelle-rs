@@ -112,10 +112,7 @@ fn find_arrow_pos(s: &str) -> Option<usize> {
 /// Check if a type string contains the datatype name (indicating recursive occurrence).
 fn is_recursive_arg(dt_name: &str, typ_str: &str) -> bool {
     // Split on spaces and arrows to check individual type components
-    let components: Vec<&str> = typ_str
-        .split([' ', '=', '>'])
-        .filter(|s| !s.is_empty())
-        .collect();
+    let components: Vec<&str> = typ_str.split([' ', '=', '>']).filter(|s| !s.is_empty()).collect();
     components.contains(&dt_name)
 }
 

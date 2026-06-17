@@ -513,7 +513,7 @@ impl CtrSugar {
                                 }
                             }
                             // Line above is messy. Let me use a clean approach.
-                            
+
                             self.mk_selector_lambda(args_k.len(), j)
                         }
                     } else {

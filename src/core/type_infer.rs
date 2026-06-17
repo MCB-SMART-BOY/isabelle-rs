@@ -151,9 +151,10 @@ impl TypeInfer {
                 // Look up in TypeEnv if type is dummy
                 if typ.is_dummy()
                     && let Some(env) = &self.type_env
-                        && let Some(t) = env.const_type(name.as_ref()) {
-                            return (t.clone(), vec![]);
-                        }
+                    && let Some(t) = env.const_type(name.as_ref())
+                {
+                    return (t.clone(), vec![]);
+                }
                 if typ.is_dummy() {
                     // Generate a fresh variable for unknown constants
                     let v = self.fresh_var(Sort::top());

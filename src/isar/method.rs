@@ -132,14 +132,13 @@ impl Method {
                     for i in 0..current.nprems() {
                         if let Some(goal) = current.prem(i)
                             && let Some((simplified, eq_thm)) = simp.rewrite_deep(&goal)
-                                && simplified != goal
-                                    && let Some(new_state) =
-                                        ThmKernel::subst_premise(&eq_thm, &current, i)
-                                    {
-                                        current = new_state;
-                                        changed = true;
-                                        break; // restart after change
-                                    }
+                            && simplified != goal
+                            && let Some(new_state) = ThmKernel::subst_premise(&eq_thm, &current, i)
+                        {
+                            current = new_state;
+                            changed = true;
+                            break; // restart after change
+                        }
                     }
                     if !changed || current.nprems() == 0 {
                         break;
@@ -415,38 +414,40 @@ impl Method {
         if let Some(goal) = state.prem(0) {
             // Equality symmetry
             if Pure::dest_equals(&goal).is_some()
-                && let Some(sym_thm) = db.by_name.get("sym") {
-                    let sym_results = tactic::resolve_tac(&[(**sym_thm).clone()], 0)(state);
-                    for r in &sym_results {
-                        if r.nprems() == 0 {
-                            all_solved.push(r.clone());
-                        } else if r.nprems() < state.nprems() && depth < 22 {
-                            let sub = Self::blast_exec(r, depth + 1, premises);
-                            for s in &sub {
-                                if s.nprems() == 0 {
-                                    all_solved.push(s.clone());
-                                }
+                && let Some(sym_thm) = db.by_name.get("sym")
+            {
+                let sym_results = tactic::resolve_tac(&[(**sym_thm).clone()], 0)(state);
+                for r in &sym_results {
+                    if r.nprems() == 0 {
+                        all_solved.push(r.clone());
+                    } else if r.nprems() < state.nprems() && depth < 22 {
+                        let sub = Self::blast_exec(r, depth + 1, premises);
+                        for s in &sub {
+                            if s.nprems() == 0 {
+                                all_solved.push(s.clone());
                             }
                         }
                     }
                 }
+            }
             // Ordering symmetry: x <= y goal, try y >= x via order_antisym
             if let Some((_, _)) = Self::dest_binary("HOL.ordLessEq", &goal)
-                && let Some(antisym) = db.by_name.get("order_antisym") {
-                    let anti_results = tactic::resolve_tac(&[(**antisym).clone()], 0)(state);
-                    for r in &anti_results {
-                        if r.nprems() == 0 {
-                            all_solved.push(r.clone());
-                        } else if r.nprems() < state.nprems() + 2 && depth < 18 {
-                            let sub = Self::blast_exec(r, depth + 1, premises);
-                            for s in &sub {
-                                if s.nprems() == 0 {
-                                    all_solved.push(s.clone());
-                                }
+                && let Some(antisym) = db.by_name.get("order_antisym")
+            {
+                let anti_results = tactic::resolve_tac(&[(**antisym).clone()], 0)(state);
+                for r in &anti_results {
+                    if r.nprems() == 0 {
+                        all_solved.push(r.clone());
+                    } else if r.nprems() < state.nprems() + 2 && depth < 18 {
+                        let sub = Self::blast_exec(r, depth + 1, premises);
+                        for s in &sub {
+                            if s.nprems() == 0 {
+                                all_solved.push(s.clone());
                             }
                         }
                     }
                 }
+            }
         }
 
         if !all_solved.is_empty() {
@@ -501,10 +502,11 @@ impl Method {
         for i in 0..state.nprems() {
             if let Some(prem) = current.prem(i)
                 && let Some((rewritten, eq_thm)) = simp.rewrite_deep(&prem)
-                    && rewritten != prem
-                        && let Some(new_state) = ThmKernel::subst_premise(&eq_thm, &current, i) {
-                            current = new_state;
-                        }
+                && rewritten != prem
+                && let Some(new_state) = ThmKernel::subst_premise(&eq_thm, &current, i)
+            {
+                current = new_state;
+            }
         }
         vec![current]
     }
@@ -718,9 +720,10 @@ impl Method {
                 continue;
             }
             if let Some(result) = ThmKernel::bicompose(true, rule, &safe_state, 0)
-                && let Some(solved) = Self::dfs_subgoals(&result, bound - 1, premises) {
-                    return Some(solved);
-                }
+                && let Some(solved) = Self::dfs_subgoals(&result, bound - 1, premises)
+            {
+                return Some(solved);
+            }
         }
 
         // Try unsafe elim rules
@@ -730,9 +733,10 @@ impl Method {
             }
             if let Some(result) =
                 ThmKernel::bicompose_eresolve(true, rule, &safe_state, 0, premises)
-                && let Some(solved) = Self::dfs_subgoals(&result, bound - 1, premises) {
-                    return Some(solved);
-                }
+                && let Some(solved) = Self::dfs_subgoals(&result, bound - 1, premises)
+            {
+                return Some(solved);
+            }
         }
         None
     }
@@ -1321,21 +1325,23 @@ fn solve_by_assumption(state: &Thm, premises: &[Arc<Thm>]) -> Option<Thm> {
         // First try exact alpha-equivalence (standard assume_tac)
         for prem in premises {
             if let Some(ns) = ThmKernel::bicompose(false, prem, &current, 0)
-                && ns.nprems() < current.nprems() {
-                    current = ns;
-                    any = true;
-                    break;
-                }
+                && ns.nprems() < current.nprems()
+            {
+                current = ns;
+                any = true;
+                break;
+            }
         }
         // Try unification-based matching for schematic subgoals
         if !any {
             for prem in premises {
                 if let Some(ns) = ThmKernel::bicompose(true, prem, &current, 0)
-                    && ns.nprems() < current.nprems() {
-                        current = ns;
-                        any = true;
-                        break;
-                    }
+                    && ns.nprems() < current.nprems()
+                {
+                    current = ns;
+                    any = true;
+                    break;
+                }
             }
         }
         if !any {
@@ -1353,7 +1359,9 @@ pub fn exec_proof(state: &Thm, proof_script: &str, premises: &[Arc<Thm>]) -> Opt
     // Handle `by <methods>` or `by(methods)` format
     let rest = if let Some(r) = script.strip_prefix("by ") {
         Some(r.to_string())
-    } else { script.strip_prefix("by(").map(|r| format!("({}", r)) };
+    } else {
+        script.strip_prefix("by(").map(|r| format!("({}", r))
+    };
 
     if let Some(rest) = rest {
         let methods = split_chained_methods(&rest);
@@ -1423,11 +1431,12 @@ pub fn exec_proof(state: &Thm, proof_script: &str, premises: &[Arc<Thm>]) -> Opt
                 let mut any = false;
                 for prem in premises {
                     if let Some(ns) = ThmKernel::bicompose(true, prem, &current, 0)
-                        && ns.nprems() < current.nprems() {
-                            current = ns;
-                            any = true;
-                            break;
-                        }
+                        && ns.nprems() < current.nprems()
+                    {
+                        current = ns;
+                        any = true;
+                        break;
+                    }
                 }
                 if !any {
                     break;
@@ -1520,9 +1529,11 @@ pub fn exec_proof(state: &Thm, proof_script: &str, premises: &[Arc<Thm>]) -> Opt
                 }
                 // Also catch "qed auto" (qed followed by method)
                 if let Some(rest) = t.strip_prefix("qed ")
-                    && !rest.is_empty() && rest != "{" {
-                        by_methods.push(format!("by {}", rest));
-                    }
+                    && !rest.is_empty()
+                    && rest != "{"
+                {
+                    by_methods.push(format!("by {}", rest));
+                }
             }
 
             // Apply extracted methods sequentially
@@ -1715,51 +1726,51 @@ fn exec_single_method_inner(state: &Thm, method_str: &str, premises: &[Arc<Thm>]
     if inner == "auto" || inner.starts_with("auto ") || inner.starts_with("auto(") {
         // Parse auto directives: intro:, simp:, elim:, dest:, iff:, add:, del:
         if inner.contains(':')
-            && let Some(rest) = inner.strip_prefix("auto ") {
-                let toks: Vec<&str> = rest.split_whitespace().collect();
-                let mut i = 0;
-                let mut directive_thms: Vec<Arc<Thm>> = Vec::new();
-                while i < toks.len() {
-                    let is_directive = matches!(
-                        toks[i],
-                        "intro:" | "simp:" | "elim:" | "dest:" | "iff:" | "add:" | "del:"
-                    );
-                    if is_directive {
-                        i += 1;
-                        while i < toks.len() && !toks[i].contains(':') {
-                            let n = toks[i].trim_end_matches(',');
-                            let db = HolTheoremDb::get();
-                            if let Some(t) = resolve_theorem_name(n, db) {
-                                directive_thms.push((*t).clone().into());
-                            }
-                            i += 1;
+            && let Some(rest) = inner.strip_prefix("auto ")
+        {
+            let toks: Vec<&str> = rest.split_whitespace().collect();
+            let mut i = 0;
+            let mut directive_thms: Vec<Arc<Thm>> = Vec::new();
+            while i < toks.len() {
+                let is_directive = matches!(
+                    toks[i],
+                    "intro:" | "simp:" | "elim:" | "dest:" | "iff:" | "add:" | "del:"
+                );
+                if is_directive {
+                    i += 1;
+                    while i < toks.len() && !toks[i].contains(':') {
+                        let n = toks[i].trim_end_matches(',');
+                        let db = HolTheoremDb::get();
+                        if let Some(t) = resolve_theorem_name(n, db) {
+                            directive_thms.push((*t).clone().into());
                         }
-                    } else {
                         i += 1;
                     }
-                }
-                // Apply collected directive theorems before auto
-                if !directive_thms.is_empty() {
-                    let mut current = state.clone();
-                    for thm in &directive_thms {
-                        let results =
-                            crate::core::tactic::resolve_tac(&[(**thm).clone()], 0)(&current);
-                        if let Some(r) = results.into_iter().next() {
-                            current = r;
-                        }
-                    }
-                    if current.nprems() == 0 {
-                        return vec![current];
-                    }
-                    // Run auto with directive theorems as additional premises
-                    let mut extended = premises.to_vec();
-                    extended.extend(directive_thms);
-                    let auto_results = Method::Auto.execute(&current, &extended);
-                    if auto_results.iter().any(|r| r.nprems() == 0) {
-                        return auto_results;
-                    }
+                } else {
+                    i += 1;
                 }
             }
+            // Apply collected directive theorems before auto
+            if !directive_thms.is_empty() {
+                let mut current = state.clone();
+                for thm in &directive_thms {
+                    let results = crate::core::tactic::resolve_tac(&[(**thm).clone()], 0)(&current);
+                    if let Some(r) = results.into_iter().next() {
+                        current = r;
+                    }
+                }
+                if current.nprems() == 0 {
+                    return vec![current];
+                }
+                // Run auto with directive theorems as additional premises
+                let mut extended = premises.to_vec();
+                extended.extend(directive_thms);
+                let auto_results = Method::Auto.execute(&current, &extended);
+                if auto_results.iter().any(|r| r.nprems() == 0) {
+                    return auto_results;
+                }
+            }
+        }
         let results = Method::Auto.execute(state, premises);
         if results.iter().any(|r| r.nprems() == 0) {
             return results;
@@ -1785,9 +1796,10 @@ fn exec_single_method_inner(state: &Thm, method_str: &str, premises: &[Arc<Thm>]
         let mut closed = Vec::new();
         for r in &results {
             if r.nprems() > 0
-                && let Some(solved) = solve_by_assumption(r, premises) {
-                    closed.push(solved);
-                }
+                && let Some(solved) = solve_by_assumption(r, premises)
+            {
+                closed.push(solved);
+            }
         }
         if !closed.is_empty() {
             return closed;
@@ -1840,9 +1852,10 @@ fn exec_single_method_inner(state: &Thm, method_str: &str, premises: &[Arc<Thm>]
             let mut closed = Vec::new();
             for r in &results {
                 if r.nprems() > 0
-                    && let Some(solved) = solve_by_assumption(r, premises) {
-                        closed.push(solved);
-                    }
+                    && let Some(solved) = solve_by_assumption(r, premises)
+                {
+                    closed.push(solved);
+                }
             }
             if !closed.is_empty() {
                 return closed;
@@ -1868,9 +1881,10 @@ fn exec_single_method_inner(state: &Thm, method_str: &str, premises: &[Arc<Thm>]
         let mut closed = Vec::new();
         for r in &results {
             if r.nprems() > 0
-                && let Some(solved) = solve_by_assumption(r, premises) {
-                    closed.push(solved);
-                }
+                && let Some(solved) = solve_by_assumption(r, premises)
+            {
+                closed.push(solved);
+            }
         }
         if !closed.is_empty() {
             return closed;
@@ -2186,15 +2200,17 @@ fn exec_unfold(method_str: &str, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm>
             // 2. With dots replaced by underscores
             let underscored = clean_name.replace('.', "_");
             if underscored != clean_name
-                && let Some(thm) = db.by_name.get(&underscored) {
-                    return Some(Arc::clone(thm));
-                }
+                && let Some(thm) = db.by_name.get(&underscored)
+            {
+                return Some(Arc::clone(thm));
+            }
             // 3. With underscores replaced by dots
             let dotted = clean_name.replace('_', ".");
             if dotted != clean_name
-                && let Some(thm) = db.by_name.get(&dotted) {
-                    return Some(Arc::clone(thm));
-                }
+                && let Some(thm) = db.by_name.get(&dotted)
+            {
+                return Some(Arc::clone(thm));
+            }
             // 4. Try adding "_def" suffix
             let with_def = format!("{}_def", clean_name);
             if let Some(thm) = db.by_name.get(&with_def) {
@@ -2202,9 +2218,10 @@ fn exec_unfold(method_str: &str, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm>
             }
             // 5. Try stripping "_def" suffix
             if let Some(base) = clean_name.strip_suffix("_def")
-                && let Some(thm) = db.by_name.get(base) {
-                    return Some(Arc::clone(thm));
-                }
+                && let Some(thm) = db.by_name.get(base)
+            {
+                return Some(Arc::clone(thm));
+            }
             None
         })
         .collect();
@@ -2283,9 +2300,10 @@ fn apply_substitution(state: &Thm, eq_thm: &Thm, in_asm: bool, premises: &[Arc<T
                     let simp = Simplifier::new(vec![rule]);
                     if let Some((rewritten, eq_proof)) = simp.rewrite_deep(&prem)
                         && rewritten != prem
-                            && let Some(new_state) = ThmKernel::subst_premise(&eq_proof, state, i) {
-                                results.push(new_state);
-                            }
+                        && let Some(new_state) = ThmKernel::subst_premise(&eq_proof, state, i)
+                    {
+                        results.push(new_state);
+                    }
                 }
             }
         }
@@ -2307,9 +2325,10 @@ fn apply_substitution(state: &Thm, eq_thm: &Thm, in_asm: bool, premises: &[Arc<T
                 let simp = Simplifier::new(vec![rule]);
                 if let Some((rewritten, eq_proof)) = simp.rewrite_deep(&goal)
                     && rewritten != goal
-                        && let Some(new_state) = ThmKernel::subst_premise(&eq_proof, state, 0) {
-                            return vec![new_state];
-                        }
+                    && let Some(new_state) = ThmKernel::subst_premise(&eq_proof, state, 0)
+                {
+                    return vec![new_state];
+                }
             }
         }
         // Fallback: try auto
@@ -2336,9 +2355,11 @@ fn exec_induct(method_str: &str, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm>
 
     let mut parts = rest.split_whitespace();
     if let Some(v) = parts.next()
-        && !v.contains(':') && !v.contains('(') {
-            var_name = v;
-        }
+        && !v.contains(':')
+        && !v.contains('(')
+    {
+        var_name = v;
+    }
 
     // 1. Try safe rules first (cheap, no backtracking)
     let safe = Method::apply_safe_rules(state, premises);
@@ -2381,16 +2402,17 @@ fn exec_induct(method_str: &str, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm>
         }
         // Try type-based: analyze goal to find the type of var_name
         if candidates.is_empty()
-            && let Some(goal) = state.prem(0) {
-                // Analyze the goal's structure to guess the type
-                let type_name = infer_type_from_goal(&goal, var_name);
-                for suffix in search_suffixes {
-                    let name = format!("{type_name}{suffix}");
-                    if let Some(thm) = db.by_name.get(&name) {
-                        candidates.push(Arc::clone(thm));
-                    }
+            && let Some(goal) = state.prem(0)
+        {
+            // Analyze the goal's structure to guess the type
+            let type_name = infer_type_from_goal(&goal, var_name);
+            for suffix in search_suffixes {
+                let name = format!("{type_name}{suffix}");
+                if let Some(thm) = db.by_name.get(&name) {
+                    candidates.push(Arc::clone(thm));
                 }
             }
+        }
     }
 
     // 3c. Heuristic: search for induction rules by name pattern
@@ -2443,9 +2465,10 @@ fn exec_induct(method_str: &str, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm>
             }
             // Solve subgoals: try safe rules first, then auto for remaining
             if r.nprems() <= 10
-                && let Some(solved) = solve_subgoals(r, premises) {
-                    return vec![solved];
-                }
+                && let Some(solved) = solve_subgoals(r, premises)
+            {
+                return vec![solved];
+            }
         }
     }
 
@@ -2539,9 +2562,10 @@ fn try_list_induct(state: &Thm, premises: &[Arc<Thm>]) -> Option<Vec<Thm>> {
                 return Some(vec![r.clone()]);
             }
             if r.nprems() <= 15
-                && let Some(s) = solve_subgoals(r, premises) {
-                    return Some(vec![s]);
-                }
+                && let Some(s) = solve_subgoals(r, premises)
+            {
+                return Some(vec![s]);
+            }
         }
     }
     None
@@ -2635,9 +2659,11 @@ fn exec_proof_script_inner(method_str: &str, state: &Thm, premises: &[Arc<Thm>])
                 }
             }
             if let Some(rest) = t.strip_prefix("qed ")
-                && !rest.is_empty() && rest != "{" {
-                    by_methods.push(format!("by {}", rest));
-                }
+                && !rest.is_empty()
+                && rest != "{"
+            {
+                by_methods.push(format!("by {}", rest));
+            }
         }
         for method in &by_methods {
             let mut next = Vec::new();
@@ -2842,9 +2868,10 @@ fn exec_arith(state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
         "Suc_eq_add_numeral_1_left",
     ] {
         if let Some(thm) = db.by_name.get(*name)
-            && let Some(rule) = RewriteRule::from_thm(Arc::clone(thm)) {
-                arith_rules.push(rule);
-            }
+            && let Some(rule) = RewriteRule::from_thm(Arc::clone(thm))
+        {
+            arith_rules.push(rule);
+        }
     }
     if arith_rules.is_empty() {
         // Fallback: try auto
@@ -2856,8 +2883,7 @@ fn exec_arith(state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
 
 fn exec_simp(method_str: &str, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
     // Check soft deadline — avoid expensive rewrite on expired budget
-    let expired =
-        VERIFY_DEADLINE.with(|c| c.get().is_some_and(|d| std::time::Instant::now() >= d));
+    let expired = VERIFY_DEADLINE.with(|c| c.get().is_some_and(|d| std::time::Instant::now() >= d));
     if expired {
         return vec![];
     }
@@ -2922,12 +2948,13 @@ fn exec_simp_all(state: &Thm, _premises: &[Arc<Thm>]) -> Vec<Thm> {
         for i in 0..current.nprems() {
             if let Some(goal) = current.prem(i)
                 && let Some((simplified, eq)) = simp.rewrite_deep(&goal)
-                    && simplified != goal
-                        && let Some(ns) = ThmKernel::subst_premise(&eq, &current, i) {
-                            current = ns;
-                            changed = true;
-                            break;
-                        }
+                && simplified != goal
+                && let Some(ns) = ThmKernel::subst_premise(&eq, &current, i)
+            {
+                current = ns;
+                changed = true;
+                break;
+            }
         }
         if !changed {
             break;
@@ -3062,24 +3089,26 @@ fn apply_attributes(mut thm: Arc<Thm>, attrs: &[String], db: &HolTheoremDb) -> A
             a if a.starts_with("folded ") => {
                 let def_name = a.strip_prefix("folded ").unwrap_or("");
                 if let Some(def_thm) = resolve_theorem_name(def_name, db)
-                    && let Some(rule) = RewriteRule::from_thm(def_thm) {
-                        let simp = Simplifier::new(vec![rule]);
-                        if let Some((folded, _eq)) = simp.rewrite_deep(thm.prop().term()) {
-                            thm = Arc::new(ThmKernel::assume(CTerm::certify(folded)));
-                        }
+                    && let Some(rule) = RewriteRule::from_thm(def_thm)
+                {
+                    let simp = Simplifier::new(vec![rule]);
+                    if let Some((folded, _eq)) = simp.rewrite_deep(thm.prop().term()) {
+                        thm = Arc::new(ThmKernel::assume(CTerm::certify(folded)));
                     }
+                }
             },
             a if a.starts_with("unfolded ") || a.starts_with("unfold ") => {
                 let def_name =
                     a.strip_prefix("unfolded ").or_else(|| a.strip_prefix("unfold ")).unwrap_or("");
                 if let Some(def_thm) = resolve_theorem_name(def_name, db)
-                    && let Some(mut rule) = RewriteRule::from_thm(def_thm) {
-                        std::mem::swap(&mut rule.lhs, &mut rule.rhs);
-                        let simp = Simplifier::new(vec![rule]);
-                        if let Some((unfolded, _eq)) = simp.rewrite_deep(thm.prop().term()) {
-                            thm = Arc::new(ThmKernel::assume(CTerm::certify(unfolded)));
-                        }
+                    && let Some(mut rule) = RewriteRule::from_thm(def_thm)
+                {
+                    std::mem::swap(&mut rule.lhs, &mut rule.rhs);
+                    let simp = Simplifier::new(vec![rule]);
+                    if let Some((unfolded, _eq)) = simp.rewrite_deep(thm.prop().term()) {
+                        thm = Arc::new(ThmKernel::assume(CTerm::certify(unfolded)));
                     }
+                }
             },
             "rule_format" => {
                 let term = thm.prop().term().clone();
@@ -3114,9 +3143,10 @@ fn apply_of(mut thm: Arc<Thm>, args: Vec<String>, db: &HolTheoremDb) -> Arc<Thm>
                 }
             }
         } else if let Some(arg_thm) = db.by_name.get(arg.as_str())
-            && let Some(new_thm) = ThmKernel::bicompose(true, arg_thm, &thm, 0) {
-                thm = Arc::new(new_thm);
-            }
+            && let Some(new_thm) = ThmKernel::bicompose(true, arg_thm, &thm, 0)
+        {
+            thm = Arc::new(new_thm);
+        }
     }
     thm
 }
@@ -3125,9 +3155,10 @@ fn apply_of(mut thm: Arc<Thm>, args: Vec<String>, db: &HolTheoremDb) -> Arc<Thm>
 fn apply_then(mut thm: Arc<Thm>, args: Vec<String>, db: &HolTheoremDb) -> Arc<Thm> {
     for arg in &args {
         if let Some(arg_thm) = db.by_name.get(arg.as_str())
-            && let Some(new_thm) = ThmKernel::bicompose(true, arg_thm, &thm, 0) {
-                thm = Arc::new(new_thm);
-            }
+            && let Some(new_thm) = ThmKernel::bicompose(true, arg_thm, &thm, 0)
+        {
+            thm = Arc::new(new_thm);
+        }
     }
     thm
 }
@@ -3145,14 +3176,16 @@ fn resolve_theorem_name(name: &str, db: &HolTheoremDb) -> Option<Arc<Thm>> {
     }
     let dot = name.replace('_', ".");
     if dot != name
-        && let Some(thm) = db.by_name.get(&dot) {
-            return Some(Arc::clone(thm));
-        }
+        && let Some(thm) = db.by_name.get(&dot)
+    {
+        return Some(Arc::clone(thm));
+    }
     let uscore = name.replace('.', "_");
     if uscore != name
-        && let Some(thm) = db.by_name.get(&uscore) {
-            return Some(Arc::clone(thm));
-        }
+        && let Some(thm) = db.by_name.get(&uscore)
+    {
+        return Some(Arc::clone(thm));
+    }
     if name.contains('.') {
         for k in 1..name.split('.').count() {
             let suffix: String = name.split('.').skip(k).collect::<Vec<_>>().join(".");
@@ -3455,9 +3488,10 @@ pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
         || proof == "by fast"
         || proof == "by iprover"
         || proof == "by force")
-        && let Some(results) = exec_proof(&goal, proof, &premises) {
-            return Some(results);
-        }
+        && let Some(results) = exec_proof(&goal, proof, &premises)
+    {
+        return Some(results);
+    }
 
     // Special handling for anonymous/auto-named datatype lemmas
     let is_anon = lem.name.is_empty() || lem.name.starts_with("[anon:");
@@ -3508,23 +3542,24 @@ pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
     if proof.contains("unfolding ") {
         // Split: "unfolding X1 X2 by method"
         if let Some(rest) = proof.strip_prefix("unfolding ")
-            && let Some(by_pos) = rest.find(" by ") {
-                let unfold_names = &rest[..by_pos];
-                let method = rest[by_pos + 4..].trim();
-                // Look up the unfolding definitions
-                let db = HolTheoremDb::get();
-                let mut current = goal.clone();
-                for name in unfold_names.split_whitespace() {
-                    if let Some(thm) = resolve_theorem_name(name, db) {
-                        current = ThmKernel::bicompose(false, &(*thm).clone(), &current, 0)
-                            .unwrap_or(current);
-                    }
-                }
-                // Apply the remaining method
-                if let Some(results) = exec_proof(&current, method, &premises) {
-                    return Some(results);
+            && let Some(by_pos) = rest.find(" by ")
+        {
+            let unfold_names = &rest[..by_pos];
+            let method = rest[by_pos + 4..].trim();
+            // Look up the unfolding definitions
+            let db = HolTheoremDb::get();
+            let mut current = goal.clone();
+            for name in unfold_names.split_whitespace() {
+                if let Some(thm) = resolve_theorem_name(name, db) {
+                    current = ThmKernel::bicompose(false, &(*thm).clone(), &current, 0)
+                        .unwrap_or(current);
                 }
             }
+            // Apply the remaining method
+            if let Some(results) = exec_proof(&current, method, &premises) {
+                return Some(results);
+            }
+        }
     }
 
     // "by (simp add: X1 X2)" — simplification with specific rules
@@ -3609,11 +3644,12 @@ pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
                             let mut closed = false;
                             for prem in &premises {
                                 if let Some(ns) = ThmKernel::bicompose(false, prem, &current, 0)
-                                    && ns.nprems() < current.nprems() {
-                                        current = ns;
-                                        closed = true;
-                                        break;
-                                    }
+                                    && ns.nprems() < current.nprems()
+                                {
+                                    current = ns;
+                                    closed = true;
+                                    break;
+                                }
                             }
                             if !closed {
                                 break;

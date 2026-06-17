@@ -406,18 +406,20 @@ impl MetisProver {
         let neg_goal_ct = CTerm::certify(neg_goal_prop);
 
         if contra_thm.hyps().contains(&neg_goal_ct)
-            && let Ok(discharged) = ThmKernel::implies_intr(&neg_goal_ct, &contra_thm) {
-                return Some(Arc::new(discharged));
-            }
+            && let Ok(discharged) = ThmKernel::implies_intr(&neg_goal_ct, &contra_thm)
+        {
+            return Some(Arc::new(discharged));
+        }
 
         // Try each negated goal sub-clause
         for clause_lits in &negated_clauses {
             if let Some(clause_thm) = Self::clause_to_thm(clause_lits) {
                 let ct = CTerm::certify(clause_thm.prop().term().clone());
                 if contra_thm.hyps().contains(&ct)
-                    && let Ok(discharged) = ThmKernel::implies_intr(&ct, &contra_thm) {
-                        return Some(Arc::new(discharged));
-                    }
+                    && let Ok(discharged) = ThmKernel::implies_intr(&ct, &contra_thm)
+                {
+                    return Some(Arc::new(discharged));
+                }
             }
         }
 
@@ -1006,14 +1008,15 @@ fn distribute_cnf(term: &Term) -> Vec<Vec<Term>> {
         if let Some((a, b)) = Pure::dest_implies(prem_term) {
             // This premise is itself an implication A ==> B
             if let Term::Const { name, .. } = concl
-                && (name.as_ref() == "HOL.False" || name.as_ref() == "False") {
-                    // (A ==> B) ==> False
-                    // → clauses: [A] and [B, False]
-                    // where [A] means: no premises, conclusion = A (i.e., A is true)
-                    // and [B, False] means: premise B, conclusion False (i.e., B ==> False)
-                    sub_clauses.push(vec![a.clone()]);
-                    sub_clauses.push(vec![b.clone(), hologic::false_const()]);
-                }
+                && (name.as_ref() == "HOL.False" || name.as_ref() == "False")
+            {
+                // (A ==> B) ==> False
+                // → clauses: [A] and [B, False]
+                // where [A] means: no premises, conclusion = A (i.e., A is true)
+                // and [B, False] means: premise B, conclusion False (i.e., B ==> False)
+                sub_clauses.push(vec![a.clone()]);
+                sub_clauses.push(vec![b.clone(), hologic::false_const()]);
+            }
         }
     }
 
@@ -1065,13 +1068,14 @@ fn skolemize_rec(term: &Term, counter: &mut usize) -> Term {
         Term::App { func, arg } => {
             if let Term::Const { name, .. } = func.as_ref() {
                 if name.as_ref() == "HOL.Ex"
-                    && let Term::Abs { name: _, typ: body_ty, body } = arg.as_ref() {
-                        let sko_name = format!("_sko{}", *counter);
-                        *counter += 1;
-                        let sko = Term::free(sko_name.as_str(), body_ty.clone());
-                        let reduced = crate::core::term_subst::subst_bounds(&[sko], body);
-                        return skolemize_rec(&reduced, counter);
-                    }
+                    && let Term::Abs { name: _, typ: body_ty, body } = arg.as_ref()
+                {
+                    let sko_name = format!("_sko{}", *counter);
+                    *counter += 1;
+                    let sko = Term::free(sko_name.as_str(), body_ty.clone());
+                    let reduced = crate::core::term_subst::subst_bounds(&[sko], body);
+                    return skolemize_rec(&reduced, counter);
+                }
                 // HOL.All: do NOT descend (universals stay atomic)
                 if name.as_ref() == "HOL.All" {
                     return term.clone();
@@ -1239,10 +1243,11 @@ pub fn hol_to_cnf(term: &Term) -> Vec<Vec<i32>> {
                 // Check for explicit Not
                 if let Term::App { func, arg } = term
                     && let Term::Const { name, .. } = func.as_ref()
-                        && (name.as_ref() == "HOL.Not" || name.as_ref() == "Not") {
-                            // ~A: flip polarity
-                            return term_to_cnf_clauses(arg, atom_map, next_id, !polarity);
-                        }
+                    && (name.as_ref() == "HOL.Not" || name.as_ref() == "Not")
+                {
+                    // ~A: flip polarity
+                    return term_to_cnf_clauses(arg, atom_map, next_id, !polarity);
+                }
                 // Atomic
                 let id = assign_atom_id(term, atom_map, next_id);
                 vec![vec![lit(id, polarity)]]
@@ -1308,14 +1313,15 @@ pub fn tseitin_transform(term: &Term) -> Vec<Vec<i32>> {
             Term::App { func, arg } => {
                 // Check for explicit negation first
                 if let Term::Const { name, .. } = func.as_ref()
-                    && (name.as_ref() == "HOL.Not" || name.as_ref() == "Not") {
-                        let va = tseitin_rec(arg, clauses, atom_map, next_id);
-                        let v = get_or_create_var(term, atom_map, next_id);
-                        // v ↔ ~a  ≡  (~v ∨ ~a) ∧ (v ∨ a)
-                        clauses.push(vec![-v, -va]);
-                        clauses.push(vec![v, va]);
-                        return v;
-                    }
+                    && (name.as_ref() == "HOL.Not" || name.as_ref() == "Not")
+                {
+                    let va = tseitin_rec(arg, clauses, atom_map, next_id);
+                    let v = get_or_create_var(term, atom_map, next_id);
+                    // v ↔ ~a  ≡  (~v ∨ ~a) ∧ (v ∨ a)
+                    clauses.push(vec![-v, -va]);
+                    clauses.push(vec![v, va]);
+                    return v;
+                }
 
                 match func.as_ref() {
                     Term::App { func: inner, arg: a } => {
@@ -1584,9 +1590,10 @@ fn find_contradiction_and_prove(prover: &MetisProver, goal: &Thm) -> Option<Arc<
     let neg_goal_ct = CTerm::certify(neg_goal_prop);
 
     if contra_thm.hyps().contains(&neg_goal_ct)
-        && let Ok(discharged) = ThmKernel::implies_intr(&neg_goal_ct, &contra_thm) {
-            return Some(Arc::new(discharged));
-        }
+        && let Ok(discharged) = ThmKernel::implies_intr(&neg_goal_ct, &contra_thm)
+    {
+        return Some(Arc::new(discharged));
+    }
 
     Some(contra_thm)
 }

@@ -141,10 +141,11 @@ impl SessionBuilder {
                 if path.is_dir() {
                     dirs.push(path);
                 } else if path.extension().is_some_and(|e| e == "thy")
-                    && let Some(tf) = TheoryFile::parse(&path) {
-                        self.files.insert(tf.name.clone(), tf);
-                        count += 1;
-                    }
+                    && let Some(tf) = TheoryFile::parse(&path)
+                {
+                    self.files.insert(tf.name.clone(), tf);
+                    count += 1;
+                }
             }
         }
         Ok(count)

@@ -122,25 +122,26 @@ fn print_term_to(term: &Term, outer_prec: Precedence, buf: &mut String) {
         Term::Abs { name, body, .. } => {
             // Check if the abstraction body has a known binder pattern
             if let Term::App { func, arg } = body.as_ref()
-                && let Term::Const { name: cname, .. } = func.as_ref() {
-                    for (binder_name, binder_sym) in BINDER_TABLE {
-                        if cname.as_ref() == *binder_name {
-                            // ∀x. body
-                            let need_paren = outer_prec < Precedence::Atomic;
-                            if need_paren {
-                                buf.push('(');
-                            }
-                            buf.push_str(binder_sym);
-                            buf.push_str(name);
-                            buf.push_str(". ");
-                            print_term_to(arg, Precedence::Top, buf);
-                            if need_paren {
-                                buf.push(')');
-                            }
-                            return;
+                && let Term::Const { name: cname, .. } = func.as_ref()
+            {
+                for (binder_name, binder_sym) in BINDER_TABLE {
+                    if cname.as_ref() == *binder_name {
+                        // ∀x. body
+                        let need_paren = outer_prec < Precedence::Atomic;
+                        if need_paren {
+                            buf.push('(');
                         }
+                        buf.push_str(binder_sym);
+                        buf.push_str(name);
+                        buf.push_str(". ");
+                        print_term_to(arg, Precedence::Top, buf);
+                        if need_paren {
+                            buf.push(')');
+                        }
+                        return;
                     }
                 }
+            }
             // Plain lambda
             buf.push('λ');
             buf.push_str(name);
@@ -152,25 +153,26 @@ fn print_term_to(term: &Term, outer_prec: Precedence, buf: &mut String) {
         Term::App { func, arg } => {
             // Check for: App(App(Const(name), left), right) — infix operator
             if let Term::App { func: inner, arg: left } = func.as_ref()
-                && let Term::Const { name, .. } = inner.as_ref() {
-                    for info in INFIX_TABLE {
-                        if info.names.contains(&name.as_ref()) {
-                            let need_paren = outer_prec > info.prec;
-                            if need_paren {
-                                buf.push('(');
-                            }
-                            print_term_to(left, info.prec, buf);
-                            buf.push(' ');
-                            buf.push_str(info.symbol);
-                            buf.push(' ');
-                            print_term_to(arg, info.prec, buf);
-                            if need_paren {
-                                buf.push(')');
-                            }
-                            return;
+                && let Term::Const { name, .. } = inner.as_ref()
+            {
+                for info in INFIX_TABLE {
+                    if info.names.contains(&name.as_ref()) {
+                        let need_paren = outer_prec > info.prec;
+                        if need_paren {
+                            buf.push('(');
                         }
+                        print_term_to(left, info.prec, buf);
+                        buf.push(' ');
+                        buf.push_str(info.symbol);
+                        buf.push(' ');
+                        print_term_to(arg, info.prec, buf);
+                        if need_paren {
+                            buf.push(')');
+                        }
+                        return;
                     }
                 }
+            }
 
             // Check for: App(Const(name), arg) — prefix operator
             if let Term::Const { name, .. } = func.as_ref() {

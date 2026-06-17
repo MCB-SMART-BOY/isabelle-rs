@@ -44,9 +44,10 @@ impl TheoryDB {
     /// Add lemmas to the current theory.
     pub fn extend_current(&mut self, lemmas: &[crate::hol::hol_loader::ParsedLemma]) {
         if let Some(ref current) = self.current.clone()
-            && let Some(db) = self.theories.get_mut(current) {
-                db.extend(lemmas);
-            }
+            && let Some(db) = self.theories.get_mut(current)
+        {
+            db.extend(lemmas);
+        }
     }
 
     /// Look up a theorem by name — searches current theory + imports + builtins.
@@ -54,24 +55,27 @@ impl TheoryDB {
         // 1. Search current theory
         if let Some(ref current) = self.current {
             if let Some(db) = self.theories.get(current)
-                && let Some(thm) = db.by_name.get(name) {
-                    return Some(Arc::clone(thm));
-                }
+                && let Some(thm) = db.by_name.get(name)
+            {
+                return Some(Arc::clone(thm));
+            }
             // 2. Search imported theories (transitive)
             if let Some(imps) = self.imports.get(current) {
                 for imp in imps {
                     if let Some(db) = self.theories.get(imp)
-                        && let Some(thm) = db.by_name.get(name) {
-                            return Some(Arc::clone(thm));
-                        }
+                        && let Some(thm) = db.by_name.get(name)
+                    {
+                        return Some(Arc::clone(thm));
+                    }
                 }
             }
         }
         // 3. Search builtins
         if let Some(ref builtins) = self.builtins
-            && let Some(thm) = builtins.by_name.get(name) {
-                return Some(Arc::clone(thm));
-            }
+            && let Some(thm) = builtins.by_name.get(name)
+        {
+            return Some(Arc::clone(thm));
+        }
         None
     }
 

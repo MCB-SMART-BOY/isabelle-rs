@@ -30,16 +30,17 @@ pub fn handle_hover(ctx: &HandlerContext, req: JsonRpcRequest) {
 
         // Try to find the theorem by name
         if let Some(word) = word
-            && let Some(thm) = db.by_name.get(&word) {
-                let prop = format!("{:?}", thm.prop().term());
-                let nprems = thm.nprems();
-                let info = if nprems == 0 {
-                    format!("**{}** (unconditional)\n\n```\n{}\n```", word, prop)
-                } else {
-                    format!("**{}** ({} premises)\n\n```\n{}\n```", word, nprems, prop)
-                };
-                return Some(info);
-            }
+            && let Some(thm) = db.by_name.get(&word)
+        {
+            let prop = format!("{:?}", thm.prop().term());
+            let nprems = thm.nprems();
+            let info = if nprems == 0 {
+                format!("**{}** (unconditional)\n\n```\n{}\n```", word, prop)
+            } else {
+                format!("**{}** ({} premises)\n\n```\n{}\n```", word, nprems, prop)
+            };
+            return Some(info);
+        }
         None
     });
 

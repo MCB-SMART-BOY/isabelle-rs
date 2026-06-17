@@ -44,9 +44,10 @@ pub fn load_hol_theory(hol_thy: &str) -> Theory {
             let decl = const_decl.trim();
             if let Some((name, typ_str)) = parse_const_decl(decl)
                 && let Some(typ) = parse_hol_type(typ_str)
-                    && !thy.is_declared(&format!("HOL.{name}")) {
-                        thy.declare_const(format!("HOL.{name}"), typ);
-                    }
+                && !thy.is_declared(&format!("HOL.{name}"))
+            {
+                thy.declare_const(format!("HOL.{name}"), typ);
+            }
         }
     }
 
@@ -55,9 +56,10 @@ pub fn load_hol_theory(hol_thy: &str) -> Theory {
         let decl = block.trim();
         if let Some((name, typ_str, _defn)) = parse_definition(decl)
             && let Some(typ) = parse_hol_type(typ_str)
-                && !thy.is_declared(&format!("HOL.{name}")) {
-                    thy.declare_const(format!("HOL.{name}"), typ);
-                }
+            && !thy.is_declared(&format!("HOL.{name}"))
+        {
+            thy.declare_const(format!("HOL.{name}"), typ);
+        }
     }
 
     thy
@@ -261,11 +263,12 @@ pub fn parse_datatypes(source: &str) -> Vec<DatatypeDef> {
         }
         if (t.starts_with("old_rep_datatype ") || t.starts_with("rep_datatype "))
             && !is_false_positive
-                && let Some((def, consumed)) = parse_old_rep_datatype(&lines, i) {
-                    defs.push(def);
-                    i = consumed;
-                    continue;
-                }
+            && let Some((def, consumed)) = parse_old_rep_datatype(&lines, i)
+        {
+            defs.push(def);
+            i = consumed;
+            continue;
+        }
         i += 1;
     }
     defs
@@ -340,7 +343,9 @@ fn parse_one_datatype(lines: &[&str], start: usize) -> Option<(DatatypeDef, usiz
             // Strip the keyword prefix
             if let Some(rest) = header.strip_prefix("datatype ") {
                 rest
-            } else { header.strip_prefix("codatatype ")? }
+            } else {
+                header.strip_prefix("codatatype ")?
+            }
         }
     } else if header.starts_with("datatype ") {
         header.strip_prefix("datatype ")?.trim()
@@ -379,13 +384,12 @@ fn parse_one_datatype(lines: &[&str], start: usize) -> Option<(DatatypeDef, usiz
         combined.push_str(t);
         i += 1;
         // Stop if line ends a constructor and next line starts new declaration
-        if !t.ends_with('|')
-            && i < lines.len() {
-                let next = lines[i].trim();
-                if !next.starts_with('|') {
-                    break;
-                }
+        if !t.ends_with('|') && i < lines.len() {
+            let next = lines[i].trim();
+            if !next.starts_with('|') {
+                break;
             }
+        }
     }
 
     let combined = combined.trim();
@@ -803,7 +807,8 @@ pub fn generate_datatype_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
     // 5. Case equation: {name}.case
     // option.case None f1 f2 = f1
     // option.case (Some x) f1 f2 = f2 x
-    for (ctor_name, args) in &def.constructors {
+    // Only generate for first constructor (others follow same pattern)
+    if let Some((ctor_name, args)) = def.constructors.first() {
         let arg_vars: Vec<String> =
             args.iter().enumerate().map(|(i, _)| format!("a{}", i + 1)).collect();
         let ctor_call = if arg_vars.is_empty() {
@@ -814,14 +819,13 @@ pub fn generate_datatype_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
         let f_vars: Vec<String> =
             (0..def.constructors.len()).map(|i| format!("f{}", i + 1)).collect();
         let case_call = format!("case_{} ({}) {}", def.name, ctor_call, f_vars.join(" "));
-        // Which f to pick?
         let ctor_idx = def.constructors.iter().position(|(n, _)| n == ctor_name).unwrap_or(0);
         let rhs = if args.is_empty() {
             f_vars[ctor_idx].clone()
         } else {
             format!("{} {}", f_vars[ctor_idx], arg_vars.join(" "))
         };
-        let case_stmt = format!("{} = {}", case_call, rhs);
+        let _case_stmt = format!("{} = {}", case_call, rhs);
         let case_term = Term::const_("True", Typ::base("prop"));
         lemmas.push(ParsedLemma {
             name: format!("{}.case", def.name),
@@ -831,7 +835,6 @@ pub fn generate_datatype_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
             alias_for: None,
             source_loc: None,
         });
-        break; // Only generate for first constructor (others follow same pattern)
     }
 
     lemmas
@@ -857,7 +860,8 @@ pub fn generate_bnf_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
 
     // 1. Map function: map_T f1 f2 (Ctor args) = Ctor (map_args...)
     let map_name = format!("map_{}", def.name);
-    for (ctor_name, args) in &def.constructors {
+    // One map equation per datatype — use first constructor only
+    if let Some((ctor_name, args)) = def.constructors.first() {
         let param_vars: Vec<String> =
             args.iter().enumerate().map(|(i, _)| format!("x{}", i + 1)).collect();
         let func_vars: Vec<String> =
@@ -869,12 +873,10 @@ pub fn generate_bnf_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
             format!("{} {}", ctor_name, param_vars.join(" "))
         };
 
-        // Map each arg through appropriate function based on type
         let mapped_args: Vec<String> = args
             .iter()
             .enumerate()
             .map(|(i, (_, arg_typ))| {
-                // Find which type param this arg corresponds to
                 for (j, tp) in def.type_params.iter().enumerate() {
                     if arg_typ.contains(tp.as_str()) {
                         return format!(
@@ -884,7 +886,7 @@ pub fn generate_bnf_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
                         );
                     }
                 }
-                format!("x{}", i + 1) // non-recursive arg: pass through
+                format!("x{}", i + 1)
             })
             .collect();
 
@@ -895,7 +897,7 @@ pub fn generate_bnf_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
         };
 
         let func_args = func_vars.join(" ");
-        let map_eq = format!("{} {} ({}) = {}", map_name, func_args, ctor_call, mapped_call);
+        let _map_eq = format!("{} {} ({}) = {}", map_name, func_args, ctor_call, mapped_call);
         let map_term = Term::const_("True", Typ::base("prop"));
 
         lemmas.push(ParsedLemma {
@@ -906,7 +908,6 @@ pub fn generate_bnf_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
             alias_for: None,
             source_loc: None,
         });
-        break; // One map equation per datatype
     }
 
     // 2. Set membership: set_T_i (Ctor x1 ... xn) = {xi | xi has type with the right param}
@@ -1058,7 +1059,8 @@ fn parse_inductives(source: &str) -> Vec<ParsedLemma> {
                     i += 1;
                     continue;
                 }
-                if !cont.starts_with(' ') && !cont.starts_with('\t')
+                if !cont.starts_with(' ')
+                    && !cont.starts_with('\t')
                     && (cont_trim.starts_with("lemma ")
                         || cont_trim.starts_with("theorem ")
                         || cont_trim.starts_with("inductive ")
@@ -1066,9 +1068,9 @@ fn parse_inductives(source: &str) -> Vec<ParsedLemma> {
                         || cont_trim.starts_with("fun ")
                         || cont_trim.starts_with("primrec ")
                         || cont_trim.starts_with("definition "))
-                    {
-                        break;
-                    }
+                {
+                    break;
+                }
                 where_lines.push(cont_trim.to_string());
                 i += 1;
             }
@@ -1907,10 +1909,11 @@ fn extract_terms_from_clause(clause: &str) -> Vec<String> {
     if let Some(colon_pos) = remaining.find(':') {
         // Check if colon is before any quote — it's a name prefix
         if let Some(quote_pos) = remaining.find('"')
-            && colon_pos < quote_pos {
-                // There's a name: prefix — strip it
-                remaining = remaining[colon_pos + 1..].trim();
-            }
+            && colon_pos < quote_pos
+        {
+            // There's a name: prefix — strip it
+            remaining = remaining[colon_pos + 1..].trim();
+        }
     }
 
     // Now extract quoted strings and bare terms
@@ -1950,11 +1953,12 @@ fn parse_named_or_bare(clause: &str) -> Option<(String, String)> {
     let clause = clause.trim();
     if let Some(colon_pos) = clause.find(':')
         && let Some(quote_pos) = clause.find('"')
-            && colon_pos < quote_pos {
-                let name = clause[..colon_pos].trim().to_string();
-                let stmt = extract_quoted(&clause[colon_pos + 1..])?;
-                return Some((name, stmt));
-            }
+        && colon_pos < quote_pos
+    {
+        let name = clause[..colon_pos].trim().to_string();
+        let stmt = extract_quoted(&clause[colon_pos + 1..])?;
+        return Some((name, stmt));
+    }
     // No name prefix — extract the quoted string or take the whole thing
     if let Some(stmt) = extract_quoted(clause) {
         Some((String::new(), stmt))
@@ -2178,9 +2182,10 @@ fn merge_multiline_quotes(block: &str) -> Vec<String> {
         }
     }
     if let Some(ref acc) = buf
-        && let Some(stmt) = extract_quoted(acc) {
-            results.push(stmt);
-        }
+        && let Some(stmt) = extract_quoted(acc)
+    {
+        results.push(stmt);
+    }
     results
 }
 
@@ -2404,10 +2409,12 @@ impl HolTheoremDb {
                 new_by_name.push((lem.name.clone(), Arc::clone(&thm)));
             }
             // Populate definition index
-            if !lem.name.is_empty() && !self.def_index.contains_key(&lem.name)
-                && let Some(ref loc) = lem.source_loc {
-                    self.def_index.insert(lem.name.clone(), loc.clone());
-                }
+            if !lem.name.is_empty()
+                && !self.def_index.contains_key(&lem.name)
+                && let Some(ref loc) = lem.source_loc
+            {
+                self.def_index.insert(lem.name.clone(), loc.clone());
+            }
             let attrs = &lem.attributes;
             // Use the new attribute system for proper classification
             let is_eq = crate::core::logic::Pure::dest_equals(thm.prop().term()).is_some();
@@ -2470,9 +2477,10 @@ impl HolTheoremDb {
             let thm = Arc::clone(&lem.theorem);
             match lem.name.as_str() {
                 "sym" | "trans" | "refl" | "arg_cong" | "fun_cong" | "iffD1" | "iffD2"
-                    if !self.simps.iter().any(|t| Arc::ptr_eq(t, &thm)) => {
-                        self.simps.push(thm);
-                    },
+                    if !self.simps.iter().any(|t| Arc::ptr_eq(t, &thm)) =>
+                {
+                    self.simps.push(thm);
+                },
                 _ => {},
             }
         }
@@ -2497,10 +2505,12 @@ impl HolTheoremDb {
                 by_name.insert(lem.name.clone(), Arc::clone(&thm));
             }
             // Populate definition index for go-to-definition
-            if !lem.name.is_empty() && !def_index.contains_key(&lem.name)
-                && let Some(ref loc) = lem.source_loc {
-                    def_index.insert(lem.name.clone(), loc.clone());
-                }
+            if !lem.name.is_empty()
+                && !def_index.contains_key(&lem.name)
+                && let Some(ref loc) = lem.source_loc
+            {
+                def_index.insert(lem.name.clone(), loc.clone());
+            }
             let attrs = &lem.attributes;
             if attrs.iter().any(|a| a.contains("intro")) {
                 intros.push(Arc::clone(&thm));
@@ -2555,9 +2565,10 @@ impl HolTheoremDb {
             let thm = Arc::clone(&lem.theorem);
             match lem.name.as_str() {
                 "sym" | "trans" | "refl" | "arg_cong" | "fun_cong" | "iffD1" | "iffD2"
-                    if !simps.iter().any(|t| Arc::ptr_eq(t, &thm)) => {
-                        simps.push(thm);
-                    },
+                    if !simps.iter().any(|t| Arc::ptr_eq(t, &thm)) =>
+                {
+                    simps.push(thm);
+                },
                 _ => {},
             }
         }
@@ -2616,25 +2627,24 @@ impl HolTheoremDb {
             for const_decl in block.split(" and ") {
                 let decl = const_decl.trim();
                 if let Some((name, typ_str)) = parse_const_decl(decl)
-                    && let Some(typ) = parse_hol_type_with_env(typ_str, &env) {
-                        let full_name = if name.contains('.') {
-                            name.to_string()
-                        } else {
-                            format!("HOL.{}", name)
-                        };
-                        env.declare_const(&full_name, typ);
-                    }
+                    && let Some(typ) = parse_hol_type_with_env(typ_str, &env)
+                {
+                    let full_name =
+                        if name.contains('.') { name.to_string() } else { format!("HOL.{}", name) };
+                    env.declare_const(&full_name, typ);
+                }
             }
         }
         // Parse definition blocks for constant type signatures
         for block in &find_blocks(source, "definition") {
             let decl = block.trim();
             if let Some((name, typ_str, _defn)) = parse_definition(decl)
-                && let Some(typ) = parse_hol_type_with_env(typ_str, &env) {
-                    let full_name =
-                        if name.contains('.') { name.to_string() } else { format!("HOL.{}", name) };
-                    env.declare_const(&full_name, typ);
-                }
+                && let Some(typ) = parse_hol_type_with_env(typ_str, &env)
+            {
+                let full_name =
+                    if name.contains('.') { name.to_string() } else { format!("HOL.{}", name) };
+                env.declare_const(&full_name, typ);
+            }
         }
         env
     }
@@ -4083,11 +4093,12 @@ pub fn parse_primrecs(source: &str) -> Vec<PrimrecDef> {
     while i < lines.len() {
         let t = lines[i].trim();
         if (t.starts_with("primrec ") || t.starts_with("fun ") || t.starts_with("function "))
-            && let Some((def, consumed)) = parse_one_primrec(&lines, i) {
-                defs.push(def);
-                i = consumed;
-                continue;
-            }
+            && let Some((def, consumed)) = parse_one_primrec(&lines, i)
+        {
+            defs.push(def);
+            i = consumed;
+            continue;
+        }
         i += 1;
     }
     defs
@@ -4347,11 +4358,12 @@ pub fn parse_classes(source: &str) -> Vec<ClassDef> {
     while i < lines.len() {
         let t = lines[i].trim();
         if t.starts_with("class ")
-            && let Some((def, consumed)) = parse_one_class(&lines, i) {
-                defs.push(def);
-                i = consumed;
-                continue;
-            }
+            && let Some((def, consumed)) = parse_one_class(&lines, i)
+        {
+            defs.push(def);
+            i = consumed;
+            continue;
+        }
         i += 1;
     }
     defs

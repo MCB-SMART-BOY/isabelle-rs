@@ -77,10 +77,11 @@ impl TheoryGraph {
                 if path.is_dir() {
                     dirs.push(path);
                 } else if path.extension().is_some_and(|e| e == "thy")
-                    && let Some(node) = self.parse_header(&path) {
-                        self.nodes.insert(node.name.clone(), node);
-                        *count += 1;
-                    }
+                    && let Some(node) = self.parse_header(&path)
+                {
+                    self.nodes.insert(node.name.clone(), node);
+                    *count += 1;
+                }
             }
         }
         Ok(())

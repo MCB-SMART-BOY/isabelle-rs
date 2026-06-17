@@ -114,9 +114,10 @@ pub fn simp_tac(simp: Simplifier, i: usize) -> TacticFn {
             None => return vec![],
         };
         if let Some((_reduced, eq_thm)) = simp.rewrite_deep(&goal)
-            && let Some(result) = ThmKernel::subst_premise(&eq_thm, st, i) {
-                return vec![result];
-            }
+            && let Some(result) = ThmKernel::subst_premise(&eq_thm, st, i)
+        {
+            return vec![result];
+        }
         vec![]
     })
 }

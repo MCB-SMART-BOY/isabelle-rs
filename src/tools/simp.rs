@@ -215,9 +215,10 @@ impl HolSimplifier {
 
         // Trivial true
         if let Term::Const { name, .. } = cond
-            && (name.as_ref() == "True" || name.as_ref() == "HOL.True") {
-                return true;
-            }
+            && (name.as_ref() == "True" || name.as_ref() == "HOL.True")
+        {
+            return true;
+        }
 
         // Try reflexive equality (t = t)
         if is_trivial_true(cond) {
@@ -233,15 +234,17 @@ impl HolSimplifier {
 
         // Try kernel simplification
         if let Some((result, _)) = self.kernel.rewrite(cond)
-            && &result != cond {
-                return self.prove_condition_with_solvers(&result, depth + 1);
-            }
+            && &result != cond
+        {
+            return self.prove_condition_with_solvers(&result, depth + 1);
+        }
 
         // Try deep rewriting
         if let Some((result, _)) = self.kernel.rewrite_deep(cond)
-            && &result != cond {
-                return self.prove_condition_with_solvers(&result, depth + 1);
-            }
+            && &result != cond
+        {
+            return self.prove_condition_with_solvers(&result, depth + 1);
+        }
 
         false
     }
@@ -311,15 +314,16 @@ impl HolSimplifier {
 
         // Try top-level rewrite
         if let Some((result, thm)) = self.hol_rewrite(&inner_term)
-            && result != inner_term {
-                let composed = match inner_thm_opt {
-                    Some(ref first) => {
-                        ThmKernel::transitive(first, &thm).unwrap_or_else(|_| thm.clone())
-                    },
-                    None => thm,
-                };
-                return Some((result, composed));
-            }
+            && result != inner_term
+        {
+            let composed = match inner_thm_opt {
+                Some(ref first) => {
+                    ThmKernel::transitive(first, &thm).unwrap_or_else(|_| thm.clone())
+                },
+                None => thm,
+            };
+            return Some((result, composed));
+        }
 
         // No top-level rewrite — return subterm result if changed
         inner_thm_opt.map(|thm| {
@@ -382,9 +386,10 @@ impl HolSimplifier {
         Arc::new(move |st: &Thm| {
             if let Some(goal) = st.prem(0)
                 && let Some((_simplified, eq_thm)) = hs.hol_rewrite_deep(&goal)
-                    && let Some(result) = ThmKernel::subst_premise(&eq_thm, st, 0) {
-                        return vec![result];
-                    }
+                && let Some(result) = ThmKernel::subst_premise(&eq_thm, st, 0)
+            {
+                return vec![result];
+            }
             vec![]
         })
     }
@@ -462,9 +467,10 @@ impl HolSimplifier {
 
         for name in &names {
             if let Some(thm) = db.by_name.get(*name)
-                && let Some(rule) = RewriteRule::from_thm(Arc::clone(thm)) {
-                    rules.push(rule);
-                }
+                && let Some(rule) = RewriteRule::from_thm(Arc::clone(thm))
+            {
+                rules.push(rule);
+            }
         }
 
         if rules.is_empty() { None } else { Some(rules) }

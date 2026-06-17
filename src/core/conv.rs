@@ -75,21 +75,22 @@ pub fn rewr_conv(rule: Thm) -> Conv {
         let rule_eq = rule.concl();
         if let Term::App { func, arg: _rhs } = &rule_eq
             && let Term::App { func: eq_const, arg: lhs } = func.as_ref()
-                && is_hol_eq(eq_const) {
-                    // If the term equals lhs, return reflexive equality
-                    if t == **lhs {
-                        // We have: rule ⊢ lhs ≡ rhs
-                        // And thm: ⊢ lhs (= t)
-                        // We need: ⊢ t ≡ rhs → which is just the rule
-                        return Some(rule.clone());
-                    }
+            && is_hol_eq(eq_const)
+        {
+            // If the term equals lhs, return reflexive equality
+            if t == **lhs {
+                // We have: rule ⊢ lhs ≡ rhs
+                // And thm: ⊢ lhs (= t)
+                // We need: ⊢ t ≡ rhs → which is just the rule
+                return Some(rule.clone());
+            }
 
-                    // Try to instantiate the rule
-                    if let Some(inst) = match_term(lhs, &t) {
-                        let inst_rule = instantiate_rule(&rule, &inst);
-                        return Some(inst_rule);
-                    }
-                }
+            // Try to instantiate the rule
+            if let Some(inst) = match_term(lhs, &t) {
+                let inst_rule = instantiate_rule(&rule, &inst);
+                return Some(inst_rule);
+            }
+        }
         None
     })
 }
@@ -255,7 +256,7 @@ fn top_sweep_walk(c: Conv, thm: &Thm) -> Option<Thm> {
             let c_arg = arg_conv(Arc::clone(&c));
             // Try top-level first, then descend
             let step = result.or_else(|| c_fun(thm));
-            
+
             step.or_else(|| c_arg(thm))
         },
         Term::Abs { .. } => {
@@ -345,9 +346,10 @@ fn rhs_of_conv(thm: &Thm) -> Option<Term> {
     match &concl {
         Term::App { func, arg: rhs } => {
             if let Term::App { func: eq_const, .. } = func.as_ref()
-                && is_hol_eq(eq_const) {
-                    return Some(rhs.as_ref().clone());
-                }
+                && is_hol_eq(eq_const)
+            {
+                return Some(rhs.as_ref().clone());
+            }
             None
         },
         _ => None,

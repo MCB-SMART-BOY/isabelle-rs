@@ -692,10 +692,11 @@ fn parse_trm_flag(s: &mut P, stop_at_imp: bool) -> Option<Term> {
 
         // Application by juxtaposition
         if (s.is_id() || matches!(s.kind(), Some(TokenKind::String | TokenKind::Number)))
-            && let Some(a) = parse_atom(s) {
-                head = Term::app(head, a);
-                continue;
-            }
+            && let Some(a) = parse_atom(s)
+        {
+            head = Term::app(head, a);
+            continue;
+        }
         break;
     }
     Some(head)
@@ -857,87 +858,88 @@ fn parse_atom(s: &mut P) -> Option<Term> {
     }
     // Set comprehension or enumeration: {x. P x} or {a, b, c}
     if let Some(TokenKind::Symbol(x)) = s.kind()
-        && x.as_ref() == "{" {
+        && x.as_ref() == "{"
+    {
+        s.adv();
+        if s.is_sym("}") {
             s.adv();
-            if s.is_sym("}") {
-                s.adv();
-                return Some(hologic::empty_set_const(Typ::dummy()));
-            }
-            // Check for range starting with ..: {..n}
+            return Some(hologic::empty_set_const(Typ::dummy()));
+        }
+        // Check for range starting with ..: {..n}
+        if s.is_sym(".") {
+            s.adv(); // first dot
             if s.is_sym(".") {
-                s.adv(); // first dot
-                if s.is_sym(".") {
-                    s.adv(); // second dot
-                    if s.is_sym("<") {
-                        s.adv();
-                    } // ..< (three chars)
-                } else if s.is_sym("<") {
+                s.adv(); // second dot
+                if s.is_sym("<") {
                     s.adv();
-                } // .< (unusual but handle)
-                let upper = if !s.is_sym("}") { Some(parse_trm(s)?) } else { None };
-                if s.is_sym("}") {
-                    s.adv();
-                }
-                let range_const = hologic::set_range_const();
-                let result = match upper {
-                    Some(u) => Term::app(range_const, u),
-                    None => range_const,
-                };
-                return Some(result);
-            }
-            let first = parse_trm(s)?;
-            // Check for set range: {a..}, {a..b}
-            if s.is_sym(".") {
-                s.adv(); // first dot
-                if s.is_sym(".") {
-                    s.adv(); // second dot
-                    if s.is_sym("<") {
-                        s.adv();
-                    } // ..< (three chars)
-                } else if s.is_sym("<") {
-                    s.adv();
-                } // .< (unusual but handle)
-                // Parse the upper bound (optional)
-                let upper = if !s.is_sym("}") { Some(parse_trm(s)?) } else { None };
-                if s.is_sym("}") {
-                    s.adv();
-                }
-                // Build: setRange(lower, upper)
-                let range_const = hologic::set_range_const();
-                let result = match upper {
-                    Some(u) => Term::app(Term::app(range_const, first), u),
-                    None => Term::app(range_const, first),
-                };
-                return Some(result);
-            }
-            if s.is_sym(".") || s.is_sym("|") {
-                // Set comprehension: {x. P x} or {x | P x}
+                } // ..< (three chars)
+            } else if s.is_sym("<") {
                 s.adv();
-                let body = parse_trm(s)?;
-                if s.is_sym("}") {
-                    s.adv();
-                }
-                let collect = hologic::collect_const(Typ::dummy());
-                let abs = Term::abs("_", Typ::dummy(), body);
-                return Some(Term::app(collect, abs));
-            }
-            // Set enumeration: {a, b, c} — parse as insert chain
-            let mut elems = vec![first];
-            while s.is_sym(",") {
-                s.adv();
-                elems.push(parse_trm(s)?);
-            }
+            } // .< (unusual but handle)
+            let upper = if !s.is_sym("}") { Some(parse_trm(s)?) } else { None };
             if s.is_sym("}") {
                 s.adv();
             }
-            let empty = hologic::empty_set_const(Typ::dummy());
-            let insert = hologic::insert_const(Typ::dummy());
-            let mut result = empty;
-            for e in elems.into_iter().rev() {
-                result = Term::app(Term::app(insert.clone(), e), result);
-            }
+            let range_const = hologic::set_range_const();
+            let result = match upper {
+                Some(u) => Term::app(range_const, u),
+                None => range_const,
+            };
             return Some(result);
         }
+        let first = parse_trm(s)?;
+        // Check for set range: {a..}, {a..b}
+        if s.is_sym(".") {
+            s.adv(); // first dot
+            if s.is_sym(".") {
+                s.adv(); // second dot
+                if s.is_sym("<") {
+                    s.adv();
+                } // ..< (three chars)
+            } else if s.is_sym("<") {
+                s.adv();
+            } // .< (unusual but handle)
+            // Parse the upper bound (optional)
+            let upper = if !s.is_sym("}") { Some(parse_trm(s)?) } else { None };
+            if s.is_sym("}") {
+                s.adv();
+            }
+            // Build: setRange(lower, upper)
+            let range_const = hologic::set_range_const();
+            let result = match upper {
+                Some(u) => Term::app(Term::app(range_const, first), u),
+                None => Term::app(range_const, first),
+            };
+            return Some(result);
+        }
+        if s.is_sym(".") || s.is_sym("|") {
+            // Set comprehension: {x. P x} or {x | P x}
+            s.adv();
+            let body = parse_trm(s)?;
+            if s.is_sym("}") {
+                s.adv();
+            }
+            let collect = hologic::collect_const(Typ::dummy());
+            let abs = Term::abs("_", Typ::dummy(), body);
+            return Some(Term::app(collect, abs));
+        }
+        // Set enumeration: {a, b, c} — parse as insert chain
+        let mut elems = vec![first];
+        while s.is_sym(",") {
+            s.adv();
+            elems.push(parse_trm(s)?);
+        }
+        if s.is_sym("}") {
+            s.adv();
+        }
+        let empty = hologic::empty_set_const(Typ::dummy());
+        let insert = hologic::insert_const(Typ::dummy());
+        let mut result = empty;
+        for e in elems.into_iter().rev() {
+            result = Term::app(Term::app(insert.clone(), e), result);
+        }
+        return Some(result);
+    }
     let kind = s.kind()?;
     let src = s.src()?;
     match &kind {

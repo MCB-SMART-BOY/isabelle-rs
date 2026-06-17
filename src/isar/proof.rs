@@ -552,9 +552,10 @@ impl IsarProof {
                 "assumption" | "." => {
                     let stmt_ct = CTerm::certify(goal.statement.clone());
                     if goal.goal_thm.hyps().contains(&stmt_ct)
-                        && let Ok(closed) = ThmKernel::trivial(stmt_ct) {
-                            goal.goal_thm = closed;
-                        }
+                        && let Ok(closed) = ThmKernel::trivial(stmt_ct)
+                    {
+                        goal.goal_thm = closed;
+                    }
                 },
                 "this" | "skip" => {
                     let stmt_ct = CTerm::certify(goal.statement.clone());
@@ -792,11 +793,12 @@ impl IsarProof {
             let mut applied = false;
             for rule_opt in &rules {
                 if let Some(rule) = rule_opt
-                    && let Some(refined) = ThmKernel::bicompose(false, rule, &goal.goal_thm, 0) {
-                        goal.goal_thm = refined;
-                        applied = true;
-                        break;
-                    }
+                    && let Some(refined) = ThmKernel::bicompose(false, rule, &goal.goal_thm, 0)
+                {
+                    goal.goal_thm = refined;
+                    applied = true;
+                    break;
+                }
             }
             if !applied {
                 let stmt_ct = CTerm::certify(goal.statement.clone());
@@ -832,10 +834,11 @@ impl IsarProof {
         if let Some(goal) = self.find_goal_mut() {
             for rule_opt in &rules {
                 if let Some(rule) = rule_opt
-                    && let Some(refined) = ThmKernel::bicompose(false, rule, &goal.goal_thm, 0) {
-                        goal.goal_thm = refined;
-                        return;
-                    }
+                    && let Some(refined) = ThmKernel::bicompose(false, rule, &goal.goal_thm, 0)
+                {
+                    goal.goal_thm = refined;
+                    return;
+                }
             }
             // Fallback: close goal
             let stmt_ct = CTerm::certify(goal.statement.clone());

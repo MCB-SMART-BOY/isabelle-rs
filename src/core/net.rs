@@ -147,9 +147,10 @@ fn lookup_in<T: Clone>(node: &NetNode<T>, term: &Term, results: &mut Vec<Arc<T>>
         Term::App { func, arg: _ } => {
             // Look up by head
             if let Term::Const { name, .. } = func.as_ref()
-                && let Some(child) = node.children.get(name.as_ref()) {
-                    lookup_in(child, term, results);
-                }
+                && let Some(child) = node.children.get(name.as_ref())
+            {
+                lookup_in(child, term, results);
+            }
             // Also check variable child
             if let Some(ref var_child) = node.var_child {
                 lookup_in(var_child, term, results);

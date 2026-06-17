@@ -81,8 +81,7 @@ pub enum ElimModifier {
 // =========================================================================
 
 /// Classification of a theorem based on its attributes and structure.
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct AttrClass {
     /// Whether this theorem should be in the safe intro set.
     pub safe_intro: bool,
@@ -103,7 +102,6 @@ pub struct AttrClass {
     /// Whether this theorem is a congruence rule.
     pub cong: bool,
 }
-
 
 // =========================================================================
 // Attribute parser

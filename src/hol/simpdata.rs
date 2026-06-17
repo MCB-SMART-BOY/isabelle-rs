@@ -278,9 +278,10 @@ fn load_named_rules(names: &[&str]) -> Vec<RewriteRule> {
     let mut rules = Vec::new();
     for name in names {
         if let Some(thm) = db.by_name.get(*name)
-            && let Some(rule) = RewriteRule::from_thm(Arc::clone(thm)) {
-                rules.push(rule);
-            }
+            && let Some(rule) = RewriteRule::from_thm(Arc::clone(thm))
+        {
+            rules.push(rule);
+        }
     }
     rules
 }

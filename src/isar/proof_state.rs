@@ -205,9 +205,10 @@ impl ProofState {
     fn resolve_case_stmt(&self, stmt: &Term) -> Term {
         if let Term::Const { name, .. } = stmt
             && (name.as_ref() == "?case" || name.as_ref() == "?thesis")
-                && let Some(subgoal) = self.get_current_subgoal() {
-                    return subgoal.prop().term().clone();
-                }
+            && let Some(subgoal) = self.get_current_subgoal()
+        {
+            return subgoal.prop().term().clone();
+        }
         stmt.clone()
     }
 
@@ -532,9 +533,10 @@ pub fn interpret_proof_script(
         // `}` — end nested block: restore outer context
         if t == "}" {
             if let ProofState::Proving { block_depth, .. } = state
-                && *block_depth > 0 {
-                    *block_depth -= 1;
-                }
+                && *block_depth > 0
+            {
+                *block_depth -= 1;
+            }
             i += 1;
             continue;
         }
@@ -557,9 +559,10 @@ pub fn interpret_proof_script(
             for name in names.split_whitespace() {
                 let name = name.trim();
                 if !name.is_empty()
-                    && let Some(thm) = db.by_name.get(name) {
-                        state.chain_fact(Arc::clone(thm));
-                    }
+                    && let Some(thm) = db.by_name.get(name)
+                {
+                    state.chain_fact(Arc::clone(thm));
+                }
             }
             i += 1;
             continue;
@@ -572,9 +575,10 @@ pub fn interpret_proof_script(
             for name in names.split_whitespace() {
                 let name = name.trim();
                 if !name.is_empty()
-                    && let Some(thm) = db.by_name.get(name) {
-                        state.add_fact(Arc::clone(thm));
-                    }
+                    && let Some(thm) = db.by_name.get(name)
+                {
+                    state.add_fact(Arc::clone(thm));
+                }
             }
             i += 1;
             continue;
@@ -610,9 +614,10 @@ pub fn interpret_proof_script(
             for name in names.split_whitespace() {
                 let name = name.trim().trim_matches(',');
                 if !name.is_empty()
-                    && let Some(thm) = db.by_name.get(name) {
-                        state.add_fact(Arc::clone(thm));
-                    }
+                    && let Some(thm) = db.by_name.get(name)
+                {
+                    state.add_fact(Arc::clone(thm));
+                }
             }
             i += 1;
             continue;
@@ -625,9 +630,10 @@ pub fn interpret_proof_script(
             for name in names.split_whitespace() {
                 let name = name.trim();
                 if !name.is_empty()
-                    && let Some(thm) = db.by_name.get(name) {
-                        state.chain_fact(Arc::clone(thm));
-                    }
+                    && let Some(thm) = db.by_name.get(name)
+                {
+                    state.chain_fact(Arc::clone(thm));
+                }
             }
             i += 1;
             continue;
@@ -832,16 +838,17 @@ fn parse_and_exec_obtain(
 
     // Try to verify the existential using the method (if not empty)
     if !method.is_empty()
-        && let Some(goal) = state.get_current_goal() {
-            let results = crate::isar::method::exec_single_method(&goal, &method, premises);
-            if results.iter().any(|r| r.nprems() == 0) {
-                // Method proved it, update the goal
-                if let Some(closed) = results.into_iter().find(|r| r.nprems() == 0) {
-                    state.set_current_goal(closed);
-                }
+        && let Some(goal) = state.get_current_goal()
+    {
+        let results = crate::isar::method::exec_single_method(&goal, &method, premises);
+        if results.iter().any(|r| r.nprems() == 0) {
+            // Method proved it, update the goal
+            if let Some(closed) = results.into_iter().find(|r| r.nprems() == 0) {
+                state.set_current_goal(closed);
             }
         }
-        // Even if method fails, we keep the obtained fact (it's an assumption)
+    }
+    // Even if method fails, we keep the obtained fact (it's an assumption)
     true
 }
 
@@ -869,10 +876,12 @@ fn parse_let_binding(rest: &str) -> Option<(String, Term)> {
     if let Some(be_pos) = rest.find(" be ") {
         let name = rest[..be_pos].trim().to_string();
         let rhs = rest[be_pos + 4..].trim().trim_matches('"');
-        if !name.is_empty() && !rhs.is_empty()
-            && let Some(term) = crate::isar::term_parser::parse_term(rhs) {
-                return Some((name, term));
-            }
+        if !name.is_empty()
+            && !rhs.is_empty()
+            && let Some(term) = crate::isar::term_parser::parse_term(rhs)
+        {
+            return Some((name, term));
+        }
     }
     None
 }
@@ -892,9 +901,10 @@ impl ProofState {
     /// Set the current goal (update the current subgoal).
     pub fn set_current_goal(&mut self, new_goal: Thm) {
         if let ProofState::Proving { subgoals, current_subgoal, .. } = self
-            && *current_subgoal < subgoals.len() {
-                subgoals[*current_subgoal] = new_goal;
-            }
+            && *current_subgoal < subgoals.len()
+        {
+            subgoals[*current_subgoal] = new_goal;
+        }
     }
 }
 

@@ -143,22 +143,23 @@ pub fn term_to_tptp(term: &Term, buf: &mut String) {
                         _ => {
                             // Binary application: check if it's an infix
                             if let Term::App { func: inner, arg: left } = func.as_ref()
-                                && let Term::Const { name: op_name, .. } = inner.as_ref() {
-                                    let op = match op_name.as_ref() {
-                                        "HOL.conj" | "HOL.and" => " & ",
-                                        "HOL.disj" | "HOL.or" => " | ",
-                                        "HOL.imp" | "Pure.imp" => " => ",
-                                        _ => "",
-                                    };
-                                    if !op.is_empty() {
-                                        buf.push('(');
-                                        term_to_tptp(left, buf);
-                                        buf.push_str(op);
-                                        term_to_tptp(arg, buf);
-                                        buf.push(')');
-                                        return;
-                                    }
+                                && let Term::Const { name: op_name, .. } = inner.as_ref()
+                            {
+                                let op = match op_name.as_ref() {
+                                    "HOL.conj" | "HOL.and" => " & ",
+                                    "HOL.disj" | "HOL.or" => " | ",
+                                    "HOL.imp" | "Pure.imp" => " => ",
+                                    _ => "",
+                                };
+                                if !op.is_empty() {
+                                    buf.push('(');
+                                    term_to_tptp(left, buf);
+                                    buf.push_str(op);
+                                    term_to_tptp(arg, buf);
+                                    buf.push(')');
+                                    return;
                                 }
+                            }
                             // Plain function application
                             term_to_tptp(func, buf);
                             buf.push('(');

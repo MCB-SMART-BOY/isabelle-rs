@@ -126,14 +126,15 @@ impl Defs {
         if let Some(existing_specs) = self.specs.get(&item) {
             for existing in existing_specs {
                 if !Self::disjoint_args(&lhs, &existing.lhs)
-                    && let Some(ref def_name) = existing.def {
-                        return Err(format!(
-                            "Conflicting type arguments for {} '{}': already defined in '{}'",
-                            if item.kind == ItemKind::Const { "constant" } else { "type" },
-                            item.name,
-                            def_name,
-                        ));
-                    }
+                    && let Some(ref def_name) = existing.def
+                {
+                    return Err(format!(
+                        "Conflicting type arguments for {} '{}': already defined in '{}'",
+                        if item.kind == ItemKind::Const { "constant" } else { "type" },
+                        item.name,
+                        def_name,
+                    ));
+                }
             }
         }
 

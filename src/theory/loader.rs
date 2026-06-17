@@ -795,9 +795,10 @@ impl TheoryProcessor {
                 || trimmed == "qed"
                 || trimmed == "done"
                 || trimmed.starts_with("by "))
-                && !result.is_empty() {
-                    break;
-                }
+                && !result.is_empty()
+            {
+                break;
+            }
             if !result.is_empty() {
                 result.push(' ');
             }
@@ -956,12 +957,13 @@ impl TheoryProcessor {
                         let attrs = std::mem::take(&mut self.pending_attributes);
                         self.add_theorem_with_attrs(name, Arc::clone(&thm), attrs);
                     } else if self.accept_all
-                        && let Some(ref pending_name) = self.pending_lemma {
-                            let stmt = Term::const_("True", Typ::base("prop"));
-                            let thm = Arc::new(ThmKernel::assume(CTerm::certify_annotated(stmt)));
-                            let attrs = std::mem::take(&mut self.pending_attributes);
-                            self.add_theorem_with_attrs(pending_name.clone(), thm, attrs);
-                        }
+                        && let Some(ref pending_name) = self.pending_lemma
+                    {
+                        let stmt = Term::const_("True", Typ::base("prop"));
+                        let thm = Arc::new(ThmKernel::assume(CTerm::certify_annotated(stmt)));
+                        let attrs = std::mem::take(&mut self.pending_attributes);
+                        self.add_theorem_with_attrs(pending_name.clone(), thm, attrs);
+                    }
                 }
             }
         });
@@ -970,9 +972,10 @@ impl TheoryProcessor {
     fn process_proof_close(&mut self, span: &CommandSpan) {
         catch_unwind_silent(|| {
             if let Some(ref mut proof) = self.proof
-                && span.name == "qed" {
-                    proof.qed();
-                }
+                && span.name == "qed"
+            {
+                proof.qed();
+            }
         });
     }
 

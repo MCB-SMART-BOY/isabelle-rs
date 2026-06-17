@@ -552,9 +552,10 @@ pub fn parse_spec_commands(source: &str) -> Vec<ParsedLemma> {
                 lemmas.push(abbr.generate_theorem());
             }
         } else if t.starts_with("def ")
-            && let Some(def) = LocalDef::parse(t) {
-                lemmas.push(def.generate_theorem());
-            }
+            && let Some(def) = LocalDef::parse(t)
+        {
+            lemmas.push(def.generate_theorem());
+        }
 
         i += 1;
     }

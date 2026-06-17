@@ -106,10 +106,11 @@ fn parse_primcorec_header(
         if !found_where {
             // Still in header — check if "where" is on this line
             if t.contains("where ")
-                && let Some(pos) = t.find("where ") {
-                    parse_primcorec_equations(&t[pos + 6..], &mut equations);
-                    found_where = true;
-                }
+                && let Some(pos) = t.find("where ")
+            {
+                parse_primcorec_equations(&t[pos + 6..], &mut equations);
+                found_where = true;
+            }
             *i += 1;
             continue;
         }
@@ -198,17 +199,15 @@ impl PrimcorecDef {
         // 2. Generate selector rules for the codatatype
         // For each equation, if the RHS is a constructor application,
         // generate: `sel_i (f args) = arg_i`
-        if !self.equations.is_empty() {
-            for (_label, lhs, rhs) in &self.equations {
-                if let Some((_ctor_name, args)) = parse_constructor_app(rhs) {
-                    for (idx, arg) in args.iter().enumerate() {
-                        let sel_name = format!("{}.sel_{}", self.name, idx);
-                        let lhs_term = format!("sel_{} ({})", idx, lhs);
-                        let eq_term = self.build_equation_term(&lhs_term, arg);
-                        results.push((sel_name, eq_term, vec!["primcorec".to_string()]));
-                    }
+        // One equation is enough for sel rules — use first
+        if let Some((_label, lhs, rhs)) = self.equations.first() {
+            if let Some((_ctor_name, args)) = parse_constructor_app(rhs) {
+                for (idx, arg) in args.iter().enumerate() {
+                    let sel_name = format!("{}.sel_{}", self.name, idx);
+                    let lhs_term = format!("sel_{} ({})", idx, lhs);
+                    let eq_term = self.build_equation_term(&lhs_term, arg);
+                    results.push((sel_name, eq_term, vec!["primcorec".to_string()]));
                 }
-                break; // One equation is enough for sel rules
             }
         }
 

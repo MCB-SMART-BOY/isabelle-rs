@@ -86,10 +86,11 @@ impl Term {
             match term {
                 Term::Const { name, typ } => {
                     if typ.is_dummy()
-                        && let Some(known) = env.const_type(name.as_ref()) {
-                            *typ = known.clone();
-                            changed = true;
-                        }
+                        && let Some(known) = env.const_type(name.as_ref())
+                    {
+                        *typ = known.clone();
+                        changed = true;
+                    }
                 },
                 Term::Free { name, typ } => {
                     if typ.is_dummy() {
