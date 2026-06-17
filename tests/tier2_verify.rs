@@ -93,6 +93,10 @@ mod tier2_verify {
         ("theories/HOL/Lookup2.thy", 60),
         ("theories/HOL/Function_Division.thy", 60),
         ("theories/HOL/Type_Length.thy", 60),
+        ("theories/HOL/Quotient_Syntax.thy", 60),
+        ("theories/HOL/Queue_Spec.thy", 60),
+        ("theories/HOL/Less_False.thy", 60),
+        ("theories/HOL/Priority_Queue_Specs.thy", 60),
     ];
 
     #[test]
