@@ -5,6 +5,12 @@
 > 功能与 Isabelle/ML 一致。错误信息 → Rust 编译器风格。工具链 → 标准 Rust 生态。
 > LCF trusted kernel + higher-order unification + Isar proof language + theory loading pipeline.
 
+## 分支策略
+
+- **`main`** — 稳定发行分支。只通过 PR 从 `dev` 合并。每次 release 在此打 tag。
+- **`dev`** — 开发分支。所有日常修改在此进行。功能完成后通过 PR 合并到 `main`。
+- **工作流**: `dev` 上开发 → 测试通过 → PR → `main` → 打 tag 发布
+
 ## Project State (v2.1.5)
 
 | Metric | Value |
@@ -89,6 +95,7 @@ Phase 6-17 ✅ v2.1.5:
 16. **At the end of EVERY conversation, update .claude/** — `.claude/rules/README.md` (状态表/已知问题, SOF), `.claude/hooks/post-session.md` (完成检查清单), `CLAUDE.md` (项目状态). This ensures the next session starts with accurate state. Don't wait for the user to ask.
 17. **Commit messages in Chinese, NO Co-Authored-By** — 提交信息用中文。禁止添加 `Co-Authored-By:` 或任何形式的 AI 署名。所有 commit 由 MCB-SMART-BOY 提交。See `## Commit Rules` below.
 18. **All proof method entry points must check VERIFY_DEADLINE** — `auto_exec`, `exec_simp`, `exec_proof` fallback chains, and any function that triggers deep recursive proof search must check `VERIFY_DEADLINE` at entry. This prevents single slow lemmas (e.g., `by (simp add: field_simps)` without matched named_theorems) from hanging the entire verification. See `src/isar/method.rs` VERIFY_DEADLINE checks.
+19. **`dev` 上开发，`main` 为稳定发行** — 日常修改在 `dev` 分支。功能稳定后通过 PR 合并到 `main`。`main` 只接受来自 `dev` 的 PR，不直接在 `main` 上提交。
 
 ## Architecture
 
