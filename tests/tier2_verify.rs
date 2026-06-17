@@ -1,6 +1,6 @@
 //! Tier 2 verification — expanded HOL theory coverage.
 //!
-//! Extends verification beyond the 5 core files to 19 foundational HOL theories.
+//! Extends verification beyond the 5 core files to 57 foundational HOL theories.
 //! Uses local DB + VERIFY_DEADLINE for per-file time budgets.
 //!
 //! Per-file timeout: 120s for arithmetic-heavy files, 60s for others.
@@ -60,6 +60,28 @@ mod tier2_verify {
         ("theories/HOL/Metis.thy", 60),
         ("theories/HOL/Presburger.thy", 90),
         ("theories/HOL/Lifting_Set.thy", 90),
+        // ── Tier2+++ Expansion (Phase 6) ── Library + Data_Structures
+        ("theories/HOL/Phantom_Type.thy", 60),
+        ("theories/HOL/Cancellation.thy", 60),
+        ("theories/HOL/Preorder.thy", 60),
+        ("theories/HOL/List_Lexorder.thy", 60),
+        ("theories/HOL/List_Lenlexorder.thy", 60),
+        ("theories/HOL/Product_Lexorder.thy", 60),
+        ("theories/HOL/Product_Plus.thy", 60),
+        ("theories/HOL/Fun_Lexorder.thy", 60),
+        ("theories/HOL/Char_ord.thy", 60),
+        ("theories/HOL/Monad_Syntax.thy", 60),
+        ("theories/HOL/NList.thy", 60),
+        ("theories/HOL/Combine_PER.thy", 60),
+        ("theories/HOL/Power_By_Squaring.thy", 60),
+        ("theories/HOL/Old_Recdef.thy", 60),
+        ("theories/HOL/Set_Algebras.thy", 60),
+        ("theories/HOL/Comparator.thy", 60),
+        ("theories/HOL/Complemented_Lattices.thy", 60),
+        ("theories/HOL/Z2.thy", 60),
+        ("theories/HOL/BNF_Corec.thy", 60),
+        ("theories/HOL/Quotient_Type.thy", 60),
+        ("theories/HOL/Tree23.thy", 60),
     ];
 
     #[test]

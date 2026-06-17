@@ -344,8 +344,8 @@ pub fn init_hol_simpset() -> HolSimplifier {
     rules.extend(HolSimplifier::builtin_rules());
 
     let mut hs = HolSimplifier::with_rules(rules);
-    hs.register_solver(Box::new(crate::tools::simp::ArithSolver));
-    hs.register_solver(Box::new(crate::tools::simp::AsmSolver));
+    hs.register_solver(Arc::new(crate::tools::simp::ArithSolver));
+    hs.register_solver(Arc::new(crate::tools::simp::AsmSolver));
     hs
 }
 

@@ -29,7 +29,7 @@ use super::{
 
 /// A conversion tries to prove `t ≡ u` for some `u`.
 /// Returns `Some(thm)` where `thm` is `⊢ t ≡ u`, or `None` if it can't rewrite.
-pub type Conv = Box<dyn Fn(&Term) -> Option<Thm> + Send + Sync>;
+pub type Conv = Arc<dyn Fn(&Term) -> Option<Thm> + Send + Sync>;
 
 // =========================================================================
 // Conversionals — combinators for conversions
@@ -37,22 +37,22 @@ pub type Conv = Box<dyn Fn(&Term) -> Option<Thm> + Send + Sync>;
 
 /// Identity conversion: always fails.
 pub fn no_conv() -> Conv {
-    Box::new(|_| None)
+    Arc::new(|_| None)
 }
 
 /// All-conversion: `t ≡ t` (reflexivity).
 pub fn all_conv() -> Conv {
-    Box::new(|t| Some(ThmKernel::reflexive(CTerm::certify(t.clone()))))
+    Arc::new(|t| Some(ThmKernel::reflexive(CTerm::certify(t.clone()))))
 }
 
 /// Try `conv1`; if it fails, try `conv2`.
 pub fn orelse_conv(conv1: Conv, conv2: Conv) -> Conv {
-    Box::new(move |t| conv1(t).or_else(|| conv2(t)))
+    Arc::new(move |t| conv1(t).or_else(|| conv2(t)))
 }
 
 /// Apply `conv` to the i-th argument of an application.
 pub fn arg_conv(i: usize, conv: Conv) -> Conv {
-    Box::new(move |t| match t {
+    Arc::new(move |t| match t {
         Term::App { func, arg } => {
             if i == 0 {
                 conv(arg).and_then(|thm| {
@@ -73,7 +73,7 @@ pub fn arg_conv(i: usize, conv: Conv) -> Conv {
 
 /// Apply `conv` under an abstraction: `λx. t` → `λx. u` if `conv` rewrites `t` to `u`.
 pub fn abs_conv(conv: Conv) -> Conv {
-    Box::new(move |t| match t {
+    Arc::new(move |t| match t {
         Term::Abs { name, typ, body } => {
             conv(body).and_then(|thm| ThmKernel::abstraction(name.as_ref(), typ.clone(), &thm).ok())
         },
@@ -83,7 +83,7 @@ pub fn abs_conv(conv: Conv) -> Conv {
 
 /// Apply `conv` to the function part of an application.
 pub fn fun_conv(conv: Conv) -> Conv {
-    Box::new(move |t| match t {
+    Arc::new(move |t| match t {
         Term::App { func, arg: _ } => conv(func).and_then(|thm| {
             ThmKernel::combination(
                 &thm,
@@ -141,6 +141,7 @@ impl RewriteRule {
 pub type ConditionSolver = Arc<dyn Fn(&Term) -> bool + Send + Sync>;
 
 /// The simplifier: a set of rewrite rules + conversions.
+#[derive(Clone)]
 pub struct Simplifier {
     rules: Vec<RewriteRule>,
     conversions: Vec<Conv>,
@@ -363,7 +364,7 @@ impl Default for Simplifier {
 
 /// Create a simplifier with just beta-reduction.
 pub fn beta_simp() -> Simplifier {
-    let beta_conv: Conv = Box::new(|t: &Term| {
+    let beta_conv: Conv = Arc::new(|t: &Term| {
         let reduced = term_subst::beta_norm(t);
         if &reduced == t {
             None

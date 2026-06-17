@@ -13,7 +13,7 @@
 //! │   ├── rules: Vec<RewriteRule>    (user + HOL built-in rules)
 //! │   ├── conversions: Vec<Conv>     (beta, eta)
 //! │   └── condition_solver           (delegated from HolSimplifier)
-//! ├── solvers: Vec<Box<dyn Solver>>  (decision procedures)
+//! ├── solvers: Vec<Arc<dyn Solver>>  (decision procedures)
 //! └── conditional_depth: usize       (max depth for proving conditions)
 //! ```
 //!
@@ -117,7 +117,7 @@ impl Solver for AsmSolver {
 /// rewrite rules and solver plugins for conditional rewriting.
 pub struct HolSimplifier {
     kernel: Simplifier,
-    solvers: Vec<Box<dyn Solver>>,
+    solvers: Vec<Arc<dyn Solver>>,
     conditional_depth: usize,
 }
 
@@ -140,7 +140,7 @@ impl HolSimplifier {
     pub fn with_beta() -> Self {
         let mut hs = HolSimplifier::new();
         // Add beta conversion via the kernel
-        let beta_conv: crate::core::simplifier::Conv = Box::new(|t: &Term| {
+        let beta_conv: crate::core::simplifier::Conv = Arc::new(|t: &Term| {
             use crate::core::term_subst;
             let reduced = term_subst::beta_norm(t);
             if &reduced == t { None } else { Some(ThmKernel::reflexive(CTerm::certify(reduced))) }
@@ -172,8 +172,8 @@ impl HolSimplifier {
         };
 
         // Register default solvers
-        hs.register_solver(Box::new(ArithSolver));
-        hs.register_solver(Box::new(AsmSolver));
+        hs.register_solver(Arc::new(ArithSolver));
+        hs.register_solver(Arc::new(AsmSolver));
 
         // Wire the condition solver callback
         hs.wire_condition_solver();
@@ -182,7 +182,7 @@ impl HolSimplifier {
     }
 
     /// Register a solver plugin.
-    pub fn register_solver(&mut self, solver: Box<dyn Solver>) {
+    pub fn register_solver(&mut self, solver: Arc<dyn Solver>) {
         self.solvers.push(solver);
     }
 
@@ -1113,8 +1113,8 @@ mod tests {
     fn test_solver_registration() {
         let mut hs = HolSimplifier::new();
         assert_eq!(hs.solvers.len(), 0);
-        hs.register_solver(Box::new(ArithSolver));
-        hs.register_solver(Box::new(AsmSolver));
+        hs.register_solver(Arc::new(ArithSolver));
+        hs.register_solver(Arc::new(AsmSolver));
         assert_eq!(hs.solvers.len(), 2);
     }
 

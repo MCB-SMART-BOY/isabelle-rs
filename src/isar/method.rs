@@ -32,6 +32,8 @@ thread_local! {
     /// Starts at a high value; decremented on each auto_exec entry.
     /// When zero, auto_exec returns immediately without expanding branches.
     pub(crate) static PROOF_SEARCH_BUDGET: Cell<usize> = Cell::new(200);
+    /// Cached base simplifier (all simp rules from DB) — avoids rebuilding on every fallback.
+    static CACHED_BASE_SIMPLIFIER: std::cell::RefCell<Option<Simplifier>> = std::cell::RefCell::new(None);
 }
 
 // =========================================================================
@@ -1665,12 +1667,20 @@ fn exec_single_method_inner(state: &Thm, method_str: &str, premises: &[Arc<Thm>]
         if blast_results.iter().any(|r| r.nprems() == 0) {
             return blast_results;
         }
-        // Try simp
-        let db = HolTheoremDb::get();
-        let rules: Vec<RewriteRule> =
-            db.simps.iter().filter_map(|t| RewriteRule::from_thm(Arc::clone(t))).collect();
-        let simp = Simplifier::new(rules);
-        return Method::Simp(simp).execute(state, premises);
+        // Try simp — use cached base simplifier to avoid rebuilding on every fallback
+        return CACHED_BASE_SIMPLIFIER.with(|cell| {
+            let simp = if let Some(ref cached) = *cell.borrow() {
+                cached.clone()
+            } else {
+                let db = HolTheoremDb::get();
+                let mut rules: Vec<RewriteRule> = db.simps.iter().filter_map(|t| RewriteRule::from_thm(Arc::clone(t))).collect();
+                rules.extend(HolSimplifier::builtin_rules());
+                let s = Simplifier::new(rules);
+                *cell.borrow_mut() = Some(s.clone());
+                s
+            };
+            Method::Simp(simp).execute(state, premises)
+        })
     }
     if inner == "simp"
         || inner.starts_with("simp ")
@@ -1718,11 +1728,20 @@ fn exec_single_method_inner(state: &Thm, method_str: &str, premises: &[Arc<Thm>]
         if auto_results.iter().any(|r| r.nprems() == 0) {
             return auto_results;
         }
-        let db = HolTheoremDb::get();
-        let rules: Vec<RewriteRule> =
-            db.simps.iter().filter_map(|t| RewriteRule::from_thm(Arc::clone(t))).collect();
-        let simp = Simplifier::new(rules);
-        return Method::Simp(simp).execute(state, premises);
+        // Try simp — use cached base simplifier
+        return CACHED_BASE_SIMPLIFIER.with(|cell| {
+            let simp = if let Some(ref cached) = *cell.borrow() {
+                cached.clone()
+            } else {
+                let db = HolTheoremDb::get();
+                let mut rules: Vec<RewriteRule> = db.simps.iter().filter_map(|t| RewriteRule::from_thm(Arc::clone(t))).collect();
+                rules.extend(HolSimplifier::builtin_rules());
+                let s = Simplifier::new(rules);
+                *cell.borrow_mut() = Some(s.clone());
+                s
+            };
+            Method::Simp(simp).execute(state, premises)
+        })
     }
     if inner == "assumption" || inner == "." {
         return Method::Assumption.execute(state, premises);

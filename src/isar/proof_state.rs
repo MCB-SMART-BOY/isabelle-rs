@@ -265,11 +265,11 @@ impl ProofState {
         }
     }
 
-    /// Get all accumulated facts as premises.
-    pub fn get_premises(&self) -> Vec<Arc<Thm>> {
+    /// Get all accumulated facts as premises (as reference).
+    pub fn get_premises(&self) -> &[Arc<Thm>] {
         match self {
-            ProofState::Proving { facts, .. } => facts.clone(),
-            _ => Vec::new(),
+            ProofState::Proving { facts, .. } => facts.as_slice(),
+            _ => &[],
         }
     }
 
