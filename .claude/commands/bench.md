@@ -13,4 +13,4 @@ RUST_MIN_STACK=268435456 cargo test test_verify_all_core_files -- --nocapture
 RUST_MIN_STACK=268435456 cargo test --test tier2_verify -- --nocapture
 ```
 
-期望: Core 125/125, Tier2 70/70 3261/3261.
+期望: Core 125/125, Tier2 97/97 3821/3821.

@@ -1,7 +1,10 @@
 //! Tier 2 verification — expanded HOL theory coverage.
 //!
-//! Extends verification beyond the 5 core files to 57 foundational HOL theories.
+//! Extends verification beyond the 5 core files to 97 HOL theories.
 //! Uses local DB + VERIFY_DEADLINE for per-file time budgets.
+//!
+//! Current: 97 files, 3821 lemmas, 100% verified, 178.4s
+//! 4 Library files pending (Product_Order, Quotient_List, Sorted_Less, State_Monad)
 //!
 //! Per-file timeout: 120s for arithmetic-heavy files, 60s for others.
 //! Uses AUTO_LIMIT to bound proof search per lemma.
@@ -97,6 +100,42 @@ mod tier2_verify {
         ("theories/HOL/Queue_Spec.thy", 60),
         ("theories/HOL/Less_False.thy", 60),
         ("theories/HOL/Priority_Queue_Specs.thy", 60),
+        // ── Phase 17: Library expansion (31 candidates) ──
+        // Main imports (low risk)
+        ("theories/HOL/Library/Case_Converter.thy", 60),
+        ("theories/HOL/Library/Centered_Division.thy", 90),
+        ("theories/HOL/Library/Code_Bit_Shifts_for_Arithmetic.thy", 60),
+        ("theories/HOL/Library/Code_Target_Int.thy", 90),
+        ("theories/HOL/Library/Conditional_Parametricity.thy", 60),
+        ("theories/HOL/Library/Confluence.thy", 60),
+        ("theories/HOL/Library/Debug.thy", 60),
+        ("theories/HOL/Library/Fraction_Field.thy", 90),
+        ("theories/HOL/Library/Group_Closure.thy", 60),
+        ("theories/HOL/Library/Groups_Big_Fun.thy", 90),
+        ("theories/HOL/Library/ListVector.thy", 60),
+        ("theories/HOL/Library/Order_Relation_More.thy", 90),
+        ("theories/HOL/Library/Order_Union.thy", 60),
+        ("theories/HOL/Library/Parallel.thy", 60),
+        ("theories/HOL/Library/Rewrite.thy", 60),
+        ("theories/HOL/Library/Signed_Division.thy", 90),
+        ("theories/HOL/Library/Stirling.thy", 60),
+        ("theories/HOL/Library/Transposition.thy", 90),
+        ("theories/HOL/Library/Uprod.thy", 60),
+        // Complex_Main imports (medium risk — may need more time)
+        ("theories/HOL/Library/Diagonal_Subsequence.thy", 60),
+        ("theories/HOL/Library/Fib.thy", 60),
+        ("theories/HOL/Library/Going_To_Filter.thy", 60),
+        ("theories/HOL/Library/Infinite_Typeclass.thy", 60),
+        ("theories/HOL/Library/Nonpos_Ints.thy", 120),
+        ("theories/HOL/Library/Periodic_Fun.thy", 60),
+        ("theories/HOL/Library/Real_Mod.thy", 120),
+        // Dependent imports (deps already in tier2)
+        ("theories/HOL/Library/Code_Abstract_Char.thy", 60),
+        // TODO(Phase 18): 4 Library files need investigation
+        // ("theories/HOL/Library/Product_Order.thy", 60), // stuck: instantiation prod :: (ord, ord) ord
+        // ("theories/HOL/Library/Quotient_List.thy", 60),  // stuck: Quotient_Set/Product/Option chain
+        // ("theories/HOL/Library/Sorted_Less.thy", 60),    // stuck: @{const} antiquotation parsing
+        // ("theories/HOL/Library/State_Monad.thy", 60),    // stuck: datatype ('s,'a) state
     ];
 
     #[test]

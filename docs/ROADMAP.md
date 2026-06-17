@@ -1,7 +1,7 @@
-# 开发路线图 v25.0 (v2.1.4 → v2.2.0)
+# 开发路线图 v25.0 (v2.1.5 → v2.2.0)
 
-> **当前版本: v2.1.4 — CI 26/26 ✅, stable Rust 1.96.0, Tier2 154s
-> **下一目标: v2.2.0 — Tier2 扩展到 100+ files + Hilbert_Choice 攻克
+> **当前版本: v2.1.5 — CI 26/26 ✅, stable Rust 1.96.0, Tier2 97/97 178s
+> **下一目标: v2.2.0 — Tier2 扩展到 100+ files + 4 Library files 修复
 
 ---
 
@@ -24,7 +24,8 @@ v2.1.4  IsarProof Arc 共享 + Metis skolemization + 7 个重度文件攻克
 
 | 版本 | 日期 | 状态 | 关键交付 |
 |------|------|:--:|------|
-| v2.1.4 | 2026-06-17 | ✅ current | CI全绿 26/26, stable Rust 1.96.0 |
+| v2.1.5 | 2026-06-17 | ✅ current | Tier2 97/97 (3821/3821, +27 Library), 178s |
+| v2.1.4 | 2026-06-17 | ✅ | CI全绿 26/26, stable Rust 1.96.0, crates.io publish |
 | v2.1.2 | 2026-06-17 | ✅ | Isabelle-aligned depth, Tier2 70/70 154s, Metis ∃-skolemization |
 | v2.1.0 | 2026-06-17 | ✅ | IsarProof Arc, auto_exec 迭代化, Tier2 61/61 |
 | v2.0.0 | 2026-06-17 | ✅ | Isar优化 + Tier2 57/57 + Metis HOL.eq |

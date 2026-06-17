@@ -2,7 +2,7 @@
 name: bench
 description: Run the complete test matrix at correct stack sizes. Check suite pass/fail status and identify regressions.
 category: meta
-version: 2.0.0
+version: 2.1.5
 triggers: [benchmark, performance, test all, regression test]
 permissions: [Bash:cargo test, Bash:RUST_MIN_STACK]
 ---
@@ -35,14 +35,14 @@ cargo test --test integration_tests
 cargo test --test proptest
 ```
 
-## Expected Results (v1.9.0)
+## Expected Results (v2.1.5)
 
 | Suite | Expected | Notes |
 |-------|----------|-------|
 | `core::thm` | 12 pass | LCF kernel |
 | `cargo check --lib` | **0 warnings** | Required per SOP |
 | `test_verify_all_core_files` | **5/5 files, 125/125 (100%)** | Core verification |
-| `tier2_verify` | **57/57 files, 3195/3195 (100%)** | 553s (9.2 min) |
+| `tier2_verify` | **97/97 files, 3821/3821 (100%)** | 178s (3.0 min) |
 | `--lib` full | 700+ pass | 1 known skip (ctr_sugar) |
 
 ## Quick Sanity Check

@@ -3,7 +3,7 @@
 > **用 Rust 重写 Isabelle — 打造更程序员友好的证明助手**
 >
 > LCF trusted kernel · 27 proof methods · Isar proof language · Metis skolemization
-> **CI 26/26 ✅ · Rust 1.96.0 stable · Core 125/125 · Tier2 70/70 3261/3261 (100%) · 154s**
+> **CI 26/26 ✅ · Rust 1.96.0 stable · Core 125/125 · Tier2 97/97 3821/3821 (100%) · 178s**
 
 ---
 
@@ -24,7 +24,7 @@ RUST_MIN_STACK=268435456 cargo test --lib
 # 核心验证 (5文件, 125定理)
 RUST_MIN_STACK=268435456 cargo test test_verify_all_core_files -- --nocapture
 
-# Tier2 扩展验证 (70文件, 3261定理, ~154s)
+# Tier2 扩展验证 (97文件, 3821定理, ~178s)
 RUST_MIN_STACK=268435456 cargo test --test tier2_verify -- --nocapture
 ```
 
@@ -35,7 +35,7 @@ RUST_MIN_STACK=268435456 cargo test --test tier2_verify -- --nocapture
 | 级别 | 文件数 | 定理数 | 验证率 | 时间 |
 |------|:-----:|:-----:|:-----:|:---:|
 | **Core (Tier1)** | 5/5 | 125/125 | 100% | ~35s |
-| **Tier2** | 70/70 | 3261/3261 | 100% | **154s** |
+| **Tier2** | 97/97 | 3821/3821 | 100% | **178s** |
 
 ### Core 文件
 
@@ -43,11 +43,12 @@ RUST_MIN_STACK=268435456 cargo test --test tier2_verify -- --nocapture
 |:--:|:--:|:--:|:--:|:--:|
 | 25/25 | 25/25 | 25/25 | 25/25 | 25/25 |
 
-### Tier2 覆盖 (70 文件)
+### Tier2 覆盖 (97 文件)
 
 Fun, Product_Type, Sum_Type, Lattices, Groups, Rings, Relation, Map, Power,
 Complete_Lattices, Option, Boolean_Algebras, Parity, Record, Meson, Metis,
-Presburger, Quotient_Option/Sum/Product/Set, +44 Library/Data_Structures 文件
+Presburger, Quotient_Option/Sum/Product/Set, +27 Library (Case_Converter, Fib,
+Fraction_Field, Nonpos_Ints, Real_Mod, Transposition, Uprod, ...), +44 misc
 
 ---
 
@@ -93,7 +94,7 @@ Presburger, Quotient_Option/Sum/Product/Set, +44 Library/Data_Structures 文件
 
 | 指标 | 值 |
 |------|-----|
-| 版本 | v2.1.4 |
+| 版本 | v2.1.5 |
 | Rust 代码 | ~55K LOC, 124 文件 |
 | 测试 | 700+ (638 lib + 76 integration) |
 | 编译警告 | **0** |

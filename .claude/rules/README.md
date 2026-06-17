@@ -9,7 +9,7 @@ version: 2.0
 > **用 Rust 重写 Isabelle，打造更程序员友好的证明助手。**
 > LCF trusted kernel + higher-order unification + Isar proof language.
 
-## 项目状态 (v2.1.4)
+## 项目状态 (v2.1.5)
 
 | 指标 | 值 |
 |------|-----|
@@ -17,13 +17,16 @@ version: 2.0
 | 证明引擎 | Isar state machine (3 modes) + 27 proof methods |
 | 经典推理器 | best/depth/dup_step + three-stage safe rules |
 | HOL 简化器 | Conditional rewriting + solver plugins + Cached Simplifier |
-| Metis | Given-clause resolution + HOL.eq paramodulation |
+| Metis | Given-clause resolution + HOL.eq paramodulation + ∃-skolemization |
+| **Tier2** | **97/97 files 100% (3821/3821), 178s** |
+| Core | 5/5 files 100% (125/125) |
+| 编译 | 0 warnings |
 | IsarProof | Arc<IsarContext> shared context, auto_exec DFS stack |
 | 模块 | core (33), isar (19), hol (22), theory (8) + tools/server/lsp |
 | 代码 | ~55K Rust LOC, 124+ files |
 | 测试 | 700+ (638 lib + 76 integration) |
 | **Core 验证** | **5/5 files, 125/125 (100%)** |
-| **Tier2 验证** | **70/70 files, 3261/3261 (100%), 551s** |
+| **Tier2 验证** | **97/97 files, 3821/3821 (100%), 178s** |
 | 编译 | 0 warnings |
 
 ## 铁律 (15)
@@ -52,6 +55,7 @@ version: 2.0
 | Hilbert_Choice/TC — auto 密集 | 🟡 中 | 56+40 auto, 需更深迭代化 |
 | Finite_Set — 大文件 | 🟡 中 | 281 lemmas, 372 simp, 3h+ |
 | Partial_Function — 内存爆炸 | 🟡 中 | 深层 fixpoint, 25GB+ |
+| 4 Library files — 解析挂死 | 🟡 中 | Product_Order/Quotient_List/Sorted_Less/State_Monad |
 | Metis skolemization 缺失 | 🟡 中 | CNF 缺 ∃-斯科伦化 |
 | HolTheoremDb 惰性初始化慢 | 🟡 中 | 首次加载 1,473 .thy files |
 

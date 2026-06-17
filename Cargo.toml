@@ -1,6 +1,6 @@
 [package]
 name = "isabelle-rs"
-version = "2.1.4"
+version = "2.1.5"
 rust-version = "1.96.0"
 edition = "2024"
 description = "Isabelle proof assistant kernel and Isar proof engine, rewritten in Rust. 27 proof methods (including Metis, Meson), Route A stability-first: hologic + simpdata + args + spec + attribute system + Tier2 verification."
