@@ -1,21 +1,11 @@
-# Rustfmt configuration for Isabelle-rs
+# Rustfmt configuration for Isabelle-rs — stable-only options
 max_width = 100
 tab_spaces = 4
 edition = "2024"
 use_small_heuristics = "Max"
 newline_style = "Unix"
-format_strings = true
-imports_granularity = "Crate"
-group_imports = "StdExternalCrate"
 reorder_imports = true
 reorder_modules = true
 match_block_trailing_comma = true
-trailing_comma = "Vertical"
-trailing_semicolon = true
 use_field_init_shorthand = true
 use_try_shorthand = true
-format_code_in_doc_comments = true
-normalize_comments = true
-normalize_doc_attributes = true
-wrap_comments = true
-comment_width = 100
