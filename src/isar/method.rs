@@ -1031,26 +1031,34 @@ impl Method {
         if count > AUTO_LIMIT.with(|c| c.get()) {
             return vec![state.clone()];
         }
-        let expired = VERIFY_DEADLINE.with(|c| {
-            c.get().map_or(false, |d| std::time::Instant::now() >= d)
-        });
+        let expired =
+            VERIFY_DEADLINE.with(|c| c.get().map_or(false, |d| std::time::Instant::now() >= d));
         if expired {
             return vec![state.clone()];
         }
         // Each DFS node costs 1 budget unit
         PROOF_SEARCH_BUDGET.with(|c| {
             let b = c.get();
-            if b > 0 { c.set(b - 1); }
+            if b > 0 {
+                c.set(b - 1);
+            }
         });
         if PROOF_SEARCH_BUDGET.with(|c| c.get()) == 0 && depth > 0 {
             return vec![state.clone()];
         }
-        if depth > 8 || state.nprems() == 0 { // Isabelle: auto uses blast(4)+classical(2), effective depth ~4-6
+        if depth > 8 || state.nprems() == 0 {
+            // Isabelle: auto uses blast(4)+classical(2), effective depth ~4-6
             return vec![state.clone()];
         }
 
         let db = HolTheoremDb::get();
-        let branch_limit = if depth > 6 { 3 } else if depth > 3 { 8 } else { 25 };
+        let branch_limit = if depth > 6 {
+            3
+        } else if depth > 3 {
+            8
+        } else {
+            25
+        };
 
         // ── Phase 0: Safe rules ──
         let current = Self::apply_safe_rules(state, premises);
@@ -1072,11 +1080,15 @@ impl Method {
         let mut simp_branches = 0usize;
         for r in &simp_results {
             if r.nprems() != current.nprems() {
-                if simp_branches >= branch_limit / 2 { break; }
+                if simp_branches >= branch_limit / 2 {
+                    break;
+                }
                 simp_branches += 1;
                 let sub = Self::auto_exec(r, depth + 1, premises);
                 for s in &sub {
-                    if s.nprems() == 0 { return sub; }
+                    if s.nprems() == 0 {
+                        return sub;
+                    }
                 }
             }
         }
@@ -1095,14 +1107,22 @@ impl Method {
 
         // Phase 3: resolve/eresolve via nets
         let resolve_results = if intro_cands.is_empty() {
-            tactic::resolve_tac(&db.intros.iter().map(|t| (**t).clone()).collect::<Vec<_>>(), 0)(&current)
+            tactic::resolve_tac(&db.intros.iter().map(|t| (**t).clone()).collect::<Vec<_>>(), 0)(
+                &current,
+            )
         } else {
-            tactic::resolve_tac(&intro_cands.iter().map(|t| (**t).clone()).collect::<Vec<_>>(), 0)(&current)
+            tactic::resolve_tac(&intro_cands.iter().map(|t| (**t).clone()).collect::<Vec<_>>(), 0)(
+                &current,
+            )
         };
         let eresolve_results = if elim_cands.is_empty() {
-            tactic::eresolve_tac(&db.elims.iter().map(|t| (**t).clone()).collect::<Vec<_>>(), 0)(&current)
+            tactic::eresolve_tac(&db.elims.iter().map(|t| (**t).clone()).collect::<Vec<_>>(), 0)(
+                &current,
+            )
         } else {
-            tactic::eresolve_tac(&elim_cands.iter().map(|t| (**t).clone()).collect::<Vec<_>>(), 0)(&current)
+            tactic::eresolve_tac(&elim_cands.iter().map(|t| (**t).clone()).collect::<Vec<_>>(), 0)(
+                &current,
+            )
         };
         let mut branch_count = 0usize;
         for r in resolve_results.iter().chain(eresolve_results.iter()) {
@@ -1117,7 +1137,8 @@ impl Method {
 
         // Phase 4: dresolve
         let dresolve_results = tactic::dresolve_tac(
-            &db.intros.iter().map(|t| (**t).clone()).collect::<Vec<_>>(), 0,
+            &db.intros.iter().map(|t| (**t).clone()).collect::<Vec<_>>(),
+            0,
         )(&current);
         for r in &dresolve_results {
             if r.nprems() == 0 {
@@ -1131,7 +1152,8 @@ impl Method {
         // Phase 5: aggressive fallback (resolve with ALL theorems)
         if depth < 5 {
             let all_results = tactic::resolve_tac(
-                &db.all.iter().take(30).map(|t| (**t).clone()).collect::<Vec<_>>(), 0,
+                &db.all.iter().take(30).map(|t| (**t).clone()).collect::<Vec<_>>(),
+                0,
             )(&current);
             for r in &all_results {
                 if r.nprems() == 0 {
@@ -1159,17 +1181,22 @@ impl Method {
             // Budget check at each DFS node
             PROOF_SEARCH_BUDGET.with(|c| {
                 let b = c.get();
-                if b > 0 { c.set(b - 1); }
+                if b > 0 {
+                    c.set(b - 1);
+                }
             });
             if PROOF_SEARCH_BUDGET.with(|c| c.get()) == 0 && child_depth > 1 {
                 continue;
             }
             // Deadline check
-            let expired = VERIFY_DEADLINE.with(|c| {
-                c.get().map_or(false, |d| std::time::Instant::now() >= d)
-            });
-            if expired { continue; }
-            if child_depth > 8 { continue; }
+            let expired =
+                VERIFY_DEADLINE.with(|c| c.get().map_or(false, |d| std::time::Instant::now() >= d));
+            if expired {
+                continue;
+            }
+            if child_depth > 8 {
+                continue;
+            }
 
             // Apply safe rules to child
             let child = Self::apply_safe_rules(&child_state, premises);
@@ -1185,19 +1212,29 @@ impl Method {
                 }
             }
 
-            let child_branch_limit = if child_depth > 6 { 3 } else if child_depth > 3 { 8 } else { 25 };
+            let child_branch_limit = if child_depth > 6 {
+                3
+            } else if child_depth > 3 {
+                8
+            } else {
+                25
+            };
 
             // Simp on child — use cached simplifier
             let child_simp_results = tactic::simp_tac(get_cached_simplifier(), 0)(&child);
             let mut cs_branches = 0usize;
             for r in &child_simp_results {
                 if r.nprems() != child.nprems() {
-                    if cs_branches >= child_branch_limit / 2 { break; }
+                    if cs_branches >= child_branch_limit / 2 {
+                        break;
+                    }
                     cs_branches += 1;
                     // Recurse into simp child
                     let sub = Self::auto_exec(r, child_depth + 1, premises);
                     for s in &sub {
-                        if s.nprems() == 0 { return sub; }
+                        if s.nprems() == 0 {
+                            return sub;
+                        }
                     }
                 }
             }
@@ -1210,14 +1247,22 @@ impl Method {
             let c_intro = db.intro_net().lookup(&child_subgoal);
             let c_elim = db.elim_net().lookup(&child_subgoal);
             let c_resolve = if c_intro.is_empty() {
-                tactic::resolve_tac(&db.intros.iter().map(|t| (**t).clone()).collect::<Vec<_>>(), 0)(&child)
+                tactic::resolve_tac(&db.intros.iter().map(|t| (**t).clone()).collect::<Vec<_>>(), 0)(
+                    &child,
+                )
             } else {
-                tactic::resolve_tac(&c_intro.iter().map(|t| (**t).clone()).collect::<Vec<_>>(), 0)(&child)
+                tactic::resolve_tac(&c_intro.iter().map(|t| (**t).clone()).collect::<Vec<_>>(), 0)(
+                    &child,
+                )
             };
             let c_eresolve = if c_elim.is_empty() {
-                tactic::eresolve_tac(&db.elims.iter().map(|t| (**t).clone()).collect::<Vec<_>>(), 0)(&child)
+                tactic::eresolve_tac(&db.elims.iter().map(|t| (**t).clone()).collect::<Vec<_>>(), 0)(
+                    &child,
+                )
             } else {
-                tactic::eresolve_tac(&c_elim.iter().map(|t| (**t).clone()).collect::<Vec<_>>(), 0)(&child)
+                tactic::eresolve_tac(&c_elim.iter().map(|t| (**t).clone()).collect::<Vec<_>>(), 0)(
+                    &child,
+                )
             };
             let mut c_branch_count = 0usize;
             // Push new children in reverse order for DFS
@@ -1234,7 +1279,8 @@ impl Method {
 
             // dresolve on child
             let c_dresolve = tactic::dresolve_tac(
-                &db.intros.iter().map(|t| (**t).clone()).collect::<Vec<_>>(), 0,
+                &db.intros.iter().map(|t| (**t).clone()).collect::<Vec<_>>(),
+                0,
             )(&child);
             for r in &c_dresolve {
                 if r.nprems() == 0 {
@@ -1338,9 +1384,8 @@ pub fn exec_proof(state: &Thm, proof_script: &str, premises: &[Arc<Thm>]) -> Opt
             }
             if next_states.is_empty() {
                 // Fallback: try auto/blast on previous states (with deadline check)
-                let expired = VERIFY_DEADLINE.with(|c| {
-                    c.get().map_or(false, |d| std::time::Instant::now() >= d)
-                });
+                let expired = VERIFY_DEADLINE
+                    .with(|c| c.get().map_or(false, |d| std::time::Instant::now() >= d));
                 if expired {
                     return None;
                 }
@@ -1377,9 +1422,8 @@ pub fn exec_proof(state: &Thm, proof_script: &str, premises: &[Arc<Thm>]) -> Opt
                 return Some(solved);
             }
             // Check deadline before expensive premise unification loop
-            let expired = VERIFY_DEADLINE.with(|c| {
-                c.get().map_or(false, |d| std::time::Instant::now() >= d)
-            });
+            let expired =
+                VERIFY_DEADLINE.with(|c| c.get().map_or(false, |d| std::time::Instant::now() >= d));
             if expired {
                 return None;
             }
@@ -1388,9 +1432,8 @@ pub fn exec_proof(state: &Thm, proof_script: &str, premises: &[Arc<Thm>]) -> Opt
             let mut current = best.clone();
             for i in 0..current.nprems() + 5 {
                 if i % 3 == 0 {
-                    let expired = VERIFY_DEADLINE.with(|c| {
-                        c.get().map_or(false, |d| std::time::Instant::now() >= d)
-                    });
+                    let expired = VERIFY_DEADLINE
+                        .with(|c| c.get().map_or(false, |d| std::time::Instant::now() >= d));
                     if expired {
                         return None;
                     }
@@ -1413,9 +1456,8 @@ pub fn exec_proof(state: &Thm, proof_script: &str, premises: &[Arc<Thm>]) -> Opt
                 return Some(current);
             }
             // Check deadline before auto/blast (expensive deep search)
-            let expired = VERIFY_DEADLINE.with(|c| {
-                c.get().map_or(false, |d| std::time::Instant::now() >= d)
-            });
+            let expired =
+                VERIFY_DEADLINE.with(|c| c.get().map_or(false, |d| std::time::Instant::now() >= d));
             if expired {
                 return None;
             }
@@ -1424,9 +1466,8 @@ pub fn exec_proof(state: &Thm, proof_script: &str, premises: &[Arc<Thm>]) -> Opt
                     return Some(r);
                 }
             }
-            let expired = VERIFY_DEADLINE.with(|c| {
-                c.get().map_or(false, |d| std::time::Instant::now() >= d)
-            });
+            let expired =
+                VERIFY_DEADLINE.with(|c| c.get().map_or(false, |d| std::time::Instant::now() >= d));
             if expired {
                 return None;
             }
@@ -1610,8 +1651,8 @@ fn get_cached_simplifier() -> Simplifier {
         return simp;
     }
     let db = HolTheoremDb::get();
-    let mut rules: Vec<RewriteRule> = db.simps.iter()
-        .filter_map(|t| RewriteRule::from_thm(Arc::clone(t))).collect();
+    let mut rules: Vec<RewriteRule> =
+        db.simps.iter().filter_map(|t| RewriteRule::from_thm(Arc::clone(t))).collect();
     rules.extend(HolSimplifier::builtin_rules());
     let simp = Simplifier::new(rules);
     CACHED_BASE_SIMPLIFIER.with(|cell| {
@@ -1750,7 +1791,7 @@ fn exec_single_method_inner(state: &Thm, method_str: &str, premises: &[Arc<Thm>]
             return blast_results;
         }
         // Try simp — use cached base simplifier to avoid rebuilding on every fallback
-        return Method::Simp(get_cached_simplifier()).execute(state, premises)
+        return Method::Simp(get_cached_simplifier()).execute(state, premises);
     }
     if inner == "simp"
         || inner.starts_with("simp ")
@@ -1799,7 +1840,7 @@ fn exec_single_method_inner(state: &Thm, method_str: &str, premises: &[Arc<Thm>]
             return auto_results;
         }
         // Try simp — use cached base simplifier
-        return Method::Simp(get_cached_simplifier()).execute(state, premises)
+        return Method::Simp(get_cached_simplifier()).execute(state, premises);
     }
     if inner == "assumption" || inner == "." {
         return Method::Assumption.execute(state, premises);
@@ -2852,9 +2893,8 @@ fn exec_arith(state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
 
 fn exec_simp(method_str: &str, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
     // Check soft deadline — avoid expensive rewrite on expired budget
-    let expired = VERIFY_DEADLINE.with(|c| {
-        c.get().map_or(false, |d| std::time::Instant::now() >= d)
-    });
+    let expired =
+        VERIFY_DEADLINE.with(|c| c.get().map_or(false, |d| std::time::Instant::now() >= d));
     if expired {
         return vec![];
     }
@@ -3330,10 +3370,9 @@ fn load_core_simpset() -> &'static CoreSimpset {
             include_str!("../../theories/HOL/Rings.thy"),
         ];
         for source in core_thys {
-            let lemmas =
-                HolTheoremDb::with_override(&empty_db, || {
-                    crate::hol::hol_loader::parse_lemmas(source)
-                });
+            let lemmas = HolTheoremDb::with_override(&empty_db, || {
+                crate::hol::hol_loader::parse_lemmas(source)
+            });
             for lem in &lemmas {
                 let thm = Arc::clone(&lem.theorem);
                 // Collect [simp] rules for the simpset
@@ -3342,10 +3381,7 @@ fn load_core_simpset() -> &'static CoreSimpset {
                 }
                 // Build attrs_index for named_theorems expansion
                 for attr in &lem.attributes {
-                    attrs_index
-                        .entry(attr.clone())
-                        .or_insert_with(Vec::new)
-                        .push(Arc::clone(&thm));
+                    attrs_index.entry(attr.clone()).or_insert_with(Vec::new).push(Arc::clone(&thm));
                 }
             }
         }
@@ -3369,11 +3405,7 @@ pub fn verify_file(source: &str) -> (usize, usize) {
     // Merge core attrs_index into local DB for named_theorems expansion
     // (e.g., algebra_simps, ac_simps, field_simps from Groups/Rings)
     for (attr, thms) in &core.attrs_index {
-        local_db
-            .attrs_index
-            .entry(attr.clone())
-            .or_default()
-            .extend(thms.iter().map(Arc::clone));
+        local_db.attrs_index.entry(attr.clone()).or_default().extend(thms.iter().map(Arc::clone));
     }
     // Only override AUTO_LIMIT if the test hasn't set it to a tighter value
     AUTO_LIMIT.with(|c| {
@@ -3412,9 +3444,8 @@ pub fn verify_lemmas_batch(lemmas: &[ParsedLemma]) -> (usize, usize) {
     let mut attempted = 0usize;
     for lem in lemmas {
         // Check soft deadline before each lemma
-        let expired = VERIFY_DEADLINE.with(|c| {
-            c.get().map_or(false, |d| std::time::Instant::now() >= d)
-        });
+        let expired =
+            VERIFY_DEADLINE.with(|c| c.get().map_or(false, |d| std::time::Instant::now() >= d));
         if expired {
             break;
         }

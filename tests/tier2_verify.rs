@@ -132,8 +132,7 @@ mod tier2_verify {
             };
 
             // Pre-count lemmas to set appropriate AUTO_LIMIT
-            let lemma_count =
-                source.matches("lemma ").count() + source.matches("theorem ").count();
+            let lemma_count = source.matches("lemma ").count() + source.matches("theorem ").count();
             let auto_limit = if lemma_count > 400 {
                 5
             } else if lemma_count > 200 {
@@ -149,9 +148,8 @@ mod tier2_verify {
             let deadline = Instant::now() + std::time::Duration::from_secs(*timeout_secs);
             method::set_verify_deadline(deadline);
 
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                verify_file(&source)
-            }));
+            let result =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| verify_file(&source)));
 
             // Clear deadline for next file
             method::clear_verify_deadline();
@@ -170,11 +168,7 @@ mod tier2_verify {
                     } else {
                         0.0
                     };
-                    let rate = if a > 0 {
-                        (v as f64 / a as f64) * 100.0
-                    } else {
-                        0.0
-                    };
+                    let rate = if a > 0 { (v as f64 / a as f64) * 100.0 } else { 0.0 };
                     let timeout_flag = if was_timed_out { " ⏱️" } else { "" };
                     let partial_flag = if was_timed_out && a < total_lemmas {
                         format!(" (partial: {}/{})", a, total_lemmas)
@@ -192,7 +186,15 @@ mod tier2_verify {
                     };
                     eprintln!(
                         "  {}{} {:>23} — {:>4}/{:<4} ({:>5.1}% ok, {:>5.1}% attempted{}) in {:>5.1}s",
-                        icon, timeout_flag, name, v, a, rate, attempted_pct, partial_flag, elapsed_secs
+                        icon,
+                        timeout_flag,
+                        name,
+                        v,
+                        a,
+                        rate,
+                        attempted_pct,
+                        partial_flag,
+                        elapsed_secs
                     );
                     total_verified += v;
                     total_attempted += a;

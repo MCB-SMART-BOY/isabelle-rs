@@ -19,7 +19,7 @@
 
 #![allow(non_snake_case)]
 
-use std::collections::{HashMap, HashSet, BTreeMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 // ============================================================================
 // Types
@@ -40,8 +40,12 @@ pub struct Item {
 }
 
 impl Item {
-    pub fn konst(name: &str) -> Self { Item { kind: ItemKind::Const, name: name.to_string() } }
-    pub fn typ(name: &str) -> Self { Item { kind: ItemKind::Type, name: name.to_string() } }
+    pub fn konst(name: &str) -> Self {
+        Item { kind: ItemKind::Const, name: name.to_string() }
+    }
+    pub fn typ(name: &str) -> Self {
+        Item { kind: ItemKind::Type, name: name.to_string() }
+    }
 }
 
 /// A definition specification: `{def, description, lhs, rhs}`.
@@ -77,7 +81,9 @@ pub struct Defs {
 
 impl Defs {
     /// Create an empty Defs database.
-    pub fn empty() -> Self { Defs::default() }
+    pub fn empty() -> Self {
+        Defs::default()
+    }
 
     /// Return all specifications for all items.
     pub fn all_specifications(&self) -> Vec<(Item, Vec<Spec>)> {
@@ -232,12 +238,8 @@ mod tests {
     #[test]
     fn test_define_simple() {
         let mut defs = Defs::empty();
-        assert!(defs
-            .define(Some("HOL"), "True", Item::konst("True"), vec![], vec![])
-            .is_ok());
-        assert!(defs
-            .define(Some("HOL"), "False", Item::konst("False"), vec![], vec![])
-            .is_ok());
+        assert!(defs.define(Some("HOL"), "True", Item::konst("True"), vec![], vec![]).is_ok());
+        assert!(defs.define(Some("HOL"), "False", Item::konst("False"), vec![], vec![]).is_ok());
     }
 
     #[test]
@@ -246,8 +248,14 @@ mod tests {
         // True: no dependencies
         defs.define(Some("HOL"), "True", Item::konst("True"), vec![], vec![]).unwrap();
         // conj depends on True
-        defs.define(Some("HOL"), "conj", Item::konst("HOL.conj"), vec![], vec![Item::konst("True")])
-            .unwrap();
+        defs.define(
+            Some("HOL"),
+            "conj",
+            Item::konst("HOL.conj"),
+            vec![],
+            vec![Item::konst("True")],
+        )
+        .unwrap();
         assert_eq!(defs.get_deps(&Item::konst("HOL.conj")).len(), 1);
     }
 
@@ -257,14 +265,18 @@ mod tests {
         // A depends on B
         defs.define(Some("T"), "A", Item::konst("A"), vec![], vec![Item::konst("B")]).unwrap();
         // B depends on A → cycle!
-        assert!(defs.define(Some("T"), "B", Item::konst("B"), vec![], vec![Item::konst("A")]).is_err());
+        assert!(
+            defs.define(Some("T"), "B", Item::konst("B"), vec![], vec![Item::konst("A")]).is_err()
+        );
     }
 
     #[test]
     fn test_self_cycle() {
         let mut defs = Defs::empty();
         // A depends on A → self-cycle!
-        assert!(defs.define(Some("T"), "A", Item::konst("A"), vec![], vec![Item::konst("A")]).is_err());
+        assert!(
+            defs.define(Some("T"), "A", Item::konst("A"), vec![], vec![Item::konst("A")]).is_err()
+        );
     }
 
     #[test]
@@ -280,12 +292,7 @@ mod tests {
     #[test]
     fn test_type_item() {
         let mut defs = Defs::empty();
-        assert!(defs
-            .define(Some("HOL"), "bool", Item::typ("bool"), vec![], vec![])
-            .is_ok());
-        assert_eq!(
-            defs.specifications_of(&Item::typ("bool")).len(),
-            1
-        );
+        assert!(defs.define(Some("HOL"), "bool", Item::typ("bool"), vec![], vec![]).is_ok());
+        assert_eq!(defs.specifications_of(&Item::typ("bool")).len(), 1);
     }
 }

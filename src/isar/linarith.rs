@@ -23,10 +23,7 @@ use crate::{
         thm::{CTerm, Thm, ThmKernel},
         types::Typ,
     },
-    hol::{
-        hol_loader::HolTheoremDb,
-        hologic,
-    },
+    hol::{hol_loader::HolTheoremDb, hologic},
     isar::method::Method,
     tools::simp::HolSimplifier,
 };
@@ -1084,13 +1081,7 @@ mod tests {
     // Helper: x + y
     fn mk_plus(x: Term, y: Term) -> Term {
         let nat = Typ::base("nat");
-        Term::app(
-            Term::app(
-                hologic::plus_const(nat),
-                x,
-            ),
-            y,
-        )
+        Term::app(Term::app(hologic::plus_const(nat), x), y)
     }
 
     // Helper: Suc x

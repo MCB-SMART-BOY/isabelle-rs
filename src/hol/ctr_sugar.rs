@@ -51,7 +51,10 @@ use crate::{
         thm::{CTerm, Thm, ThmKernel},
         types::Typ,
     },
-    hol::{hol_loader::{DatatypeDef, ParsedLemma}, hologic},
+    hol::{
+        hol_loader::{DatatypeDef, ParsedLemma},
+        hologic,
+    },
 };
 
 // =========================================================================
@@ -719,10 +722,7 @@ impl CtrSugar {
 
         let split_formula = if parts.is_empty() {
             // No cases → trivially P ==> P
-            Pure::mk_implies(
-                Term::free("P", Typ::base("bool")),
-                Term::free("P", Typ::base("bool")),
-            )
+            Pure::mk_implies(Term::free("P", Typ::base("bool")), Term::free("P", Typ::base("bool")))
         } else if parts.len() == 1 {
             parts.pop().unwrap()
         } else {
@@ -1196,10 +1196,7 @@ impl CtrSugar {
 
         let split_formula = if disj_parts.is_empty() {
             // No constructors → split is trivially true
-            Pure::mk_implies(
-                Term::free("P", Typ::base("bool")),
-                Term::free("P", Typ::base("bool")),
-            )
+            Pure::mk_implies(Term::free("P", Typ::base("bool")), Term::free("P", Typ::base("bool")))
         } else if disj_parts.len() == 1 {
             disj_parts.pop().unwrap()
         } else {
@@ -1701,8 +1698,12 @@ mod tests {
         // Here it's simplified to just the conjunction for internal use
         assert!(thms.split.nprems() == 0, "split should have no premises");
         let split_prop = format!("{:?}", thms.split.prop().term());
-        assert!(split_prop.contains("HOL.conj") || split_prop.contains("Pure.eq") || split_prop.contains("HOL.eq"),
-            "split should contain conjunction or equality: {split_prop}");
+        assert!(
+            split_prop.contains("HOL.conj")
+                || split_prop.contains("Pure.eq")
+                || split_prop.contains("HOL.eq"),
+            "split should contain conjunction or equality: {split_prop}"
+        );
 
         // Disc definitions: 2 (is_None, is_Some)
         assert_eq!(thms.disc_defs.len(), 2, "disc_defs count");

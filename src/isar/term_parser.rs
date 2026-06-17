@@ -773,7 +773,10 @@ fn parse_atom(s: &mut P) -> Option<Term> {
         }
         let else_branch = parse_trm(s)?;
         // Build: HOL.If(cond, then, else)
-        return Some(Term::app(Term::app(Term::app(hologic::if_const(Typ::dummy()), cond), then_branch), else_branch));
+        return Some(Term::app(
+            Term::app(Term::app(hologic::if_const(Typ::dummy()), cond), then_branch),
+            else_branch,
+        ));
     }
     // let expression: let x = e1 in e2
     if s.is_kw("let") {

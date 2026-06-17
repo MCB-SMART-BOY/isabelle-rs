@@ -349,8 +349,12 @@ pub struct ParseError {
 }
 
 impl ParseError {
-    pub fn code(&self) -> &'static str { "E0300" }
-    pub fn help(&self) -> Option<&'static str> { None }
+    pub fn code(&self) -> &'static str {
+        "E0300"
+    }
+    pub fn help(&self) -> Option<&'static str> {
+        None
+    }
 }
 
 // ============================================================================

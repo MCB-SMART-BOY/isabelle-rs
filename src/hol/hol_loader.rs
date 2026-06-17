@@ -2450,10 +2450,7 @@ impl HolTheoremDb {
             }
             // Populate reverse attribute index (for named_theorems resolution)
             for attr in attrs {
-                self.attrs_index
-                    .entry(attr.clone())
-                    .or_default()
-                    .push(Arc::clone(&thm));
+                self.attrs_index.entry(attr.clone()).or_default().push(Arc::clone(&thm));
             }
         }
         // Apply new by-name entries
@@ -2541,10 +2538,7 @@ impl HolTheoremDb {
             }
             // Populate reverse attribute index (for named_theorems resolution)
             for attr in attrs {
-                attrs_index
-                    .entry(attr.clone())
-                    .or_default()
-                    .push(Arc::clone(&thm));
+                attrs_index.entry(attr.clone()).or_default().push(Arc::clone(&thm));
             }
         }
         // Resolve aliases from `lemmas` commands (second pass)
@@ -2568,10 +2562,7 @@ impl HolTheoremDb {
                             simps.push(Arc::clone(&thm));
                         }
                         for attr in attrs {
-                            attrs_index
-                                .entry(attr.clone())
-                                .or_default()
-                                .push(Arc::clone(&thm));
+                            attrs_index.entry(attr.clone()).or_default().push(Arc::clone(&thm));
                         }
                         break; // Use first found alias target
                     }
@@ -4347,8 +4338,11 @@ mod primrec_tests {
         let simp_lemmas: Vec<_> = lemmas.iter().filter(|l| l.name.contains(".simps")).collect();
         assert!(!simp_lemmas.is_empty(), "Expected at least one .simps lemma");
         for l in &simp_lemmas {
-            assert!(l.attributes.contains(&"simp".to_string()),
-                "Lemma {} should have [simp] attribute", l.name);
+            assert!(
+                l.attributes.contains(&"simp".to_string()),
+                "Lemma {} should have [simp] attribute",
+                l.name
+            );
         }
     }
 }

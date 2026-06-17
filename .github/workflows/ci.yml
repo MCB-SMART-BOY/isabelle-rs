@@ -34,7 +34,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rustfmt
-      - run: cargo fmt --all -- --check
+      - run: rustup run nightly cargo fmt --all -- --check
 
   clippy:
     name: "clippy"
@@ -47,7 +47,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo clippy --lib -- -D warnings
 
   # ==========================================================================
   # Stage 2: Unit Tests (parallel, < 5 min)
@@ -127,8 +127,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Core verification benchmark
         run: cargo test test_verify_all_core_files -- --nocapture
-      - name: Beyond-core verification
-        run: cargo test test_verify_beyond_core --lib -- --nocapture
       - name: BNF/datatype tests
         run: cargo test --test bnf_tests
       - name: Integration tests

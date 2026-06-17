@@ -58,12 +58,14 @@ fn to_nnf(term: &Term) -> Term {
     match term {
         Term::App { func, arg } if hologic::is_not_const(func) => match arg.as_ref() {
             Term::App { func: f2, arg: a2 } if hologic::is_not_const(f2) => to_nnf(a2),
-            Term::App { func: f2, arg: a2 } if hologic::is_conj_const(f2) => {
-                hologic::mk_disj(to_nnf(&hologic::mk_not((**arg).clone())), to_nnf(&hologic::mk_not((**a2).clone())))
-            },
-            Term::App { func: f2, arg: a2 } if hologic::is_disj_const(f2) => {
-                hologic::mk_conj(to_nnf(&hologic::mk_not((**arg).clone())), to_nnf(&hologic::mk_not((**a2).clone())))
-            },
+            Term::App { func: f2, arg: a2 } if hologic::is_conj_const(f2) => hologic::mk_disj(
+                to_nnf(&hologic::mk_not((**arg).clone())),
+                to_nnf(&hologic::mk_not((**a2).clone())),
+            ),
+            Term::App { func: f2, arg: a2 } if hologic::is_disj_const(f2) => hologic::mk_conj(
+                to_nnf(&hologic::mk_not((**arg).clone())),
+                to_nnf(&hologic::mk_not((**a2).clone())),
+            ),
             Term::App { func: f2, arg: _ } if hologic::is_imp_const(f2) => {
                 hologic::mk_conj(to_nnf(arg), to_nnf(&hologic::mk_not((**arg).clone())))
             },

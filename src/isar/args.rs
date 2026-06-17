@@ -10,8 +10,8 @@
 
 #![allow(non_snake_case)]
 
-use std::sync::Arc;
 use crate::core::thm::Thm;
+use std::sync::Arc;
 
 // ============================================================================
 // MethodArgs — parsed method arguments
@@ -61,7 +61,9 @@ pub enum GoalSpec {
 
 impl MethodArgs {
     /// Create empty args.
-    pub fn new() -> Self { MethodArgs::default() }
+    pub fn new() -> Self {
+        MethodArgs::default()
+    }
 
     /// Quick check: are there any arguments at all?
     pub fn is_empty(&self) -> bool {
@@ -98,29 +100,55 @@ impl Args {
     // -- Keyword matchers --
 
     /// Match the keyword `add`.
-    pub fn add() -> &'static str { "add" }
+    pub fn add() -> &'static str {
+        "add"
+    }
     /// Match the keyword `del`.
-    pub fn del() -> &'static str { "del" }
+    pub fn del() -> &'static str {
+        "del"
+    }
     /// Match the keyword `only`.
-    pub fn only() -> &'static str { "only" }
+    pub fn only() -> &'static str {
+        "only"
+    }
     /// Match the keyword `rule`.
-    pub fn rule() -> &'static str { "rule" }
+    pub fn rule() -> &'static str {
+        "rule"
+    }
     /// Match the keyword `arbitrary`.
-    pub fn arbitrary() -> &'static str { "arbitrary" }
+    pub fn arbitrary() -> &'static str {
+        "arbitrary"
+    }
     /// Match the keyword `intro`.
-    pub fn intro() -> &'static str { "intro" }
+    pub fn intro() -> &'static str {
+        "intro"
+    }
     /// Match the keyword `elim`.
-    pub fn elim() -> &'static str { "elim" }
+    pub fn elim() -> &'static str {
+        "elim"
+    }
     /// Match the keyword `dest`.
-    pub fn dest() -> &'static str { "dest" }
+    pub fn dest() -> &'static str {
+        "dest"
+    }
     /// Match the keyword `simp`.
-    pub fn simp() -> &'static str { "simp" }
+    pub fn simp() -> &'static str {
+        "simp"
+    }
 
     /// List of all known modifier keywords used in method arguments.
     pub fn modifier_keywords() -> &'static [&'static str] {
         &[
-            "add:", "del:", "only:", "rule:", "arbitrary:",
-            "intro:", "elim:", "dest:", "simp:", "iff:",
+            "add:",
+            "del:",
+            "only:",
+            "rule:",
+            "arbitrary:",
+            "intro:",
+            "elim:",
+            "dest:",
+            "simp:",
+            "iff:",
         ]
     }
 
@@ -168,7 +196,9 @@ impl Args {
     /// Handles: `add:`, `del:`, `only:`, `rule:`, `arbitrary:`
     pub fn parse_modifiers(method_str: &str) -> MethodArgs {
         let mut args = MethodArgs::new();
-        if method_str.is_empty() { return args; }
+        if method_str.is_empty() {
+            return args;
+        }
 
         let s = method_str.trim();
         // Parse goal spec first (if present at start)
@@ -179,8 +209,12 @@ impl Args {
                     args.goal_spec = Some(gs);
                 }
                 s[end + 1..].trim()
-            } else { s }
-        } else { s };
+            } else {
+                s
+            }
+        } else {
+            s
+        };
 
         // Extract each modifier clause
         if let Some(names) = Self::extract_clause(s, "add:") {
@@ -198,10 +232,12 @@ impl Args {
             }
         }
         if let Some(name) = Self::extract_clause(s, "rule:") {
-            args.rule_name = name.split_whitespace().next().map(|n| n.trim_end_matches(',').to_string());
+            args.rule_name =
+                name.split_whitespace().next().map(|n| n.trim_end_matches(',').to_string());
         }
         if let Some(vars) = Self::extract_clause(s, "arbitrary:") {
-            args.arbitrary = vars.split_whitespace().map(|v| v.trim_end_matches(',').to_string()).collect();
+            args.arbitrary =
+                vars.split_whitespace().map(|v| v.trim_end_matches(',').to_string()).collect();
         }
         if let Some(names) = Self::extract_clause(s, "intro:") {
             args.intro_names = split_thm_names(names);
@@ -227,8 +263,16 @@ impl Args {
 /// Find the position of the next modifier keyword in `s`.
 fn find_next_keyword(s: &str) -> usize {
     let keywords = [
-        "add:", "del:", "only:", "rule:", "arbitrary:",
-        "intro:", "elim:", "dest:", "simp:", "iff:",
+        "add:",
+        "del:",
+        "only:",
+        "rule:",
+        "arbitrary:",
+        "intro:",
+        "elim:",
+        "dest:",
+        "simp:",
+        "iff:",
     ];
     let mut earliest = s.len();
     for kw in &keywords {
@@ -253,14 +297,20 @@ fn split_thm_names(s: &str) -> Vec<String> {
     let mut current = String::new();
     for ch in s.chars() {
         match ch {
-            '[' => { depth += 1; current.push(ch); }
-            ']' => { depth -= 1; current.push(ch); }
+            '[' => {
+                depth += 1;
+                current.push(ch);
+            },
+            ']' => {
+                depth -= 1;
+                current.push(ch);
+            },
             ' ' | '\t' if depth == 0 => {
                 if !current.is_empty() {
                     names.push(current.clone());
                     current.clear();
                 }
-            }
+            },
             _ => current.push(ch),
         }
     }
@@ -275,11 +325,7 @@ fn resolve_names(names: &[String], db: &crate::hol::hol_loader::HolTheoremDb) ->
     let mut thms = Vec::new();
     for name in names {
         // Strip [OF ...] suffix for lookup
-        let lookup = if let Some(pos) = name.find('[') {
-            &name[..pos]
-        } else {
-            name.as_str()
-        };
+        let lookup = if let Some(pos) = name.find('[') { &name[..pos] } else { name.as_str() };
         let trimmed = lookup.trim();
         if let Some(thm) = db.by_name.get(trimmed) {
             thms.push(Arc::clone(thm));
@@ -305,13 +351,12 @@ pub fn parse_of_suffix(s: &str) -> (&str, Vec<String>) {
     if let Some(pos) = s.find('[') {
         let name = s[..pos].trim();
         let rest = &s[pos..];
-        let of_args = if let Some(inner) = rest.strip_prefix("[OF ")
-            .and_then(|r| r.strip_suffix(']'))
-        {
-            inner.split_whitespace().map(|s| s.to_string()).collect()
-        } else {
-            Vec::new()
-        };
+        let of_args =
+            if let Some(inner) = rest.strip_prefix("[OF ").and_then(|r| r.strip_suffix(']')) {
+                inner.split_whitespace().map(|s| s.to_string()).collect()
+            } else {
+                Vec::new()
+            };
         (name, of_args)
     } else {
         (s, Vec::new())

@@ -677,7 +677,11 @@ impl TheoryProcessor {
                     for (thm_name, term, attrs) in &thms {
                         let thm =
                             Arc::new(ThmKernel::assume(CTerm::certify_annotated(term.clone())));
-                        self.add_theorem_with_attrs(thm_name.clone(), Arc::clone(&thm), attrs.clone());
+                        self.add_theorem_with_attrs(
+                            thm_name.clone(),
+                            Arc::clone(&thm),
+                            attrs.clone(),
+                        );
                     }
                 }
             },
@@ -990,10 +994,8 @@ impl TheoryProcessor {
     fn process_lemmas_cmd(&mut self, span: &CommandSpan) {
         let body = span.body.trim();
         // Remove leading keyword
-        let rest = body
-            .strip_prefix("lemmas ")
-            .or_else(|| body.strip_prefix("theorems "))
-            .unwrap_or(body);
+        let rest =
+            body.strip_prefix("lemmas ").or_else(|| body.strip_prefix("theorems ")).unwrap_or(body);
         let rest = rest.trim();
 
         // Parse optional attributes: [simp, intro!]
@@ -1032,9 +1034,7 @@ impl TheoryProcessor {
     /// Adds/overrides attributes on existing theorems without changing names.
     fn process_declare_cmd(&mut self, span: &CommandSpan) {
         let body = span.body.trim();
-        let rest = body
-            .strip_prefix("declare ")
-            .unwrap_or(body);
+        let rest = body.strip_prefix("declare ").unwrap_or(body);
         let rest = rest.trim();
 
         // Split by " and " to get individual declarations
@@ -1356,10 +1356,15 @@ mod tests {
         let mut proc = TheoryProcessor::with_parent(pure, "Test");
         proc.accept_all = true;
         // accept_all mode bypasses proof search, accepting all lemmas as axioms
-        let source = "theory Test imports Pure begin\nlemma trivial: \"A ==> A\"\nby assumption\nend";
+        let source =
+            "theory Test imports Pure begin\nlemma trivial: \"A ==> A\"\nby assumption\nend";
         let _thy = proc.process_source(source);
         eprintln!("Errors: {:?}", proc.errors());
         eprintln!("Theorems: {}", proc.theorem_count());
-        assert!(proc.theorem_count() > 0, "Expected >=1 theorem in accept_all mode. Errors: {:?}", proc.errors());
+        assert!(
+            proc.theorem_count() > 0,
+            "Expected >=1 theorem in accept_all mode. Errors: {:?}",
+            proc.errors()
+        );
     }
 }

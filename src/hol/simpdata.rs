@@ -84,7 +84,10 @@ pub fn hol_basic_simp_rules() -> Vec<RewriteRule> {
         let s = fresh_var("s", alpha.clone());
         let body_typ = Typ::dummy();
         let f = fresh_var("f", Typ::arrow(alpha.clone(), body_typ.clone()));
-        let lhs = Term::app(Term::app(hologic::let_const(Typ::dummy(), Typ::dummy()), s.clone()), f.clone());
+        let lhs = Term::app(
+            Term::app(hologic::let_const(Typ::dummy(), Typ::dummy()), s.clone()),
+            f.clone(),
+        );
         let rhs = Term::app(f, s);
         let eq = Pure::mk_equals(body_typ, lhs, rhs);
         add_rule(&mut rules, "Let_def", eq);
@@ -203,7 +206,8 @@ pub fn hol_basic_simp_rules() -> Vec<RewriteRule> {
     // (EX x. False) = False
     {
         let x = fresh_var("x", alpha.clone());
-        let lhs = hologic::mk_Trueprop(hologic::mk_exists("x", alpha.clone(), hologic::false_const()));
+        let lhs =
+            hologic::mk_Trueprop(hologic::mk_exists("x", alpha.clone(), hologic::false_const()));
         let rhs = hologic::mk_Trueprop(hologic::false_const());
         add_rule(&mut rules, "ex_False", Pure::mk_equals(prop_p.clone(), lhs, rhs));
     }
@@ -248,8 +252,11 @@ pub fn hol_basic_simp_rules() -> Vec<RewriteRule> {
     // --- excluded_middle: ~P | P ---
     {
         let p = fresh_var("P", bool_prop);
-        add_rule(&mut rules, "excluded_middle",
-            hologic::mk_Trueprop(hologic::mk_disj(hologic::mk_not(p.clone()), p)));
+        add_rule(
+            &mut rules,
+            "excluded_middle",
+            hologic::mk_Trueprop(hologic::mk_disj(hologic::mk_not(p.clone()), p)),
+        );
     }
 
     rules
@@ -328,14 +335,24 @@ pub fn init_hol_simpset() -> HolSimplifier {
 
     // Load named theorems from DB
     let builtin_names = &[
-        "HOL.conjI", "HOL.conjunct1", "HOL.conjunct2",
-        "HOL.disjI1", "HOL.disjI2",
-        "HOL.impI", "HOL.mp",
-        "HOL.notI", "HOL.notE",
-        "HOL.iffI", "HOL.iffD1", "HOL.iffD2",
-        "HOL.allI", "HOL.spec",
-        "HOL.exI", "HOL.exE",
-        "HOL.Eq_TrueI", "HOL.Eq_FalseI",
+        "HOL.conjI",
+        "HOL.conjunct1",
+        "HOL.conjunct2",
+        "HOL.disjI1",
+        "HOL.disjI2",
+        "HOL.impI",
+        "HOL.mp",
+        "HOL.notI",
+        "HOL.notE",
+        "HOL.iffI",
+        "HOL.iffD1",
+        "HOL.iffD2",
+        "HOL.allI",
+        "HOL.spec",
+        "HOL.exI",
+        "HOL.exE",
+        "HOL.Eq_TrueI",
+        "HOL.Eq_FalseI",
         "HOL.case_split",
     ];
     rules.extend(load_named_rules(builtin_names));

@@ -127,9 +127,11 @@ pub fn all_elim(ct: CTerm, thm: &Thm) -> Result<Thm, KernelError> {
 // =========================================================================
 
 pub fn ex_intr(_x_name: &str, _thm_pt: &Thm) -> Thm {
-    let ex = hologic::mk_Trueprop(
-        hologic::mk_exists("x", Typ::base("nat"), Term::const_("P", Typ::base("bool")))
-    );
+    let ex = hologic::mk_Trueprop(hologic::mk_exists(
+        "x",
+        Typ::base("nat"),
+        Term::const_("P", Typ::base("bool")),
+    ));
     ThmKernel::assume(CTerm::certify(ex))
 }
 

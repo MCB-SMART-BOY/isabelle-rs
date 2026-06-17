@@ -1077,26 +1077,42 @@ fn skolemize_rec(term: &Term, counter: &mut usize) -> Term {
                     }
                 }
                 // HOL.All: do NOT descend (universals stay atomic)
-                if name.as_ref() == "HOL.All" { return term.clone(); }
+                if name.as_ref() == "HOL.All" {
+                    return term.clone();
+                }
             }
             // Logical connectives: recurse
             match func.as_ref() {
                 Term::App { func: inner, arg: a } => match inner.as_ref() {
-                    Term::Const { name, .. } if name.as_ref() == "HOL.conj" =>
-                        crate::hol::hologic::mk_conj(skolemize_rec(a, counter), skolemize_rec(arg, counter)),
-                    Term::Const { name, .. } if name.as_ref() == "HOL.disj" =>
-                        crate::hol::hologic::mk_disj(skolemize_rec(a, counter), skolemize_rec(arg, counter)),
-                    Term::Const { name, .. } if name.as_ref() == "HOL.implies" =>
-                        crate::hol::hologic::mk_imp(skolemize_rec(a, counter), skolemize_rec(arg, counter)),
+                    Term::Const { name, .. } if name.as_ref() == "HOL.conj" => {
+                        crate::hol::hologic::mk_conj(
+                            skolemize_rec(a, counter),
+                            skolemize_rec(arg, counter),
+                        )
+                    },
+                    Term::Const { name, .. } if name.as_ref() == "HOL.disj" => {
+                        crate::hol::hologic::mk_disj(
+                            skolemize_rec(a, counter),
+                            skolemize_rec(arg, counter),
+                        )
+                    },
+                    Term::Const { name, .. } if name.as_ref() == "HOL.implies" => {
+                        crate::hol::hologic::mk_imp(
+                            skolemize_rec(a, counter),
+                            skolemize_rec(arg, counter),
+                        )
+                    },
                     _ => Term::app(skolemize_rec(func, counter), skolemize_rec(arg, counter)),
                 },
-                Term::Const { name, .. } if name.as_ref() == "HOL.Not" =>
-                    crate::hol::hologic::mk_not(skolemize_rec(arg, counter)),
-                Term::Const { name, .. } if name.as_ref() == "HOL.Trueprop" =>
-                    crate::hol::hologic::mk_Trueprop(skolemize_rec(arg, counter)),
+                Term::Const { name, .. } if name.as_ref() == "HOL.Not" => {
+                    crate::hol::hologic::mk_not(skolemize_rec(arg, counter))
+                },
+                Term::Const { name, .. } if name.as_ref() == "HOL.Trueprop" => {
+                    crate::hol::hologic::mk_Trueprop(skolemize_rec(arg, counter))
+                },
                 _ => Term::app(skolemize_rec(func, counter), skolemize_rec(arg, counter)),
             }
-        }
+        },
         // Bare Abs: do not descend
         Term::Abs { .. } => term.clone(),
         _ => term.clone(),

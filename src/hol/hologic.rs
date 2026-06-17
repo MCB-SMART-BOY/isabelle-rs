@@ -36,19 +36,27 @@ pub fn eq_const(typ: Typ) -> Term {
 
 /// The `HOL.conj` constant: `bool => bool => bool`.
 #[inline]
-pub fn conj_const() -> Term { Term::const_("HOL.conj", bool_bin_type()) }
+pub fn conj_const() -> Term {
+    Term::const_("HOL.conj", bool_bin_type())
+}
 
 /// The `HOL.disj` constant: `bool => bool => bool`.
 #[inline]
-pub fn disj_const() -> Term { Term::const_("HOL.disj", bool_bin_type()) }
+pub fn disj_const() -> Term {
+    Term::const_("HOL.disj", bool_bin_type())
+}
 
 /// The `HOL.implies` constant: `bool => bool => bool`.
 #[inline]
-pub fn imp_const() -> Term { Term::const_("HOL.implies", bool_bin_type()) }
+pub fn imp_const() -> Term {
+    Term::const_("HOL.implies", bool_bin_type())
+}
 
 /// The `HOL.Not` constant: `bool => bool`.
 #[inline]
-pub fn not_const() -> Term { Term::const_("HOL.Not", Typ::arrow(Typ::base("bool"), Typ::base("bool"))) }
+pub fn not_const() -> Term {
+    Term::const_("HOL.Not", Typ::arrow(Typ::base("bool"), Typ::base("bool")))
+}
 
 /// The `HOL.All` constant for type T: `(T => bool) => bool`.
 #[inline]
@@ -70,27 +78,32 @@ fn bool_bin_type() -> Typ {
 
 /// The `HOL.True` constant: `bool`.
 #[inline]
-pub fn true_const() -> Term { Term::const_("HOL.True", Typ::base("bool")) }
+pub fn true_const() -> Term {
+    Term::const_("HOL.True", Typ::base("bool"))
+}
 
 /// The `HOL.False` constant: `bool`.
 #[inline]
-pub fn false_const() -> Term { Term::const_("HOL.False", Typ::base("bool")) }
+pub fn false_const() -> Term {
+    Term::const_("HOL.False", Typ::base("bool"))
+}
 
 /// The `HOL.If` constant: `bool => 'a => 'a => 'a`. Type parameterized.
 #[inline]
 pub fn if_const(typ: Typ) -> Term {
-    Term::const_("HOL.If",
-        Typ::arrow(Typ::base("bool"),
-        Typ::arrow(typ.clone(),
-        Typ::arrow(typ.clone(), typ))))
+    Term::const_(
+        "HOL.If",
+        Typ::arrow(Typ::base("bool"), Typ::arrow(typ.clone(), Typ::arrow(typ.clone(), typ))),
+    )
 }
 
 /// The `HOL.Let` constant: `'a => ('a => 'b) => 'b`. Type parameterized.
 #[inline]
 pub fn let_const(a_typ: Typ, b_typ: Typ) -> Term {
-    Term::const_("HOL.Let",
-        Typ::arrow(a_typ.clone(),
-        Typ::arrow(Typ::arrow(a_typ, b_typ.clone()), b_typ)))
+    Term::const_(
+        "HOL.Let",
+        Typ::arrow(a_typ.clone(), Typ::arrow(Typ::arrow(a_typ, b_typ.clone()), b_typ)),
+    )
 }
 
 // ============================================================================
@@ -99,27 +112,39 @@ pub fn let_const(a_typ: Typ, b_typ: Typ) -> Term {
 
 /// `bool` type.
 #[inline]
-pub fn boolT() -> Typ { Typ::base("bool") }
+pub fn boolT() -> Typ {
+    Typ::base("bool")
+}
 
 /// `prop` type (Pure).
 #[inline]
-pub fn propT() -> Typ { Typ::base("prop") }
+pub fn propT() -> Typ {
+    Typ::base("prop")
+}
 
 /// `nat` type (from Nat theory).
 #[inline]
-pub fn natT() -> Typ { Typ::base("Nat.nat") }
+pub fn natT() -> Typ {
+    Typ::base("Nat.nat")
+}
 
 /// `int` type (from Int theory).
 #[inline]
-pub fn intT() -> Typ { Typ::base("Int.int") }
+pub fn intT() -> Typ {
+    Typ::base("Int.int")
+}
 
 /// `real` type (from Real theory).
 #[inline]
-pub fn realT() -> Typ { Typ::base("Real.real") }
+pub fn realT() -> Typ {
+    Typ::base("Real.real")
+}
 
 /// `Set.set` type: `T => bool`.
 #[inline]
-pub fn mk_setT(typ: Typ) -> Typ { Typ::apply("Set.set", vec![typ]) }
+pub fn mk_setT(typ: Typ) -> Typ {
+    Typ::apply("Set.set", vec![typ])
+}
 
 /// Extract element type from set type. Returns None if not a set type.
 pub fn dest_setT(typ: &Typ) -> Option<Typ> {
@@ -140,14 +165,16 @@ pub fn dest_prodT(typ: &Typ) -> Option<(Typ, Typ)> {
     match typ {
         Typ::Type { name, args } if name.as_ref() == "Product_Type.prod" && args.len() == 2 => {
             Some((args[0].clone(), args[1].clone()))
-        }
+        },
         _ => None,
     }
 }
 
 /// `Product_Type.unit` type.
 #[inline]
-pub fn unitT() -> Typ { Typ::base("Product_Type.unit") }
+pub fn unitT() -> Typ {
+    Typ::base("Product_Type.unit")
+}
 
 /// `List.list` type.
 #[inline]
@@ -158,7 +185,9 @@ pub fn listT(typ: Typ) -> Typ {
 /// Extract element type from list type.
 pub fn dest_listT(typ: &Typ) -> Option<Typ> {
     match typ {
-        Typ::Type { name, args } if name.as_ref() == "List.list" && args.len() == 1 => Some(args[0].clone()),
+        Typ::Type { name, args } if name.as_ref() == "List.list" && args.len() == 1 => {
+            Some(args[0].clone())
+        },
         _ => None,
     }
 }
@@ -219,7 +248,10 @@ pub fn conjuncts(term: &Term) -> Vec<&Term> {
     let mut stack = vec![term];
     while let Some(t) = stack.pop() {
         match dest_conj(t) {
-            Some((a, b)) => { stack.push(b); stack.push(a); }
+            Some((a, b)) => {
+                stack.push(b);
+                stack.push(a);
+            },
             None => result.push(t),
         }
     }
@@ -249,7 +281,10 @@ pub fn disjuncts(term: &Term) -> Vec<&Term> {
     let mut stack = vec![term];
     while let Some(t) = stack.pop() {
         match dest_disj(t) {
-            Some((a, b)) => { stack.push(b); stack.push(a); }
+            Some((a, b)) => {
+                stack.push(b);
+                stack.push(a);
+            },
             None => result.push(t),
         }
     }
@@ -352,7 +387,9 @@ pub fn dest_eq(term: &Term) -> Option<(&Term, &Term)> {
 }
 
 #[inline]
-pub fn is_eq_const_hol(t: &Term) -> bool { matches!(t, Term::Const { name, .. } if name.as_ref() == "HOL.eq") }
+pub fn is_eq_const_hol(t: &Term) -> bool {
+    matches!(t, Term::Const { name, .. } if name.as_ref() == "HOL.eq")
+}
 
 /// Destruct `HOL.eq $ lhs $ rhs` into (lhs, rhs). Returns None if not a HOL equality.
 pub fn dest_hol_equals(term: &Term) -> Option<(&Term, &Term)> {
@@ -377,12 +414,10 @@ pub fn mk_all(x: &str, typ: Typ, body: Term) -> Term {
 /// Destruct `ALL x. P(x)` into (variable name, type, body). Returns None if not an All.
 pub fn dest_all(term: &Term) -> Option<(&str, &Typ, &Term)> {
     match term {
-        Term::App { func, arg: body } if is_all_const(func) => {
-            match body.as_ref() {
-                Term::Abs { name, typ, body } => Some((name.as_ref(), typ, body)),
-                _ => None,
-            }
-        }
+        Term::App { func, arg: body } if is_all_const(func) => match body.as_ref() {
+            Term::Abs { name, typ, body } => Some((name.as_ref(), typ, body)),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -395,20 +430,22 @@ pub fn mk_exists(x: &str, typ: Typ, body: Term) -> Term {
 /// Destruct `EX x. P(x)` into (variable name, type, body). Returns None if not an Ex.
 pub fn dest_exists(term: &Term) -> Option<(&str, &Typ, &Term)> {
     match term {
-        Term::App { func, arg: body } if is_exists_const(func) => {
-            match body.as_ref() {
-                Term::Abs { name, typ, body } => Some((name.as_ref(), typ, body)),
-                _ => None,
-            }
-        }
+        Term::App { func, arg: body } if is_exists_const(func) => match body.as_ref() {
+            Term::Abs { name, typ, body } => Some((name.as_ref(), typ, body)),
+            _ => None,
+        },
         _ => None,
     }
 }
 
 #[inline]
-pub fn is_all_const(t: &Term) -> bool { matches!(t, Term::Const { name, .. } if name.as_ref() == "HOL.All") }
+pub fn is_all_const(t: &Term) -> bool {
+    matches!(t, Term::Const { name, .. } if name.as_ref() == "HOL.All")
+}
 #[inline]
-pub fn is_exists_const(t: &Term) -> bool { matches!(t, Term::Const { name, .. } if name.as_ref() == "HOL.Ex") }
+pub fn is_exists_const(t: &Term) -> bool {
+    matches!(t, Term::Const { name, .. } if name.as_ref() == "HOL.Ex")
+}
 
 // ============================================================================
 // Set operations
@@ -417,10 +454,10 @@ pub fn is_exists_const(t: &Term) -> bool { matches!(t, Term::Const { name, .. } 
 /// Build `Collect_const T = Set.Collect :: (T => bool) => Set.set T`.
 #[inline]
 pub fn collect_const(typ: Typ) -> Term {
-    Term::const_("Set.Collect", Typ::arrow(
-        Typ::arrow(typ.clone(), Typ::base("bool")),
-        mk_setT(typ),
-    ))
+    Term::const_(
+        "Set.Collect",
+        Typ::arrow(Typ::arrow(typ.clone(), Typ::base("bool")), mk_setT(typ)),
+    )
 }
 
 /// Build `{x. P(x)}` or `Collect A P`.
@@ -432,7 +469,10 @@ pub fn mk_Collect(x: &str, typ: Typ, pred: Term) -> Term {
 pub fn mk_mem(x: Term, a: Term) -> Term {
     let set_typ = Typ::dummy(); // ideally dest_setT from a's type
     Term::apps(
-        Term::const_("Set.member", Typ::arrow(set_typ.clone(), Typ::arrow(mk_setT(set_typ), Typ::base("bool")))),
+        Term::const_(
+            "Set.member",
+            Typ::arrow(set_typ.clone(), Typ::arrow(mk_setT(set_typ), Typ::base("bool"))),
+        ),
         vec![x, a],
     )
 }
@@ -470,7 +510,7 @@ pub fn dest_set(term: &Term) -> Option<Vec<&Term>> {
             let mut elems = dest_set(rest)?;
             elems.insert(0, elem);
             Some(elems)
-        }
+        },
     }
 }
 
@@ -504,7 +544,9 @@ pub fn mk_UNIV(typ: Typ) -> Term {
 
 /// The unit value `()`.
 #[inline]
-pub fn unit_val() -> Term { Term::const_("Product_Type.Unity", unitT()) }
+pub fn unit_val() -> Term {
+    Term::const_("Product_Type.Unity", unitT())
+}
 
 /// Check if a term is `()`.
 #[inline]
@@ -515,7 +557,10 @@ pub fn is_unit(term: &Term) -> bool {
 /// `Pair_const T1 T2 :: T1 => T2 => T1 * T2`.
 #[inline]
 pub fn pair_const(t1: Typ, t2: Typ) -> Term {
-    Term::const_("Product_Type.Pair", Typ::arrow(t1.clone(), Typ::arrow(t2.clone(), mk_prodT(t1, t2))))
+    Term::const_(
+        "Product_Type.Pair",
+        Typ::arrow(t1.clone(), Typ::arrow(t2.clone(), mk_prodT(t1, t2))),
+    )
 }
 
 /// Build `(t1, t2)`.
@@ -537,27 +582,23 @@ pub fn dest_prod(term: &Term) -> Option<(&Term, &Term)> {
 
 /// Build `fst p`.
 pub fn mk_fst(p: Term) -> Term {
-    Term::app(
-        Term::const_("Product_Type.prod.fst", Typ::arrow(Typ::dummy(), Typ::dummy())),
-        p,
-    )
+    Term::app(Term::const_("Product_Type.prod.fst", Typ::arrow(Typ::dummy(), Typ::dummy())), p)
 }
 
 /// Build `snd p`.
 pub fn mk_snd(p: Term) -> Term {
-    Term::app(
-        Term::const_("Product_Type.prod.snd", Typ::arrow(Typ::dummy(), Typ::dummy())),
-        p,
-    )
+    Term::app(Term::const_("Product_Type.prod.snd", Typ::arrow(Typ::dummy(), Typ::dummy())), p)
 }
 
 /// `case_prod_const A B C :: (A => B => C) => (A*B) => C`.
 pub fn case_prod_const(a: Typ, b: Typ, c: Typ) -> Term {
-    Term::const_("Product_Type.prod.case_prod",
+    Term::const_(
+        "Product_Type.prod.case_prod",
         Typ::arrow(
             Typ::arrow(a.clone(), Typ::arrow(b.clone(), c.clone())),
             Typ::arrow(mk_prodT(a, b), c),
-        ))
+        ),
+    )
 }
 
 /// Build `case_prod f`.
@@ -579,7 +620,9 @@ pub fn is_pair_const(t: &Term) -> bool {
 
 /// Zero: `0 :: nat`.
 #[inline]
-pub fn zero_nat() -> Term { Term::const_("Groups.zero_class.zero", natT()) }
+pub fn zero_nat() -> Term {
+    Term::const_("Groups.zero_class.zero", natT())
+}
 
 /// Check if a term is `0 :: nat`.
 #[inline]
@@ -623,7 +666,7 @@ pub fn dest_nat(term: &Term) -> Option<usize> {
         t => {
             let inner = dest_Suc(t)?;
             dest_nat(inner).map(|n| n + 1)
-        }
+        },
     }
 }
 
@@ -633,11 +676,15 @@ pub fn dest_nat(term: &Term) -> Option<usize> {
 
 /// `Num.num` type.
 #[inline]
-pub fn numT() -> Typ { Typ::base("Num.num") }
+pub fn numT() -> Typ {
+    Typ::base("Num.num")
+}
 
 /// `1` as a numeral bit: `Num.One`.
 #[inline]
-pub fn one_const() -> Term { Term::const_("Num.num.One", numT()) }
+pub fn one_const() -> Term {
+    Term::const_("Num.num.One", numT())
+}
 
 /// `Bit0` constructor: `num => num`.
 #[inline]
@@ -712,24 +759,25 @@ pub fn mk_number(typ: Typ, n: i64) -> Term {
     } else {
         // negative: uminus (mk_number T (-n))
         let pos = mk_number(typ.clone(), -n);
-        Term::app(
-            Term::const_("Groups.uminus_class.uminus", Typ::arrow(typ.clone(), typ)),
-            pos,
-        )
+        Term::app(Term::const_("Groups.uminus_class.uminus", Typ::arrow(typ.clone(), typ)), pos)
     }
 }
 
 /// Destruct a number into (type, value).
 pub fn dest_number(term: &Term) -> Option<(Typ, i64)> {
     match term {
-        Term::Const { name, typ } if name.as_ref() == "Groups.zero_class.zero" => Some((typ.clone(), 0)),
-        Term::Const { name, typ } if name.as_ref() == "Groups.one_class.one" => Some((typ.clone(), 1)),
+        Term::Const { name, typ } if name.as_ref() == "Groups.zero_class.zero" => {
+            Some((typ.clone(), 0))
+        },
+        Term::Const { name, typ } if name.as_ref() == "Groups.one_class.one" => {
+            Some((typ.clone(), 1))
+        },
         Term::App { func, arg } if is_numeral_class_const(func) => {
             dest_numeral(arg).map(|n| (Typ::dummy(), n as i64))
-        }
+        },
         Term::App { func, arg } if is_uminus_const(func) => {
             dest_number(arg).map(|(_, n)| (Typ::dummy(), -n))
-        }
+        },
         _ => None,
     }
 }
@@ -776,7 +824,7 @@ pub fn dest_list(term: &Term) -> Option<Vec<&Term>> {
             let mut elems = dest_list(rest)?;
             elems.insert(0, elem);
             Some(elems)
-        }
+        },
     }
 }
 
@@ -805,11 +853,13 @@ pub fn is_cons_const(t: &Term) -> bool {
 
 /// Build `if cond then t else f`.
 pub fn mk_if(cond: Term, t: Term, f: Term) -> Term {
-    let if_const = Term::const_("HOL.If",
+    let if_const = Term::const_(
+        "HOL.If",
         Typ::arrow(
             Typ::base("bool"),
             Typ::arrow(Typ::dummy(), Typ::arrow(Typ::dummy(), Typ::dummy())),
-        ));
+        ),
+    );
     Term::apps(if_const, vec![cond, t, f])
 }
 
@@ -824,7 +874,7 @@ pub fn dest_if(term: &Term) -> Option<(&Term, &Term, &Term)> {
             } else {
                 None
             }
-        }
+        },
         _ => None,
     }
 }
@@ -840,11 +890,10 @@ pub fn is_if_const(t: &Term) -> bool {
 
 /// Build `Let v = rhs in body`.
 pub fn mk_let(v: &str, typ: Typ, rhs: Term, body: Term) -> Term {
-    let let_const = Term::const_("HOL.Let",
-        Typ::arrow(typ.clone(), Typ::arrow(
-            Typ::arrow(typ, Typ::dummy()),
-            Typ::dummy(),
-        )));
+    let let_const = Term::const_(
+        "HOL.Let",
+        Typ::arrow(typ.clone(), Typ::arrow(Typ::arrow(typ, Typ::dummy()), Typ::dummy())),
+    );
     Term::apps(let_const, vec![rhs, Term::abs(v, Typ::dummy(), body)])
 }
 
@@ -860,7 +909,8 @@ pub fn mk_binop(c: &str, t: Term, u: Term) -> Term {
 
 /// Build a binary relation: `c $ t $ u` returning bool.
 pub fn mk_binrel(c: &str, t: Term, u: Term) -> Term {
-    let brel = Term::const_(c, Typ::arrow(Typ::dummy(), Typ::arrow(Typ::dummy(), Typ::base("bool"))));
+    let brel =
+        Term::const_(c, Typ::arrow(Typ::dummy(), Typ::arrow(Typ::dummy(), Typ::base("bool"))));
     Term::apps(brel, vec![t, u])
 }
 
@@ -899,15 +949,13 @@ pub fn suc_const() -> Term {
 /// The `Complete_Lattices.Inf` constant for type `set T => T`.
 #[inline]
 pub fn Inf_const(typ: Typ) -> Term {
-    Term::const_("Complete_Lattices.Inf_class.Inf",
-        Typ::arrow(mk_setT(typ.clone()), typ))
+    Term::const_("Complete_Lattices.Inf_class.Inf", Typ::arrow(mk_setT(typ.clone()), typ))
 }
 
 /// The `Complete_Lattices.Sup` constant for type `set T => T`.
 #[inline]
 pub fn Sup_const(typ: Typ) -> Term {
-    Term::const_("Complete_Lattices.Sup_class.Sup",
-        Typ::arrow(mk_setT(typ.clone()), typ))
+    Term::const_("Complete_Lattices.Sup_class.Sup", Typ::arrow(mk_setT(typ.clone()), typ))
 }
 
 // ============================================================================

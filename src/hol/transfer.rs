@@ -176,9 +176,10 @@ mod tests {
             source: "map".to_string(),
             target: "map_transferred".to_string(),
             relation: Term::const_("R", Typ::base("prop")),
-            theorem: Arc::new(ThmKernel::assume(CTerm::certify(
-                Term::const_("True", Typ::base("prop")),
-            ))),
+            theorem: Arc::new(ThmKernel::assume(CTerm::certify(Term::const_(
+                "True",
+                Typ::base("prop"),
+            )))),
         };
         db.add(rule);
         assert_eq!(db.find_for("map").len(), 1);

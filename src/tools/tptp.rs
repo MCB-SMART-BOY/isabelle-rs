@@ -204,10 +204,7 @@ mod tests {
         // P & Q => P
         let p = CTerm::certify(Term::const_("P", Typ::base("prop")));
         let q = CTerm::certify(Term::const_("Q", Typ::base("prop")));
-        let pq = Term::app(
-            Term::app(hologic::conj_const(), p.term().clone()),
-            q.term().clone(),
-        );
+        let pq = Term::app(Term::app(hologic::conj_const(), p.term().clone()), q.term().clone());
         let goal_term = Pure::mk_implies(pq, p.term().clone());
         let goal = ThmKernel::assume(CTerm::certify(goal_term));
 

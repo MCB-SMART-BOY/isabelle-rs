@@ -251,11 +251,7 @@ impl Definition {
             let prefix = source[..where_pos].trim();
             let body = source[where_pos + 5..].trim();
             // Extract name from prefix (may have type annotation)
-            let name = prefix
-                .split_whitespace()
-                .next()?
-                .trim_end_matches(',')
-                .to_string();
+            let name = prefix.split_whitespace().next()?.trim_end_matches(',').to_string();
             // Extract type annotation if present: `x :: "type"`
             let typ = if let Some(colon) = prefix.find("::") {
                 let type_str = prefix[colon + 2..].trim();
@@ -372,9 +368,10 @@ impl Axiomatization {
             lemmas.push(ParsedLemma {
                 name: format!("ax_{}", name),
                 attributes: vec!["axiom".to_string()],
-                theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(
-                    Term::const_(name.as_str(), Typ::base("prop")),
-                ))),
+                theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(Term::const_(
+                    name.as_str(),
+                    Typ::base("prop"),
+                )))),
                 proof_script: None,
                 alias_for: Some(vec![name.clone()]),
                 source_loc: None,
@@ -426,9 +423,10 @@ impl Abbreviation {
         ParsedLemma {
             name: format!("abbrev_{}", self.name),
             attributes: vec!["abbreviation".to_string()],
-            theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(
-                Term::const_(self.name.as_str(), Typ::base("prop")),
-            ))),
+            theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(Term::const_(
+                self.name.as_str(),
+                Typ::base("prop"),
+            )))),
             proof_script: None,
             alias_for: Some(vec![self.name.clone()]),
             source_loc: None,
@@ -453,9 +451,7 @@ pub struct TypeAbbrev {
 
 impl TypeAbbrev {
     pub fn parse(source: &str) -> Option<Self> {
-        let source = source.trim()
-            .strip_prefix("type_synonym")?
-            .trim();
+        let source = source.trim().strip_prefix("type_synonym")?.trim();
         let source = source.trim_start_matches("type_abbrev").trim();
         // Parse: 'a 'b name = "rhs type"
         let parts: Vec<&str> = source.splitn(2, '=').collect();
@@ -467,14 +463,9 @@ impl TypeAbbrev {
 
         // Extract type args (starting with ') and name
         let tokens: Vec<&str> = lhs.split_whitespace().collect();
-        let args: Vec<String> = tokens.iter()
-            .filter(|t| t.starts_with('\''))
-            .map(|t| t.to_string())
-            .collect();
-        let name = tokens.iter()
-            .filter(|t| !t.starts_with('\''))
-            .last()?
-            .to_string();
+        let args: Vec<String> =
+            tokens.iter().filter(|t| t.starts_with('\'')).map(|t| t.to_string()).collect();
+        let name = tokens.iter().filter(|t| !t.starts_with('\'')).last()?.to_string();
 
         Some(TypeAbbrev { name, args, rhs: rhs.to_string() })
     }
@@ -483,9 +474,10 @@ impl TypeAbbrev {
         ParsedLemma {
             name: format!("type_{}", self.name),
             attributes: vec!["type_abbrev".to_string()],
-            theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(
-                Term::const_(self.name.as_str(), Typ::base("type")),
-            ))),
+            theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(Term::const_(
+                self.name.as_str(),
+                Typ::base("type"),
+            )))),
             proof_script: None,
             alias_for: None,
             source_loc: None,
@@ -574,11 +566,29 @@ pub fn parse_spec_commands(source: &str) -> Vec<ParsedLemma> {
 /// Check if a trimmed line starts a new Isar command.
 fn is_new_command(line: &str) -> bool {
     let keywords = [
-        "lemma ", "theorem ", "typedecl ", "definition ", "axiomatization ",
-        "specification ", "ax_specification ", "abbreviation ", "def ",
-        "inductive ", "coinductive ", "fun ", "function ", "primrec ",
-        "datatype ", "codatatype ", "locale ", "class ", "instance ",
-        "interpretation ", "typedef ", "record ", "type_synonym ",
+        "lemma ",
+        "theorem ",
+        "typedecl ",
+        "definition ",
+        "axiomatization ",
+        "specification ",
+        "ax_specification ",
+        "abbreviation ",
+        "def ",
+        "inductive ",
+        "coinductive ",
+        "fun ",
+        "function ",
+        "primrec ",
+        "datatype ",
+        "codatatype ",
+        "locale ",
+        "class ",
+        "instance ",
+        "interpretation ",
+        "typedef ",
+        "record ",
+        "type_synonym ",
     ];
     keywords.iter().any(|kw| line.starts_with(kw))
 }
@@ -633,10 +643,8 @@ mod tests {
 
     #[test]
     fn test_axiomatization_parse() {
-        let ax = Axiomatization::parse(
-            "axiomatization f :: \"'a => 'a\" where \"f x = x\"",
-        )
-        .unwrap();
+        let ax =
+            Axiomatization::parse("axiomatization f :: \"'a => 'a\" where \"f x = x\"").unwrap();
         assert_eq!(ax.constants.len(), 1);
         assert_eq!(ax.constants[0].0, "f");
     }
