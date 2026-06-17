@@ -1,4 +1,0 @@
-[env]
-# Isabelle-rs requires larger stack for deep recursion in proof search
-# v1.6.0: increased to 256MB for BNF/Ctr_Sugar/Lfp lemma generation
-RUST_MIN_STACK = "1073741824"  # 1G

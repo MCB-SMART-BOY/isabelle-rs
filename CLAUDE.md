@@ -28,7 +28,7 @@
 | Code | ~55K Rust LOC, 124+ files |
 | Tests | 700+ (638 lib + 76 integration) |
 | Verification | **Core 5/5 files 100% (125/125)**, **Tier2 70/70 files 100% (3261/3261)** |
-| Time | Tier2 551s (9.2 min) |
+| Time | Tier2 154s (2.6 min) |
 | isabelle-source | ✅ Isabelle 2025 full distribution (364MB, 1,473 .thy files) |
 
 ## Active Strategy: v2.1.2 Released
@@ -46,7 +46,7 @@ Phase 3 ✅ Performance:
 3.2 ✅ Memory-bounded search (PROOF_SEARCH_BUDGET + depth branch pruning)
 3.3 ✅ Rewrite depth hard limit (MAX_REWRITE_DEPTH=40)
 
-Phase 6-8 ✅ v2.1.2:
+Phase 6-16 ✅ v2.1.2:
 6. ✅ Tier2 expansion: 36→57 files (21 new from Library/Data_Structures, +236 lemmas)
 7. ✅ Isar engine optimizations (get_premises ref, cached Simplifier, Conv Box→Arc)
 8a. ✅ Metis HOL.eq paramodulation (dest_hol_equals)
