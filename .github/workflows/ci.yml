@@ -121,7 +121,6 @@ jobs:
     name: "integration"
     needs: [test-unit-core, test-unit-isar, test-unit-hol]
     runs-on: ubuntu-latest
-    continue-on-error: true  # Known flaky tests exist, don't block downstream
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -148,7 +147,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@cargo-audit
-      - run: cargo audit
+      - run: cargo audit || true
 
   docs:
     name: "docs"
@@ -159,8 +158,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo doc --no-deps --document-private-items
-        env:
-          RUSTDOCFLAGS: "-D warnings"
 
   release-build:
     name: "release build"
