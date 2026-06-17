@@ -1053,9 +1053,60 @@ fn distribute_cnf(term: &Term) -> Vec<Vec<Term>> {
 ///    literals
 ///
 /// The returned clauses can be fed directly into [`SatSolver`].
+/// Skolemize existential quantifiers: replace `HOL.Ex $ Abs(x,ty,body)` with `body[c/x]`.
+/// Preserves satisfiability for SAT-based proof search. Uses fresh `_skoN` constants.
+pub fn skolemize(term: &Term) -> Term {
+    let mut counter = 0usize;
+    skolemize_rec(term, &mut counter)
+}
+
+/// Recursive skolemization: replaces HOL.Ex $ Abs(x,ty,body) with body[sko/x].
+/// Does NOT descend under HOL.All (universals stay as propositional atoms).
+fn skolemize_rec(term: &Term, counter: &mut usize) -> Term {
+    match term {
+        // HOL.Ex $ Abs(x, ty, body) → body[sko/x]
+        Term::App { func, arg } => {
+            if let Term::Const { name, .. } = func.as_ref() {
+                if name.as_ref() == "HOL.Ex" {
+                    if let Term::Abs { name: _, typ: body_ty, body } = arg.as_ref() {
+                        let sko_name = format!("_sko{}", *counter);
+                        *counter += 1;
+                        let sko = Term::free(sko_name.as_str(), body_ty.clone());
+                        let reduced = crate::core::term_subst::subst_bounds(&[sko], body);
+                        return skolemize_rec(&reduced, counter);
+                    }
+                }
+                // HOL.All: do NOT descend (universals stay atomic)
+                if name.as_ref() == "HOL.All" { return term.clone(); }
+            }
+            // Logical connectives: recurse
+            match func.as_ref() {
+                Term::App { func: inner, arg: a } => match inner.as_ref() {
+                    Term::Const { name, .. } if name.as_ref() == "HOL.conj" =>
+                        crate::hol::hologic::mk_conj(skolemize_rec(a, counter), skolemize_rec(arg, counter)),
+                    Term::Const { name, .. } if name.as_ref() == "HOL.disj" =>
+                        crate::hol::hologic::mk_disj(skolemize_rec(a, counter), skolemize_rec(arg, counter)),
+                    Term::Const { name, .. } if name.as_ref() == "HOL.implies" =>
+                        crate::hol::hologic::mk_imp(skolemize_rec(a, counter), skolemize_rec(arg, counter)),
+                    _ => Term::app(skolemize_rec(func, counter), skolemize_rec(arg, counter)),
+                },
+                Term::Const { name, .. } if name.as_ref() == "HOL.Not" =>
+                    crate::hol::hologic::mk_not(skolemize_rec(arg, counter)),
+                Term::Const { name, .. } if name.as_ref() == "HOL.Trueprop" =>
+                    crate::hol::hologic::mk_Trueprop(skolemize_rec(arg, counter)),
+                _ => Term::app(skolemize_rec(func, counter), skolemize_rec(arg, counter)),
+            }
+        }
+        // Bare Abs: do not descend
+        Term::Abs { .. } => term.clone(),
+        _ => term.clone(),
+    }
+}
+
 pub fn hol_to_cnf(term: &Term) -> Vec<Vec<i32>> {
     let mut atom_map: HashMap<Term, i32> = HashMap::new();
     let mut next_id: i32 = 1;
+    let skolemized = skolemize(term);
 
     fn assign_atom_id(term: &Term, atom_map: &mut HashMap<Term, i32>, next_id: &mut i32) -> i32 {
         if let Some(&id) = atom_map.get(term) {
@@ -1209,7 +1260,7 @@ pub fn hol_to_cnf(term: &Term) -> Vec<Vec<i32>> {
         result
     }
 
-    term_to_cnf_clauses(term, &mut atom_map, &mut next_id, true)
+    term_to_cnf_clauses(&skolemized, &mut atom_map, &mut next_id, true)
 }
 
 /// Tseitin transformation: convert a HOL formula to equisatisfiable CNF.
@@ -1224,6 +1275,7 @@ pub fn tseitin_transform(term: &Term) -> Vec<Vec<i32>> {
     let mut clauses = Vec::new();
     let mut atom_map: HashMap<Term, i32> = HashMap::new();
     let mut next_id: i32 = 1;
+    let skolemized = skolemize(term);
 
     fn get_or_create_var(term: &Term, atom_map: &mut HashMap<Term, i32>, next_id: &mut i32) -> i32 {
         if let Some(&id) = atom_map.get(term) {
@@ -1324,7 +1376,7 @@ pub fn tseitin_transform(term: &Term) -> Vec<Vec<i32>> {
         }
     }
 
-    let root_var = tseitin_rec(term, &mut clauses, &mut atom_map, &mut next_id);
+    let root_var = tseitin_rec(&skolemized, &mut clauses, &mut atom_map, &mut next_id);
     // Assert the root formula is true
     clauses.push(vec![root_var]);
 
