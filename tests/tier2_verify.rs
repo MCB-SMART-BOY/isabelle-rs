@@ -82,6 +82,11 @@ mod tier2_verify {
         ("theories/HOL/BNF_Corec.thy", 60),
         ("theories/HOL/Quotient_Type.thy", 60),
         ("theories/HOL/Tree23.thy", 60),
+        // ── Phase 13: Library chain expansion ──
+        ("theories/HOL/Quotient_Option.thy", 60),
+        ("theories/HOL/Quotient_Sum.thy", 60),
+        ("theories/HOL/Quotient_Product.thy", 60),
+        ("theories/HOL/Quotient_Set.thy", 60),
     ];
 
     #[test]
