@@ -632,10 +632,10 @@ impl MetisProver {
                 return;
             }
 
-            // Check if this premise is an equality `s = t`
-            let eq_pair = Pure::dest_equals(eq_prem);
+            // Check if this premise is an equality `s = t` (Pure.eq or HOL.eq)
+            let eq_pair = Pure::dest_equals(eq_prem)
+                .or_else(|| crate::hol::hologic::dest_hol_equals(eq_prem));
             if eq_pair.is_none() {
-                // Also check for HOL.eq
                 continue;
             }
             let (lhs, rhs) = eq_pair.unwrap();
@@ -1750,9 +1750,11 @@ impl MetisReplay {
         let (eq_prems, eq_concl) = Pure::strip_imp_prems(eq_clause.prop().term());
         let (tgt_prems, _tgt_concl) = Pure::strip_imp_prems(target.prop().term());
 
-        // Check if eq_concl or any eq premise is an equality
+        // Check if eq_concl or any eq premise is an equality (Pure.eq or HOL.eq)
         for eq_term in std::iter::once(eq_concl).chain(eq_prems.iter().copied()) {
-            if Pure::dest_equals(eq_term).is_some() {
+            if Pure::dest_equals(eq_term).is_some()
+                || crate::hol::hologic::dest_hol_equals(eq_term).is_some()
+            {
                 // Try subst_premise on each premise of target
                 for i in 0..tgt_prems.len() {
                     if let Some(result) = ThmKernel::subst_premise(eq_clause, target, i) {

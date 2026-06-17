@@ -354,6 +354,17 @@ pub fn dest_eq(term: &Term) -> Option<(&Term, &Term)> {
 #[inline]
 pub fn is_eq_const_hol(t: &Term) -> bool { matches!(t, Term::Const { name, .. } if name.as_ref() == "HOL.eq") }
 
+/// Destruct `HOL.eq $ lhs $ rhs` into (lhs, rhs). Returns None if not a HOL equality.
+pub fn dest_hol_equals(term: &Term) -> Option<(&Term, &Term)> {
+    match term {
+        Term::App { func, arg: rhs } => match func.as_ref() {
+            Term::App { func, arg: lhs } if is_eq_const_hol(func) => Some((lhs, rhs)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 // ============================================================================
 // Quantifiers
 // ============================================================================
