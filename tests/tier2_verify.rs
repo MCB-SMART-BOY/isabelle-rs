@@ -87,6 +87,12 @@ mod tier2_verify {
         ("theories/HOL/Quotient_Sum.thy", 60),
         ("theories/HOL/Quotient_Product.thy", 60),
         ("theories/HOL/Quotient_Set.thy", 60),
+        // ── Phase 15: micro-files ──
+        ("theories/HOL/Cmp.thy", 60),
+        ("theories/HOL/Base_FDS.thy", 60),
+        ("theories/HOL/Lookup2.thy", 60),
+        ("theories/HOL/Function_Division.thy", 60),
+        ("theories/HOL/Type_Length.thy", 60),
     ];
 
     #[test]
