@@ -1,6 +1,6 @@
-# 开发路线图 v25.0 (v2.1.2 → v2.2.0)
+# 开发路线图 v25.0 (v2.1.3 → v2.2.0)
 
-> **当前版本**: v2.1.2 — Isabelle-aligned depth limits, Tier2 154s (3.6x 加速)
+> **当前版本: v2.1.3 — stable Rust 1.96.0, CI修复, 完整文档同步
 > **下一目标**: v2.2.0 — Tier2 扩展到 100+ files + Hilbert_Choice 攻克
 
 ---
@@ -8,7 +8,7 @@
 ## 总体策略
 
 ```
-v2.0.0 ✅ 当前版本: v2.1.2 — Isabelle-aligned depth limits, 3.6x Tier2加速
+v2.0.0 ✅ 当前版本: v2.1.3 — stable Rust 1.96.0, CI修复, 完整文档同步
         ✅ Tier2 扩展: 36→57 files (21 new, +236 lemmas)
         ✅ Isar 引擎优化 (get_premises ref, cached Simplifier)
         ✅ Metis HOL.eq 参数调制 (dest_hol_equals)
@@ -24,7 +24,7 @@ v2.1.0  IsarProof Arc 共享 + Metis skolemization + 7 个重度文件攻克
 
 | 版本 | 日期 | 状态 | 关键交付 |
 |------|------|:--:|------|
-| v2.1.2 | 2026-06-17 | ✅ current | auto depth→8 (Isabelle-aligned), Tier2 70/70 154s, Metis ∃-skolemization |
+| v2.1.3 | 2026-06-17 | ✅ current | auto depth→8 (Isabelle-aligned), Tier2 70/70 154s, Metis ∃-skolemization |
 | v2.1.0 | 2026-06-17 | ✅ | IsarProof Arc, auto_exec 迭代化, Tier2 61/61 |
 | v2.0.0 | 2026-06-17 | ✅ | Isar优化 + Tier2 57/57 + Metis HOL.eq |
 | v1.9.0 | 2026-06-16 | ✅ | Route A 完成, Tier2 36/36 100%, Phase 3 完成 |

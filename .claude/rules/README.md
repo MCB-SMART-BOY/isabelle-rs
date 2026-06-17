@@ -9,7 +9,7 @@ version: 2.0
 > **用 Rust 重写 Isabelle，打造更程序员友好的证明助手。**
 > LCF trusted kernel + higher-order unification + Isar proof language.
 
-## 项目状态 (v2.1.2)
+## 项目状态 (v2.1.3)
 
 | 指标 | 值 |
 |------|-----|
