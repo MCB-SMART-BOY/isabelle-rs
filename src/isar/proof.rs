@@ -113,7 +113,7 @@ impl Goal {
 #[derive(Clone, Debug)]
 pub struct ProofNode {
     /// The local context (fixes, assumes, notes).
-    pub context: IsarContext,
+    pub context: Arc<IsarContext>,
     /// Current facts: `(thms, is_proper_chaining)`.
     pub facts: Option<(Vec<Thm>, bool)>,
     /// Current mode.
@@ -125,7 +125,7 @@ pub struct ProofNode {
 }
 
 impl ProofNode {
-    pub fn new(context: IsarContext) -> Self {
+    pub fn new(context: Arc<IsarContext>) -> Self {
         ProofNode {
             context,
             facts: None,
@@ -175,7 +175,7 @@ impl IsarProof {
 
     /// Initialize a proof state from a theory context.
     pub fn init(theory: Arc<Theory>) -> Self {
-        let ctx = IsarContext::init(&theory);
+        let ctx = Arc::new(IsarContext::init(&theory));
         IsarProof { stack: vec![ProofNode::new(ctx)], theory }
     }
 
@@ -203,7 +203,7 @@ impl IsarProof {
 
     /// Push a new block onto the stack.
     fn open_block(&mut self) {
-        let ctx = self.top().context.clone();
+        let ctx = Arc::clone(&self.top().context);
         self.stack.push(ProofNode::new(ctx));
     }
 
@@ -351,7 +351,7 @@ impl IsarProof {
     pub fn fix(&mut self, vars: &[(&str, Typ)]) {
         self.assert_forward();
         for &(name, ref typ) in vars {
-            self.top_mut().context.fix(name, typ.clone());
+            Arc::make_mut(&mut self.top_mut().context).fix(name, typ.clone());
         }
         self.reset_facts();
     }
@@ -360,7 +360,7 @@ impl IsarProof {
     pub fn assume(&mut self, props: &[Term]) {
         self.assert_forward();
         for prop in props {
-            self.top_mut().context.assume(prop.clone());
+            Arc::make_mut(&mut self.top_mut().context).assume(prop.clone());
         }
         self.reset_facts();
     }
@@ -368,14 +368,14 @@ impl IsarProof {
     /// `let x = t` — local abbreviation.
     pub fn let_bind(&mut self, name: &str, _term: Term) {
         self.assert_forward();
-        self.top_mut().context.note(name, vec![]);
+        Arc::make_mut(&mut self.top_mut().context).note(name, vec![]);
         self.reset_facts();
     }
 
     /// `note name = thms` — record a local fact.
     pub fn note(&mut self, name: &str, thms: Vec<Arc<Thm>>) {
         self.assert_forward();
-        self.top_mut().context.note(name, thms);
+        Arc::make_mut(&mut self.top_mut().context).note(name, thms);
     }
 
     /// `from thms` — use facts as the source for the next step.
@@ -679,7 +679,7 @@ impl IsarProof {
 
     /// Internal: update the calculation chain with new facts.
     fn update_calculation(&mut self, facts: Vec<Thm>) {
-        self.top_mut().context.chain_facts(facts);
+        Arc::make_mut(&mut self.top_mut().context).chain_facts(facts);
     }
 
     /// Internal: take all accumulated calculation facts.
