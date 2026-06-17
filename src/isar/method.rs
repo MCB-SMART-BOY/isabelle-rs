@@ -334,10 +334,8 @@ impl Method {
             }
         }
 
-        // 2. Try simp
-        let simp_rules: Vec<RewriteRule> =
-            db.simps.iter().filter_map(|t| RewriteRule::from_thm(Arc::clone(t))).collect();
-        let simp = Simplifier::new(simp_rules);
+        // 2. Try simp — use cached simplifier
+        let simp = get_cached_simplifier();
         let simp_results = tactic::simp_tac(simp, 0)(state);
         for r in &simp_results {
             if r.nprems() == 0 {
@@ -1068,10 +1066,8 @@ impl Method {
             }
         }
 
-        // ── Phase 2: Simp + recurse (inline for simplicity) ──
-        let simp_rules: Vec<RewriteRule> =
-            db.simps.iter().filter_map(|t| RewriteRule::from_thm(Arc::clone(t))).collect();
-        let simp = Simplifier::new(simp_rules);
+        // ── Phase 2: Simp — use cached simplifier ──
+        let simp = get_cached_simplifier();
         let simp_results = tactic::simp_tac(simp, 0)(&current);
         let mut simp_branches = 0usize;
         for r in &simp_results {
@@ -1191,10 +1187,8 @@ impl Method {
 
             let child_branch_limit = if child_depth > 10 { 3 } else if child_depth > 5 { 8 } else { 25 };
 
-            // Simp on child
-            let child_simp_results = tactic::simp_tac(Simplifier::new(
-                db.simps.iter().filter_map(|t| RewriteRule::from_thm(Arc::clone(t))).collect()
-            ), 0)(&child);
+            // Simp on child — use cached simplifier
+            let child_simp_results = tactic::simp_tac(get_cached_simplifier(), 0)(&child);
             let mut cs_branches = 0usize;
             for r in &child_simp_results {
                 if r.nprems() != child.nprems() {
@@ -1608,6 +1602,26 @@ fn parse_single_method(method_str: &str, _state: &Thm, _premises: &[Arc<Thm>]) -
 
 /// Execute a single method with premises.
 /// Guarded against infinite recursion via SINGLE_METHOD_DEPTH counter.
+/// Get or create the cached base simplifier (all DB simp rules + builtins).
+/// Safe for recursive use — clones the cached value without holding a borrow.
+fn get_cached_simplifier() -> Simplifier {
+    let cached = CACHED_BASE_SIMPLIFIER.with(|cell| cell.borrow().clone());
+    if let Some(simp) = cached {
+        return simp;
+    }
+    let db = HolTheoremDb::get();
+    let mut rules: Vec<RewriteRule> = db.simps.iter()
+        .filter_map(|t| RewriteRule::from_thm(Arc::clone(t))).collect();
+    rules.extend(HolSimplifier::builtin_rules());
+    let simp = Simplifier::new(rules);
+    CACHED_BASE_SIMPLIFIER.with(|cell| {
+        if cell.borrow().is_none() {
+            *cell.borrow_mut() = Some(simp.clone());
+        }
+    });
+    simp
+}
+
 pub fn exec_single_method(state: &Thm, method_str: &str, premises: &[Arc<Thm>]) -> Vec<Thm> {
     let depth = SINGLE_METHOD_DEPTH.with(|c| {
         let d = c.get() + 1;
@@ -1736,19 +1750,7 @@ fn exec_single_method_inner(state: &Thm, method_str: &str, premises: &[Arc<Thm>]
             return blast_results;
         }
         // Try simp — use cached base simplifier to avoid rebuilding on every fallback
-        return CACHED_BASE_SIMPLIFIER.with(|cell| {
-            let simp = if let Some(ref cached) = *cell.borrow() {
-                cached.clone()
-            } else {
-                let db = HolTheoremDb::get();
-                let mut rules: Vec<RewriteRule> = db.simps.iter().filter_map(|t| RewriteRule::from_thm(Arc::clone(t))).collect();
-                rules.extend(HolSimplifier::builtin_rules());
-                let s = Simplifier::new(rules);
-                *cell.borrow_mut() = Some(s.clone());
-                s
-            };
-            Method::Simp(simp).execute(state, premises)
-        })
+        return Method::Simp(get_cached_simplifier()).execute(state, premises)
     }
     if inner == "simp"
         || inner.starts_with("simp ")
@@ -1797,19 +1799,7 @@ fn exec_single_method_inner(state: &Thm, method_str: &str, premises: &[Arc<Thm>]
             return auto_results;
         }
         // Try simp — use cached base simplifier
-        return CACHED_BASE_SIMPLIFIER.with(|cell| {
-            let simp = if let Some(ref cached) = *cell.borrow() {
-                cached.clone()
-            } else {
-                let db = HolTheoremDb::get();
-                let mut rules: Vec<RewriteRule> = db.simps.iter().filter_map(|t| RewriteRule::from_thm(Arc::clone(t))).collect();
-                rules.extend(HolSimplifier::builtin_rules());
-                let s = Simplifier::new(rules);
-                *cell.borrow_mut() = Some(s.clone());
-                s
-            };
-            Method::Simp(simp).execute(state, premises)
-        })
+        return Method::Simp(get_cached_simplifier()).execute(state, premises)
     }
     if inner == "assumption" || inner == "." {
         return Method::Assumption.execute(state, premises);
@@ -3385,14 +3375,22 @@ pub fn verify_file(source: &str) -> (usize, usize) {
             .or_default()
             .extend(thms.iter().map(Arc::clone));
     }
-    let auto_max = if lemmas.len() > 500 {
-        50
-    } else if lemmas.len() > 200 {
-        80
-    } else {
-        200
-    };
-    AUTO_LIMIT.with(|c| c.set(auto_max));
+    // Only override AUTO_LIMIT if the test hasn't set it to a tighter value
+    AUTO_LIMIT.with(|c| {
+        let current = c.get();
+        if current >= 100 {
+            // default is 100 — override with per-file heuristic
+            let auto_max = if lemmas.len() > 500 {
+                50
+            } else if lemmas.len() > 200 {
+                80
+            } else {
+                200
+            };
+            c.set(auto_max);
+        }
+        // else: test caller already set a tighter limit, respect it
+    });
     // Reset per-file search budget (controls memory via branch pruning)
     PROOF_SEARCH_BUDGET.with(|c| c.set(200));
     HolTheoremDb::with_override(&local_db, || verify_lemmas_batch(&lemmas))
@@ -3433,6 +3431,7 @@ pub fn verify_lemmas_batch(lemmas: &[ParsedLemma]) -> (usize, usize) {
 
 pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
     AUTO_DEPTH.with(|c| c.set(0));
+    PROOF_SEARCH_BUDGET.with(|c| c.set(200)); // Per-lemma reset — prevents early lemmas starving later ones
 
     // If a built-in Var-override exists, use it directly (skip proof replay).
     // This covers lemmas whose proofs use complex patterns (multi-method chains,
