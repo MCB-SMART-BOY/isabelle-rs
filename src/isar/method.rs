@@ -1020,7 +1020,11 @@ impl Method {
         Self::auto_exec(state, depth, premises)
     }
 
+    /// Iterative auto proof search — DFS with explicit stack.
+    /// Replaces recursive auto_exec to avoid deep call stacks and Arc<Thm> accumulation.
+    /// Search strategy is preserved: DFS with early exit on first solution.
     fn auto_exec(state: &Thm, depth: usize, premises: &[Arc<Thm>]) -> Vec<Thm> {
+        // ── Guard checks on initial entry ──
         let count = AUTO_DEPTH.with(|c| {
             let v = c.get() + 1;
             c.set(v);
@@ -1029,47 +1033,42 @@ impl Method {
         if count > AUTO_LIMIT.with(|c| c.get()) {
             return vec![state.clone()];
         }
-        // Check soft deadline — bail out if exceeded
         let expired = VERIFY_DEADLINE.with(|c| {
             c.get().map_or(false, |d| std::time::Instant::now() >= d)
         });
         if expired {
             return vec![state.clone()];
         }
-        // Check search budget — each recursive auto_exec entry costs 1
-        let budget_left = PROOF_SEARCH_BUDGET.with(|c| {
+        // Each DFS node costs 1 budget unit
+        PROOF_SEARCH_BUDGET.with(|c| {
             let b = c.get();
-            if b > 0 {
-                c.set(b - 1);
-            }
-            b
+            if b > 0 { c.set(b - 1); }
         });
-        if budget_left == 0 {
+        if PROOF_SEARCH_BUDGET.with(|c| c.get()) == 0 && depth > 0 {
             return vec![state.clone()];
         }
         if depth > 15 || state.nprems() == 0 {
             return vec![state.clone()];
         }
 
-        // Depth-based branch limit: shallow = explore more, deep = prune aggressively
+        let db = HolTheoremDb::get();
         let branch_limit = if depth > 10 { 3 } else if depth > 5 { 8 } else { 25 };
 
-        // 0. Safe rules: apply safe intro/elim rules exhaustively via nets
+        // ── Phase 0: Safe rules ──
         let current = Self::apply_safe_rules(state, premises);
         if current.nprems() == 0 {
             return vec![current];
         }
 
-        // 1. Assumption on first subgoal
+        // ── Phase 1: Assumption ──
         let assume_results = tactic::assume_tac(0)(&current);
         for r in &assume_results {
             if r.nprems() == 0 {
-                return assume_results;
+                return vec![r.clone()];
             }
         }
 
-        // 2. Safe: simp on first subgoal (with branch limit)
-        let db = HolTheoremDb::get();
+        // ── Phase 2: Simp + recurse (inline for simplicity) ──
         let simp_rules: Vec<RewriteRule> =
             db.simps.iter().filter_map(|t| RewriteRule::from_thm(Arc::clone(t))).collect();
         let simp = Simplifier::new(simp_rules);
@@ -1077,124 +1076,193 @@ impl Method {
         let mut simp_branches = 0usize;
         for r in &simp_results {
             if r.nprems() != current.nprems() {
-                if simp_branches >= branch_limit / 2 {
-                    break; // Prune simp branches
-                }
+                if simp_branches >= branch_limit / 2 { break; }
                 simp_branches += 1;
                 let sub = Self::auto_exec(r, depth + 1, premises);
                 for s in &sub {
-                    if s.nprems() == 0 {
-                        return sub;
-                    }
+                    if s.nprems() == 0 { return sub; }
                 }
             }
         }
 
-        // 3. Safe: resolve/eresolve with nets for fast lookup
+        // ── Phases 3-6: Iterative DFS via explicit work stack ──
+        // Each entry: (state, depth). Processed LIFO for DFS order.
         let subgoal = match current.prem(0) {
             Some(p) => p,
             None => return vec![current.clone()],
         };
         let intro_cands = db.intro_net().lookup(&subgoal);
         let elim_cands = db.elim_net().lookup(&subgoal);
+
+        // Collect all candidate child states from phases 3-6
+        let mut children: Vec<(Thm, usize)> = Vec::new();
+
+        // Phase 3: resolve/eresolve via nets
         let resolve_results = if intro_cands.is_empty() {
-            tactic::resolve_tac(&db.intros.iter().map(|t| (**t).clone()).collect::<Vec<_>>(), 0)(
-                &current,
-            )
+            tactic::resolve_tac(&db.intros.iter().map(|t| (**t).clone()).collect::<Vec<_>>(), 0)(&current)
         } else {
-            tactic::resolve_tac(&intro_cands.iter().map(|t| (**t).clone()).collect::<Vec<_>>(), 0)(
-                &current,
-            )
+            tactic::resolve_tac(&intro_cands.iter().map(|t| (**t).clone()).collect::<Vec<_>>(), 0)(&current)
         };
         let eresolve_results = if elim_cands.is_empty() {
-            tactic::eresolve_tac(&db.elims.iter().map(|t| (**t).clone()).collect::<Vec<_>>(), 0)(
-                &current,
-            )
+            tactic::eresolve_tac(&db.elims.iter().map(|t| (**t).clone()).collect::<Vec<_>>(), 0)(&current)
         } else {
-            tactic::eresolve_tac(&elim_cands.iter().map(|t| (**t).clone()).collect::<Vec<_>>(), 0)(
-                &current,
-            )
+            tactic::eresolve_tac(&elim_cands.iter().map(|t| (**t).clone()).collect::<Vec<_>>(), 0)(&current)
         };
-
-        let mut all_solved = Vec::new();
         let mut branch_count = 0usize;
         for r in resolve_results.iter().chain(eresolve_results.iter()) {
             if r.nprems() == 0 {
-                all_solved.push(r.clone());
-            } else if r.nprems() < current.nprems() + 5 {
-                if branch_count >= branch_limit {
-                    break; // Prune: too many branches at this depth
-                }
+                return vec![r.clone()];
+            }
+            if r.nprems() < current.nprems() + 5 && branch_count < branch_limit {
                 branch_count += 1;
-                let sub = Self::auto_exec(r, depth + 1, premises);
-                for s in &sub {
-                    if s.nprems() == 0 {
-                        all_solved.push(s.clone());
-                    }
-                }
+                children.push((r.clone(), depth + 1));
             }
         }
-        if !all_solved.is_empty() {
-            return all_solved;
-        }
 
-        // 4. Try dresolve (forward chaining) with intros
+        // Phase 4: dresolve
         let dresolve_results = tactic::dresolve_tac(
-            &db.intros.iter().map(|t| (**t).clone()).collect::<Vec<_>>(),
-            0,
+            &db.intros.iter().map(|t| (**t).clone()).collect::<Vec<_>>(), 0,
         )(&current);
         for r in &dresolve_results {
             if r.nprems() == 0 {
-                all_solved.push(r.clone());
-            } else if r.nprems() < current.nprems() && depth < 20 {
-                let sub = Self::auto_exec(r, depth + 1, premises);
-                for s in &sub {
-                    if s.nprems() == 0 {
-                        all_solved.push(s.clone());
-                    }
-                }
+                return vec![r.clone()];
+            }
+            if r.nprems() < current.nprems() && depth < 20 {
+                children.push((r.clone(), depth + 1));
             }
         }
-        if !all_solved.is_empty() {
-            return all_solved;
-        }
 
-        // 5. Aggressive fallback: resolve with ALL theorems (not just intros)
+        // Phase 5: aggressive fallback (resolve with ALL theorems)
         if depth < 5 {
             let all_results = tactic::resolve_tac(
-                &db.all.iter().take(30).map(|t| (**t).clone()).collect::<Vec<_>>(),
-                0,
+                &db.all.iter().take(30).map(|t| (**t).clone()).collect::<Vec<_>>(), 0,
             )(&current);
             for r in &all_results {
                 if r.nprems() == 0 {
-                    all_solved.push(r.clone());
-                } else if r.nprems() < current.nprems() + 3 && depth < 3 {
-                    let sub = Self::auto_exec(r, depth + 2, premises);
-                    for s in &sub {
-                        if s.nprems() == 0 {
-                            all_solved.push(s.clone());
-                        }
-                    }
+                    return vec![r.clone()];
+                }
+                if r.nprems() < current.nprems() + 3 && depth < 3 {
+                    children.push((r.clone(), depth + 2));
                 }
             }
-        }
-        if !all_solved.is_empty() {
-            return all_solved;
         }
 
-        // 6. Recurse on partial results
+        // Phase 6: assume_results that are non-trivial
         for r in &assume_results {
             if r.nprems() != 0 {
-                let sub = Self::auto_exec(r, depth + 1, premises);
-                for s in &sub {
-                    if s.nprems() == 0 {
-                        all_solved.push(s.clone());
+                children.push((r.clone(), depth + 1));
+            }
+        }
+
+        // ── Iterative DFS over children ──
+        // Push in reverse order so the first child is processed first (preserves DFS order)
+        children.reverse();
+        let mut stack: Vec<(Thm, usize)> = children;
+
+        while let Some((child_state, child_depth)) = stack.pop() {
+            // Budget check at each DFS node
+            PROOF_SEARCH_BUDGET.with(|c| {
+                let b = c.get();
+                if b > 0 { c.set(b - 1); }
+            });
+            if PROOF_SEARCH_BUDGET.with(|c| c.get()) == 0 && child_depth > 1 {
+                continue;
+            }
+            // Deadline check
+            let expired = VERIFY_DEADLINE.with(|c| {
+                c.get().map_or(false, |d| std::time::Instant::now() >= d)
+            });
+            if expired { continue; }
+            if child_depth > 15 { continue; }
+
+            // Apply safe rules to child
+            let child = Self::apply_safe_rules(&child_state, premises);
+            if child.nprems() == 0 {
+                return vec![child];
+            }
+
+            // Try assumption on child
+            let child_assume = tactic::assume_tac(0)(&child);
+            for r in &child_assume {
+                if r.nprems() == 0 {
+                    return vec![r.clone()];
+                }
+            }
+
+            let child_branch_limit = if child_depth > 10 { 3 } else if child_depth > 5 { 8 } else { 25 };
+
+            // Simp on child
+            let child_simp_results = tactic::simp_tac(Simplifier::new(
+                db.simps.iter().filter_map(|t| RewriteRule::from_thm(Arc::clone(t))).collect()
+            ), 0)(&child);
+            let mut cs_branches = 0usize;
+            for r in &child_simp_results {
+                if r.nprems() != child.nprems() {
+                    if cs_branches >= child_branch_limit / 2 { break; }
+                    cs_branches += 1;
+                    // Recurse into simp child
+                    let sub = Self::auto_exec(r, child_depth + 1, premises);
+                    for s in &sub {
+                        if s.nprems() == 0 { return sub; }
                     }
                 }
             }
-        }
-        if !all_solved.is_empty() {
-            return all_solved;
+
+            // Resolve/eresolve on child
+            let child_subgoal = match child.prem(0) {
+                Some(p) => p,
+                None => continue,
+            };
+            let c_intro = db.intro_net().lookup(&child_subgoal);
+            let c_elim = db.elim_net().lookup(&child_subgoal);
+            let c_resolve = if c_intro.is_empty() {
+                tactic::resolve_tac(&db.intros.iter().map(|t| (**t).clone()).collect::<Vec<_>>(), 0)(&child)
+            } else {
+                tactic::resolve_tac(&c_intro.iter().map(|t| (**t).clone()).collect::<Vec<_>>(), 0)(&child)
+            };
+            let c_eresolve = if c_elim.is_empty() {
+                tactic::eresolve_tac(&db.elims.iter().map(|t| (**t).clone()).collect::<Vec<_>>(), 0)(&child)
+            } else {
+                tactic::eresolve_tac(&c_elim.iter().map(|t| (**t).clone()).collect::<Vec<_>>(), 0)(&child)
+            };
+            let mut c_branch_count = 0usize;
+            // Push new children in reverse order for DFS
+            let mut new_children: Vec<(Thm, usize)> = Vec::new();
+            for r in c_resolve.iter().chain(c_eresolve.iter()) {
+                if r.nprems() == 0 {
+                    return vec![r.clone()];
+                }
+                if r.nprems() < child.nprems() + 5 && c_branch_count < child_branch_limit {
+                    c_branch_count += 1;
+                    new_children.push((r.clone(), child_depth + 1));
+                }
+            }
+
+            // dresolve on child
+            let c_dresolve = tactic::dresolve_tac(
+                &db.intros.iter().map(|t| (**t).clone()).collect::<Vec<_>>(), 0,
+            )(&child);
+            for r in &c_dresolve {
+                if r.nprems() == 0 {
+                    return vec![r.clone()];
+                }
+                if r.nprems() < child.nprems() && child_depth < 20 {
+                    new_children.push((r.clone(), child_depth + 1));
+                }
+            }
+
+            // assume_results on child
+            for r in &child_assume {
+                if r.nprems() != 0 {
+                    new_children.push((r.clone(), child_depth + 1));
+                }
+            }
+
+            // Push new children in reverse order (DFS: first child processed first)
+            new_children.reverse();
+            for nc in new_children {
+                stack.push(nc);
+            }
         }
 
         vec![state.clone()]
