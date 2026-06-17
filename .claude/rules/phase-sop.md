@@ -97,7 +97,7 @@ RUST_MIN_STACK=268435456 cargo test test_verify_all_core_files --lib -- --nocapt
 - [x] 构建零警告 (cargo check --lib)
 - [x] 裸 HOL const 调用: 100+ → 3 (有意的)
 
-## v1.9.0 完成确认
+## v2.0.0 完成确认
 
 - [x] Route A Step 1: 5 测试修复 ✅ v1.8.1
 - [x] Route A Step 2: OOM/栈溢出修复 ✅ v1.9.0-dev

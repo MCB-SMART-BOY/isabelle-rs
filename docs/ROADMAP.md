@@ -1,22 +1,21 @@
-# 开发路线图 v23.0 (v1.9.0-dev → v2.0.0)
+# 开发路线图 v24.0 (v2.0.0 → v2.1.0)
 
-> **当前版本**: v1.9.0-dev — Route A 稳定性优先, Tier2 验证扩展中
-> **下一目标**: v1.9.0 — Route A 完成 (Tier2 + 属性集成 + 文档同步)
+> **当前版本**: v2.0.0 — Isar 优化 + Metis 硬化 + Tier2 57 files
+> **下一目标**: v2.1.0 — 重度文件攻克 + IsarProof Arc 共享 + Metis skolemization
 
 ---
 
 ## 总体策略
 
 ```
-v1.9.0 (当前) ✅ Route A 完成:
-             ✅ 5 测试修复
-             ✅ OOM 根因修复
-             ✅ Tier2 验证: 36/36 files 100% (2959/2959, 513s)
-             ✅ 属性系统 (class assumes + attrs_index + lemmas + declare)
-             ✅ 文档同步
-             ✅ Phase 3: 核心 simpset + 内存限界 + rewrite深度
+v2.0.0 ✅ 当前版本:
+        ✅ Tier2 扩展: 36→57 files (21 new, +236 lemmas)
+        ✅ Isar 引擎优化 (get_premises ref, cached Simplifier)
+        ✅ Metis HOL.eq 参数调制 (dest_hol_equals)
+        ✅ Tier2: 57/57 files 100% (3195/3195, 553s)
+        ✅ Core: 5/5 files 125/125 (100%)
     ↓
-v2.0.0        Metis 真正集成 + 全库验证 1000+ files + 结构化 Isar 证明优化
+v2.1.0  IsarProof Arc 共享 + Metis skolemization + 7 个重度文件攻克
 ```
 
 ---
@@ -25,7 +24,8 @@ v2.0.0        Metis 真正集成 + 全库验证 1000+ files + 结构化 Isar 证
 
 | 版本 | 日期 | 状态 | 关键交付 |
 |------|------|:--:|------|
-| v1.9.0 | 2026-06-16 | ✅ current | Route A 完成, Tier2 36/36 100%, Phase 3 完成 |
+| v2.0.0 | 2026-06-17 | ✅ current | Isar优化 + Tier2 57/57 + Metis HOL.eq |
+| v1.9.0 | 2026-06-16 | ✅ | Route A 完成, Tier2 36/36 100%, Phase 3 完成 |
 | v1.8.1 | 2026-06-04 | ✅ | 5/5 core files 125/125, prove_condition 修复 |
 | v1.8.0 | 2026-06-03 | ✅ | Meson, 方法组合子, 属性链, verify_file(), Tier2/Tier3 |
 | v1.7.0 | 2026-06-03 | ✅ | BNF Lfp/Gfp 完整, Ctr_Sugar, Metis, Transfer/Lifting |

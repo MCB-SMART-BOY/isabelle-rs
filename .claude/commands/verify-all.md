@@ -40,6 +40,6 @@ RUST_MIN_STACK=268435456 cargo test --test bnf_tests --test comprehensive --test
 |-------|----------|
 | Kernel tests | All pass |
 | Core verification | 5/5 files 125/125 (100%) |
-| Tier2 | **36/36 files 2959/2959 (100%), 513s** |
+| Tier2 | **57/57 files 3195/3195 (100%), 553s** |
 | lib tests | 700+ pass |
 | cargo check --lib | 0 warnings |

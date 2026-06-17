@@ -5,7 +5,7 @@
 > 功能与 Isabelle/ML 一致。错误信息 → Rust 编译器风格。工具链 → 标准 Rust 生态。
 > LCF trusted kernel + higher-order unification + Isar proof language + theory loading pipeline.
 
-## Project State (v1.9.0)
+## Project State (v2.0.0)
 
 | Metric | Value |
 |--------|-------|
@@ -17,20 +17,21 @@
 | BNF Lfp/Gfp | Complete: induction/coinduction/fold/rec/unfold/corec + map/set/rel/pred |
 | Ctr_Sugar | case/disc/sel/split/cong/nchotomy/size theorem generation |
 | Meson | Model elimination prover — 1st-class proof method |
+| Metis | Given-clause resolution prover — 1st-class, HOL.eq paramodulation ✅ |
 | Transfer/Lifting | Transfer rule generation + rel_fun/rel_set + quotient type theorems |
-| **hologic** | ✅ 40+ mk_*/dest_*/is_* functions, 100→3 bare HOL const calls |
-| **simpdata** | ✅ 28 built-in rules, `init_hol_simpset()`, core simpset (8 theories) |
+| **hologic** | ✅ 40+ mk_*/dest_*/is_* functions, `dest_hol_equals`, 100→3 bare HOL const calls |
+| **simpdata** | ✅ 28 built-in rules, `init_hol_simpset()`, core simpset (8 theories), cached |
 | **args** | ✅ `Args::parse_modifiers()` wired into `exec_simp` + `exec_induct` |
 | **spec** | ✅ Definition/Axiomatization/Abbreviation/TypeAbbrev/Typedecl parsers |
 | **attrs** | ✅ class assumes + attrs_index + lemmas + declare |
 | **deadline** | ✅ VERIFY_DEADLINE (7 checkpoints) + PROOF_SEARCH_BUDGET |
-| Code | ~54K Rust LOC, 124 files |
+| Code | ~55K Rust LOC, 124+ files |
 | Tests | 700+ (638 lib + 76 integration) |
-| Verification | **Core 5/5 files 100% (125/125)**, **Tier2 36/36 files 100% (2959/2959)** |
-| Time | Tier2 513s (8.5 min) |
+| Verification | **Core 5/5 files 100% (125/125)**, **Tier2 57/57 files 100% (3195/3195)** |
+| Time | Tier2 553s (9.2 min) |
 | isabelle-source | ✅ Isabelle 2025 full distribution (364MB, 1,473 .thy files) |
 
-## Active Strategy: v1.9.0 Released
+## Active Strategy: v2.0.0 Released
 
 ```
 Route A ✅ Complete:
@@ -44,17 +45,26 @@ Phase 3 ✅ Performance:
 3.1 ✅ Core simpset injection (8 theories: HOL→Groups→Rings, Rings 4x faster)
 3.2 ✅ Memory-bounded search (PROOF_SEARCH_BUDGET + depth branch pruning)
 3.3 ✅ Rewrite depth hard limit (MAX_REWRITE_DEPTH=40)
+
+Phase 6-8 ✅ v2.0.0:
+6. ✅ Tier2 expansion: 36→57 files (21 new from Library/Data_Structures, +236 lemmas)
+7. ✅ Isar engine optimizations (get_premises ref, cached Simplifier, Conv Box→Arc)
+8a. ✅ Metis HOL.eq paramodulation (dest_hol_equals)
+8b. ⏭️ Skolemization deferred to v2.1.0
+8c. ⏭️ ATP TSTP capture deferred to v2.1.0
 ```
 
 ## Known Issues
 
 | Issue | Severity | Detail |
 |-------|:--------:|--------|
-| Fields.thy — structured Isar proof replay overhead | 🟡 Medium | 205 lemmas × multi-step proofs; not data-flow, Isar engine bottleneck |
+| Fields.thy — structured Isar proof replay overhead | 🟡 Medium | 205 lemmas × multi-step proofs; needs IsarProof Arc-sharing (proof.rs) |
 | Num.thy — same as Fields | 🟡 Medium | 354 simp calls, structured proofs |
-| Hilbert_Choice/Transitive_Closure — auto/blast dense | 🟡 Medium | Memory-budget protected but slow |
-| Finite_Set — large file (281 lemmas) | 🟡 Medium | 3h+ processing time |
+| Hilbert_Choice/Transitive_Closure — auto/blast dense | 🟡 Medium | Memory-budget protected but slow; needs iterativized auto_exec |
+| Finite_Set — large file (281 lemmas) | 🟡 Medium | 3h+ processing time; needs proof_state.rs caching |
+| Partial_Function — memory explosion | 🟡 Medium | Deep fixpoint constructions; needs v2.1.0 |
 | LazyLock DB init slow | 🟡 Medium | First HolTheoremDb::get() loads all 1,473 .thy files; should be on-demand |
+| Metis skolemization missing | 🟡 Medium | CNF conversion lacks ∃-Skolemization; deferred to v2.1.0 |
 | hologic constants (3 remaining) | 🟢 Low | Intentional: prop eq, term_builder, comment |
 
 

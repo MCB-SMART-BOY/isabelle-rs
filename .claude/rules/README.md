@@ -1,5 +1,5 @@
 ---
-description: Isabelle-rs — Rust 重写 Isabelle，程序员友好的证明助手。v1.9.0-dev, Route A 稳定性优先。
+description: Isabelle-rs — Rust 重写 Isabelle，程序员友好的证明助手。v2.0.0-dev, Route A 稳定性优先。
 globs: "**/*.rs"
 alwaysApply: true
 version: 9.0
@@ -71,11 +71,11 @@ updated: 2026-06-16
 | 模块 | core (33), isar (19), hol (22), theory (8) + tools (7) + server/lsp/session/syntax (30) |
 | Isar 命令 | 30+ 种 |
 | 理论命令 | locale/class/instance/interpretation/typedef/record/datatype/fun/inductive |
-| 代码 | ~54K Rust LOC, 124 files |
+| 代码 | ~55K Rust LOC, 124 files |
 | 测试 | 700+ (638 lib + 76 integration) |
-| 验证 | **Core 5/5 files 125/125 (100%), Tier2 36/36 files 2959/2959 (100%)** |
-| 速度 | Tier2 513s (8.5 min); Rings 14s (曾 56s, 4x 加速) |
-| 路线图 | v1.9.0 发布, Route A 完成, Phase 3 完成 |
+| 验证 | **Core 5/5 files 125/125 (100%), Tier2 57/57 files 3195/3195 (100%)** |
+| 速度 | Tier2 553s (9.2 min); Rings 14s (曾 56s, 4x 加速) |
+| 路线图 | v2.0.0 发布, Phase 6-8 完成 |
 
 ## 已知问题
 
@@ -139,4 +139,4 @@ updated: 2026-06-16
 | CI/CD / GitHub Actions / 自动化 | [ci-cd.md](ci-cd.md) |
 | 属性测试 / proptest / 不变量 | [property-testing.md](property-testing.md) |
 | 每个 Phase/任务完成后的流程 | [phase-sop.md](phase-sop.md) |
-| **下一步计划 (v1.9.0-dev → v1.9.0)** | [next-phase.md](next-phase.md) |
+| **下一步计划 (v2.0.0-dev → v2.0.0)** | [next-phase.md](next-phase.md) |

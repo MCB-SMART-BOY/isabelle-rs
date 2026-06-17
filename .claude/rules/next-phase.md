@@ -1,5 +1,5 @@
 ---
-description: v1.9.0 发布后的下一步计划
+description: v2.0.0 发布后的下一步计划
 version: 2.0
 created: 2026-06-16
 updated: 2026-06-16 (Phase 3.1-3.3 ✅, Phase 5 🔄)
