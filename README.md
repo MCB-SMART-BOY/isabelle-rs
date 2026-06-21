@@ -76,7 +76,7 @@ Fraction_Field, Nonpos_Ints, Real_Mod, Transposition, Uprod, ...), +44 misc
   2 → Anonymous datatype axiom
   3 → Isar structured proof (三模式状态机)
   4 → exec_proof → 27 methods + chain fallback
-  5 → Axiom acceptance (generalize_thm)
+  5 → Admit as oracle (ThmKernel::admit "admitted" — 非静默公理, !is_fully_proved())
 ```
 
 ---
@@ -104,11 +104,14 @@ Fraction_Field, Nonpos_Ints, Real_Mod, Transposition, Uprod, ...), +44 misc
 
 | 指标 | 值 |
 |------|-----|
-| 版本 | v2.1.5 |
+| 版本 | v2.2.1 |
 | Rust 代码 | ~55K LOC, 124 文件 |
-| 测试 | 700+ (638 lib + 76 integration) |
+| 测试 | 700+ (642 lib + 76 integration), 含信任足迹测试 |
+| 真实证明率 | Tier2 85.8% (3277/3821), Core 125/125 |
+| 信任模型 | T3 oracle 足迹 ✅ — `is_fully_proved()` 区分 proved/admitted |
 | 编译警告 | **0** |
 | 栈需求 | 256MB (`RUST_MIN_STACK=268435456`) |
+| 文档 | [docs/TRUST.md](docs/TRUST.md) — de Bruijn 信任模型 |
 
 ---
 
@@ -120,6 +123,7 @@ Fraction_Field, Nonpos_Ints, Real_Mod, Transposition, Uprod, ...), +44 misc
 | [.claude/rules/](.claude/rules/) | 领域约束 + 铁律 (globs 触发) |
 | [.claude/skills/](.claude/skills/) | 可执行工作流 (自然语言触发) |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 架构设计 |
+| [docs/TRUST.md](docs/TRUST.md) | 信任模型 (de Bruijn T1-T4, 真实证明率) |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | 开发路线图 |
 | [docs/GAP_ANALYSIS.md](docs/GAP_ANALYSIS.md) | vs Isabelle 差距分析 |
 | [CHANGELOG.md](CHANGELOG.md) | 版本历史 |
