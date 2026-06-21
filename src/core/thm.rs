@@ -228,7 +228,16 @@ impl Hyps {
                 n1 == n2 && i1 == i2
             },
             (Term::Bound(i1), Term::Bound(i2)) => i1 == i2,
-            (Term::Abs { body: b1, .. }, Term::Abs { body: b2, .. }) => Self::alpha_eq(b1, b2),
+            (Term::Abs { body: b1, typ: t1, .. }, Term::Abs { body: b2, typ: t2, .. }) => {
+                // α-equivalence requires equal binder types. We tolerate
+                // Typ::dummy() on either side (the type was never inferred —
+                // pervasive in the current parser output), but two *known*
+                // distinct binder types denote different functions and must
+                // NOT be identified: λ(x:nat). x ≢ λ(x:bool). x. Without this
+                // guard, `transitive`/`implies_elim` could chain across
+                // incompatible types once type inference annotates binders.
+                (t1.is_dummy() || t2.is_dummy() || t1 == t2) && Self::alpha_eq(b1, b2)
+            },
             (Term::App { func: f1, arg: a1 }, Term::App { func: f2, arg: a2 }) => {
                 Self::alpha_eq(f1, f2) && Self::alpha_eq(a1, a2)
             },
@@ -467,6 +476,51 @@ impl ThmKernel {
         out
     }
 
+    /// Union two flex-flex pair lists (tpairs), preserving uniqueness.
+    ///
+    /// Every multi-premise rule must carry forward the unresolved higher-order
+    /// unification constraints of its premises — in Isabelle these are a logical
+    /// burden on the theorem that must never be silently dropped. (Currently the
+    /// engine produces no flex-flex pairs, so these lists are empty in practice;
+    /// this keeps the kernel correct-by-construction once full HO unification
+    /// feeds them.)
+    fn union_tpairs(a: &[(Term, Term)], b: &[(Term, Term)]) -> Vec<(Term, Term)> {
+        if b.is_empty() {
+            return a.to_vec();
+        }
+        if a.is_empty() {
+            return b.to_vec();
+        }
+        let mut out = a.to_vec();
+        for p in b {
+            if !out.contains(p) {
+                out.push(p.clone());
+            }
+        }
+        out
+    }
+
+    /// Union two sort-hypothesis lists (shyps), preserving uniqueness.
+    ///
+    /// Sort constraints required by type-class-polymorphic constants must be
+    /// propagated, not forgotten — dropping them would let a theorem be used in
+    /// a context where its class constraints are unsatisfied.
+    fn union_shyps(a: &[Sort], b: &[Sort]) -> Vec<Sort> {
+        if b.is_empty() {
+            return a.to_vec();
+        }
+        if a.is_empty() {
+            return b.to_vec();
+        }
+        let mut out = a.to_vec();
+        for s in b {
+            if !out.contains(s) {
+                out.push(s.clone());
+            }
+        }
+        out
+    }
+
     /// **Admit** `ct` as an oracle-backed theorem: `⊢ ct`, tagged with the
     /// oracle `name`.
     ///
@@ -618,9 +672,19 @@ impl ThmKernel {
 
     /// **Combination**: `Γ ⊢ f ≡ g` and `Δ ⊢ x ≡ y` ⟹ `Γ ∪ Δ ⊢ f x ≡ g y`.
     ///
-    /// Like Isabelle's combination rule, validates that:
-    /// - The function type is actually a function type (arrow)
-    /// - The argument types are compatible (skip check if either is dummy)
+    /// This is a **congruence** rule: it is logically sound for *any* `f ≡ g`
+    /// and `x ≡ y`, irrespective of types — equality is preserved under
+    /// application. The type comparison below is therefore a **well-formedness
+    /// guard** (rejecting meaningless ill-typed applications), not a soundness
+    /// guard.
+    ///
+    /// When both the function domain and the argument type are known, a
+    /// mismatch is rejected. When either is `Typ::dummy()` (the type was never
+    /// inferred — pervasive in the current parser/loader pipeline), the guard
+    /// is necessarily skipped: we cannot compare against an unknown type, and
+    /// skipping cannot introduce logical unsoundness because the rule is a
+    /// congruence. Strengthening this further requires full type inference at
+    /// the parse boundary (a separate workstream), not a kernel change.
     pub fn combination(thm_f: &Thm, thm_x: &Thm) -> Result<Thm, KernelError> {
         let (f, g, fn_typ) = Pure::dest_equals_with_type(thm_f.prop.term())
             .ok_or_else(|| KernelError::NotEquality(thm_f.prop.term().clone()))?;
@@ -652,8 +716,8 @@ impl ThmKernel {
             hyps: thm_f.hyps.union(&thm_x.hyps),
             prop: new_prop,
             maxidx: usize::max(thm_f.maxidx, thm_x.maxidx),
-            tpairs: vec![],
-            shyps: vec![],
+            tpairs: Self::union_tpairs(&thm_f.tpairs, &thm_x.tpairs),
+            shyps: Self::union_shyps(&thm_f.shyps, &thm_x.shyps),
             oracles: Self::union_oracles(&thm_f.oracles, &thm_x.oracles),
             derivation: Derivation::Rule {
                 name: "combination",
@@ -697,8 +761,8 @@ impl ThmKernel {
             hyps: thm.hyps.clone(),
             prop: new_prop,
             maxidx: thm.maxidx,
-            tpairs: vec![],
-            shyps: vec![],
+            tpairs: thm.tpairs.clone(),
+            shyps: thm.shyps.clone(),
             oracles: thm.oracles.clone(),
             derivation: Derivation::Rule {
                 name: "abstraction",
@@ -761,8 +825,8 @@ impl ThmKernel {
             hyps: thm.hyps.remove(assumption),
             prop: new_prop,
             maxidx: thm.maxidx,
-            tpairs: vec![],
-            shyps: vec![],
+            tpairs: thm.tpairs.clone(),
+            shyps: thm.shyps.clone(),
             oracles: thm.oracles.clone(),
             derivation: Derivation::Rule {
                 name: "implies_intr",
@@ -790,8 +854,8 @@ impl ThmKernel {
             hyps: thm_imp.hyps.union(&thm_a.hyps),
             prop: CTerm::certify(b.clone()),
             maxidx: usize::max(thm_imp.maxidx, thm_a.maxidx),
-            tpairs: vec![],
-            shyps: vec![],
+            tpairs: Self::union_tpairs(&thm_imp.tpairs, &thm_a.tpairs),
+            shyps: Self::union_shyps(&thm_imp.shyps, &thm_a.shyps),
             oracles: Self::union_oracles(&thm_imp.oracles, &thm_a.oracles),
             derivation: Derivation::Rule {
                 name: "implies_elim",
@@ -819,8 +883,8 @@ impl ThmKernel {
             hyps: thm.hyps.clone(),
             prop: CTerm::certify(all_term),
             maxidx: thm.maxidx,
-            tpairs: vec![],
-            shyps: vec![],
+            tpairs: thm.tpairs.clone(),
+            shyps: thm.shyps.clone(),
             oracles: thm.oracles.clone(),
             derivation: Derivation::Rule {
                 name: "forall_intr",
@@ -838,8 +902,8 @@ impl ThmKernel {
             hyps: thm.hyps.clone(),
             prop: CTerm::certify(instantiated),
             maxidx: usize::max(thm.maxidx, ct.maxidx()),
-            tpairs: vec![],
-            shyps: vec![],
+            tpairs: thm.tpairs.clone(),
+            shyps: thm.shyps.clone(),
             oracles: thm.oracles.clone(),
             derivation: Derivation::Rule {
                 name: "forall_elim",
@@ -1019,8 +1083,8 @@ impl ThmKernel {
             hyps: thm1.hyps.union(&thm2.hyps),
             prop: CTerm::certify(new_prop),
             maxidx: usize::max(thm1.maxidx, thm2.maxidx),
-            tpairs: vec![],
-            shyps: vec![],
+            tpairs: Self::union_tpairs(&thm1.tpairs, &thm2.tpairs),
+            shyps: Self::union_shyps(&thm1.shyps, &thm2.shyps),
             oracles: Self::union_oracles(&thm1.oracles, &thm2.oracles),
             derivation: Derivation::Rule {
                 name: "bicompose",
@@ -1064,8 +1128,8 @@ impl ThmKernel {
             hyps: state.hyps.union(&eq_thm.hyps),
             prop: CTerm::certify(new_prop),
             maxidx: usize::max(state.maxidx, eq_thm.maxidx),
-            tpairs: vec![],
-            shyps: vec![],
+            tpairs: Self::union_tpairs(&state.tpairs, &eq_thm.tpairs),
+            shyps: Self::union_shyps(&state.shyps, &eq_thm.shyps),
             oracles: Self::union_oracles(&state.oracles, &eq_thm.oracles),
             derivation: Derivation::Rule {
                 name: "subst_premise",
@@ -1186,8 +1250,8 @@ impl ThmKernel {
             hyps: thm1.hyps.union(&thm2.hyps),
             prop: CTerm::certify(new_prop),
             maxidx: usize::max(thm1.maxidx, thm2.maxidx),
-            tpairs: vec![],
-            shyps: vec![],
+            tpairs: Self::union_tpairs(&thm1.tpairs, &thm2.tpairs),
+            shyps: Self::union_shyps(&thm1.shyps, &thm2.shyps),
             oracles: Self::union_oracles(&thm1.oracles, &thm2.oracles),
             derivation: Derivation::Rule {
                 name: "bicompose_eresolve",
@@ -1595,5 +1659,122 @@ mod tests {
         let r2 = ThmKernel::reflexive(CTerm::certify(u));
         let clean = ThmKernel::transitive(&r1, &r2).unwrap();
         assert!(clean.is_fully_proved());
+    }
+
+    // =================================================================
+    // T2-3: sort hypotheses (shyps) must survive inference rules
+    // =================================================================
+
+    #[test]
+    fn test_shyps_propagate_through_single_premise_rule() {
+        // A sort constraint attached to a premise must not be silently dropped
+        // by a single-premise rule. Before this fix, symmetric set shyps=vec![].
+        let nat = Typ::base("nat");
+        let eq =
+            Pure::mk_equals(nat.clone(), Term::const_("a", nat.clone()), Term::const_("b", nat));
+        let base = ThmKernel::reflexive(CTerm::certify(eq));
+        let sort = Sort::new(vec![Arc::from("order")]);
+        let tagged = ThmKernel::add_shyp(&base, sort.clone());
+        assert_eq!(tagged.shyps().len(), 1);
+
+        // symmetric is single-premise; the shyp must carry through.
+        let flipped = ThmKernel::symmetric(&tagged).unwrap();
+        assert!(flipped.shyps().contains(&sort), "shyp dropped by symmetric");
+    }
+
+    #[test]
+    fn test_shyps_union_through_multi_premise_rule() {
+        // Two premises each carrying a distinct sort constraint: transitive must
+        // carry the union of both. Before this fix, multi-premise rules dropped them.
+        let nat = Typ::base("nat");
+        let a = Term::const_("a", nat.clone());
+        let b = Term::const_("b", nat.clone());
+        let c = Term::const_("c", nat.clone());
+        let ab = ThmKernel::reflexive(CTerm::certify(Pure::mk_equals(
+            nat.clone(),
+            a.clone(),
+            a.clone(),
+        )));
+        let bc = ThmKernel::reflexive(CTerm::certify(Pure::mk_equals(nat.clone(), a.clone(), a)));
+        let s1 = Sort::new(vec![Arc::from("order")]);
+        let s2 = Sort::new(vec![Arc::from("finite")]);
+        let _ = (b, c); // terms above kept reflexive for a valid transitive chain
+        let p1 = ThmKernel::add_shyp(&ab, s1.clone());
+        let p2 = ThmKernel::add_shyp(&bc, s2.clone());
+
+        let res = ThmKernel::transitive(&p1, &p2).unwrap();
+        assert!(res.shyps().contains(&s1), "shyp s1 dropped");
+        assert!(res.shyps().contains(&s2), "shyp s2 dropped");
+    }
+
+    // =================================================================
+    // T2-2: combination must reject a known argument-type mismatch
+    // =================================================================
+
+    #[test]
+    fn test_combination_rejects_known_type_mismatch() {
+        // f : nat → bool, applied to an argument equality typed `int`.
+        // With both types known, the well-formedness guard must fire.
+        let nat = Typ::base("nat");
+        let int = Typ::base("int");
+        let bool_t = Typ::base("bool");
+        let fn_typ = Typ::arrow(nat.clone(), bool_t);
+
+        // f ≡ f at type nat→bool
+        let f = Term::const_("f", fn_typ.clone());
+        let f_eq = ThmKernel::reflexive(CTerm::certify_typed(f, fn_typ));
+        // x ≡ x at type int (mismatched against the nat domain)
+        let x = Term::const_("x", int.clone());
+        let x_eq = ThmKernel::reflexive(CTerm::certify_typed(x, int));
+
+        let res = ThmKernel::combination(&f_eq, &x_eq);
+        assert!(
+            matches!(res, Err(KernelError::TypeMismatch { .. })),
+            "combination accepted a known nat-vs-int mismatch: {res:?}"
+        );
+    }
+
+    #[test]
+    fn test_combination_accepts_well_typed_congruence() {
+        // f : nat → nat applied to x : nat — proper congruence, must succeed.
+        let nat = Typ::base("nat");
+        let fn_typ = Typ::arrow(nat.clone(), nat.clone());
+        let f = Term::const_("f", fn_typ.clone());
+        let f_eq = ThmKernel::reflexive(CTerm::certify_typed(f, fn_typ));
+        let x = Term::const_("x", nat.clone());
+        let x_eq = ThmKernel::reflexive(CTerm::certify_typed(x, nat));
+
+        let res = ThmKernel::combination(&f_eq, &x_eq);
+        assert!(res.is_ok(), "well-typed congruence rejected: {res:?}");
+        assert!(res.unwrap().is_fully_proved());
+    }
+
+    // =================================================================
+    // T2-1 (Branch C): alpha_eq must not identify lambdas with distinct
+    // KNOWN binder types, but must still tolerate Typ::dummy().
+    // =================================================================
+
+    #[test]
+    fn test_alpha_eq_rejects_distinct_binder_types() {
+        // λ(x:nat). x  vs  λ(x:bool). x  — same body, different known types.
+        let nat_abs = Term::abs("x", Typ::base("nat"), Term::Bound(0));
+        let bool_abs = Term::abs("x", Typ::base("bool"), Term::Bound(0));
+        assert!(
+            !Hyps::alpha_eq(&nat_abs, &bool_abs),
+            "alpha_eq wrongly identified λ(x:nat).x with λ(x:bool).x"
+        );
+    }
+
+    #[test]
+    fn test_alpha_eq_tolerates_dummy_binder_type() {
+        // Backward-compat: dummy on either side still matches (status quo —
+        // the parser emits dummy binder types pervasively).
+        let dummy_abs = Term::abs("x", Typ::dummy(), Term::Bound(0));
+        let nat_abs = Term::abs("y", Typ::base("nat"), Term::Bound(0));
+        assert!(Hyps::alpha_eq(&dummy_abs, &nat_abs), "dummy binder should match any type");
+        assert!(Hyps::alpha_eq(&nat_abs, &dummy_abs), "symmetric dummy match failed");
+        // And two identical known types still match.
+        let nat_abs2 = Term::abs("z", Typ::base("nat"), Term::Bound(0));
+        assert!(Hyps::alpha_eq(&nat_abs, &nat_abs2));
     }
 }

@@ -46,6 +46,20 @@ pub struct Thm {
 - 禁止用 `ThmKernel::assume` 把未证明的命题伪装成已证 — 用 `admit`
 - 详见 [docs/TRUST.md](../../docs/TRUST.md)
 
+## T2 规则可靠 — 铁律 (v2.2.0)
+
+- **`tpairs`/`shyps` 必须并集传播** — 多前提规则用 `union_tpairs`/`union_shyps`,
+  单前提 `clone`。当前恒空,但接入完整高阶合一后丢弃会不可靠。
+- **`alpha_eq` Branch A/B 是承重的真实可靠性洞,禁止在内核直接收紧**:
+  - Branch A `Free≡Const` 后缀匹配 (`thm.rs:219`) — 弥合 parser/loader 表示鸿沟
+  - Branch B `Var≡Free` (`thm.rs:225`) — DB schematic 定理靠此匹配 parser 的 Free
+  - **正确修复在解析边界** (certify_annotated 把 Free 解析为 Const + hol_loader
+    mk_var→Term::free),不在内核。直接收紧会击穿算术证明链 → Tier2 暴跌。见 T2-4。
+- **`alpha_eq` Branch C 已加 binder 类型守卫** (`thm.rs:231`) — dummy 容忍,
+  已知不同类型拒绝。`λ(x:nat).x ≢ λ(x:bool).x`。
+- **`combination` 是 congruence 规则** — 对任意类型逻辑可靠;dummy 时跳过类型检查
+  是 well-formedness 取舍,非 bug。类型已知时拒绝不匹配。
+
 ## 模式: 类型感知等值
 
 ```rust

@@ -34,7 +34,7 @@
 | 性质 | 含义 | 达成度 |
 |:--:|------|:--:|
 | **T1 不可伪造** | 获得 `Thm` 的唯一途径是内核推理规则;无 `pub` 后门、无 `unsafe` 伪造 | 🟡 ~90% |
-| **T2 规则可靠** | 15 条内核规则各自正确执行推理,强制全部边条件 | 🟠 进行中 |
+| **T2 规则可靠** | 15 条内核规则各自正确执行推理,强制全部边条件 | 🟡 部分 (tpairs/shyps+Branch C 已修, A/B 延后) |
 | **T3 信任可追溯** | 任何未经证明就接受的东西(oracle/sorry/admitted)记录在 `Thm` 的信任足迹中,并随推导传播 | ✅ **已达成** |
 | **T4 可独立复检** | 独立最小检查器能重放证明项、确认定理 | 🔴 ~30% (死代码) |
 
@@ -126,17 +126,21 @@ pub struct Thm {
 伪装成"已推导"(如 `conj_intr` 忽略输入定理直接 `assume`)。需降为 `pub(crate)` 或
 改为显式 oracle。详见 GAP_ANALYSIS。
 
-### T2 规则可靠(进行中)
+### T2 规则可靠(进行中 — v2.2.0 部分达成)
 
-内核审计发现的真实可靠性缺口,逐条修复 + 回归测试:
+内核审计 + kernel-reviewer 复核发现的可靠性缺口,逐条修复 + 回归测试:
 
-| 缺口 | 位置 | 风险 | 状态 |
-|------|------|:--:|:--:|
-| `tpairs`/`shyps` 被 12 条规则丢弃 | `thm.rs` | flex-flex / sort 约束静默消失 | 🟠 待修 |
-| `alpha_eq` 混同 `Free`/`Var`/`Const` | `thm.rs:219` | schematic 变量误匹配自由变量 | 🟠 待修 |
-| `combination` 在 `Typ::dummy()` 时跳过类型检查 | `thm.rs` | 类型不安全的组合 | 🟠 待修 |
+| 缺口 | 位置 | 真实性质 | 状态 |
+|------|------|------|:--:|
+| `tpairs`/`shyps` 被 12 条规则丢弃 | `thm.rs` | **潜在**:当前引擎不产生 flex-flex/sort 约束 (恒空), 故无现行不可靠; 接入完整高阶合一后会咬人 | ✅ **已修** (并集传播, 零行为风险) |
+| `combination` 在 `Typ::dummy()` 时跳过类型检查 | `thm.rs:669` | **非 bug**:combination 是 congruence 规则, 对任意类型逻辑可靠; 类型检查只是 well-formedness 守卫, dummy 时无从检查 | ✅ **已澄清+测试** (类型已知时拒绝不匹配) |
+| `alpha_eq` Branch C — `Abs` 忽略 binder 类型 | `thm.rs:231` | **潜在真洞**:`λ(x:nat).x ≡ λ(x:bool).x` 一旦 type_annotate 标注 binder 即可被误同一 | ✅ **已修** (binder 类型守卫, dummy 容忍) |
+| `alpha_eq` Branch A — `Free≡Const` 后缀匹配 | `thm.rs:219` | **真洞但承重**:弥合 parser (`Free("zero")`) 与 loader (`Const("Groups.zero")`) 表示鸿沟; 直接收紧会击穿算术证明链 | 🔴 **延后 (T2-4)** |
+| `alpha_eq` Branch B — `Var≡Free` 忽略 index | `thm.rs:225` | **真洞但承重**:DB 全部 schematic 定理用 `Term::var`, 靠此匹配 parser 的 `Free`; 直接移除会击穿整个证明管线 | 🔴 **延后 (T2-4)** |
 
-每条修复需配一个"修复前能伪造假定理、修复后被拒"的回归测试。
+**关键认知(kernel-reviewer 复核结论):** Branch A/B 是真实可靠性洞,但**正确的修复在解析边界,不在内核** —— 应在 `CTerm::certify_annotated` / parser 把 `Free("zero")` 解析为 `Const("Groups.zero")`,并把 hol_loader 的 `mk_var` 改为 `Term::free`(对齐已正确的 `nat.induct` 设计),然后才能安全收紧 `alpha_eq`。直接在内核收紧会让 Tier2 真实证明率暴跌。这是 T2-4 的独立工程(数天),不是内核小改。
+
+**v2.2.0 已修:** tpairs/shyps 并集传播 + Branch C binder 类型守卫 + combination 文档化/测试。每项配回归测试(`test_shyps_*`、`test_alpha_eq_*`、`test_combination_*`),core 125/125 不回退。
 
 ### T4 可独立复检(北极星,~30%)
 
