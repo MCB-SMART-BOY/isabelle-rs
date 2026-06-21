@@ -33,7 +33,7 @@
 
 | 性质 | 含义 | 达成度 |
 |:--:|------|:--:|
-| **T1 不可伪造** | 获得 `Thm` 的唯一途径是内核推理规则;无 `pub` 后门、无 `unsafe` 伪造 | 🟡 ~90% |
+| **T1 不可伪造** | 获得 `Thm` 的唯一途径是内核推理规则;无 `pub` 后门、无 `unsafe` 伪造 | ✅ ~98% (后门已收口) |
 | **T2 规则可靠** | 15 条内核规则各自正确执行推理,强制全部边条件 | 🟡 部分 (tpairs/shyps+Branch C 已修, A/B 延后) |
 | **T3 信任可追溯** | 任何未经证明就接受的东西(oracle/sorry/admitted)记录在 `Thm` 的信任足迹中,并随推导传播 | ✅ **已达成** |
 | **T4 可独立复检** | 独立最小检查器能重放证明项、确认定理 | 🔴 ~30% (死代码) |
@@ -119,12 +119,19 @@ pub struct Thm {
 
 ## 五、T1 / T2 / T4 现状与计划
 
-### T1 不可伪造 (~90%)
+### T1 不可伪造 (~98% — v2.2.0 后门已收口)
 
 ✅ `Thm` 字段私有,`PartialEq/Eq` derive,无 `pub` 字段后门。
-🟡 **待办**:`src/hol/hol_rules.rs`、`hol_consts.rs` 中若干 `pub fn` 产出 `P ⊢ P` 却
-伪装成"已推导"(如 `conj_intr` 忽略输入定理直接 `assume`)。需降为 `pub(crate)` 或
-改为显式 oracle。详见 GAP_ANALYSIS。
+✅ **假定理后门已收口**:`hol_rules.rs`(11 个连接词 stub)、`hol_consts.rs`(3 个)、
+`core/conjunction.rs`(2 个)中那些"产出结论形状却不从前提推导"的函数,过去用
+`ThmKernel::assume` 伪装成已证。现已:(1) 全部改用 `ThmKernel::admit(ct, "...:STUB")`,
+使结果 `!is_fully_proved()` 且污点传播;(2) 降为 `pub(crate)`,无法泄漏出 crate。
+真实推导(`mp`/`all_intr`/`all_elim`/`true_intr` 委托内核)保持 `pub`。
+全 src 扫描确认:**无任何 `pub fn` 返回 `assume(结论)` 伪装成已推导的定理**。
+机器可检不变式:`test_stubs_are_admitted_not_proved` 等断言 stub 输出带 oracle 标记。
+
+🟡 剩余 ~2%:`assume` 在证明引擎里仍广泛用于**合法**的目标/前提初始化(`P ⊢ P` 正是
+待证目标的形态),这是正确的 LCF 惯用法,非伪造。
 
 ### T2 规则可靠(进行中 — v2.2.0 部分达成)
 

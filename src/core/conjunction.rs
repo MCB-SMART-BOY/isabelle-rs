@@ -27,22 +27,29 @@ pub fn dest_conjunction(term: &Term) -> Option<(&Term, &Term)> {
 }
 
 /// Conjunction introduction: from `Γ ⊢ A` and `Γ ⊢ B`, derive `Γ ⊢ A &&& B`.
-pub fn conj_intr(thm1: &Thm, thm2: &Thm) -> Thm {
+///
+/// **Stub (T1):** this constructs the shape `A &&& B` but does not derive it
+/// from `thm1`/`thm2`; it is admitted via `ThmKernel::admit` so the result is
+/// not `is_fully_proved()`. `pub(crate)` — placeholder pending a real
+/// derivation (`A ⟹ B ⟹ A` discharged from the two premises). Unused today.
+pub(crate) fn conj_intr(thm1: &Thm, thm2: &Thm) -> Thm {
     let a = thm1.prop().term().clone();
     let imp = Pure::mk_implies(a.clone(), Pure::mk_implies(thm2.prop().term().clone(), a));
     let ct = CTerm::certify(imp);
-    ThmKernel::assume(ct)
+    ThmKernel::admit(ct, "conjunction:STUB")
 }
 
 /// Conjunction elimination (left projection): `Γ ⊢ A &&& B` → `Γ ⊢ A`.
-pub fn conj_elim1(thm: &Thm) -> Option<Thm> {
+///
+/// **Stub (T1):** admitted, not derived (see `conj_intr`). `pub(crate)`.
+pub(crate) fn conj_elim1(thm: &Thm) -> Option<Thm> {
     let (a, _b) = dest_conjunction(thm.prop().term())?;
     let imp = Pure::mk_implies(
         a.clone(),
         Pure::mk_implies(Term::const_("B", Typ::base("prop")), a.clone()),
     );
     let ct = CTerm::certify(imp);
-    Some(ThmKernel::assume(ct))
+    Some(ThmKernel::admit(ct, "conjunction:STUB"))
 }
 
 // =========================================================================

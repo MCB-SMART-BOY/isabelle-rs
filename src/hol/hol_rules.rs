@@ -3,6 +3,18 @@
 //! These rules operate at the HOL (object logic) level, built on
 //! top of Pure's meta-logic (!!, ==>, ==).
 //!
+//! ## Trust status (T1)
+//!
+//! `mp`, `all_intr`, `all_elim` are **genuine** — they delegate to the LCF
+//! kernel (`ThmKernel`). Every other rule here is an **unsound stub**: it
+//! constructs the *shape* of the conclusion but does not actually derive it
+//! from its premises. To keep the kernel honest (it must be impossible to
+//! forge a "proved" theorem), these stubs route through `ThmKernel::admit`
+//! with the oracle tag `"hol_rules:STUB"`. Any theorem produced by them is
+//! therefore **not** `is_fully_proved()`, and that taint propagates. They are
+//! `pub(crate)` so they cannot leak outside this crate, and exist only as
+//! placeholders pending real HOL-level derivations.
+//!
 //! ## Coverage
 //!
 //! | Connective | Introduction | Elimination |
@@ -23,25 +35,29 @@ use crate::core::{
 };
 use crate::hol::hologic;
 
+/// Oracle tag for the unsound connective stubs below. A theorem carrying this
+/// tag was NOT derived from its premises — it was admitted (see module docs).
+const STUB_ORACLE: &str = "hol_rules:STUB";
+
 // =========================================================================
 // Conjunction (∧)
 // =========================================================================
 
-pub fn conj_intr(thm_p: &Thm, thm_q: &Thm) -> Thm {
+pub(crate) fn conj_intr(thm_p: &Thm, thm_q: &Thm) -> Thm {
     let p = thm_p.prop().term().clone();
     let q = thm_q.prop().term().clone();
     let conj = hologic::mk_Trueprop(hologic::mk_conj(p, q));
-    ThmKernel::assume(CTerm::certify(conj))
+    ThmKernel::admit(CTerm::certify(conj), STUB_ORACLE)
 }
 
-pub fn conj_elim1(thm_conj: &Thm) -> Thm {
+pub(crate) fn conj_elim1(thm_conj: &Thm) -> Thm {
     let p = extract_left(thm_conj.prop().term());
-    ThmKernel::assume(CTerm::certify(p.clone()))
+    ThmKernel::admit(CTerm::certify(p.clone()), STUB_ORACLE)
 }
 
-pub fn conj_elim2(thm_conj: &Thm) -> Thm {
+pub(crate) fn conj_elim2(thm_conj: &Thm) -> Thm {
     let q = extract_right(thm_conj.prop().term());
-    ThmKernel::assume(CTerm::certify(q.clone()))
+    ThmKernel::admit(CTerm::certify(q.clone()), STUB_ORACLE)
 }
 
 fn extract_left(term: &Term) -> &Term {
@@ -65,34 +81,35 @@ fn extract_right(term: &Term) -> &Term {
 // Disjunction (∨)
 // =========================================================================
 
-pub fn disj_intr1(thm_p: &Thm, q: &Term) -> Thm {
+pub(crate) fn disj_intr1(thm_p: &Thm, q: &Term) -> Thm {
     let p = thm_p.prop().term().clone();
     let disj = hologic::mk_Trueprop(hologic::mk_disj(p, q.clone()));
-    ThmKernel::assume(CTerm::certify(disj))
+    ThmKernel::admit(CTerm::certify(disj), STUB_ORACLE)
 }
 
-pub fn disj_intr2(p: &Term, thm_q: &Thm) -> Thm {
+pub(crate) fn disj_intr2(p: &Term, thm_q: &Thm) -> Thm {
     let q = thm_q.prop().term().clone();
     let disj = hologic::mk_Trueprop(hologic::mk_disj(p.clone(), q));
-    ThmKernel::assume(CTerm::certify(disj))
+    ThmKernel::admit(CTerm::certify(disj), STUB_ORACLE)
 }
 
-pub fn disj_elim(_thm_disj: &Thm, _thm_pr: &Thm, _thm_qr: &Thm) -> Thm {
+pub(crate) fn disj_elim(_thm_disj: &Thm, _thm_pr: &Thm, _thm_qr: &Thm) -> Thm {
     let r = _thm_qr.prop().term().clone();
-    ThmKernel::assume(CTerm::certify(r))
+    ThmKernel::admit(CTerm::certify(r), STUB_ORACLE)
 }
 
 // =========================================================================
 // Implication (⟶)
 // =========================================================================
 
-pub fn imp_intr(thm_p: &CTerm, thm_q: &Thm) -> Thm {
+pub(crate) fn imp_intr(thm_p: &CTerm, thm_q: &Thm) -> Thm {
     let p = thm_p.term().clone();
     let q = thm_q.prop().term().clone();
     let imp = Pure::mk_implies(p, q);
-    ThmKernel::assume(CTerm::certify(imp))
+    ThmKernel::admit(CTerm::certify(imp), STUB_ORACLE)
 }
 
+/// **Genuine**: delegates to the kernel's `implies_elim` (modus ponens).
 pub fn mp(thm_imp: &Thm, thm_p: &Thm) -> Result<Thm, KernelError> {
     ThmKernel::implies_elim(thm_imp, thm_p)
 }
@@ -101,23 +118,25 @@ pub fn mp(thm_imp: &Thm, thm_p: &Thm) -> Result<Thm, KernelError> {
 // Negation (¬)
 // =========================================================================
 
-pub fn not_intr(_thm_pf: &Thm) -> Thm {
+pub(crate) fn not_intr(_thm_pf: &Thm) -> Thm {
     let not_p = hologic::mk_Trueprop(hologic::mk_not(Term::const_("P", Typ::base("bool"))));
-    ThmKernel::assume(CTerm::certify(not_p))
+    ThmKernel::admit(CTerm::certify(not_p), STUB_ORACLE)
 }
 
-pub fn not_elim(_thm_not_p: &Thm, _thm_p: &Thm, goal: CTerm) -> Thm {
-    ThmKernel::assume(goal)
+pub(crate) fn not_elim(_thm_not_p: &Thm, _thm_p: &Thm, goal: CTerm) -> Thm {
+    ThmKernel::admit(goal, STUB_ORACLE)
 }
 
 // =========================================================================
 // Universal quantifier (∀)
 // =========================================================================
 
+/// **Genuine**: delegates to the kernel's `forall_intr`.
 pub fn all_intr(x_name: &str, x_typ: Typ, thm: &Thm) -> Result<Thm, KernelError> {
     ThmKernel::forall_intr(x_name, x_typ, thm)
 }
 
+/// **Genuine**: delegates to the kernel's `forall_elim`.
 pub fn all_elim(ct: CTerm, thm: &Thm) -> Result<Thm, KernelError> {
     ThmKernel::forall_elim(ct, thm)
 }
@@ -126,18 +145,18 @@ pub fn all_elim(ct: CTerm, thm: &Thm) -> Result<Thm, KernelError> {
 // Existential quantifier (∃)
 // =========================================================================
 
-pub fn ex_intr(_x_name: &str, _thm_pt: &Thm) -> Thm {
+pub(crate) fn ex_intr(_x_name: &str, _thm_pt: &Thm) -> Thm {
     let ex = hologic::mk_Trueprop(hologic::mk_exists(
         "x",
         Typ::base("nat"),
         Term::const_("P", Typ::base("bool")),
     ));
-    ThmKernel::assume(CTerm::certify(ex))
+    ThmKernel::admit(CTerm::certify(ex), STUB_ORACLE)
 }
 
-pub fn ex_elim(_thm_ex: &Thm, _thm_pq: &Thm) -> Thm {
+pub(crate) fn ex_elim(_thm_ex: &Thm, _thm_pq: &Thm) -> Thm {
     let q = _thm_pq.prop().term().clone();
-    ThmKernel::assume(CTerm::certify(q))
+    ThmKernel::admit(CTerm::certify(q), STUB_ORACLE)
 }
 
 // =========================================================================
@@ -181,6 +200,10 @@ mod tests {
         let thm_q = ThmKernel::assume(q);
         let conj = conj_intr(&thm_p, &thm_q);
         assert!(conj.prop().term().is_app());
+        // T1: connective stubs are admitted, NOT genuine proofs — they must
+        // carry the oracle tag so their use is exposed in the trust footprint.
+        assert!(!conj.is_fully_proved(), "conj_intr stub must be admitted, not proved");
+        assert_eq!(&*conj.oracles()[0], STUB_ORACLE);
     }
 
     #[test]
