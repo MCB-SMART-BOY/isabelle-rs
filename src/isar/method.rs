@@ -3459,6 +3459,67 @@ pub fn verify_file(source: &str) -> (usize, usize) {
     HolTheoremDb::with_override(&local_db, || verify_lemmas_batch(&lemmas))
 }
 
+/// Per-lemma verification diagnostic: same setup as `verify_file`, but returns
+/// `(name, proof_script, is_proved)` for every attempted lemma instead of a
+/// count. Used to analyze which admitted lemmas the prover cannot yet close.
+///
+/// `is_proved` is derived from the T3 trust footprint (`Thm::is_fully_proved()`),
+/// so it reflects genuine proofs vs `admit`ted fallbacks.
+pub fn verify_file_diagnostic(source: &str) -> Vec<(String, String, bool)> {
+    use crate::hol::hol_loader::HolTheoremDb;
+    let empty_db = HolTheoremDb::new();
+    let lemmas =
+        HolTheoremDb::with_override(&empty_db, || crate::hol::hol_loader::parse_lemmas(source));
+    let mut local_db = HolTheoremDb::from_lemmas(&lemmas);
+    HolTheoremDb::add_builtins(&mut local_db);
+    let core = load_core_simpset();
+    for thm in &core.simps {
+        local_db.simps.push(Arc::clone(thm));
+    }
+    for (attr, thms) in &core.attrs_index {
+        local_db.attrs_index.entry(attr.clone()).or_default().extend(thms.iter().map(Arc::clone));
+    }
+    AUTO_LIMIT.with(|c| {
+        if c.get() >= 100 {
+            let auto_max = if lemmas.len() > 500 {
+                50
+            } else if lemmas.len() > 200 {
+                80
+            } else {
+                200
+            };
+            c.set(auto_max);
+        }
+    });
+    PROOF_SEARCH_BUDGET.with(|c| c.set(200));
+
+    HolTheoremDb::with_override(&local_db, || {
+        LOCAL_THEOREM_INDEX.with(|idx| {
+            let mut map = idx.borrow_mut();
+            map.clear();
+            for lem in &lemmas {
+                if !lem.name.is_empty() {
+                    map.insert(lem.name.clone(), Arc::clone(&lem.theorem));
+                }
+            }
+        });
+        let mut out = Vec::new();
+        for lem in &lemmas {
+            if lem.proof_script.is_none() {
+                continue;
+            }
+            let script = lem.proof_script.clone().unwrap_or_default();
+            let proved = verify_lemma(lem).is_some_and(|thm| {
+                thm.is_fully_proved()
+                    && LAST_OUTCOME.with(|c| c.get()) != VerifyOutcome::AxiomAccepted
+            });
+            out.push((lem.name.clone(), script, proved));
+        }
+        LOCAL_THEOREM_INDEX.with(|idx| idx.borrow_mut().clear());
+        out
+    })
+}
+
 /// Verify lemmas with local index for same-file definitions.
 /// Checks `VERIFY_DEADLINE` before each lemma — returns partial results if exceeded.
 pub fn verify_lemmas_batch(lemmas: &[ParsedLemma]) -> (usize, usize) {

@@ -1346,9 +1346,44 @@ fn capture_proof(lines: &[&str], pos: usize) -> (Option<String>, usize) {
             i += 1;
         }
         (Some(proof), lines_consumed)
-    } else if t.starts_with("apply") || t.starts_with("proof") {
-        // For apply/proof scripts, just capture the first line for now
+    } else if t.starts_with("apply") {
+        // For apply scripts, just capture the first line for now.
         (Some(t.to_string()), 1)
+    } else if t.starts_with("proof") {
+        // Capture the FULL structured proof block: from `proof ...` to its
+        // matching `qed`, tracking nested proof/qed pairs. Previously only the
+        // first line (`proof -`) was captured, so the body (obtain/moreover/
+        // ultimately/show ...) was discarded and the lemma could never replay
+        // — it was admitted. The interpreter handles these commands, so giving
+        // it the whole block lets such lemmas be genuinely proved.
+        let mut block: Vec<String> = vec![t.to_string()];
+        let mut depth = 1usize; // we're inside one `proof`
+        let mut i = pos + 1;
+        let mut lines_consumed = 1usize;
+        while i < lines.len() {
+            let cont_trim = lines[i].trim();
+            lines_consumed += 1;
+            block.push(cont_trim.to_string());
+            // Nesting: a nested `proof` opens a level, `qed` closes one.
+            // `by`/`.`/`..` terminating a sub-goal do not change block depth.
+            if cont_trim == "proof"
+                || cont_trim.starts_with("proof ")
+                || cont_trim.starts_with("proof(")
+            {
+                depth += 1;
+            } else if cont_trim == "qed" || cont_trim.starts_with("qed ") {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            i += 1;
+            // Safety bound: don't run away on a malformed/unterminated block.
+            if lines_consumed > 400 {
+                break;
+            }
+        }
+        (Some(block.join("\n")), lines_consumed)
     } else {
         (None, 0)
     }
