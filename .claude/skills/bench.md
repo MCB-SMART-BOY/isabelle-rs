@@ -42,7 +42,7 @@ cargo test --test proptest
 | `core::thm` | 12 pass | LCF kernel |
 | `cargo check --lib` | **0 warnings** | Required per SOP |
 | `test_verify_all_core_files` | **5/5 files, 125/125 (100%)** | Core verification |
-| `tier2_verify` | **97/97 files, 3821/3821 (100%)** | 178s (3.0 min) |
+| `tier2_verify` | **97/97 files; 真实证明率 85.8% (3277/3821 proved, 544 admitted)** | 178s (3.0 min) |
 | `--lib` full | 700+ pass | 1 known skip (ctr_sugar) |
 
 ## Quick Sanity Check

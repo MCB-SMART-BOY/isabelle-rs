@@ -147,6 +147,11 @@ mod tier2_verify {
         let mut processed = 0usize;
         let mut timed_out = 0usize;
 
+        // Honest proof-rate instrumentation: distinguish lemmas closed by a real
+        // proof from lemmas accepted as axioms when the proof engine could not
+        // replay their script. `verify_lemma` returns Some for both.
+        method::reset_verify_stats();
+
         eprintln!("\n╔══════════════════════════════════════════════╗");
         eprintln!("║   Tier 2 — Extended HOL Verification        ║");
         eprintln!("║   Per-file deadlines enforced by VERIFY_DEADLINE ║");
@@ -187,11 +192,17 @@ mod tier2_verify {
             let deadline = Instant::now() + std::time::Duration::from_secs(*timeout_secs);
             method::set_verify_deadline(deadline);
 
+            let stats_before = method::verify_stats();
             let result =
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| verify_file(&source)));
 
             // Clear deadline for next file
             method::clear_verify_deadline();
+
+            // Per-file proved/accepted delta (axiom-accepted lemmas are NOT real proofs).
+            let stats_after = method::verify_stats();
+            let proved_delta = stats_after.0.saturating_sub(stats_before.0);
+            let accepted_delta = stats_after.1.saturating_sub(stats_before.1);
 
             let elapsed = start.elapsed();
             let elapsed_secs = elapsed.as_secs_f64();
@@ -224,7 +235,7 @@ mod tier2_verify {
                         "⚪"
                     };
                     eprintln!(
-                        "  {}{} {:>23} — {:>4}/{:<4} ({:>5.1}% ok, {:>5.1}% attempted{}) in {:>5.1}s",
+                        "  {}{} {:>23} — {:>4}/{:<4} ({:>5.1}% ok, {:>5.1}% attempted{}) [proved {} / axiom {}] in {:>5.1}s",
                         icon,
                         timeout_flag,
                         name,
@@ -233,6 +244,8 @@ mod tier2_verify {
                         rate,
                         attempted_pct,
                         partial_flag,
+                        proved_delta,
+                        accepted_delta,
                         elapsed_secs
                     );
                     total_verified += v;
@@ -266,6 +279,23 @@ mod tier2_verify {
             total_time
         );
         eprintln!("  Files with lemmas: {}  |  Timed out: {}", ok_count, timed_out);
+        eprintln!("───────────────────────────────────────────────");
+
+        // Honest breakdown: of everything counted as "verified", how many were
+        // closed by a real proof vs accepted as axioms (statement trusted, no proof).
+        let (proved, accepted) = method::verify_stats();
+        let real_total = proved + accepted;
+        let proved_pct =
+            if real_total > 0 { (proved as f64 / real_total as f64) * 100.0 } else { 0.0 };
+        eprintln!(
+            "  REAL PROOF RATE: {}/{} lemmas genuinely proved ({:.1}%)",
+            proved, real_total, proved_pct
+        );
+        eprintln!(
+            "  Axiom-accepted (NOT proved): {} lemmas ({:.1}%)",
+            accepted,
+            100.0 - proved_pct
+        );
         eprintln!("───────────────────────────────────────────────\n");
 
         assert!(processed > 0, "No Tier 2 files processed!");

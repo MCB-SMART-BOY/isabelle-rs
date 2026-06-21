@@ -9,25 +9,24 @@ version: 2.0
 > **用 Rust 重写 Isabelle，打造更程序员友好的证明助手。**
 > LCF trusted kernel + higher-order unification + Isar proof language.
 
-## 项目状态 (v2.1.5)
+## 项目状态 (v2.2.0)
 
 | 指标 | 值 |
 |------|-----|
-| 内核 | 15 ops + tpairs/shyps, 0 `Typ::dummy()` fallback |
+| 内核 | 15 ops + tpairs/shyps + **oracle 信任足迹 (T3)**, 不可伪造 Thm |
+| **信任模型** | ✅ **T3**: `is_fully_proved()`/`oracles()` + `ThmKernel::admit`, 见 docs/TRUST.md |
 | 证明引擎 | Isar state machine (3 modes) + 27 proof methods |
 | 经典推理器 | best/depth/dup_step + three-stage safe rules |
 | HOL 简化器 | Conditional rewriting + solver plugins + Cached Simplifier |
 | Metis | Given-clause resolution + HOL.eq paramodulation + ∃-skolemization |
-| **Tier2** | **97/97 files 100% (3821/3821), 178s** |
+| **Tier2 真实证明率** | **85.8% (3277/3821 proved, 544 admitted), 178s** |
 | Core | 5/5 files 100% (125/125) |
 | 编译 | 0 warnings |
 | IsarProof | Arc<IsarContext> shared context, auto_exec DFS stack |
 | 模块 | core (33), isar (19), hol (22), theory (8) + tools/server/lsp |
 | 代码 | ~55K Rust LOC, 124+ files |
-| 测试 | 700+ (638 lib + 76 integration) |
-| **Core 验证** | **5/5 files, 125/125 (100%)** |
-| **Tier2 验证** | **97/97 files, 3821/3821 (100%), 178s** |
-| 编译 | 0 warnings |
+| 测试 | 700+ (642 lib + 76 integration), 含 4 信任足迹测试 |
+| **战略** | 放弃追广度, 押注「内核可信 + 片段深度」; 可信路线 A 先行 B 北极星 |
 
 ## 铁律 (15)
 

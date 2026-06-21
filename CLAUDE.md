@@ -11,11 +11,12 @@
 - **`dev`** — 开发分支。所有日常修改在此进行。功能完成后通过 PR 合并到 `main`。
 - **工作流**: `dev` 上开发 → 测试通过 → PR → `main` → 打 tag 发布
 
-## Project State (v2.1.5)
+## Project State (v2.2.0)
 
 | Metric | Value |
 |--------|-------|
-| Kernel | 15 ops + tpairs/shyps, 100% Isabelle-equivalent, 0 `Typ::dummy()` fallback |
+| Kernel | 15 ops + tpairs/shyps + **oracle trust footprint (T3)**, unforgeable Thm |
+| **Trust Model** | ✅ **T3 done**: `Thm::is_fully_proved()`/`oracles()`, `ThmKernel::admit`, union-propagated. See [docs/TRUST.md](docs/TRUST.md) |
 | Proof Engine | Isar state machine (3 modes) + 27 proof methods |
 | Classical Reasoner | best/depth/dup_step + three-stage safe rules |
 | Arithmetic | Fourier-Motzkin variable elimination (nat/int linear) |
@@ -33,12 +34,33 @@
 | **deadline** | ✅ VERIFY_DEADLINE (7 checkpoints) + PROOF_SEARCH_BUDGET |
 | Code | ~55K Rust LOC, 124+ files |
 | Toolchain | Rust 1.96.0 stable (edition 2024) |
-| Tests | 700+ (638 lib + 76 integration) |
-| Verification | **Core 5/5 files 100% (125/125)**, **Tier2 97/97 files 100% (3821/3821)** |
-| Time | Tier2 178s (3.0 min) — CI 26/26 ✅ |
+| Tests | 700+ (642 lib + 76 integration), incl. 4 trust-footprint tests |
+| **Verification** | **Core 5/5 100% (125/125)**; **Tier2 真实证明率 85.8% (3277/3821 proved, 544 admitted)** |
+| Time | Tier2 178s (3.0 min) — CI ✅ |
 | isabelle-source | ✅ Isabelle 2025 full distribution (364MB, 1,473 .thy files) |
 
-## Active Strategy: v2.1.5
+## 战略定位 (v2.2.0)
+
+**取舍:放弃追赶 Isabelle 的广度,押注「内核可信 + 片段深度」。**
+Isabelle 本体 ~138 万行 (758 .ML + 1843 .thy + 356 .scala),其中 97.6 万行是
+30 年积累的理论库(Analysis/Algebra/Probability...),无法也无需复刻。差异化价值在于
+做一个干净、内存安全、**诚实可信**、错误信息友好的 Rust HOL 核。
+
+**可信路线:A 先行,B 为北极星** (见 [docs/TRUST.md](docs/TRUST.md))
+- **A 务实可信** = T1 不可伪造 + T2 规则可靠 + T3 信任可追溯。系统永不说谎。
+- **B 完全可信** = A + T4 独立证明项复检 (de Bruijn)。
+
+| 阶段 | 内容 | 状态 |
+|------|------|:--:|
+| T3 信任足迹 | `Thm` oracle 追踪 + `admit` 入口 + 真实证明率仪表 | ✅ 已达成 |
+| T2 内核加固 | tpairs/shyps 并集传播 ✅ + alpha_eq Branch C binder 守卫 ✅ + combination 文档化/测试 ✅ | 🟡 部分 (A/B 延后→T2-4) |
+| T1 不可伪造 | hol_rules(11)/hol_consts(3)/conjunction(2) 假定理后门 → admit 标记 + pub(crate) ✅ | ✅ 已达成 |
+| **路线 A 务实可信** | T1 + T2(部分) + T3 — 系统永不说谎 | ✅ **基本完成** |
+| T2-4 解析边界 | Free→Const 解析 + hol_loader mk_var→Term::free, 才能安全收紧 alpha_eq Branch A/B | 🔴 待办 (数天) |
+| 证明率攻坚 | 缩小 544 admitted (Rings 80 + Lattices_Big 63 + Complete_Lattices 25 ...) | 🟠 待办 |
+| T4 独立复检 | proofterm.rs check_proof 补完并接通 | 🔴 北极星 |
+
+## Active Strategy: v2.1.5 (历史)
 
 ```
 Route A ✅ Complete:
@@ -96,6 +118,8 @@ Phase 6-17 ✅ v2.1.5:
 17. **Commit messages in Chinese, NO Co-Authored-By** — 提交信息用中文。禁止添加 `Co-Authored-By:` 或任何形式的 AI 署名。所有 commit 由 MCB-SMART-BOY 提交。See `## Commit Rules` below.
 18. **All proof method entry points must check VERIFY_DEADLINE** — `auto_exec`, `exec_simp`, `exec_proof` fallback chains, and any function that triggers deep recursive proof search must check `VERIFY_DEADLINE` at entry. This prevents single slow lemmas (e.g., `by (simp add: field_simps)` without matched named_theorems) from hanging the entire verification. See `src/isar/method.rs` VERIFY_DEADLINE checks.
 19. **`dev` 上开发，`main` 为稳定发行** — 日常修改在 `dev` 分支。功能稳定后通过 PR 合并到 `main`。`main` 只接受来自 `dev` 的 PR，不直接在 `main` 上提交。
+20. **诚实证明率铁律 — 永不谎称证明** — 对外报告能力时,只引用 `Thm::is_fully_proved()` 派生的**真实证明率**(信任足迹为空),绝不引用"已处理 / verified"计数。证明引擎无法闭合的引理必须经 `ThmKernel::admit(ct, "admitted")` 接受为 oracle 定理,**禁止**用 `ThmKernel::assume` 伪装成已证。`admit` 是内核唯一的"接受而不证明"入口。见 [docs/TRUST.md](docs/TRUST.md)。
+21. **新增定理生成路径不得绕过信任足迹** — 任何产出 `Thm` 的代码,若它"接受命题而不真正推导"(如旧的 `generalize_thm`、`hol_rules` 连接词规则),必须经 `admit` 标记 oracle,使 `is_fully_proved()` 如实为 false。内核规则会自动并集传播 `oracles`,无需手动维护。
 
 ## Architecture
 

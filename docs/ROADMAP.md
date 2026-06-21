@@ -1,21 +1,24 @@
-# 开发路线图 v25.0 (v2.1.5 → v2.2.0)
+# 开发路线图 v26.0 (v2.2.0 信任工程 → 可信化)
 
-> **当前版本: v2.1.5 — CI 26/26 ✅, stable Rust 1.96.0, Tier2 97/97 178s
-> **下一目标: v2.2.0 — Tier2 扩展到 100+ files + 4 Library files 修复
+> **当前版本: v2.2.0 — T3 信任足迹达成, Tier2 真实证明率 85.8% (3277/3821), 178s**
+> **战略转向: 放弃追广度, 押注「内核可信 + 片段深度」。可信路线 A 先行, B 北极星。**
+> 见 [TRUST.md](TRUST.md)。
 
 ---
 
-## 总体策略
+## 总体策略 (v2.2.0 转向可信工程)
 
 ```
-v2.0.0 ✅ 当前版本: v2.1.4 — CI 26/26 ✅, stable Rust 1.96.0, Tier2 154s
-        ✅ Tier2 扩展: 36→57 files (21 new, +236 lemmas)
-        ✅ Isar 引擎优化 (get_premises ref, cached Simplifier)
-        ✅ Metis HOL.eq 参数调制 (dest_hol_equals)
-        ✅ Tier2: 57/57 files 100% (3195/3195, 553s)
-        ✅ Core: 5/5 files 125/125 (100%)
+诚实化 ✅ — 把"100% verified"虚高指标变成由类型系统保证的真实证明率
+  ✅ T3 信任足迹: Thm.oracles 随 15 规则并集传播
+  ✅ ThmKernel::admit — 唯一"接受而不证明"入口
+  ✅ Tier2 真实证明率: 85.8% (3277 proved / 544 admitted)
     ↓
-v2.1.4  IsarProof Arc 共享 + Metis skolemization + 7 个重度文件攻克
+可信化 (进行中) — A 先行 (T1+T2+T3), B 北极星 (+T4)
+  🟠 T2 内核加固: tpairs/shyps 传播 + alpha_eq 收紧 + combination 类型检查
+  🟠 T1 后门收口: hol_rules/hol_consts 假定理制造机
+  🟠 证明率攻坚: 缩小 544 admitted (Rings/Lattices_Big/Complete_Lattices)
+  🔴 T4 独立复检: proofterm.rs check_proof 补完并接通 (de Bruijn)
 ```
 
 ---
@@ -24,7 +27,8 @@ v2.1.4  IsarProof Arc 共享 + Metis skolemization + 7 个重度文件攻克
 
 | 版本 | 日期 | 状态 | 关键交付 |
 |------|------|:--:|------|
-| v2.1.5 | 2026-06-17 | ✅ current | Tier2 97/97 (3821/3821, +27 Library), 178s |
+| v2.2.0 | 2026-06-21 | ✅ current | **T3 信任足迹 + admit + 真实证明率 85.8% + 战略转向** |
+| v2.1.5 | 2026-06-17 | ✅ | Tier2 97/97 (3821/3821, +27 Library), 178s |
 | v2.1.4 | 2026-06-17 | ✅ | CI全绿 26/26, stable Rust 1.96.0, crates.io publish |
 | v2.1.2 | 2026-06-17 | ✅ | Isabelle-aligned depth, Tier2 70/70 154s, Metis ∃-skolemization |
 | v2.1.0 | 2026-06-17 | ✅ | IsarProof Arc, auto_exec 迭代化, Tier2 61/61 |

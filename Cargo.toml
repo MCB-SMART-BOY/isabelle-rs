@@ -1,9 +1,9 @@
 [package]
 name = "isabelle-rs"
-version = "2.1.5"
+version = "2.2.0"
 rust-version = "1.96.0"
 edition = "2024"
-description = "Isabelle proof assistant kernel and Isar proof engine, rewritten in Rust. 27 proof methods (including Metis, Meson), Route A stability-first: hologic + simpdata + args + spec + attribute system + Tier2 verification."
+description = "Isabelle proof assistant kernel and Isar proof engine, rewritten in Rust. LCF trusted kernel with oracle trust-footprint tracking (T3 de Bruijn honesty), 27 proof methods (Metis, Meson), Isar proof language. Honest real-proof-rate reporting."
 license = "Apache-2.0"
 repository = "https://github.com/MCB-SMART-BOY/isabelle-rs"
 documentation = "https://docs.rs/isabelle-rs"

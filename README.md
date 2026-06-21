@@ -2,8 +2,11 @@
 
 > **用 Rust 重写 Isabelle — 打造更程序员友好的证明助手**
 >
-> LCF trusted kernel · 27 proof methods · Isar proof language · Metis skolemization
-> **CI 26/26 ✅ · Rust 1.96.0 stable · Core 125/125 · Tier2 97/97 3821/3821 (100%) · 178s**
+> LCF trusted kernel · 信任足迹 (oracle 追踪) · 27 proof methods · Isar proof language
+> **CI ✅ · Rust 1.96.0 stable · Core 125/125 · Tier2 真实证明率 85.8% (3277/3821) · 178s**
+>
+> 🔒 **诚实承诺**:系统永不谎称证明。每个定理可查信任足迹,admitted 与 proved
+> 由类型系统区分。见 [docs/TRUST.md](docs/TRUST.md)。
 
 ---
 
@@ -12,10 +15,10 @@
 ```bash
 git clone https://github.com/MCB-SMART-BOY/isabelle-rs && cd isabelle-rs
 
-# 构建 (需要 Rust nightly)
+# 构建 (Rust 1.96.0 stable, edition 2024)
 cargo build
 
-# 内核测试
+# 内核测试 (含信任足迹测试)
 cargo test --lib core::thm
 
 # 完整测试
@@ -24,7 +27,7 @@ RUST_MIN_STACK=268435456 cargo test --lib
 # 核心验证 (5文件, 125定理)
 RUST_MIN_STACK=268435456 cargo test test_verify_all_core_files -- --nocapture
 
-# Tier2 扩展验证 (97文件, 3821定理, ~178s)
+# Tier2 扩展验证 (97文件, 报告真实证明率, ~178s)
 RUST_MIN_STACK=268435456 cargo test --test tier2_verify -- --nocapture
 ```
 
@@ -32,10 +35,16 @@ RUST_MIN_STACK=268435456 cargo test --test tier2_verify -- --nocapture
 
 ## 验证结果
 
-| 级别 | 文件数 | 定理数 | 验证率 | 时间 |
+> **"验证率" = 真实证明率** (`Thm::is_fully_proved()`,信任足迹为空)。
+> 处理但未证明的引理被 `admit` 为 oracle 定理,**不计入**证明率。
+
+| 级别 | 文件数 | 真证明 / 引理 | 真实证明率 | 时间 |
 |------|:-----:|:-----:|:-----:|:---:|
 | **Core (Tier1)** | 5/5 | 125/125 | 100% | ~35s |
-| **Tier2** | 97/97 | 3821/3821 | 100% | **178s** |
+| **Tier2** | 97/97 | **3277/3821** | **85.8%** | **178s** |
+
+剩余 14.2% (544 条) 是 admitted——证明引擎尚无法闭合,被诚实标记为 oracle 依赖。
+集中在 Rings/Lattices_Big/Complete_Lattices 等代数化简与大算子密集文件。
 
 ### Core 文件
 
@@ -76,7 +85,8 @@ Fraction_Field, Nonpos_Ints, Real_Mod, Transposition, Uprod, ...), +44 misc
 
 | 组件 | 状态 | 说明 |
 |------|:--:|------|
-| **LCF 内核** | ✅ | 15 操作 + tpairs/shyps, 0 `Typ::dummy()`, 100% Isabelle 等价 |
+| **LCF 内核** | ✅ | 15 操作 + tpairs/shyps + **oracle 信任足迹**, 不可伪造定理 |
+| **信任模型 (T3)** | ✅ | `Thm::is_fully_proved()` / `oracles()`, admitted 由类型系统标记并传播 |
 | **Isar 引擎** | ✅ | 三模式 (Forward/Chain/Backward), 30+ 命令, Arc<IsarContext> 共享 |
 | **27 证明方法** | ✅ | auto/blast/simp/fast/best/metis/meson/arith/induct... |
 | **经典推理器** | ✅ | best/depth/dup_step + 三阶段 safe rules + discrimination nets |
