@@ -313,6 +313,17 @@ pub struct Thm {
     /// sort constraints like `OFCLASS('a, order)`. These must be
     /// satisfied by the calling context.
     shyps: Vec<Sort>,
+    /// Oracle trust footprint (Isabelle's `oracles_of`).
+    ///
+    /// The set of *unproved* assertions this theorem ultimately depends on:
+    /// external oracles, `sorry`, or lemmas `admitted` by the verifier when
+    /// its proof engine could not replay the script. Propagated as a union
+    /// through every inference rule, exactly like `hyps`.
+    ///
+    /// **A theorem is genuinely proved iff this is empty.** This is the
+    /// machine-checkable backbone of the project's honesty guarantee (T3):
+    /// the `Thm` itself records whether it was proved or merely trusted.
+    oracles: Vec<Arc<str>>,
     derivation: Derivation,
     serial: u64,
 }
@@ -340,6 +351,23 @@ impl Thm {
     }
     pub fn has_oracles(&self) -> bool {
         matches!(self.derivation, Derivation::Oracle { .. })
+    }
+
+    /// The oracle trust footprint: the unproved assertions (oracles, `sorry`,
+    /// `admitted` lemmas) this theorem ultimately depends on. Empty for a
+    /// genuinely proved theorem.
+    pub fn oracles(&self) -> &[Arc<str>] {
+        &self.oracles
+    }
+
+    /// Whether this theorem was derived entirely by sound inference, with no
+    /// reliance on any oracle, `sorry`, or `admitted` lemma.
+    ///
+    /// This is the honest counterpart to "verified": a theorem can be
+    /// constructed (`Some(thm)`) yet not be `is_fully_proved()` if it was
+    /// admitted rather than proved.
+    pub fn is_fully_proved(&self) -> bool {
+        self.oracles.is_empty()
     }
     pub fn serial(&self) -> u64 {
         self.serial
@@ -419,9 +447,51 @@ fn new_serial() -> u64 {
 pub struct ThmKernel;
 
 impl ThmKernel {
-    // =================================================================
-    // Primitive: assume
-    // =================================================================
+    /// Union two oracle footprints, preserving uniqueness.
+    ///
+    /// Used by every multi-premise rule to propagate the trust footprint of
+    /// its premises into the conclusion, exactly as `hyps` are unioned.
+    fn union_oracles(a: &[Arc<str>], b: &[Arc<str>]) -> Vec<Arc<str>> {
+        if b.is_empty() {
+            return a.to_vec();
+        }
+        if a.is_empty() {
+            return b.to_vec();
+        }
+        let mut out = a.to_vec();
+        for o in b {
+            if !out.iter().any(|x| **x == **o) {
+                out.push(Arc::clone(o));
+            }
+        }
+        out
+    }
+
+    /// **Admit** `ct` as an oracle-backed theorem: `⊢ ct`, tagged with the
+    /// oracle `name`.
+    ///
+    /// This is the kernel's single, auditable entry point for accepting a
+    /// proposition *without proof* — the analogue of Isabelle's `sorry` and
+    /// oracle mechanism. The resulting theorem is NOT `is_fully_proved()`;
+    /// its `oracles()` footprint contains `name`, and that footprint
+    /// propagates into everything derived from it.
+    ///
+    /// The verifier's "accept as axiom when the engine cannot replay the
+    /// proof" fallback routes through here, so admitted lemmas are honestly
+    /// distinguishable from proved ones at the type level.
+    pub fn admit(ct: CTerm, name: &str) -> Thm {
+        let oracle: Arc<str> = Arc::from(name);
+        Thm {
+            hyps: Hyps::empty(),
+            prop: ct.clone(),
+            maxidx: ct.maxidx(),
+            tpairs: vec![],
+            shyps: vec![],
+            oracles: vec![oracle],
+            derivation: Derivation::Oracle { name: name.to_string(), prop: ct },
+            serial: new_serial(),
+        }
+    }
 
     /// **Assume** `ct`: `{ct} ⊢ ct`.
     ///
@@ -436,6 +506,7 @@ impl ThmKernel {
             maxidx: ct.maxidx(),
             tpairs: vec![],
             shyps: vec![],
+            oracles: vec![],
             derivation: Derivation::Axiom { name: "assume" },
             serial: new_serial(),
         }
@@ -465,6 +536,7 @@ impl ThmKernel {
             maxidx: ct.maxidx(),
             tpairs: vec![],
             shyps: vec![],
+            oracles: vec![],
             derivation: Derivation::Axiom { name: "reflexive" },
             serial: new_serial(),
         }
@@ -487,6 +559,7 @@ impl ThmKernel {
             maxidx: thm.maxidx,
             tpairs: thm.tpairs.clone(),
             shyps: thm.shyps.clone(),
+            oracles: thm.oracles.clone(),
             derivation: Derivation::Rule {
                 name: "symmetric",
                 premises: vec![ThmDeriv { serial: thm.serial, prop: thm.prop.clone() }],
@@ -527,6 +600,7 @@ impl ThmKernel {
                 sh.extend(thm2.shyps.clone());
                 sh
             },
+            oracles: Self::union_oracles(&thm1.oracles, &thm2.oracles),
             derivation: Derivation::Rule {
                 name: "transitive",
                 premises: vec![
@@ -580,6 +654,7 @@ impl ThmKernel {
             maxidx: usize::max(thm_f.maxidx, thm_x.maxidx),
             tpairs: vec![],
             shyps: vec![],
+            oracles: Self::union_oracles(&thm_f.oracles, &thm_x.oracles),
             derivation: Derivation::Rule {
                 name: "combination",
                 premises: vec![
@@ -624,6 +699,7 @@ impl ThmKernel {
             maxidx: thm.maxidx,
             tpairs: vec![],
             shyps: vec![],
+            oracles: thm.oracles.clone(),
             derivation: Derivation::Rule {
                 name: "abstraction",
                 premises: vec![ThmDeriv { serial: thm.serial, prop: thm.prop.clone() }],
@@ -661,6 +737,7 @@ impl ThmKernel {
             maxidx: ct.maxidx(),
             tpairs: vec![],
             shyps: vec![],
+            oracles: vec![],
             derivation: Derivation::Axiom { name: "beta_conversion" },
             serial: new_serial(),
         })
@@ -686,6 +763,7 @@ impl ThmKernel {
             maxidx: thm.maxidx,
             tpairs: vec![],
             shyps: vec![],
+            oracles: thm.oracles.clone(),
             derivation: Derivation::Rule {
                 name: "implies_intr",
                 premises: vec![ThmDeriv { serial: thm.serial, prop: thm.prop.clone() }],
@@ -714,6 +792,7 @@ impl ThmKernel {
             maxidx: usize::max(thm_imp.maxidx, thm_a.maxidx),
             tpairs: vec![],
             shyps: vec![],
+            oracles: Self::union_oracles(&thm_imp.oracles, &thm_a.oracles),
             derivation: Derivation::Rule {
                 name: "implies_elim",
                 premises: vec![
@@ -742,6 +821,7 @@ impl ThmKernel {
             maxidx: thm.maxidx,
             tpairs: vec![],
             shyps: vec![],
+            oracles: thm.oracles.clone(),
             derivation: Derivation::Rule {
                 name: "forall_intr",
                 premises: vec![ThmDeriv { serial: thm.serial, prop: thm.prop.clone() }],
@@ -760,6 +840,7 @@ impl ThmKernel {
             maxidx: usize::max(thm.maxidx, ct.maxidx()),
             tpairs: vec![],
             shyps: vec![],
+            oracles: thm.oracles.clone(),
             derivation: Derivation::Rule {
                 name: "forall_elim",
                 premises: vec![ThmDeriv { serial: thm.serial, prop: thm.prop.clone() }],
@@ -787,6 +868,7 @@ impl ThmKernel {
             maxidx: usize::max(thm.maxidx, env.maxidx()),
             tpairs: thm.tpairs.clone(),
             shyps: thm.shyps.clone(),
+            oracles: thm.oracles.clone(),
             derivation: Derivation::Rule {
                 name: "instantiate",
                 premises: vec![ThmDeriv { serial: thm.serial, prop: thm.prop.clone() }],
@@ -939,6 +1021,7 @@ impl ThmKernel {
             maxidx: usize::max(thm1.maxidx, thm2.maxidx),
             tpairs: vec![],
             shyps: vec![],
+            oracles: Self::union_oracles(&thm1.oracles, &thm2.oracles),
             derivation: Derivation::Rule {
                 name: "bicompose",
                 premises: vec![
@@ -983,6 +1066,7 @@ impl ThmKernel {
             maxidx: usize::max(state.maxidx, eq_thm.maxidx),
             tpairs: vec![],
             shyps: vec![],
+            oracles: Self::union_oracles(&state.oracles, &eq_thm.oracles),
             derivation: Derivation::Rule {
                 name: "subst_premise",
                 premises: vec![
@@ -1104,6 +1188,7 @@ impl ThmKernel {
             maxidx: usize::max(thm1.maxidx, thm2.maxidx),
             tpairs: vec![],
             shyps: vec![],
+            oracles: Self::union_oracles(&thm1.oracles, &thm2.oracles),
             derivation: Derivation::Rule {
                 name: "bicompose_eresolve",
                 premises: vec![
@@ -1440,5 +1525,75 @@ mod tests {
         let result = ThmKernel::instantiate(&env, &thm);
         // The var should be replaced by zero
         assert_eq!(result.prop().term(), &zero);
+    }
+
+    // =================================================================
+    // Trust footprint (T3): proved vs admitted must be distinguishable
+    // =================================================================
+
+    #[test]
+    fn test_proved_theorem_has_empty_oracle_footprint() {
+        // A theorem built purely by kernel rules carries no oracle.
+        let a = prop("A");
+        let thm = ThmKernel::trivial(a).unwrap();
+        assert!(thm.is_fully_proved());
+        assert!(thm.oracles().is_empty());
+    }
+
+    #[test]
+    fn test_admit_is_not_fully_proved() {
+        // admit() accepts a proposition without proof — it must be tagged.
+        let a = prop("A");
+        let thm = ThmKernel::admit(a.clone(), "admitted");
+        assert!(!thm.is_fully_proved());
+        assert_eq!(thm.oracles().len(), 1);
+        assert_eq!(&*thm.oracles()[0], "admitted");
+        assert!(thm.has_oracles());
+        // The conclusion is still the admitted proposition.
+        assert_eq!(thm.prop(), &a);
+    }
+
+    #[test]
+    fn test_oracle_footprint_propagates_through_rules() {
+        // An admitted equality, fed through a real kernel rule, must taint
+        // the result: trust is contagious and never silently dropped.
+        let t = CTerm::certify(Term::const_("t", Typ::base("nat")));
+        let u = CTerm::certify(Term::const_("u", Typ::base("nat")));
+        let eq = Pure::mk_equals(Typ::base("nat"), t.term().clone(), u.term().clone());
+        let admitted_eq = ThmKernel::admit(CTerm::certify(eq), "admitted");
+        assert!(!admitted_eq.is_fully_proved());
+
+        // symmetric is a sound rule, but its input was admitted.
+        let flipped = ThmKernel::symmetric(&admitted_eq).unwrap();
+        assert!(!flipped.is_fully_proved(), "oracle must propagate through symmetric");
+        assert_eq!(&*flipped.oracles()[0], "admitted");
+    }
+
+    #[test]
+    fn test_union_of_proved_and_admitted_is_tainted() {
+        // transitive(proved, admitted) must be tainted; transitive(proved,
+        // proved) must stay clean. This is the core of honest accounting.
+        let nat = Typ::base("nat");
+        let t = Term::const_("t", nat.clone());
+        let u = Term::const_("u", nat.clone());
+        let v = Term::const_("v", nat.clone());
+
+        let proved_tu = ThmKernel::reflexive(CTerm::certify(t.clone())); // ⊢ t ≡ t  (clean)
+        assert!(proved_tu.is_fully_proved());
+
+        let admitted_tv = ThmKernel::admit(
+            CTerm::certify(Pure::mk_equals(nat.clone(), t.clone(), v.clone())),
+            "admitted",
+        );
+        // transitive(t≡t, t≡v) = t≡v, tainted by the admitted premise.
+        let res = ThmKernel::transitive(&proved_tu, &admitted_tv).unwrap();
+        assert!(!res.is_fully_proved());
+        assert_eq!(res.oracles().len(), 1);
+
+        // transitive of two clean reflexives stays clean.
+        let r1 = ThmKernel::reflexive(CTerm::certify(u.clone()));
+        let r2 = ThmKernel::reflexive(CTerm::certify(u));
+        let clean = ThmKernel::transitive(&r1, &r2).unwrap();
+        assert!(clean.is_fully_proved());
     }
 }

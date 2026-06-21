@@ -2,6 +2,42 @@
 
 All notable changes to isabelle-rs.
 
+## [2.2.0] — 2026-06-21
+
+### 🔒 信任工程 (Trust Engineering) — 本版本主题
+
+诚实化:把"Tier2 100% verified"的虚高指标,变成由类型系统保证的**真实证明率**。
+
+### Added
+- **T3 信任足迹 (oracle tracking)** — `Thm` 新增 `oracles: Vec<Arc<str>>` 字段,
+  像 `hyps` 一样通过全部 15 条内核规则**并集传播**。真证明 → 足迹空;admitted → 含标记。
+- **`ThmKernel::admit(ct, name)`** — 内核唯一的"接受命题而不证明"入口(对应 Isabelle
+  `sorry`/oracle)。返回的定理 `!is_fully_proved()`,且污点随推导传染。
+- **`Thm::is_fully_proved()` / `Thm::oracles()`** — 判定与查询信任足迹的公开 API。
+- **`docs/TRUST.md`** — 完整信任模型:de Bruijn T1-T4 性质、达成度、可信路线 A/B。
+- 4 个内核单元测试:`test_admit_is_not_fully_proved`、
+  `test_oracle_footprint_propagates_through_rules`、
+  `test_union_of_proved_and_admitted_is_tainted`、
+  `test_proved_theorem_has_empty_oracle_footprint`。
+- Tier2 harness 打印 `REAL PROOF RATE`(由 `is_fully_proved()` 派生)。
+
+### Changed
+- **`verify_lemma` 的 axiom-accept fallback 改用 `admit`** — 旧版用 `ThmKernel::assume`
+  把失败的引理伪装成 `P ⊢ P` 已证。现在路由经 `admit`,admitted 由类型系统标记。
+- **真实证明率公开:Tier2 = 85.8% (3277/3821 proved, 544 admitted)**,不再宣称 100%。
+- 所有文档(README/CLAUDE/GAP_ANALYSIS/ROADMAP)证明率口径统一为 `is_fully_proved()`。
+- 新增铁律 #20/#21:永不谎称证明;新增定理生成路径不得绕过信任足迹。
+
+### Fixed
+- **指标失信根因** — `verify_lemma` 结构上对任何有证明脚本的引理恒返回 `Some`,导致
+  "100%" 是数学保证而非测量结果。现已由 oracle 足迹如实区分 proved vs admitted。
+
+### 战略
+- 确立定位:**放弃追赶 Isabelle 广度(138 万行,97% 是 30 年理论库),押注「内核可信
+  + 片段深度」**。Sledgehammer/CodeGen/SMT 战略上不追。
+
+---
+
 ## [2.1.5] — 2026-06-17
 
 ### Added

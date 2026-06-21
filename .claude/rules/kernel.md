@@ -21,7 +21,7 @@ updated: 2026-05-29
 推导 (1): trivial
 ```
 
-## Thm 结构体完整字段 (Phase 39)
+## Thm 结构体完整字段 (Phase 39 + T3 信任足迹)
 
 ```rust
 pub struct Thm {
@@ -30,10 +30,21 @@ pub struct Thm {
     maxidx: usize,                 // 最大 schematic 索引
     tpairs: Vec<(Term, Term)>,     // flex-flex 分歧对 (Phase 39)
     shyps: Vec<Sort>,              // sort 假设 (Phase 39)
+    oracles: Vec<Arc<str>>,        // 信任足迹 (T3): 依赖的未证明断言, 像 hyps 一样并集传播
     derivation: Derivation,        // 推导历史
     serial: u64,                   // 唯一序列号
 }
 ```
+
+## T3 信任足迹 — 铁律
+
+- **真证明 ⟺ `oracles` 为空 ⟺ `is_fully_proved()`**
+- `ThmKernel::admit(ct, name)` 是内核**唯一**"接受命题而不证明"入口 (对应 sorry/oracle)
+- 每条规则必须传播 `oracles`:公理类 `vec![]`;单前提 `thm.oracles.clone()`;
+  多前提 `Self::union_oracles(&a.oracles, &b.oracles)`
+- **新增 Thm 构造点必须设置 `oracles`** (铁律 #7 + #21)
+- 禁止用 `ThmKernel::assume` 把未证明的命题伪装成已证 — 用 `admit`
+- 详见 [docs/TRUST.md](../../docs/TRUST.md)
 
 ## 模式: 类型感知等值
 

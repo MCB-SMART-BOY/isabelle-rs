@@ -34,6 +34,40 @@ thread_local! {
     pub(crate) static PROOF_SEARCH_BUDGET: Cell<usize> = const { Cell::new(200) };
     /// Cached base simplifier (all simp rules from DB) — avoids rebuilding on every fallback.
     static CACHED_BASE_SIMPLIFIER: std::cell::RefCell<Option<Simplifier>> = const { std::cell::RefCell::new(None) };
+    /// Outcome classifier: how the *most recent* `verify_lemma` call produced its result.
+    /// Set to `Proved` at entry, downgraded to `AxiomAccepted` at non-proving exit sites.
+    /// Read by `verify_lemmas_batch` to maintain the honest proved-vs-accepted tally.
+    static LAST_OUTCOME: Cell<VerifyOutcome> = const { Cell::new(VerifyOutcome::Proved) };
+    /// Running tally of verify outcomes since the last `reset_verify_stats()`.
+    /// `(proved, axiom_accepted)`. Accumulated across all files in a Tier2 run.
+    static VERIFY_STATS: Cell<(usize, usize)> = const { Cell::new((0, 0)) };
+}
+
+/// How a `verify_lemma` call arrived at its `Some(Thm)` result.
+///
+/// This distinguishes genuine proofs (the kernel closed every subgoal) from
+/// lemmas that were *accepted as axioms* because the proof engine could not
+/// replay their script. Both return `Some`, so without this tag the headline
+/// "verified" count cannot tell the two apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerifyOutcome {
+    /// A real proof path closed the goal (safe rules, exec_proof, Isar replay,
+    /// rule resolution, unfolding+method, etc.).
+    Proved,
+    /// No proof was run: the lemma's statement was accepted as an axiom via a
+    /// trust-mode shortcut, an anonymous-datatype passthrough, or the final
+    /// `generalize_thm` fallback.
+    AxiomAccepted,
+}
+
+/// Reset the global proved-vs-accepted tally. Call before a verification run.
+pub fn reset_verify_stats() {
+    VERIFY_STATS.with(|c| c.set((0, 0)));
+}
+
+/// Read the global proved-vs-accepted tally as `(proved, axiom_accepted)`.
+pub fn verify_stats() -> (usize, usize) {
+    VERIFY_STATS.with(|c| c.get())
 }
 
 // =========================================================================
@@ -3260,6 +3294,15 @@ fn has_schematic_vars(term: &Term) -> bool {
     }
 }
 
+/// Accept a lemma's statement *without proof*, as an admitted (oracle-backed)
+/// theorem.
+///
+/// This is the verifier's last-resort fallback: when no proof path closes the
+/// goal, we generalize its free variables to schematic ones and `admit` the
+/// result. The returned theorem is **not** `is_fully_proved()` — it carries
+/// the `"admitted"` oracle, so it is honestly distinguishable from a genuine
+/// proof at the type level, and that taint propagates into anything derived
+/// from it.
 fn generalize_thm(thm: &Thm) -> Thm {
     let mut frees: Vec<String> = Vec::new();
     fn collect(term: &Term, out: &mut Vec<String>) {
@@ -3281,7 +3324,8 @@ fn generalize_thm(thm: &Thm) -> Thm {
     let mut seen = std::collections::HashSet::new();
     frees.retain(|n| seen.insert(n.clone()));
     if frees.is_empty() {
-        return thm.clone();
+        // No free vars to generalize, but still unproved — admit the prop.
+        return ThmKernel::admit(CTerm::certify(thm.prop().term().clone()), "admitted");
     }
     let mut m: std::collections::HashMap<String, Term> = std::collections::HashMap::new();
     for (i, name) in frees.iter().enumerate() {
@@ -3297,7 +3341,7 @@ fn generalize_thm(thm: &Thm) -> Thm {
             _ => term.clone(),
         }
     }
-    ThmKernel::assume(CTerm::certify(apply(thm.prop().term(), &m)))
+    ThmKernel::admit(CTerm::certify(apply(thm.prop().term(), &m)), "admitted")
 }
 
 /// Set the proof attempt limit (used by auto/fast/best/etc.).
@@ -3438,8 +3482,18 @@ pub fn verify_lemmas_batch(lemmas: &[ParsedLemma]) -> (usize, usize) {
         }
         if lem.proof_script.is_some() {
             attempted += 1;
-            if verify_lemma(lem).is_some() {
+            if let Some(thm) = verify_lemma(lem) {
                 verified += 1;
+                // Honest proved-vs-accepted split. Primary signal: the Thm's
+                // own oracle footprint (admitted lemmas carry "admitted").
+                // Secondary: the exit-site tag, which additionally catches
+                // open-goal resolution that returned a still-incomplete Thm.
+                let exit_accepted = LAST_OUTCOME.with(|c| c.get()) == VerifyOutcome::AxiomAccepted;
+                let proved = thm.is_fully_proved() && !exit_accepted;
+                VERIFY_STATS.with(|c| {
+                    let (p, a) = c.get();
+                    if proved { c.set((p + 1, a)) } else { c.set((p, a + 1)) }
+                });
             }
         }
     }
@@ -3449,6 +3503,8 @@ pub fn verify_lemmas_batch(lemmas: &[ParsedLemma]) -> (usize, usize) {
 
 pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
     AUTO_DEPTH.with(|c| c.set(0));
+    // Optimistically assume a real proof; non-proving exit sites downgrade this.
+    LAST_OUTCOME.with(|c| c.set(VerifyOutcome::Proved));
 
     // If a built-in Var-override exists, use it directly (skip proof replay).
     // This covers lemmas whose proofs use complex patterns (multi-method chains,
@@ -3461,7 +3517,8 @@ pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
         let parsed_has_no_vars = !has_schematic_vars(parsed_term);
         // Accept if built-in has Var and parsed version uses Free (intentional override)
         if has_vars && parsed_has_no_vars {
-            return Some(ThmKernel::assume(CTerm::certify(builtin_term.clone())));
+            LAST_OUTCOME.with(|c| c.set(VerifyOutcome::AxiomAccepted));
+            return Some(ThmKernel::admit(CTerm::certify(builtin_term.clone()), "admitted"));
         }
     }
 
@@ -3469,10 +3526,14 @@ pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
     if lem.proof_script.is_none()
         || lem.proof_script.as_deref().is_some_and(|s| s.trim().is_empty())
     {
+        LAST_OUTCOME.with(|c| c.set(VerifyOutcome::AxiomAccepted));
         if let Some(builtin) = db.by_name.get(&lem.name) {
             return Some(builtin.as_ref().clone());
         }
-        return Some(lem.theorem.as_ref().clone());
+        return Some(ThmKernel::admit(
+            CTerm::certify(lem.theorem.prop().term().clone()),
+            "admitted",
+        ));
     }
 
     let proof = lem.proof_script.as_ref()?;
@@ -3501,7 +3562,11 @@ pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
             || proof_trimmed.contains("rule list.exhaust")
             || proof_trimmed.contains("rule list.case")
         {
-            return Some(lem.theorem.as_ref().clone());
+            LAST_OUTCOME.with(|c| c.set(VerifyOutcome::AxiomAccepted));
+            return Some(ThmKernel::admit(
+                CTerm::certify(lem.theorem.prop().term().clone()),
+                "admitted",
+            ));
         }
     }
 
@@ -3532,6 +3597,10 @@ pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
             if let Some(rule_thm) = resolve_theorem_name(rule_name, db) {
                 let resolved = crate::core::tactic::resolve_tac(&[(*rule_thm).clone()], 0)(&goal);
                 if let Some(thm) = resolved.into_iter().next() {
+                    // Resolution may leave open subgoals; only a closed goal is a real proof.
+                    if thm.nprems() != 0 {
+                        LAST_OUTCOME.with(|c| c.set(VerifyOutcome::AxiomAccepted));
+                    }
                     return Some(thm);
                 }
             }
@@ -3584,6 +3653,11 @@ pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
                 }
             }
             if current.nprems() < goal.nprems() || current != goal {
+                // Only a closed goal (no remaining subgoals) counts as a real proof;
+                // a merely-rewritten-but-open goal is a weak acceptance.
+                if current.nprems() != 0 {
+                    LAST_OUTCOME.with(|c| c.set(VerifyOutcome::AxiomAccepted));
+                }
                 return Some(current);
             }
         }
@@ -3601,6 +3675,10 @@ pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
             if let Some(rule_thm) = resolve_theorem_name(rule_name, db) {
                 let resolved = crate::core::tactic::resolve_tac(&[(*rule_thm).clone()], 0)(&goal);
                 if let Some(thm) = resolved.into_iter().next() {
+                    // Resolution may leave open subgoals; only a closed goal is a real proof.
+                    if thm.nprems() != 0 {
+                        LAST_OUTCOME.with(|c| c.set(VerifyOutcome::AxiomAccepted));
+                    }
                     return Some(thm);
                 }
             }
@@ -3684,6 +3762,7 @@ pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
         },
     }
     // Last resort: generalize and accept as axiom
+    LAST_OUTCOME.with(|c| c.set(VerifyOutcome::AxiomAccepted));
     Some(generalize_thm(&lem.theorem))
 }
 
