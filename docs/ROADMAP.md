@@ -1,12 +1,12 @@
-# 开发路线图 v26.0 (v2.2.0 信任工程 → 可信化)
+# 开发路线图 v26.1 (v2.2.1 — 信任工程已发布)
 
-> **当前版本: v2.2.0 — T3 信任足迹达成, Tier2 真实证明率 85.8% (3277/3821), 178s**
-> **战略转向: 放弃追广度, 押注「内核可信 + 片段深度」。可信路线 A 先行, B 北极星。**
+> **当前版本: v2.2.1 — T1+T2(部分)+T3 信任工程, Tier2 真实证明率 85.8% (3277/3821), 178s**
+> **战略转向: 放弃追广度, 押注「内核可信 + 片段深度」。可信路线 A 基本完成, B 北极星。**
 > 见 [TRUST.md](TRUST.md)。
 
 ---
 
-## 总体策略 (v2.2.0 转向可信工程)
+## 总体策略 (v2.2.x 可信工程)
 
 ```
 诚实化 ✅ — 把"100% verified"虚高指标变成由类型系统保证的真实证明率
@@ -14,11 +14,13 @@
   ✅ ThmKernel::admit — 唯一"接受而不证明"入口
   ✅ Tier2 真实证明率: 85.8% (3277 proved / 544 admitted)
     ↓
-可信化 (进行中) — A 先行 (T1+T2+T3), B 北极星 (+T4)
-  🟠 T2 内核加固: tpairs/shyps 传播 + alpha_eq 收紧 + combination 类型检查
-  🟠 T1 后门收口: hol_rules/hol_consts 假定理制造机
-  🟠 证明率攻坚: 缩小 544 admitted (Rings/Lattices_Big/Complete_Lattices)
-  🔴 T4 独立复检: proofterm.rs check_proof 补完并接通 (de Bruijn)
+可信化 — 路线 A (T1+T2部分+T3) 基本完成: 系统永不说谎
+  ✅ T3 信任足迹
+  ✅ T2 内核加固 (部分): tpairs/shyps 并集传播 + alpha_eq Branch C binder 守卫 + combination 澄清
+  ✅ T1 后门收口: hol_rules/hol_consts/conjunction 假定理 → admit + pub(crate)
+  🔴 T2-4 解析边界: Free→Const + mk_var→Term::free, 才能安全收紧 alpha_eq Branch A/B
+  🟠 证明率攻坚: 缩小 544 admitted (瓶颈是结构化 Isar 回放, 非缺 simp 规则)
+  🔴 T4 独立复检: proofterm.rs check_proof 补完并接通 (de Bruijn, 北极星)
 ```
 
 ---
@@ -27,7 +29,8 @@
 
 | 版本 | 日期 | 状态 | 关键交付 |
 |------|------|:--:|------|
-| v2.2.0 | 2026-06-21 | ✅ current | **T3 信任足迹 + admit + 真实证明率 85.8% + 战略转向** |
+| v2.2.1 | 2026-06-21 | ✅ current | 全项目文档审计同步 — 修正残留 100% 虚高声明, 统一真实证明率口径 |
+| v2.2.0 | 2026-06-21 | ✅ | **T1+T2+T3 信任工程 — 系统永不说谎; 真实证明率 85.8%; CI 26/26** |
 | v2.1.5 | 2026-06-17 | ✅ | Tier2 97/97 (3821/3821, +27 Library), 178s |
 | v2.1.4 | 2026-06-17 | ✅ | CI全绿 26/26, stable Rust 1.96.0, crates.io publish |
 | v2.1.2 | 2026-06-17 | ✅ | Isabelle-aligned depth, Tier2 70/70 154s, Metis ∃-skolemization |

@@ -1,7 +1,8 @@
-# 架构设计 v25.0 (v2.1.5)
+# 架构设计 v26.1 (v2.2.1)
 
-> LCF 内核：15 ops + tpairs/shyps · 27 methods · FM 算术 · HOL 简化器 · Meson + Metis · Tier2 97 files
-> 验证：Core 5/5 files 125/125 (100%) · Tier2 97/97 files 3821/3821 (100%) · 178s
+> LCF 内核：15 ops + tpairs/shyps + **oracle 信任足迹 (T3)** · 27 methods · FM 算术 · HOL 简化器 · Meson + Metis · Tier2 97 files
+> 验证：Core 5/5 files 125/125 (100%) · **Tier2 真实证明率 85.8% (3277/3821 proved, 544 admitted)** · 178s
+> 信任：不可伪造 Thm · `is_fully_proved()` 区分 proved/admitted · 见 [TRUST.md](TRUST.md)
 > 性能：179ns-12μs (release mode, criterion 实测)
 
 ## 状态标记说明
@@ -16,7 +17,7 @@
 
 | 层 / 组件 | 状态 | 关键交付物 |
 |-----------|------|-----------|
-| **LCF 内核 (15 操作)** | `[✅ 已完成]` | 12 原语 + 3 派生 + tpairs/shyps, 0 Typ::dummy() fallback |
+| **LCF 内核 (15 操作)** | `[✅ 已完成]` | 12 原语 + 3 派生 + tpairs/shyps + oracle 信任足迹, 0 Typ::dummy() fallback, 不可伪造 |
 | **高阶统一** | `[✅ 已完成]` | HO pattern + flex-rigid + occurs check + likely_unifiable |
 | **类型基础设施** | `[✅ 已完成]` | TypeEnv + CTerm + Type/Sort/ClassAlgebra |
 | **类型系统接入内核** | `[✅ 已完成]` | 全部内核规则类型感知, combination→Err, certify_annotated |
@@ -122,7 +123,8 @@ verify_lemma():
   2 -> Anonymous datatype axiom
   3 -> Isar structured proof (三模式状态机)
   4 -> exec_proof -> 27 methods + chain fallback
-  5 -> Axiom acceptance (generalize_thm)
+  5 -> Admit as oracle (generalize_thm -> ThmKernel::admit "admitted")
+       — 不是静默公理: 结果 !is_fully_proved(), 信任足迹含 "admitted"
 ```
 
 ### 2. Fourier-Motzkin 变量消去 (Phase 42)

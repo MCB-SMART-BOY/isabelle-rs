@@ -2,6 +2,19 @@
 
 All notable changes to isabelle-rs.
 
+## [2.2.1] — 2026-06-21
+
+### Docs
+- **全项目文档审计 + 同步** —— 修正残留的过时引用,统一证明率口径:
+  - `docs/ARCHITECTURE.md`:删除残留的 "Tier2 97/97 3821/3821 (100%)" 虚高声明,
+    改为真实证明率 85.8% (3277/3821);header v25.0→v26.0;LCF 内核加 oracle 信任足迹。
+  - `README.md`:项目状态版本 v2.1.5→v2.2.0,加真实证明率/信任模型行,链接 TRUST.md。
+  - `.claude/skills/bench.md`:frontmatter + Expected Results 版本 → v2.2.0。
+- 全 doc 扫描确认:无任何**当前状态**仍宣称 "100% verified"(历史记录如实保留)。
+- 纯文档变更,零代码改动;kernel/trust 22/22、fmt、clippy 0 errors 全通过。
+
+---
+
 ## [2.2.0] — 2026-06-21
 
 ### 🔒 信任工程 (Trust Engineering) — 本版本主题

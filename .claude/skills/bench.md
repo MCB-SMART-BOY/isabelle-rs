@@ -2,7 +2,7 @@
 name: bench
 description: Run the complete test matrix at correct stack sizes. Check suite pass/fail status and identify regressions.
 category: meta
-version: 2.1.5
+version: 2.2.1
 triggers: [benchmark, performance, test all, regression test]
 permissions: [Bash:cargo test, Bash:RUST_MIN_STACK]
 ---
@@ -35,7 +35,7 @@ cargo test --test integration_tests
 cargo test --test proptest
 ```
 
-## Expected Results (v2.1.5)
+## Expected Results (v2.2.1)
 
 | Suite | Expected | Notes |
 |-------|----------|-------|

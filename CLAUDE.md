@@ -11,7 +11,7 @@
 - **`dev`** — 开发分支。所有日常修改在此进行。功能完成后通过 PR 合并到 `main`。
 - **工作流**: `dev` 上开发 → 测试通过 → PR → `main` → 打 tag 发布
 
-## Project State (v2.2.0)
+## Project State (v2.2.1)
 
 | Metric | Value |
 |--------|-------|
@@ -149,7 +149,7 @@ verify_lemma():
   2 → Anonymous datatype axiom
   3 → Isar structured proof (three-mode state machine)
   4 → exec_proof → 27 methods + chain fallback
-  5 → Axiom acceptance (generalize_thm)
+  5 → Admit as oracle (generalize_thm → ThmKernel::admit "admitted", !is_fully_proved())
 ```
 
 ## Module Map
