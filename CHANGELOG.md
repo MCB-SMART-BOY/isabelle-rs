@@ -15,26 +15,45 @@ All notable changes to isabelle-rs.
   `sorry`/oracle)。返回的定理 `!is_fully_proved()`,且污点随推导传染。
 - **`Thm::is_fully_proved()` / `Thm::oracles()`** — 判定与查询信任足迹的公开 API。
 - **`docs/TRUST.md`** — 完整信任模型:de Bruijn T1-T4 性质、达成度、可信路线 A/B。
-- 4 个内核单元测试:`test_admit_is_not_fully_proved`、
-  `test_oracle_footprint_propagates_through_rules`、
-  `test_union_of_proved_and_admitted_is_tainted`、
-  `test_proved_theorem_has_empty_oracle_footprint`。
+- **`verify_file_diagnostic`** — 暴露每条引理 (name, proof_script, is_proved),
+  由 T3 足迹派生;用于分析 admitted 引理的真实瓶颈。
+- 14 个内核/信任单元测试(T3 footprint ×4、T2 shyps/alpha_eq/combination ×6、
+  T1 stub-admitted ×2、capture 等)。
 - Tier2 harness 打印 `REAL PROOF RATE`(由 `is_fully_proved()` 派生)。
 
 ### Changed
+- **T2 内核可靠性加固**(每项配回归测试,core 125/125 + Tier2 85.8% 不回退):
+  - `tpairs`/`shyps` 改为并集传播(`union_tpairs`/`union_shyps`)——修 12 条规则的
+    静默丢弃。当前恒空无现行不可靠,接入完整高阶合一后才咬人;零行为风险预防。
+  - `alpha_eq` Branch C:`Abs` 加 binder 类型守卫——`λ(x:nat).x ≢ λ(x:bool).x`,
+    dummy 容忍(parser 现状),已知不同类型拒绝。
+  - `combination` 澄清+测试:congruence 规则对任意类型逻辑可靠,dummy 跳过非 bug。
+- **T1 不可伪造:假定理后门收口** —— `hol_rules`(11 连接词 stub)、`hol_consts`(3)、
+  `core/conjunction`(2)中"产出结论形状却不从前提推导"的函数,过去用
+  `ThmKernel::assume` 伪装成已证。现全部改用 `ThmKernel::admit(_, "*:STUB")`
+  (输出 `!is_fully_proved()`,污点传播)并降为 `pub(crate)`。真实规则
+  (mp/all_intr/all_elim/true_intr)保持 `pub`。全 src 扫描确认无 `pub` 伪造后门。
 - **`verify_lemma` 的 axiom-accept fallback 改用 `admit`** — 旧版用 `ThmKernel::assume`
   把失败的引理伪装成 `P ⊢ P` 已证。现在路由经 `admit`,admitted 由类型系统标记。
+- **`capture_proof` 修复**:`proof...qed` 块之前只捕获首行(`proof -`),丢弃整个 body;
+  现在捕获完整平衡块(跟踪 proof/qed 嵌套)——结构化 Isar 回放的前提。
 - **真实证明率公开:Tier2 = 85.8% (3277/3821 proved, 544 admitted)**,不再宣称 100%。
-- 所有文档(README/CLAUDE/GAP_ANALYSIS/ROADMAP)证明率口径统一为 `is_fully_proved()`。
-- 新增铁律 #20/#21:永不谎称证明;新增定理生成路径不得绕过信任足迹。
+- 所有文档(README/CLAUDE/GAP_ANALYSIS/ROADMAP/DEVELOPMENT)证明率口径统一为
+  `is_fully_proved()`。新增铁律 #20/#21:永不谎称证明;新路径不得绕过信任足迹。
 
 ### Fixed
 - **指标失信根因** — `verify_lemma` 结构上对任何有证明脚本的引理恒返回 `Some`,导致
   "100%" 是数学保证而非测量结果。现已由 oracle 足迹如实区分 proved vs admitted。
 
+### 诊断结论(指导后续)
+- 544 admitted 的瓶颈是**结构性**的:结构化 `proof...qed` 回放(51%)、locale 上下文、
+  `obtains` 语句——**不是缺 simp 规则集**。85.8% 是当前引擎的诚实平台期;推高需要
+  结构化 Isar / locale / obtains 的独立工程(数天,可靠性敏感)。
+
 ### 战略
 - 确立定位:**放弃追赶 Isabelle 广度(138 万行,97% 是 30 年理论库),押注「内核可信
   + 片段深度」**。Sledgehammer/CodeGen/SMT 战略上不追。
+- **路线 A 务实可信(T1+T2部分+T3)基本完成:系统由类型系统保证永不说谎。**
 
 ---
 
