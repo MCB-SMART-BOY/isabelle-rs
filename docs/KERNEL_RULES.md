@@ -26,6 +26,10 @@ the rule-level ledger, not a claim of full Isabelle `thm.ML` equivalence.
 - Single-premise rules must preserve `hyps`, `tpairs`, `shyps`, and `oracles`.
 - Multi-premise rules must union `hyps`, `tpairs`, `shyps`, and `oracles`.
 - Known non-dummy types must not be silently crossed by kernel rules.
+- Trusted kernel equality uses `Hyps::kernel_alpha_eq`, not parser/loader
+  compatibility matching.
+- `Hyps::compat_alpha_eq` is an explicitly named legacy compatibility relation;
+  it must not be used by trusted `ThmKernel` primitive rules.
 - `Typ::dummy()` tolerance is a parser/loader boundary compromise, not a kernel
   proof principle.
 
@@ -37,28 +41,28 @@ the rule-level ledger, not a claim of full Isabelle `thm.ML` equivalence.
 | `assume` | `ThmKernel::assume` | `A |- A` | certified proposition input | no oracle | `test_assume`, `implies_intro_is_the_only_way_to_discharge_assume_here` |
 | `reflexive` | `ThmKernel::reflexive` | `|- t == t` | uses cterm type, may still be dummy | clean theorem | `test_reflexive`; dummy tightening pending |
 | `symmetric` | `ThmKernel::symmetric` | `Γ |- t == u` to `Γ |- u == t` | input must be equality | clone all premise burdens | oracle and shyp propagation tests |
-| `transitive` | `ThmKernel::transitive` | `Γ |- t == u`, `Δ |- u == v` to `Γ∪Δ |- t == v` | middle terms alpha-equal; known middle-term and equality types compatible | union all premise burdens | type-mismatch attack tests |
+| `transitive` | `ThmKernel::transitive` | `Γ |- t == u`, `Δ |- u == v` to `Γ∪Δ |- t == v` | middle terms strict-kernel alpha-equal; known middle-term and equality types compatible | union all premise burdens | type-mismatch and alpha-confusion attack tests |
 | `combination` | `ThmKernel::combination` | `f == g`, `x == y` to `f x == g y` | first equality type must be function; known argument type compatible with domain | union all premise burdens | known mismatch and well-typed tests |
 | `abstraction` | `ThmKernel::abstraction` | `Γ |- t == u` to `Γ |- (λx. t) == (λx. u)` | `x` not free in `Γ` | clone all premise burdens | free-in-hyp attack test |
 | `beta_conversion` | `ThmKernel::beta_conversion` | `|- (λx. t) u == t[u/x]` | input must be an application whose function is an abstraction | clean theorem | Bound(0) substitution attack test |
 | `implies_intr` | `ThmKernel::implies_intr` | `Γ∪{A} |- B` to `Γ |- A ==> B` | `A` present in hypotheses | remove discharged hyp; clone burdens | existing trivial/assume tests |
-| `implies_elim` | `ThmKernel::implies_elim` | `Γ |- A ==> B`, `Δ |- A` to `Γ∪Δ |- B` | antecedent alpha-equal to minor proposition; known antecedent types compatible | union all premise burdens | type-mismatch attack test |
+| `implies_elim` | `ThmKernel::implies_elim` | `Γ |- A ==> B`, `Δ |- A` to `Γ∪Δ |- B` | antecedent strict-kernel alpha-equal to minor proposition; known antecedent types compatible | union all premise burdens | type-mismatch attack test |
 | `forall_intr` | `ThmKernel::forall_intr` | `Γ |- P` to `Γ |- !!x. P` | `x` not free in `Γ` | clone all premise burdens | free-in-hyp condition parallels abstraction |
 | `forall_elim` | `ThmKernel::forall_elim` | `Γ |- !!x. P x` to `Γ |- P t` | input must be forall; known binder/argument types compatible | clone all premise burdens | binder/argument mismatch attack test |
 | `instantiate_checked` | `ThmKernel::instantiate_checked` | `Γ |- P` to `Γθ |- Pθ` | environment assignments must preserve known variable types | clone burdens; normalizes hyps/prop | ill-typed env attack test |
 | `instantiate_legacy` | `ThmKernel::instantiate_legacy` | test-only characterization of the removed infallible API | compiled only under `cfg(test)`; invalid environments leave theorem unchanged | clone burdens on success | internal no-unsound-theorem regression test |
-| `bicompose` | `ThmKernel::bicompose` | resolution/composition over a selected premise | selected premise exists; match/unify succeeds; known alpha-match types compatible | union all premise burdens | alpha type-mismatch attack test |
-| `subst_premise` | `ThmKernel::subst_premise` | replace selected premise using `t == u` | selected premise alpha-equal to lhs; known lhs/premise types compatible | union all premise burdens | type-mismatch attack test |
+| `bicompose` | `ThmKernel::bicompose` | resolution/composition over a selected premise | selected premise exists; match/unify succeeds; known strict-alpha-match types compatible | union all premise burdens | alpha type-mismatch attack test |
+| `subst_premise` | `ThmKernel::subst_premise` | replace selected premise using `t == u` | selected premise strict-kernel alpha-equal to lhs; known lhs/premise types compatible | union all premise burdens | type-mismatch attack test |
 | `bicompose_eresolve` | `ThmKernel::bicompose_eresolve` | resolution with major-premise elimination | major premise matches available hyp/premise and conclusion matches subgoal; known types compatible | union all premise burdens | unifier type-mismatch attack test |
 
 ## Known Kernel Boundary Gaps
 
-- `Hyps::alpha_eq` still accepts `Free("zero")` as `Const("Groups.zero")` by
-  suffix matching. This is a real soundness gap, kept temporarily because the
-  parser/loader boundary emits inconsistent term heads.
-- `Hyps::alpha_eq` still accepts `Var("x", i)` as `Free("x")`, ignoring the
-  schematic variable index. This is also a real gap and must be removed after
-  parser and theorem database variable representation are aligned.
+- `Hyps::kernel_alpha_eq` is now strict: it rejects Free/Const suffix matching,
+  Var/Free matching, distinct schematic variable indices, and dummy-vs-known
+  binder type matching.
+- `Hyps::compat_alpha_eq` still preserves the old Free/Const, Var/Free, and
+  dummy-binder behavior for explicitly named compatibility paths. This remains
+  parser/loader boundary debt; do not use it in trusted `ThmKernel` rules.
 - `forall_elim` enforces known binder/argument type compatibility, but
   `Pure::mk_all`/`lambda` still frequently leaves binder types as `Typ::dummy()`.
 - `CTerm::certify` is not yet a hard certification boundary. It infers what it
@@ -96,11 +100,12 @@ This makes `assume(A)` replay as a valid open theorem (`A |- A`) while still not
 counting as `is_closed_proved()`. It also makes admitted/oracle-backed theorems
 fail independent kernel replay instead of appearing as closed proofs.
 
-The replay checker now uses the same alpha-equivalence relation and conservative
-known-type compatibility checks as the kernel for the supported implication and
-transitivity paths. This avoids a completeness mismatch where the kernel could
-construct a theorem whose supported derivation then failed replay solely because
-middle terms were alpha-equivalent rather than syntactically equal.
+The replay checker now uses the same strict kernel alpha-equivalence relation
+and conservative known-type compatibility checks as the kernel for the
+supported implication and transitivity paths. This avoids a completeness
+mismatch where the kernel could construct a theorem whose supported derivation
+then failed replay solely because middle terms were alpha-equivalent rather
+than syntactically equal.
 
 ## Checked Instantiation Call-Site Audit
 
@@ -192,3 +197,7 @@ precisely:
   `hyps`/`tpairs`/`oracles`, documented `ProofBody::check` as proposition-only,
   and reduced `Derivation`/`ThmDeriv` plus low-level proofterm check helper
   visibility to crate-internal.
+- Strict kernel alpha-equivalence is now separated from legacy compatibility
+  matching. Trusted `ThmKernel` rules and replay use `kernel_alpha_eq`, while
+  `compat_alpha_eq` is isolated for explicitly marked parser/loader
+  compatibility paths.

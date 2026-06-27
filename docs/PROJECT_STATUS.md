@@ -51,12 +51,15 @@ cargo test core::thm::tests::
 cargo test --lib core::
 ```
 
-Current known ignored tests remain the `alpha_eq` parser/type-boundary debts:
+The baseline originally carried two ignored `alpha_eq` tests:
 
 ```text
 Free / Const suffix matching
 Var / Free index confusion
 ```
+
+Strict kernel alpha-equivalence now rejects both in trusted paths. The legacy
+behavior is isolated as explicit `compat_alpha_eq` parser/loader compatibility.
 
 ## What Is Solid
 
@@ -121,8 +124,8 @@ These are trusted-boundary issues that T4 replay does not automatically solve:
 
 | Debt | Why it matters | Correct direction |
 |---|---|---|
-| `alpha_eq` Free/Const suffix matching | Can identify different term heads because parser and loader disagree. | Fix parser/loader/type annotation, then tighten kernel equality. |
-| `alpha_eq` Var/Free matching | Can ignore schematic variable index distinctions. | Align theorem DB/parser representation of schematic variables. |
+| `compat_alpha_eq` Free/Const suffix matching | Still available for legacy parser/loader compatibility, but no longer used by trusted kernel equality. | Fix parser/loader/type annotation, then remove/narrow compat usage. |
+| `compat_alpha_eq` Var/Free matching | Still available for schematic-variable parser gaps, but no longer used by trusted kernel equality. | Align theorem DB/parser representation of schematic variables. |
 | `Typ::dummy()` at kernel boundaries | Lets ill-typed terms remain too long. | Make parser/type inference/CTerm certification produce well-typed certified terms. |
 | `Option<Thm>` errors | Type mismatch and normal non-match can both become `None`. | Gradually move trusted boundaries toward `Result<Option<Thm>, KernelError>`. |
 
@@ -159,9 +162,10 @@ primitive rule coverage are still open.
 Do not spend the next phase on more HOL/Isar surface features, LSP, WASM,
 Sledgehammer, SMT, or Code Generator work. The route is:
 
-1. Extend T4 proofterm replay rule coverage.
-2. Tighten parser/type/certification boundaries to reduce `Typ::dummy()` and
+1. Tighten kernel equality/certification boundaries to reduce `Typ::dummy()` and
    Free/Const/Var confusion.
+2. Extend T4 proofterm replay rule coverage after strict kernel semantics are
+   stable.
 3. Reduce admitted lemmas by cause, not by hiding fallback paths.
 4. Expand HOL/Isar/tool coverage only after the trusted boundary remains stable.
 5. Add optional CLI/verify integration for proof replay once major primitive

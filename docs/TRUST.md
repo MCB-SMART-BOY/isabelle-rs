@@ -33,7 +33,7 @@ implementation.
 | Criterion | Meaning | Current status |
 |---|---|---|
 | T1 non-forgeable theorem type | `Thm` cannot be built outside the trusted constructor boundary. | Mostly established by private fields and `ThmKernel` routes. |
-| T2 reliable kernel rules | Primitive rules enforce side conditions and propagate theorem burdens. | Main body hardened; `alpha_eq` and `Typ::dummy()` remain known debts. |
+| T2 reliable kernel rules | Primitive rules enforce side conditions and propagate theorem burdens. | Strict kernel alpha-equivalence split out; `Typ::dummy()` and hard certification remain known debts. |
 | T3 trust footprint tracking | Unproved acceptance is explicit and propagates through later inference. | Strong project area; `admitted:*`/oracle footprints are explicit. |
 | T4 independent replay | A small checker replays proof objects and compares theorem burdens. | Minimal replay prototype for six rules. |
 
@@ -150,14 +150,14 @@ Known debts:
 
 | Debt | Why it matters | Direction |
 |---|---|---|
-| `alpha_eq` Free/Const suffix matching | Can equate different term heads because parser/loader disagree. | Fix parser/loader/type annotations, then tighten kernel equality. |
-| `alpha_eq` Var/Free matching | Can ignore schematic variable index distinctions. | Align theorem DB and parser variable representation. |
+| Compatibility Free/Const suffix matching | `compat_alpha_eq` still exists for parser/loader legacy paths. | Keep it out of trusted rules; fix parser/loader/type annotations and remove the compat need. |
+| Compatibility Var/Free matching | `compat_alpha_eq` still exists for schematic-variable parser gaps. | Keep it out of trusted rules; align theorem DB and parser variable representation. |
 | `Typ::dummy()` tolerance | Lets ill-typed terms survive too far. | Harden `CTerm` certification and type inference boundaries. |
 | `Option<Thm>` proof-search APIs | Can hide `KernelError` diagnostics. | Move trusted paths toward `Result<Option<Thm>, KernelError>`. |
 
-Do not directly delete broad `alpha_eq` compatibility in the kernel until the
-front-end representation gaps are fixed; that would likely break HOL proof
-search without solving the root cause.
+Trusted kernel rules use `Hyps::kernel_alpha_eq`. The old broad matching is
+isolated as `Hyps::compat_alpha_eq` and must remain explicitly marked as
+compatibility-only until front-end representation gaps are fixed.
 
 ## T4 Proofterm Replay Status
 

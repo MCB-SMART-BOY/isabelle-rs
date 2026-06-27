@@ -18,7 +18,7 @@ Current status:
 
 | Track | Status |
 |---|---|
-| T2 primitive rule hardening | Main body done, but `alpha_eq` and `Typ::dummy()` remain known debts. |
+| T2 primitive rule hardening | Strict kernel alpha-equivalence split out; `Typ::dummy()` and certification remain known debts. |
 | Checked instantiation | Production paths closed over `instantiate_checked`. |
 | Admit/oracle tracking | Explicit, classified, and propagated. |
 | Closed theorem acceptance | Main path, session reporting, and final trusted tables use `is_closed_proved()`. |
@@ -27,8 +27,9 @@ Current status:
 
 Priority order:
 
-1. Extend T4 proofterm replay rule coverage.
-2. Tighten parser/type/certification boundaries.
+1. Tighten kernel equality/certification boundaries.
+2. Extend T4 proofterm replay rule coverage after strict kernel semantics are
+   stable.
 3. Reduce admitted lemmas by reason.
 4. Expand HOL/Isar/tool coverage only where it reduces admitted counts without
    weakening trust boundaries.
@@ -84,7 +85,31 @@ eef6d80 docs: reposition project as trusted Rust LCF kernel prototype
 
 The next active code phase should start at Phase 1.
 
-## Phase 1: T4 Replay Batch 1
+## Phase 1: Strict Kernel Boundary
+
+Target work:
+
+```text
+kernel_alpha_eq / compat_alpha_eq separation
+CTerm::certify_checked
+Thm invariant checker
+strict kernel mode
+```
+
+Status:
+
+- `kernel_alpha_eq` is now strict for trusted theorem construction.
+- `compat_alpha_eq` preserves legacy Free/Const, Var/Free, and dummy-binder
+  behavior only for explicitly named compatibility paths.
+
+Next strict-boundary tasks:
+
+- Add a checked certification API that rejects dummy-typed trusted inputs.
+- Add theorem invariant checks for primitive-rule outputs.
+- Add a strict-kernel mode that requires strict certification and invariant
+  checks before counting trusted results.
+
+## Phase 2: T4 Replay Batch 1
 
 Target rules:
 
@@ -146,7 +171,7 @@ cargo test --lib core::
 cargo check
 ```
 
-## Phase 2: T4 Replay Batch 2
+## Phase 3: T4 Replay Batch 2
 
 Target rules:
 
@@ -188,7 +213,7 @@ Done when:
 - All known side-condition attacks fail closed.
 - `docs/KERNEL_RULES.md` marks replay support per rule.
 
-## Phase 3: T4 Replay Batch 3
+## Phase 4: T4 Replay Batch 3
 
 Target rules:
 
@@ -235,7 +260,7 @@ Done when:
 - Production theorem instantiation and replay instantiation have the same
   acceptance/rejection semantics for known concrete type mismatches.
 
-## Phase 4: T4 Replay Batch 4
+## Phase 5: T4 Replay Batch 4
 
 Target rules:
 
@@ -278,7 +303,7 @@ Done when:
 - Replay can validate the main proof-search generated derivations without
   silently trusting unsupported rules.
 
-## Phase 5: Parser / Type / Certification Boundary
+## Phase 6: Parser / Type / Certification Boundary
 
 Goal:
 
@@ -313,7 +338,7 @@ Done when:
 - `alpha_eq` Var/Free compatibility can be removed or narrowed.
 - Existing Tier2 proof rate does not rely on unsound kernel matching.
 
-## Phase 6: Admitted Lemma Reduction
+## Phase 7: Admitted Lemma Reduction
 
 Goal:
 
@@ -364,7 +389,7 @@ Done when:
 - No admitted path is reclassified as proved without a kernel derivation or
   proof replay support.
 
-## Phase 7: Optional Proof Replay Integration
+## Phase 8: Optional Proof Replay Integration
 
 Goal:
 

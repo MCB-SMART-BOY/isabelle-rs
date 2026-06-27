@@ -1,8 +1,8 @@
 # Trusted Kernel Baseline
 
-This document records the current trusted-kernel checkpoint. It is a baseline
-for future T4 replay expansion and parser/type-boundary work; it is not a claim
-of full Isabelle compatibility.
+This document records the trusted-kernel checkpoint created before the Strict
+Kernel Phase. It is a baseline for kernel-boundary work; it is not a claim of
+full Isabelle compatibility.
 
 ## Baseline Commits
 
@@ -36,7 +36,7 @@ cargo test core::thm::tests::
 cargo test --lib core::
 ```
 
-Latest baseline result:
+Baseline result before the Strict Kernel Phase:
 
 ```text
 cargo fmt --check                      passed
@@ -56,6 +56,10 @@ Var / Free index confusion
 
 They belong to the parser/type/certification boundary and must not be hidden by
 claiming T2 is complete.
+
+Strict Kernel Phase update: trusted kernel equality now uses
+`Hyps::kernel_alpha_eq`, so the Free/Const and Var/Free tests are ordinary
+passing tests. The old behavior remains only in `Hyps::compat_alpha_eq`.
 
 ## Current Trust Semantics
 
@@ -121,9 +125,11 @@ Cargo.lock
 isabelle-source
 ```
 
-At the time this baseline was recorded, their remaining local changes were:
+At the time the original baseline was recorded, their remaining local changes
+were:
 
-- `Cargo.lock`: patch-level dependency lockfile updates;
+- `Cargo.lock`: patch-level dependency lockfile updates, later committed as
+  `ae036f2 deps: update lockfile`;
 - `isabelle-source`: upstream Isabelle submodule pointer movement.
 
 They should be either reverted by the owner or committed separately with
@@ -138,15 +144,15 @@ Do not mix either file into kernel, trust, proofterm, or roadmap changes.
 
 ## Next Entry Point
 
-The next code phase is T4 replay batch 1:
+The next code phase is the Strict Kernel Phase:
 
 ```text
-beta_conversion
-forall_intr
-forall_elim
+kernel_alpha_eq / compat_alpha_eq separation
+CTerm::certify_checked
+Thm invariant checker
+strict kernel mode
 ```
 
 Do not start the next phase by broadening HOL/Isar coverage, adding LSP UI,
-touching WASM runtime, or chasing more `.thy` files. The next proof work should
-add replay constructors, replay checks, positive tests, attack tests, tamper
-tests, and documentation for those three primitive rules only.
+touching WASM runtime, or chasing more `.thy` files. T4 replay expansion should
+resume after strict kernel equality and certification boundaries are stable.

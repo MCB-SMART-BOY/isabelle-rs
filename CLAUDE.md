@@ -31,7 +31,7 @@ Read these first:
 | Track | Status |
 |---|---|
 | LCF-style `Thm` kernel | Research prototype with private theorem fields and `ThmKernel` construction boundary. |
-| T2 primitive rule hardening | Main body improved; `alpha_eq` and `Typ::dummy()` remain known trust debts. |
+| T2 primitive rule hardening | Main body improved; strict `kernel_alpha_eq` split out; `Typ::dummy()` and certification remain known trust debts. |
 | Checked instantiation | Production paths use `instantiate_checked`; legacy infallible API is not production. |
 | Oracle/admit tracking | Explicit `admitted:*` footprints and propagation. |
 | Closed theorem acceptance | Verified lemma statistics require `is_closed_proved()`. |
@@ -72,8 +72,8 @@ admitted:simp_fallback
 4. Preserve `hyps`, `tpairs`, `shyps`, and `oracles` through kernel rules.
 5. Use `instantiate_checked` on production theorem-instantiation paths.
 6. Do not widen `Typ::dummy()` tolerance in the kernel.
-7. Do not delete broad `alpha_eq` Free/Const or Var/Free compatibility until
-   parser/loader/type annotation boundaries are fixed.
+7. Do not use `compat_alpha_eq` in trusted kernel rules; it exists only for
+   explicitly marked parser/loader compatibility.
 8. Proof replay success does not replace closed theorem acceptance.
 9. `ProofBody::check(expected_prop)` is proposition-only compatibility code;
    trusted replay gates are `Thm::check_proof()` and `Thm::validate_proof()`.
@@ -83,12 +83,12 @@ admitted:simp_fallback
 
 Priority order:
 
-1. Extend T4 replay to `beta_conversion`, `forall_intr`, and `forall_elim`.
-2. Add replay for `combination`, `abstraction`, and equality-intro/elimination
+1. Tighten kernel equality/certification boundaries and reduce `Typ::dummy()`.
+2. Extend T4 replay to `beta_conversion`, `forall_intr`, and `forall_elim`.
+3. Add replay for `combination`, `abstraction`, and equality-intro/elimination
    rules if present.
-3. Add replay for `instantiate_checked` / generalization.
-4. Add replay for `bicompose`, `bicompose_eresolve`, and `subst_premise`.
-5. Tighten parser/type/certification boundaries and reduce `Typ::dummy()`.
+4. Add replay for `instantiate_checked` / generalization.
+5. Add replay for `bicompose`, `bicompose_eresolve`, and `subst_premise`.
 6. Shrink admitted lemmas by classified reason.
 7. Expand HOL/Isar/LSP/WASM only after trusted boundaries remain stable.
 
@@ -147,8 +147,8 @@ final Theory theorem table
 
 ## Known Persistent Debts
 
-- `alpha_eq` Free/Const compatibility.
-- `alpha_eq` Var/Free compatibility.
+- `compat_alpha_eq` Free/Const compatibility outside trusted kernel paths.
+- `compat_alpha_eq` Var/Free compatibility outside trusted kernel paths.
 - `Typ::dummy()` at parser/type/certification boundaries.
 - `Option<Thm>` erasing `KernelError` on some proof-search paths.
 - Partial T4 replay coverage.

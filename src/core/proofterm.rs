@@ -260,7 +260,7 @@ fn known_term_types_compatible(a: &Term, b: &Term) -> bool {
 }
 
 fn alpha_eq_with_known_types(a: &Term, b: &Term) -> bool {
-    Hyps::alpha_eq(a, b) && known_term_types_compatible(a, b)
+    Hyps::kernel_alpha_eq(a, b) && known_term_types_compatible(a, b)
 }
 
 /// Replay a proof term and reconstruct the theorem shape it proves.

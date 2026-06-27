@@ -118,7 +118,7 @@ Current debts:
 Typ::dummy()
 Free / Const confusion
 Var / Free compatibility
-broad alpha_eq matching
+compatibility-only alpha_eq matching
 parser / loader / theorem DB representation mismatch
 ```
 
@@ -229,9 +229,9 @@ Drop-in replacement for Isabelle
 
 ## Next Work With Highest Research Value
 
-1. Extend T4 replay to the next primitive rules.
-2. Harden parser/type/certification boundaries to remove broad `alpha_eq`
-   compatibility.
+1. Harden kernel equality/certification boundaries.
+2. Extend T4 replay to the next primitive rules after strict kernel semantics
+   are stable.
 3. Reduce `Typ::dummy()` at theorem construction sites.
 4. Shrink admitted lemmas by reason while preserving oracle footprints.
 5. Only then increase HOL/Isar surface coverage.

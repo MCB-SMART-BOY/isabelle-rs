@@ -90,9 +90,9 @@ Relative completion estimates:
 
 ## Known Trust Debts
 
-- `alpha_eq` still has broad Free/Const and Var/Free compatibility kept for
-  parser/loader compatibility. This is a real T2 debt and must be fixed at the
-  parser/type/certification boundary before tightening the kernel.
+- Trusted kernel equality now uses strict `kernel_alpha_eq`. The old broad
+  Free/Const and Var/Free behavior is isolated as explicit `compat_alpha_eq`
+  parser/loader compatibility and remains a T2 boundary debt.
 - `Typ::dummy()` still appears at trusted boundaries. The direction is stricter
   parsing, type inference, and `CTerm` certification, not more kernel tolerance.
 - Some proof-search APIs still collapse `KernelError` into `Option<Thm>`. This
@@ -104,8 +104,8 @@ Relative completion estimates:
 
 Current priority order:
 
-1. Extend T4 proofterm replay to more primitive kernel rules.
-2. Tighten parser/type/certification boundaries and reduce `Typ::dummy()`.
+1. Tighten kernel equality/certification boundaries and reduce `Typ::dummy()`.
+2. Extend T4 proofterm replay to more primitive kernel rules.
 3. Shrink admitted lemmas by cause, preserving explicit oracle footprints.
 4. Expand HOL/Isar coverage after trusted boundaries remain stable.
 5. Treat LSP/WASM/agent integration as later layers over a trustworthy kernel.
@@ -117,7 +117,7 @@ Detailed plan: [docs/ROADMAP.md](docs/ROADMAP.md).
 | Document | Purpose |
 |---|---|
 | [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md) | Canonical current positioning and status. |
-| [docs/BASELINE.md](docs/BASELINE.md) | Current trusted-kernel checkpoint, gate, known ignored tests, and next entry point. |
+| [docs/BASELINE.md](docs/BASELINE.md) | Trusted-kernel checkpoint, gate, strict-kernel update, and next entry point. |
 | [docs/TRUST.md](docs/TRUST.md) | Trust model, theorem acceptance, oracle/admit semantics. |
 | [docs/KERNEL_RULES.md](docs/KERNEL_RULES.md) | Kernel rule audit ledger. |
 | [docs/KERNEL_ATTACK_TESTS.md](docs/KERNEL_ATTACK_TESTS.md) | Soundness regression matrix. |

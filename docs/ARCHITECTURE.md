@@ -153,8 +153,8 @@ Current semantics:
 | Debt | Impact | Direction |
 |---|---|---|
 | `Typ::dummy()` at trusted boundaries | Allows ill-typed terms to survive too far. | Strengthen parser, type inference, and `CTerm` certification. |
-| Broad `alpha_eq` Free/Const compatibility | Can identify different term heads. | Align parser/loader term heads before tightening kernel equality. |
-| Broad `alpha_eq` Var/Free compatibility | Can ignore schematic variable indices. | Align theorem DB and parser variable representation. |
+| Compatibility Free/Const matching | Old behavior is isolated in `compat_alpha_eq`; trusted kernel equality rejects it. | Align parser/loader term heads and remove/narrow compatibility usage. |
+| Compatibility Var/Free matching | Old behavior is isolated in `compat_alpha_eq`; trusted kernel equality rejects it. | Align theorem DB and parser variable representation. |
 | `Option<Thm>` proof-search APIs | Erases distinction between type rejection and ordinary non-match. | Move trusted boundaries toward `Result<Option<Thm>, KernelError>`. |
 | Partial proofterm replay | Only validates a small primitive subset. | Extend replay rule-by-rule with attack tests. |
 | HOL tool stubs/fallbacks | Many generated facts are admitted or heuristic. | Keep fallback admitted; reduce by cause later. |

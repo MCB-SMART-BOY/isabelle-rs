@@ -14,6 +14,7 @@ proofterm checking; it means the listed trusted-boundary regressions are covered
 |---|---|---|
 | Chain two equalities with known distinct object types through `transitive` | rejected with `KernelError::TypeMismatch` | `tests/kernel_soundness.rs::transitive_rejects_known_equality_type_mismatch`; `src/core/thm.rs::test_transitive_rejects_known_equality_type_mismatch` |
 | Chain two dummy-typed equalities whose middle terms have incompatible known types | rejected with `KernelError::TypeMismatch` | `tests/kernel_soundness.rs::transitive_rejects_dummy_equality_type_with_known_middle_type_mismatch` |
+| Chain two equalities through Free/Const suffix-compatible middle terms | rejected with `KernelError::MidTermsNotEquiv` | `tests/kernel_soundness.rs::transitive_rejects_free_const_suffix_middle_term` |
 | Beta-convert `(λx. x) a` and expose raw `Bound(0)` | rejected by construction; RHS is `a` | `tests/kernel_soundness.rs::beta_conversion_substitutes_the_argument`; `src/core/thm.rs::test_beta_conversion_substitutes_argument_for_bound_zero` |
 | Abstract over a variable that is free in hypotheses | rejected with `FreeVarInHypotheses` | `tests/kernel_soundness.rs::abstraction_rejects_free_variable_in_hypotheses` |
 | Treat `assume(A)` as an unconditional theorem | impossible through public shape; discharge requires `implies_intr` | `tests/kernel_soundness.rs::implies_intro_is_the_only_way_to_discharge_assume_here` |
@@ -26,8 +27,13 @@ proofterm checking; it means the listed trusted-boundary regressions are covered
 | Drop oracle footprint through a multi-premise rule | result remains tainted | `src/core/thm.rs::test_union_of_proved_and_admitted_is_tainted` |
 | Drop sort hypotheses through single-premise or multi-premise rules | `shyps` preserved/unioned | `src/core/thm.rs::test_shyps_propagate_through_single_premise_rule`; `src/core/thm.rs::test_shyps_union_through_multi_premise_rule` |
 | Use `combination` with a known argument-domain mismatch | rejected with `KernelError::TypeMismatch` | `src/core/thm.rs::test_combination_rejects_known_type_mismatch` |
-| Identify lambdas with distinct known binder types | rejected by `alpha_eq` | `src/core/thm.rs::test_alpha_eq_rejects_distinct_binder_types` |
+| Identify lambdas with distinct known binder types | rejected by `kernel_alpha_eq` | `src/core/thm.rs::test_alpha_eq_rejects_distinct_binder_types` |
+| Identify dummy-vs-known lambda binders in trusted equality | rejected by `kernel_alpha_eq`; accepted only by explicit `compat_alpha_eq` | `src/core/thm.rs::test_kernel_alpha_eq_rejects_dummy_known_binder_match` |
+| Match `Free("zero")` with `Const("Groups.zero")` by suffix in trusted equality | rejected by `kernel_alpha_eq`; accepted only by explicit `compat_alpha_eq` | `src/core/thm.rs::test_alpha_eq_should_reject_free_const_suffix_match` |
+| Match `Var("x", i)` with `Free("x")` in trusted equality | rejected by `kernel_alpha_eq`; accepted only by explicit `compat_alpha_eq` | `src/core/thm.rs::test_alpha_eq_should_reject_var_free_index_confusion` |
+| Ignore schematic variable indices | rejected by `kernel_alpha_eq` | `src/core/thm.rs::test_kernel_alpha_eq_rejects_distinct_var_indices` |
 | Use `implies_elim` across alpha-equal antecedents with incompatible known types | rejected with `KernelError::TypeMismatch` | `tests/kernel_soundness.rs::implies_elim_rejects_known_antecedent_type_mismatch` |
+| Use `implies_elim` across Var/Free same-name antecedents | rejected with `KernelError::AntecedentMismatch` | `tests/kernel_soundness.rs::implies_elim_rejects_var_free_antecedent_confusion` |
 | Instantiate `!!x. P x` with a known wrong-typed term | rejected with `KernelError::TypeMismatch` | `tests/kernel_soundness.rs::forall_elim_rejects_known_binder_argument_type_mismatch` |
 | Apply an environment that maps `?x::nat` to a `bool` term | public path rejects through `instantiate_checked`; old infallible behavior is internal test-only | `tests/kernel_soundness.rs::instantiate_checked_rejects_known_type_mismatch`; `src/core/thm.rs::test_instantiate_legacy_is_test_only_and_conservative` |
 | Rewrite a premise through a same-name lhs with incompatible known type | `subst_premise` returns `None` | `tests/kernel_soundness.rs::subst_premise_rejects_known_lhs_premise_type_mismatch` |
@@ -49,21 +55,23 @@ proofterm checking; it means the listed trusted-boundary regressions are covered
 | Reject alpha-equivalent middle terms in supported `transitive` replay even though the kernel accepted them | replay uses kernel alpha-equivalence and known-type compatibility | `src/core/proofterm.rs::transitive_replay_accepts_alpha_equivalent_middle_terms` |
 | Confuse unsupported replay rule with tampering or oracle failure | unsupported rules produce an explicit unsupported-rule error | `src/core/proofterm.rs::unsupported_rule_is_reported_separately_from_tampering` |
 
-## Ignored Known-Gap Tests
+## Compatibility-Only Gaps
 
-These tests encode the desired final kernel behavior but are intentionally
-ignored until parser/loader/type annotation are aligned. They should be enabled
-only after the corresponding front-end representation gap is fixed.
+The former ignored Free/Const and Var/Free tests are now ordinary passing
+strict-kernel tests. The old behavior remains only in `Hyps::compat_alpha_eq` so
+legacy parser/loader paths can be isolated and audited explicitly.
 
-| Known gap | Desired result | Ignored test |
+| Compatibility debt | Trusted behavior | Compatibility behavior |
 |---|---|---|
-| `Free("zero")` matches `Const("Groups.zero")` by suffix | `alpha_eq` rejects Free/Const confusion | `src/core/thm.rs::test_alpha_eq_should_reject_free_const_suffix_match` |
-| `Var("x", i)` matches `Free("x")`, ignoring schematic index | `alpha_eq` rejects Var/Free confusion | `src/core/thm.rs::test_alpha_eq_should_reject_var_free_index_confusion` |
+| `Free("zero")` vs `Const("Groups.zero")` suffix matching | `kernel_alpha_eq` rejects it | `compat_alpha_eq` still accepts it |
+| `Var("x", i)` vs `Free("x")` matching | `kernel_alpha_eq` rejects it | `compat_alpha_eq` still accepts it |
+| Dummy-vs-known binder type matching | `kernel_alpha_eq` rejects it | `compat_alpha_eq` still accepts it |
 
 ## Next Attack Tests To Add
 
-- `subst_premise` must not rewrite across Free/Const or Var/Free confusion once
-  strict `alpha_eq` is enabled.
+- `subst_premise`, `bicompose`, and `bicompose_eresolve` should get explicit
+  Free/Const and Var/Free rejection tests now that strict `kernel_alpha_eq` is
+  enabled.
 - `bicompose` and `bicompose_eresolve` still need explicit oracle/tpairs/shyps
   propagation tests with non-empty burdens on both premises.
 - `instantiate_checked` should eventually validate sort constraints and richer

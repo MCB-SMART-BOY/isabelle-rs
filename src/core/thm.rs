@@ -171,9 +171,9 @@ impl Hyps {
         }
     }
 
-    /// Check if a hypothesis is already present (modulo α-equivalence).
+    /// Check if a hypothesis is already present (modulo kernel α-equivalence).
     pub fn contains(&self, h: &CTerm) -> bool {
-        self.entries.iter().any(|existing| Self::alpha_eq(existing.term(), h.term()))
+        self.entries.iter().any(|existing| Self::kernel_alpha_eq(existing.term(), h.term()))
     }
 
     pub fn len(&self) -> usize {
@@ -201,18 +201,44 @@ impl Hyps {
             entries: self
                 .entries
                 .iter()
-                .filter(|existing| !Self::alpha_eq(existing.term(), h.term()))
+                .filter(|existing| !Self::kernel_alpha_eq(existing.term(), h.term()))
                 .cloned()
                 .collect(),
         }
     }
 
-    /// α-equivalence check for terms.
+    /// Strict kernel α-equivalence check for terms.
     ///
-    /// Two terms are α-equivalent if they are equal modulo bound variable renaming.
-    /// This is a simplified structural comparison; a full implementation would
-    /// use de Bruijn normalization or nominal techniques.
-    pub(crate) fn alpha_eq(a: &Term, b: &Term) -> bool {
+    /// This relation is for trusted theorem construction. It only accepts real
+    /// structural α-equivalence: term constructors must match, schematic
+    /// variable indices must match, and binder types must match. It deliberately
+    /// does not perform parser/loader compatibility repairs such as Free/Const
+    /// suffix matching or Var/Free matching.
+    pub(crate) fn kernel_alpha_eq(a: &Term, b: &Term) -> bool {
+        match (a, b) {
+            (Term::Const { name: n1, .. }, Term::Const { name: n2, .. }) => n1 == n2,
+            (Term::Free { name: n1, .. }, Term::Free { name: n2, .. }) => n1 == n2,
+            (Term::Var { name: n1, index: i1, .. }, Term::Var { name: n2, index: i2, .. }) => {
+                n1 == n2 && i1 == i2
+            },
+            (Term::Bound(i1), Term::Bound(i2)) => i1 == i2,
+            (Term::Abs { body: b1, typ: t1, .. }, Term::Abs { body: b2, typ: t2, .. }) => {
+                t1 == t2 && Self::kernel_alpha_eq(b1, b2)
+            },
+            (Term::App { func: f1, arg: a1 }, Term::App { func: f2, arg: a2 }) => {
+                Self::kernel_alpha_eq(f1, f2) && Self::kernel_alpha_eq(a1, a2)
+            },
+            _ => false,
+        }
+    }
+
+    /// Backward-compatible parser/loader matching.
+    ///
+    /// This preserves the historical loose behavior for explicitly marked
+    /// compatibility paths only. It must not be used by trusted `ThmKernel`
+    /// primitive rules.
+    #[allow(dead_code)]
+    pub(crate) fn compat_alpha_eq(a: &Term, b: &Term) -> bool {
         match (a, b) {
             (Term::Const { name: n1, .. }, Term::Const { name: n2, .. }) => n1 == n2,
             (Term::Free { name: n1, .. }, Term::Free { name: n2, .. }) => n1 == n2,
@@ -229,17 +255,12 @@ impl Hyps {
             },
             (Term::Bound(i1), Term::Bound(i2)) => i1 == i2,
             (Term::Abs { body: b1, typ: t1, .. }, Term::Abs { body: b2, typ: t2, .. }) => {
-                // α-equivalence requires equal binder types. We tolerate
-                // Typ::dummy() on either side (the type was never inferred —
-                // pervasive in the current parser output), but two *known*
-                // distinct binder types denote different functions and must
-                // NOT be identified: λ(x:nat). x ≢ λ(x:bool). x. Without this
-                // guard, `transitive`/`implies_elim` could chain across
-                // incompatible types once type inference annotates binders.
-                (t1.is_dummy() || t2.is_dummy() || t1 == t2) && Self::alpha_eq(b1, b2)
+                // Compatibility mode still tolerates dummy binders for legacy
+                // parser output. Trusted kernel equality does not.
+                (t1.is_dummy() || t2.is_dummy() || t1 == t2) && Self::compat_alpha_eq(b1, b2)
             },
             (Term::App { func: f1, arg: a1 }, Term::App { func: f2, arg: a2 }) => {
-                Self::alpha_eq(f1, f2) && Self::alpha_eq(a1, a2)
+                Self::compat_alpha_eq(f1, f2) && Self::compat_alpha_eq(a1, a2)
             },
             _ => false,
         }
@@ -602,7 +623,7 @@ impl ThmKernel {
     }
 
     fn alpha_eq_with_known_types(a: &Term, b: &Term) -> bool {
-        Hyps::alpha_eq(a, b) && Self::known_term_types_compatible(a, b)
+        Hyps::kernel_alpha_eq(a, b) && Self::known_term_types_compatible(a, b)
     }
 
     /// **Admit** `ct` as an oracle-backed theorem: `⊢ ct`, tagged with the
@@ -719,8 +740,8 @@ impl ThmKernel {
         let (u2, v, eq_typ2) = Pure::dest_equals_with_type(thm2.prop.term())
             .ok_or_else(|| KernelError::NotEquality(thm2.prop.term().clone()))?;
 
-        // In Isabelle, the middle terms must be α-equivalent
-        if !Hyps::alpha_eq(u1, u2) {
+        // The middle terms must be strict kernel α-equivalent.
+        if !Hyps::kernel_alpha_eq(u1, u2) {
             return Err(KernelError::MidTermsNotEquiv);
         }
         Self::ensure_known_term_types_compatible(u1, u2)?;
@@ -932,7 +953,7 @@ impl ThmKernel {
         let (a, b) = Pure::dest_implies(thm_imp.prop.term())
             .ok_or_else(|| KernelError::NotImplication(thm_imp.prop.term().clone()))?;
 
-        if !Hyps::alpha_eq(a, thm_a.prop.term()) {
+        if !Hyps::kernel_alpha_eq(a, thm_a.prop.term()) {
             return Err(KernelError::AntecedentMismatch);
         }
         Self::ensure_known_term_types_compatible(a, thm_a.prop.term())?;
@@ -1264,7 +1285,7 @@ impl ThmKernel {
     pub fn subst_premise(eq_thm: &Thm, state: &Thm, i: usize) -> Option<Thm> {
         let (t, u) = Pure::dest_equals(eq_thm.prop.term())?;
         let prem_i = Pure::nth_premise(state.prop.term(), i)?;
-        if !Hyps::alpha_eq(t, prem_i) {
+        if !Hyps::kernel_alpha_eq(t, prem_i) {
             return None;
         }
         if !Self::known_term_types_compatible(t, prem_i) {
@@ -1726,7 +1747,7 @@ mod tests {
         let t1 = Term::abs("x", Typ::dummy(), Term::bound(0));
         let t2 = Term::abs("y", Typ::dummy(), Term::bound(0));
         assert_ne!(t1, t2);
-        assert!(Hyps::alpha_eq(&t1, &t2));
+        assert!(Hyps::kernel_alpha_eq(&t1, &t2));
     }
 
     // =================================================================
@@ -1795,7 +1816,7 @@ mod tests {
         assert!(result.is_some());
         let r = result.unwrap();
         // First premise should be B (from thm's premises)
-        assert!(Hyps::alpha_eq(&r.prem(0).unwrap(), b.term()));
+        assert!(Hyps::kernel_alpha_eq(&r.prem(0).unwrap(), b.term()));
     }
 
     #[test]
@@ -2059,8 +2080,8 @@ mod tests {
     }
 
     // =================================================================
-    // T2-1 (Branch C): alpha_eq must not identify lambdas with distinct
-    // KNOWN binder types, but must still tolerate Typ::dummy().
+    // T2-1 (Strict Kernel Phase): kernel alpha-equivalence must not perform
+    // parser/loader compatibility repair.
     // =================================================================
 
     #[test]
@@ -2069,47 +2090,72 @@ mod tests {
         let nat_abs = Term::abs("x", Typ::base("nat"), Term::Bound(0));
         let bool_abs = Term::abs("x", Typ::base("bool"), Term::Bound(0));
         assert!(
-            !Hyps::alpha_eq(&nat_abs, &bool_abs),
-            "alpha_eq wrongly identified λ(x:nat).x with λ(x:bool).x"
+            !Hyps::kernel_alpha_eq(&nat_abs, &bool_abs),
+            "kernel_alpha_eq wrongly identified λ(x:nat).x with λ(x:bool).x"
         );
     }
 
     #[test]
-    fn test_alpha_eq_tolerates_dummy_binder_type() {
-        // Backward-compat: dummy on either side still matches (status quo —
-        // the parser emits dummy binder types pervasively).
+    fn test_kernel_alpha_eq_rejects_dummy_known_binder_match() {
+        // Strict kernel equality requires binder types to match exactly. Dummy
+        // binder compatibility is now isolated in compat_alpha_eq.
         let dummy_abs = Term::abs("x", Typ::dummy(), Term::Bound(0));
         let nat_abs = Term::abs("y", Typ::base("nat"), Term::Bound(0));
-        assert!(Hyps::alpha_eq(&dummy_abs, &nat_abs), "dummy binder should match any type");
-        assert!(Hyps::alpha_eq(&nat_abs, &dummy_abs), "symmetric dummy match failed");
-        // And two identical known types still match.
+        assert!(
+            !Hyps::kernel_alpha_eq(&dummy_abs, &nat_abs),
+            "kernel_alpha_eq tolerated dummy-vs-known binder type"
+        );
+        assert!(
+            !Hyps::kernel_alpha_eq(&nat_abs, &dummy_abs),
+            "kernel_alpha_eq tolerated known-vs-dummy binder type"
+        );
+
+        // Compatibility mode preserves the historical behavior explicitly.
+        assert!(Hyps::compat_alpha_eq(&dummy_abs, &nat_abs));
+        assert!(Hyps::compat_alpha_eq(&nat_abs, &dummy_abs));
+
+        // Two identical known types still match in strict mode.
         let nat_abs2 = Term::abs("z", Typ::base("nat"), Term::Bound(0));
-        assert!(Hyps::alpha_eq(&nat_abs, &nat_abs2));
+        assert!(Hyps::kernel_alpha_eq(&nat_abs, &nat_abs2));
     }
 
     #[test]
-    #[ignore = "known parser/loader boundary gap: Free/Const suffix matching is still tolerated"]
     fn test_alpha_eq_should_reject_free_const_suffix_match() {
-        // Desired final kernel behavior after parser/loader alignment:
-        // a free variable named `zero` is not the HOL constant `Groups.zero`.
+        // A free variable named `zero` is not the HOL constant `Groups.zero`.
         let free_zero = Term::free("zero", Typ::base("nat"));
         let const_zero = Term::const_("Groups.zero", Typ::base("nat"));
         assert!(
-            !Hyps::alpha_eq(&free_zero, &const_zero),
-            "alpha_eq identified Free(\"zero\") with Const(\"Groups.zero\")"
+            !Hyps::kernel_alpha_eq(&free_zero, &const_zero),
+            "kernel_alpha_eq identified Free(\"zero\") with Const(\"Groups.zero\")"
+        );
+        assert!(
+            Hyps::compat_alpha_eq(&free_zero, &const_zero),
+            "compat_alpha_eq should preserve legacy Free/Const suffix matching"
         );
     }
 
     #[test]
-    #[ignore = "known parser/loader boundary gap: Var/Free matching is still tolerated"]
     fn test_alpha_eq_should_reject_var_free_index_confusion() {
-        // Desired final kernel behavior after schematic variables are parsed
-        // correctly: a schematic variable with an index is not a free variable.
+        // A schematic variable with an index is not a free variable.
         let schematic = Term::var("x", 7, Typ::base("nat"));
         let free = Term::free("x", Typ::base("nat"));
         assert!(
-            !Hyps::alpha_eq(&schematic, &free),
-            "alpha_eq identified Var(\"x\", 7) with Free(\"x\")"
+            !Hyps::kernel_alpha_eq(&schematic, &free),
+            "kernel_alpha_eq identified Var(\"x\", 7) with Free(\"x\")"
+        );
+        assert!(
+            Hyps::compat_alpha_eq(&schematic, &free),
+            "compat_alpha_eq should preserve legacy Var/Free matching"
+        );
+    }
+
+    #[test]
+    fn test_kernel_alpha_eq_rejects_distinct_var_indices() {
+        let x0 = Term::var("x", 0, Typ::base("nat"));
+        let x7 = Term::var("x", 7, Typ::base("nat"));
+        assert!(
+            !Hyps::kernel_alpha_eq(&x0, &x7),
+            "kernel_alpha_eq identified distinct schematic variable indices"
         );
     }
 }

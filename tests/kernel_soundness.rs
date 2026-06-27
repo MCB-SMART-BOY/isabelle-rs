@@ -66,6 +66,30 @@ fn transitive_rejects_dummy_equality_type_with_known_middle_type_mismatch() {
 }
 
 #[test]
+fn transitive_rejects_free_const_suffix_middle_term() {
+    let nat = Typ::base("nat");
+    let a = Term::const_("a", nat.clone());
+    let free_zero = Term::free("zero", nat.clone());
+    let const_zero = Term::const_("Groups.zero", nat.clone());
+    let c = Term::const_("c", nat.clone());
+
+    let left = ThmKernel::admit(
+        CTerm::certify(Pure::mk_equals(nat.clone(), a, free_zero)),
+        "admitted:kernel_alpha_left",
+    );
+    let right = ThmKernel::admit(
+        CTerm::certify(Pure::mk_equals(nat, const_zero, c)),
+        "admitted:kernel_alpha_right",
+    );
+
+    let result = ThmKernel::transitive(&left, &right);
+    assert!(
+        matches!(&result, Err(KernelError::MidTermsNotEquiv)),
+        "transitive accepted Free/Const suffix matching through trusted alpha equality: {result:?}"
+    );
+}
+
+#[test]
 fn beta_conversion_substitutes_the_argument() {
     let nat = Typ::base("nat");
     let lam = Term::abs("x", nat.clone(), Term::bound(0));
@@ -140,6 +164,27 @@ fn implies_elim_rejects_known_antecedent_type_mismatch() {
     assert!(
         matches!(&result, Err(KernelError::TypeMismatch { .. })),
         "implies_elim accepted alpha-equal antecedents with incompatible known types: {result:?}"
+    );
+}
+
+#[test]
+fn implies_elim_rejects_var_free_antecedent_confusion() {
+    let prop_t = Typ::base("prop");
+    let schematic = Term::var("A", 7, prop_t.clone());
+    let free = Term::free("A", prop_t.clone());
+    let conclusion = Term::const_("C", prop_t);
+
+    let implication = ThmKernel::admit(
+        CTerm::certify(Pure::mk_implies(schematic, conclusion)),
+        "admitted:implies_elim_var_free_attack",
+    );
+    let minor =
+        ThmKernel::admit(CTerm::certify(free), "admitted:implies_elim_var_free_attack_minor");
+
+    let result = ThmKernel::implies_elim(&implication, &minor);
+    assert!(
+        matches!(&result, Err(KernelError::AntecedentMismatch)),
+        "implies_elim accepted Var/Free matching through trusted alpha equality: {result:?}"
     );
 }
 
