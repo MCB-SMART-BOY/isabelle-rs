@@ -2274,6 +2274,12 @@ pub fn load_all_theories() -> Result<HolTheoremDb, String> {
     Ok(db)
 }
 
+/// HOL proof-search fact database.
+///
+/// This is not the final trusted theorem table. It intentionally stores parsed,
+/// generated, builtin, open, and admitted facts for proof search. Consumers that
+/// report proved lemmas or export trusted theory theorems must use
+/// `Thm::is_closed_proved()` or the final `Theory` table instead.
 pub struct HolTheoremDb {
     pub intros: Vec<Arc<crate::core::thm::Thm>>,
     pub elims: Vec<Arc<crate::core::thm::Thm>>,
@@ -2283,7 +2289,9 @@ pub struct HolTheoremDb {
     /// Safe elim rules
     pub safe_elims: Vec<Arc<crate::core::thm::Thm>>,
     pub all: Vec<Arc<crate::core::thm::Thm>>,
-    /// Theorem lookup by name (e.g., "sym", "trans", "refl")
+    /// Searchable fact lookup by name (e.g., "sym", "trans", "refl").
+    ///
+    /// Entries may be open or admitted; this map is not a trusted theorem table.
     pub by_name: std::collections::HashMap<String, Arc<crate::core::thm::Thm>>,
     /// Type environment (maps constant/type names to their Typ)
     pub type_env: crate::core::types::TypeEnv,
@@ -2319,6 +2327,21 @@ impl HolTheoremDb {
             safe_elim_net: std::sync::OnceLock::new(),
             attrs_index: std::collections::HashMap::new(),
         }
+    }
+
+    /// Count searchable fact entries stored in `all`.
+    ///
+    /// This includes open/admitted facts and aliases used by proof search.
+    pub fn searchable_fact_count(&self) -> usize {
+        self.all.len()
+    }
+
+    /// Count facts in `all` that are closed proved theorems.
+    ///
+    /// This is useful for audits, but the final trusted theorem table is
+    /// `core::theory::Theory`, not this proof-search database.
+    pub fn closed_proved_count(&self) -> usize {
+        self.all.iter().filter(|thm| thm.is_closed_proved()).count()
     }
 
     /// Check if a lemma has a "safe" intro attribute: `[intro!]`
@@ -3642,6 +3665,37 @@ mod lemma_tests {
 
         // No attrs → default to intro (fallback)
         assert!(db.by_name.contains_key("no_attr"), "rule without attrs should still be in DB");
+    }
+
+    #[test]
+    fn test_hol_theorem_db_distinguishes_searchable_from_closed_proved() {
+        let open_fact = create_test_lemma("open_fact", &[], &Term::const_("A", Typ::base("prop")));
+
+        let db = HolTheoremDb::from_lemmas(&[open_fact]);
+
+        assert_eq!(db.searchable_fact_count(), 1);
+        assert_eq!(db.closed_proved_count(), 0);
+        assert!(db.by_name.contains_key("open_fact"));
+    }
+
+    #[test]
+    fn test_hol_theorem_db_counts_closed_proved_facts_separately() {
+        let true_ct = CTerm::certify(Term::const_("True", Typ::base("prop")));
+        let thm = ThmKernel::trivial(true_ct).expect("trivial True theorem");
+        let lemmas = vec![ParsedLemma {
+            name: "closed_fact".into(),
+            attributes: Vec::new(),
+            theorem: Arc::new(thm),
+            proof_script: Some("by trivial".into()),
+            alias_for: None,
+            source_loc: None,
+        }];
+
+        let db = HolTheoremDb::from_lemmas(&lemmas);
+
+        assert_eq!(db.searchable_fact_count(), 1);
+        assert_eq!(db.closed_proved_count(), 1);
+        assert!(db.by_name.get("closed_fact").is_some_and(|thm| thm.is_closed_proved()));
     }
 
     #[test]

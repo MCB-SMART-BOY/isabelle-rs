@@ -13,7 +13,7 @@ use super::{theory::Theory, thm::Thm};
 pub fn add_fact(theory: &mut Theory, name: &str, thms: Vec<Arc<Thm>>) {
     // Simplified: store in the theory
     for thm in thms {
-        if thm.is_unconditional() {
+        if thm.is_closed_proved() {
             theory.add_theorem(name, thm.as_ref().clone());
         }
     }

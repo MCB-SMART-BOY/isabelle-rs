@@ -148,11 +148,10 @@ impl TheoryProcessor {
     }
 
     /// Process with verification statistics: (theory, verified_count, total_count).
-    /// "Verified" means the theorem is unconditional (no hypotheses).
+    /// "Verified" means closed proved: no oracles, no hypotheses, no unresolved tpairs.
     pub fn process_source_verified(&mut self, source: &str) -> (Arc<Theory>, usize, usize) {
         let thy = self.process_source(source);
-        let verified =
-            self.theorems.iter().filter(|(_, thm)| thm.as_ref().is_unconditional()).count();
+        let verified = self.closed_theorem_count();
         (thy, verified, self.theorems.len())
     }
 
@@ -936,7 +935,10 @@ impl TheoryProcessor {
             if let Some(ref pending_name) = self.pending_lemma {
                 self.lemma_count += 1;
                 let stmt = Term::const_("True", Typ::base("prop"));
-                let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+                let thm = Arc::new(ThmKernel::admit(
+                    CTerm::certify(stmt),
+                    "admitted:proof_engine_failed",
+                ));
                 let attrs = std::mem::take(&mut self.pending_attributes);
                 self.add_theorem_with_attrs(pending_name.clone(), thm, attrs);
             }
@@ -960,7 +962,10 @@ impl TheoryProcessor {
                         && let Some(ref pending_name) = self.pending_lemma
                     {
                         let stmt = Term::const_("True", Typ::base("prop"));
-                        let thm = Arc::new(ThmKernel::assume(CTerm::certify_annotated(stmt)));
+                        let thm = Arc::new(ThmKernel::admit(
+                            CTerm::certify_annotated(stmt),
+                            "admitted:proof_engine_failed",
+                        ));
                         let attrs = std::mem::take(&mut self.pending_attributes);
                         self.add_theorem_with_attrs(pending_name.clone(), thm, attrs);
                     }
@@ -1076,7 +1081,7 @@ impl TheoryProcessor {
         // Record all theorems into the local theory
         if let Some(ref mut local) = self.local {
             for (name, thm) in &self.theorems {
-                if thm.as_ref().is_unconditional() {
+                if thm.as_ref().is_closed_proved() {
                     local.note_theorem(name, Arc::clone(thm));
                 }
             }
@@ -1095,6 +1100,11 @@ impl TheoryProcessor {
     /// Get the theorem count.
     pub fn theorem_count(&self) -> usize {
         self.theorems.len()
+    }
+
+    /// Get the count of accumulated theorem-index entries that are closed proved lemmas.
+    pub fn closed_theorem_count(&self) -> usize {
+        self.theorems.iter().filter(|(_, thm)| thm.as_ref().is_closed_proved()).count()
     }
 
     /// Look up a theorem by name from the local index.
@@ -1364,6 +1374,36 @@ mod tests {
             proc.theorem_count() > 0,
             "Expected >=1 theorem in accept_all mode. Errors: {:?}",
             proc.errors()
+        );
+    }
+
+    #[test]
+    fn test_accept_all_is_admitted_not_closed_verified() {
+        let pure = Theory::pure();
+        let mut proc = TheoryProcessor::with_parent(pure, "Test");
+        proc.accept_all = true;
+        let source =
+            "theory Test imports Pure begin\nlemma trivial: \"A ==> A\"\nby assumption\nend";
+
+        let (thy, verified, total) = proc.process_source_verified(source);
+
+        assert!(proc.errors().is_empty(), "Errors: {:?}", proc.errors());
+        assert_eq!(total, 1);
+        assert_eq!(proc.theorem_count(), 1);
+        assert_eq!(verified, 0, "accepted theorem must not count as closed proved");
+        assert_eq!(proc.closed_theorem_count(), 0);
+
+        let thm = proc.lookup_theorem("trivial").expect("accept_all should index the theorem");
+        assert!(!thm.is_fully_proved());
+        assert!(!thm.is_closed_proved());
+        assert!(
+            thm.oracles().iter().any(|o| o.as_ref() == "admitted:proof_engine_failed"),
+            "accept_all must leave an oracle footprint: {:?}",
+            thm.oracles()
+        );
+        assert!(
+            thy.lookup_theorem("trivial").is_none(),
+            "accepted theorem must not enter the closed proved theorem table"
         );
     }
 }

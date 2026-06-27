@@ -70,6 +70,10 @@ pub fn verify_stats() -> (usize, usize) {
     VERIFY_STATS.with(|c| c.get())
 }
 
+fn is_closed_proved_outcome(thm: &Thm) -> bool {
+    thm.is_closed_proved() && LAST_OUTCOME.with(|c| c.get()) != VerifyOutcome::AxiomAccepted
+}
+
 // =========================================================================
 // Method
 // =========================================================================
@@ -3102,6 +3106,10 @@ fn parse_of_suffix(rest: &str) -> (&str, Vec<String>) {
 /// Supports: [symmetric], [simplified], [folded def], [unfolded def],
 ///           [rule_format], plus OF/THEN handled separately via apply_of/apply_then.
 fn apply_attributes(mut thm: Arc<Thm>, attrs: &[String], db: &HolTheoremDb) -> Arc<Thm> {
+    fn admit_attribute_transformation(term: Term) -> Arc<Thm> {
+        Arc::new(ThmKernel::admit(CTerm::certify(term), "admitted:attribute_transformation"))
+    }
+
     for attr in attrs {
         let a = attr.trim();
         match a {
@@ -3116,7 +3124,7 @@ fn apply_attributes(mut thm: Arc<Thm>, attrs: &[String], db: &HolTheoremDb) -> A
                 if !rules.is_empty() {
                     let simp = Simplifier::new(rules);
                     if let Some((simplified, _eq)) = simp.rewrite_deep(thm.prop().term()) {
-                        thm = Arc::new(ThmKernel::assume(CTerm::certify(simplified)));
+                        thm = admit_attribute_transformation(simplified);
                     }
                 }
             },
@@ -3127,7 +3135,7 @@ fn apply_attributes(mut thm: Arc<Thm>, attrs: &[String], db: &HolTheoremDb) -> A
                 {
                     let simp = Simplifier::new(vec![rule]);
                     if let Some((folded, _eq)) = simp.rewrite_deep(thm.prop().term()) {
-                        thm = Arc::new(ThmKernel::assume(CTerm::certify(folded)));
+                        thm = admit_attribute_transformation(folded);
                     }
                 }
             },
@@ -3140,7 +3148,7 @@ fn apply_attributes(mut thm: Arc<Thm>, attrs: &[String], db: &HolTheoremDb) -> A
                     std::mem::swap(&mut rule.lhs, &mut rule.rhs);
                     let simp = Simplifier::new(vec![rule]);
                     if let Some((unfolded, _eq)) = simp.rewrite_deep(thm.prop().term()) {
-                        thm = Arc::new(ThmKernel::assume(CTerm::certify(unfolded)));
+                        thm = admit_attribute_transformation(unfolded);
                     }
                 }
             },
@@ -3152,7 +3160,7 @@ fn apply_attributes(mut thm: Arc<Thm>, attrs: &[String], db: &HolTheoremDb) -> A
                     for p in prems.iter().rev() {
                         result = Pure::mk_implies((*p).clone(), result.clone());
                     }
-                    thm = Arc::new(ThmKernel::assume(CTerm::certify(result)));
+                    thm = admit_attribute_transformation(result);
                 }
             },
             _ => {}, // Unknown or OF/THEN — handled separately
@@ -3300,9 +3308,9 @@ fn has_schematic_vars(term: &Term) -> bool {
 /// This is the verifier's last-resort fallback: when no proof path closes the
 /// goal, we generalize its free variables to schematic ones and `admit` the
 /// result. The returned theorem is **not** `is_fully_proved()` — it carries
-/// the `"admitted"` oracle, so it is honestly distinguishable from a genuine
-/// proof at the type level, and that taint propagates into anything derived
-/// from it.
+/// an `"admitted:proof_engine_failed"` oracle, so it is honestly distinguishable
+/// from a genuine proof at the type level, and that taint propagates into
+/// anything derived from it.
 fn generalize_thm(thm: &Thm) -> Thm {
     let mut frees: Vec<String> = Vec::new();
     fn collect(term: &Term, out: &mut Vec<String>) {
@@ -3325,7 +3333,10 @@ fn generalize_thm(thm: &Thm) -> Thm {
     frees.retain(|n| seen.insert(n.clone()));
     if frees.is_empty() {
         // No free vars to generalize, but still unproved — admit the prop.
-        return ThmKernel::admit(CTerm::certify(thm.prop().term().clone()), "admitted");
+        return ThmKernel::admit(
+            CTerm::certify(thm.prop().term().clone()),
+            "admitted:proof_engine_failed",
+        );
     }
     let mut m: std::collections::HashMap<String, Term> = std::collections::HashMap::new();
     for (i, name) in frees.iter().enumerate() {
@@ -3341,7 +3352,7 @@ fn generalize_thm(thm: &Thm) -> Thm {
             _ => term.clone(),
         }
     }
-    ThmKernel::admit(CTerm::certify(apply(thm.prop().term(), &m)), "admitted")
+    ThmKernel::admit(CTerm::certify(apply(thm.prop().term(), &m)), "admitted:proof_engine_failed")
 }
 
 /// Set the proof attempt limit (used by auto/fast/best/etc.).
@@ -3463,8 +3474,8 @@ pub fn verify_file(source: &str) -> (usize, usize) {
 /// `(name, proof_script, is_proved)` for every attempted lemma instead of a
 /// count. Used to analyze which admitted lemmas the prover cannot yet close.
 ///
-/// `is_proved` is derived from the T3 trust footprint (`Thm::is_fully_proved()`),
-/// so it reflects genuine proofs vs `admit`ted fallbacks.
+/// `is_proved` requires a closed, oracle-free theorem with no accepted-axiom
+/// exit tag; open `A |- A` results are not counted as proved lemmas.
 pub fn verify_file_diagnostic(source: &str) -> Vec<(String, String, bool)> {
     use crate::hol::hol_loader::HolTheoremDb;
     let empty_db = HolTheoremDb::new();
@@ -3509,10 +3520,7 @@ pub fn verify_file_diagnostic(source: &str) -> Vec<(String, String, bool)> {
                 continue;
             }
             let script = lem.proof_script.clone().unwrap_or_default();
-            let proved = verify_lemma(lem).is_some_and(|thm| {
-                thm.is_fully_proved()
-                    && LAST_OUTCOME.with(|c| c.get()) != VerifyOutcome::AxiomAccepted
-            });
+            let proved = verify_lemma(lem).is_some_and(|thm| is_closed_proved_outcome(&thm));
             out.push((lem.name.clone(), script, proved));
         }
         LOCAL_THEOREM_INDEX.with(|idx| idx.borrow_mut().clear());
@@ -3544,13 +3552,14 @@ pub fn verify_lemmas_batch(lemmas: &[ParsedLemma]) -> (usize, usize) {
         if lem.proof_script.is_some() {
             attempted += 1;
             if let Some(thm) = verify_lemma(lem) {
-                verified += 1;
                 // Honest proved-vs-accepted split. Primary signal: the Thm's
-                // own oracle footprint (admitted lemmas carry "admitted").
-                // Secondary: the exit-site tag, which additionally catches
-                // open-goal resolution that returned a still-incomplete Thm.
-                let exit_accepted = LAST_OUTCOME.with(|c| c.get()) == VerifyOutcome::AxiomAccepted;
-                let proved = thm.is_fully_proved() && !exit_accepted;
+                // closed-proved predicate (oracle-free, no hyps, no unresolved
+                // tpairs). Secondary: the exit-site tag, which additionally
+                // catches proof-engine shortcuts that accepted the statement.
+                let proved = is_closed_proved_outcome(&thm);
+                if proved {
+                    verified += 1;
+                }
                 VERIFY_STATS.with(|c| {
                     let (p, a) = c.get();
                     if proved { c.set((p + 1, a)) } else { c.set((p, a + 1)) }
@@ -3579,7 +3588,10 @@ pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
         // Accept if built-in has Var and parsed version uses Free (intentional override)
         if has_vars && parsed_has_no_vars {
             LAST_OUTCOME.with(|c| c.set(VerifyOutcome::AxiomAccepted));
-            return Some(ThmKernel::admit(CTerm::certify(builtin_term.clone()), "admitted"));
+            return Some(ThmKernel::admit(
+                CTerm::certify(builtin_term.clone()),
+                "admitted:parser_gap",
+            ));
         }
     }
 
@@ -3593,7 +3605,7 @@ pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
         }
         return Some(ThmKernel::admit(
             CTerm::certify(lem.theorem.prop().term().clone()),
-            "admitted",
+            "admitted:unsupported_method",
         ));
     }
 
@@ -3626,7 +3638,7 @@ pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
             LAST_OUTCOME.with(|c| c.set(VerifyOutcome::AxiomAccepted));
             return Some(ThmKernel::admit(
                 CTerm::certify(lem.theorem.prop().term().clone()),
-                "admitted",
+                "admitted:datatype_stub",
             ));
         }
     }
@@ -4111,8 +4123,65 @@ mod tests {
         // [A] ==> A (assume A from hyps)
         let a = Term::const_("A", Typ::base("prop"));
         let state = ThmKernel::assume(CTerm::certify(a.clone()));
-        // state: {A} ⊢ A, nprems=0 — already proved!
+        // state: {A} ⊢ A, nprems=0 but still open under hypothesis A.
         assert_eq!(state.nprems(), 0);
+    }
+
+    #[test]
+    fn test_open_oracle_free_theorem_is_not_closed_proved_outcome() {
+        LAST_OUTCOME.with(|c| c.set(VerifyOutcome::Proved));
+        let a = CTerm::certify(Term::const_("A", Typ::base("prop")));
+        let thm = ThmKernel::assume(a);
+
+        assert!(thm.is_fully_proved(), "assume has no oracle footprint");
+        assert!(!thm.is_closed(), "assume leaves an ambient hypothesis");
+        assert!(!thm.is_closed_proved());
+        assert!(!super::is_closed_proved_outcome(&thm));
+    }
+
+    #[test]
+    fn test_apply_attributes_rule_format_is_admitted() {
+        let a = Term::const_("A", Typ::base("prop"));
+        let b = Term::const_("B", Typ::base("prop"));
+        let imp = Pure::mk_implies(a, b);
+        let thm = Arc::new(ThmKernel::assume(CTerm::certify(imp)));
+        let db = HolTheoremDb::new();
+
+        let transformed = super::apply_attributes(thm, &[String::from("rule_format")], &db);
+
+        assert!(!transformed.is_fully_proved());
+        assert!(!transformed.is_closed_proved());
+        assert!(transformed.hyps().is_empty());
+        assert!(
+            transformed.oracles().iter().any(|o| o.as_ref() == "admitted:attribute_transformation"),
+            "attribute transformation must carry an oracle footprint: {:?}",
+            transformed.oracles()
+        );
+    }
+
+    #[test]
+    fn test_verify_batch_does_not_count_open_theorem_as_verified() {
+        let a = Term::const_("A", Typ::base("prop"));
+        let goal = Pure::mk_implies(a.clone(), a.clone());
+        let lem = ParsedLemma {
+            name: "target".into(),
+            attributes: Vec::new(),
+            theorem: Arc::new(ThmKernel::assume(CTerm::certify(goal))),
+            proof_script: Some("by (rule open_rule)".into()),
+            alias_for: None,
+            source_loc: None,
+        };
+
+        let mut db = HolTheoremDb::new();
+        db.by_name.insert("open_rule".into(), Arc::new(ThmKernel::assume(CTerm::certify(a))));
+
+        reset_verify_stats();
+        let (verified, attempted) =
+            HolTheoremDb::with_override(&db, || verify_lemmas_batch(std::slice::from_ref(&lem)));
+
+        assert_eq!(attempted, 1);
+        assert_eq!(verified, 0, "open oracle-free theorem must not count as proved");
+        assert_eq!(verify_stats(), (0, 1));
     }
 
     #[test]
@@ -4472,7 +4541,10 @@ mod integration_tests {
             eprintln!("Found lemma: {} with proof: {:?}", lem.name, lem.proof_script);
             let result = verify_lemma(lem);
             match result {
-                Some(thm) => eprintln!("VERIFIED: {} -> {:?}", lem.name, thm.prop().term()),
+                Some(thm) if is_closed_proved_outcome(&thm) => {
+                    eprintln!("CLOSED PROVED: {} -> {:?}", lem.name, thm.prop().term())
+                },
+                Some(thm) => eprintln!("ACCEPTED/OPEN: {} -> {:?}", lem.name, thm.prop().term()),
                 None => eprintln!("FAILED to verify: {}", lem.name),
             }
         }
@@ -4486,7 +4558,12 @@ mod integration_tests {
                     lem.proof_script.as_ref().map(|s| &s[..s.len().min(80)])
                 );
                 let result = verify_lemma(lem);
-                eprintln!("  Result: {}", if result.is_some() { "VERIFIED" } else { "FAILED" });
+                let status = match result {
+                    Some(ref thm) if is_closed_proved_outcome(thm) => "CLOSED PROVED",
+                    Some(_) => "ACCEPTED/OPEN",
+                    None => "FAILED",
+                };
+                eprintln!("  Result: {status}");
             }
         }
     }
@@ -4521,7 +4598,7 @@ mod benchmark_tests {
             let mut verified = 0usize;
             let start = std::time::Instant::now();
             for lem in with_proofs.iter().take(sample) {
-                if verify_lemma(lem).is_some() {
+                if verify_lemma(lem).is_some_and(|thm| is_closed_proved_outcome(&thm)) {
                     verified += 1;
                 }
             }
@@ -4555,11 +4632,18 @@ mod benchmark_tests {
             let t0 = Instant::now();
             let result = verify_lemma(lem);
             let dt = t0.elapsed().as_secs_f64();
-            if result.is_some() {
+            let proved = result.as_ref().is_some_and(|thm| is_closed_proved_outcome(thm));
+            if proved {
                 verified += 1;
             }
             if dt > 1.0 {
-                let status = if result.is_some() { "OK" } else { "FAIL" };
+                let status = if proved {
+                    "CLOSED PROVED"
+                } else if result.is_some() {
+                    "ACCEPTED/OPEN"
+                } else {
+                    "FAIL"
+                };
                 eprintln!("    SLOW [{}/{}] {}: {:.2}s {}", i + 1, sample, lem.name, dt, status);
             }
         }

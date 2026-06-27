@@ -78,7 +78,7 @@ pub struct BuildResult {
     pub loaded: usize,
     /// Total number of theories found.
     pub total: usize,
-    /// Total number of theorems produced.
+    /// Total number of closed proved theorems registered in final theories.
     pub theorems: usize,
     /// Number of failed theories.
     pub failed: usize,
@@ -248,7 +248,7 @@ impl SessionBuilder {
             let thy = proc.process_source(&source);
             self.registry.register(Arc::clone(&thy));
             if proc.errors().is_empty() {
-                Ok(proc.theorem_count())
+                Ok(proc.closed_theorem_count())
             } else {
                 Err(proc.errors().to_vec())
             }
@@ -329,17 +329,27 @@ impl SessionBuilder {
             let thy = proc.process_source(&source);
             self.registry.register(Arc::clone(&thy));
 
-            if proc.lemma_count == 0 && proc.theorem_count() == 0 {
+            let attempted = proc.lemma_count;
+            let indexed = proc.theorem_count();
+            let verified = proc.closed_theorem_count().min(attempted);
+
+            if attempted == 0 && indexed == 0 {
                 Ok(VerifyStatus::NoLemmas)
             } else if proc.errors().is_empty() {
-                if proc.lemma_count > 0 {
-                    Ok(VerifyStatus::FullSuccess)
-                } else {
+                if attempted == 0 {
                     Ok(VerifyStatus::NoLemmas)
+                } else if verified == attempted {
+                    Ok(VerifyStatus::FullSuccess)
+                } else if verified > 0 {
+                    Ok(VerifyStatus::PartialSuccess {
+                        verified,
+                        attempted,
+                        failed_names: Vec::new(),
+                    })
+                } else {
+                    Ok(VerifyStatus::ProofFailure { attempted })
                 }
             } else {
-                let verified = proc.theorem_count();
-                let attempted = proc.lemma_count;
                 let failed_names: Vec<String> = proc.errors().iter().take(10).cloned().collect();
                 if verified == 0 {
                     // Check if any errors are syntax-related
@@ -387,6 +397,18 @@ impl Default for SessionBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::theory::verify_classifier::VerifyStatus;
+
+    fn write_temp_theory(name: &str, source: &str) -> std::path::PathBuf {
+        let mut path = std::env::temp_dir();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock before unix epoch")
+            .as_nanos();
+        path.push(format!("isabelle_rs_{name}_{}_{}.thy", std::process::id(), nanos));
+        std::fs::write(&path, source).expect("write temp theory");
+        path
+    }
 
     #[test]
     fn test_theory_file_parse_from_str() {
@@ -433,5 +455,42 @@ mod tests {
         assert!(!result.is_success());
         assert_eq!(result.loaded, 3);
         assert_eq!(result.failed, 2);
+    }
+
+    #[test]
+    fn test_accept_all_does_not_report_session_verified_theorems() {
+        let source =
+            "theory Test imports Pure begin\nlemma trivial: \"A ==> A\"\nby assumption\nend";
+        let path = write_temp_theory("accept_all", source);
+        let tf = TheoryFile { name: "Test".into(), path: path.clone(), imports: Vec::new() };
+
+        let mut builder = SessionBuilder::new();
+        builder.set_accept_all(true);
+        builder.files.insert(tf.name.clone(), tf);
+        builder.order = vec!["Test".into()];
+
+        let result = builder.build();
+        assert_eq!(result.loaded, 1);
+        assert_eq!(result.theorems, 0, "admitted accept_all facts are not closed proved");
+        assert_eq!(builder.theorem_count_for("Test"), 0);
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_accept_all_classifier_is_not_full_success() {
+        let source =
+            "theory Test imports Pure begin\nlemma trivial: \"A ==> A\"\nby assumption\nend";
+        let path = write_temp_theory("accept_all_classifier", source);
+        let tf = TheoryFile { name: "Test".into(), path: path.clone(), imports: Vec::new() };
+
+        let mut builder = SessionBuilder::new();
+        builder.set_accept_all(true);
+        let status = builder.build_one_classified(&tf);
+
+        assert_eq!(status, VerifyStatus::ProofFailure { attempted: 1 });
+        assert_eq!(builder.theorem_count_for("Test"), 0);
+
+        let _ = std::fs::remove_file(path);
     }
 }

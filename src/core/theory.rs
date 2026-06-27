@@ -159,10 +159,10 @@ impl Theory {
 
     /// Add a proved theorem to the theory.
     ///
-    /// The theorem must be unconditional (no hypotheses) and its propositions
-    /// must be built from constants declared in this theory.
+    /// The theorem must be closed, oracle-free, and its propositions must be
+    /// built from constants declared in this theory.
     pub fn add_theorem(&mut self, name: impl Into<Symbol>, thm: Thm) {
-        assert!(thm.is_unconditional(), "stored theorems must be unconditional");
+        assert!(thm.is_closed_proved(), "stored theorems must be closed proved theorems");
         self.theorems.insert(name.into(), Arc::new(thm));
     }
 
