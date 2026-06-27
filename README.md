@@ -117,6 +117,7 @@ Detailed plan: [docs/ROADMAP.md](docs/ROADMAP.md).
 | Document | Purpose |
 |---|---|
 | [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md) | Canonical current positioning and status. |
+| [docs/BASELINE.md](docs/BASELINE.md) | Current trusted-kernel checkpoint, gate, known ignored tests, and next entry point. |
 | [docs/TRUST.md](docs/TRUST.md) | Trust model, theorem acceptance, oracle/admit semantics. |
 | [docs/KERNEL_RULES.md](docs/KERNEL_RULES.md) | Kernel rule audit ledger. |
 | [docs/KERNEL_ATTACK_TESTS.md](docs/KERNEL_ATTACK_TESTS.md) | Soundness regression matrix. |

@@ -35,12 +35,13 @@ Priority order:
 5. Add optional replay gates to CLI/verification paths after replay covers the
    main primitive rules.
 
-## Phase 0: Documentation and Codex Context Sync
+## Phase 0: Baseline and Documentation Sync
 
-Status: in progress for this update.
+Status: complete for the first trusted-kernel checkpoint.
 
 Goal:
 
+- Preserve the current T2/trust/T4 work as a reviewable baseline.
 - Make README, docs, root `CLAUDE.md`, and `~/.codex` agree on the same project
   positioning.
 - Remove misleading "Rust rewrite of Isabelle" and "feature complete" language.
@@ -52,6 +53,7 @@ Files:
 README.md
 CLAUDE.md
 docs/PROJECT_STATUS.md
+docs/BASELINE.md
 docs/TRUST.md
 docs/ARCHITECTURE.md
 docs/GAP_ANALYSIS.md
@@ -64,11 +66,23 @@ docs/DEVELOPMENT.md
 
 Done when:
 
+- The baseline commits and trusted gate are recorded.
 - All high-level docs describe the project as a research prototype, not a full
   Isabelle rewrite.
 - All proof-rate language distinguishes `is_fully_proved()` from
   `is_closed_proved()`.
 - The next engineering plan starts with T4 replay, not more HOL/Isar features.
+
+Current baseline commits:
+
+```text
+e60580b kernel: harden primitive rules and checked instantiation
+7465d48 trust: require closed proved theorems for trusted acceptance
+2dee3d0 proofterm: add minimal burden-aware derivation replay
+eef6d80 docs: reposition project as trusted Rust LCF kernel prototype
+```
+
+The next active code phase should start at Phase 1.
 
 ## Phase 1: T4 Replay Batch 1
 

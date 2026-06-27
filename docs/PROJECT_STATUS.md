@@ -28,6 +28,36 @@ feature parity with Isabelle/HOL. Its value is a smaller Rust-native setting for
 studying theorem-construction boundaries, admitted/oracle accounting, closed
 theorem statistics, and proof-object replay.
 
+## Current Baseline
+
+The first trusted-kernel engineering checkpoint is recorded in
+[BASELINE.md](BASELINE.md). It includes four reviewable commits:
+
+```text
+e60580b kernel: harden primitive rules and checked instantiation
+7465d48 trust: require closed proved theorems for trusted acceptance
+2dee3d0 proofterm: add minimal burden-aware derivation replay
+eef6d80 docs: reposition project as trusted Rust LCF kernel prototype
+```
+
+The baseline gate is:
+
+```bash
+cargo fmt --check
+cargo check
+cargo test --test kernel_soundness
+cargo test core::proofterm::tests::
+cargo test core::thm::tests::
+cargo test --lib core::
+```
+
+Current known ignored tests remain the `alpha_eq` parser/type-boundary debts:
+
+```text
+Free / Const suffix matching
+Var / Free index confusion
+```
+
 ## What Is Solid
 
 The following areas have a coherent implementation and regression coverage:
