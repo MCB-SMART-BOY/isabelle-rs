@@ -272,17 +272,21 @@ impl fmt::Debug for Hyps {
 /// - `Axiom`: a primitive inference rule with no premises
 /// - `Rule`: a primitive inference rule applied to premises
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Derivation {
+pub(crate) enum Derivation {
     Oracle { name: String, prop: CTerm },
-    Axiom { name: &'static str },
-    Rule { name: &'static str, premises: Vec<ThmDeriv> },
+    Axiom { name: &'static str, prop: CTerm },
+    Rule { name: &'static str, prop: CTerm, premises: Vec<ThmDeriv> },
 }
 
 /// A reference to a premise theorem's derivation.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ThmDeriv {
-    pub serial: u64,
-    pub prop: CTerm,
+pub(crate) struct ThmDeriv {
+    pub(crate) serial: u64,
+    pub(crate) prop: CTerm,
+    pub(crate) hyps: Hyps,
+    pub(crate) tpairs: Vec<(Term, Term)>,
+    pub(crate) oracles: Vec<Arc<str>>,
+    pub(crate) derivation: Derivation,
 }
 
 // =========================================================================
@@ -339,7 +343,14 @@ pub struct Thm {
 
 impl ThmDeriv {
     fn from_thm(thm: &Thm) -> Self {
-        ThmDeriv { serial: thm.serial, prop: thm.prop.clone() }
+        ThmDeriv {
+            serial: thm.serial,
+            prop: thm.prop.clone(),
+            hyps: thm.hyps.clone(),
+            tpairs: thm.tpairs.clone(),
+            oracles: thm.oracles.clone(),
+            derivation: thm.derivation.clone(),
+        }
     }
 }
 
@@ -404,25 +415,31 @@ impl Thm {
 
     /// Reconstruct the proof term for this theorem from its derivation.
     pub fn proof_term(&self) -> super::proofterm::ProofTerm {
-        super::proofterm::ProofTerm::from_derivation(&self.derivation, self.prop.term())
+        super::proofterm::ProofTerm::from_derivation(&self.derivation)
     }
 
     /// Check that this theorem's proof term is valid.
     /// Returns `Ok(())` if the proof checks out, or an error message.
     pub fn check_proof(&self) -> Result<(), String> {
         let proof = self.proof_term();
-        super::proofterm::check_proof(&proof, self.prop.term())
+        super::proofterm::check_proof_with_burdens(
+            &proof,
+            self.prop.term(),
+            &self.hyps,
+            &self.tpairs,
+            &self.oracles,
+        )
     }
 
     /// Get the proof body for this theorem (lazy checking).
     pub fn proof_body(&self) -> super::proofterm::ProofBody {
-        super::proofterm::ProofBody::from_derivation(&self.derivation, self.prop.term())
+        super::proofterm::ProofBody::from_derivation(&self.derivation)
     }
 
     /// Validate the proof body against the theorem's proposition.
     /// Returns Ok if the proof is valid (or cached), Err if invalid.
     pub fn validate_proof(&self, body: &mut super::proofterm::ProofBody) -> Result<(), String> {
-        body.check(self.prop.term())
+        body.check_with_burdens(self.prop.term(), &self.hyps, &self.tpairs, &self.oracles)
     }
 
     /// Get the i-th subgoal (0-indexed).
@@ -628,7 +645,7 @@ impl ThmKernel {
             tpairs: vec![],
             shyps: vec![],
             oracles: vec![],
-            derivation: Derivation::Axiom { name: "assume" },
+            derivation: Derivation::Axiom { name: "assume", prop: ct },
             serial: new_serial(),
         }
     }
@@ -659,7 +676,7 @@ impl ThmKernel {
             tpairs: vec![],
             shyps: vec![],
             oracles: vec![],
-            derivation: Derivation::Axiom { name: "reflexive" },
+            derivation: Derivation::Axiom { name: "reflexive", prop: new_prop },
             serial: new_serial(),
         }
     }
@@ -684,6 +701,7 @@ impl ThmKernel {
             oracles: thm.oracles.clone(),
             derivation: Derivation::Rule {
                 name: "symmetric",
+                prop: new_prop,
                 premises: vec![ThmDeriv::from_thm(thm)],
             },
             serial: new_serial(),
@@ -725,6 +743,7 @@ impl ThmKernel {
             oracles: Self::union_oracles(&thm1.oracles, &thm2.oracles),
             derivation: Derivation::Rule {
                 name: "transitive",
+                prop: new_prop,
                 premises: vec![ThmDeriv::from_thm(thm1), ThmDeriv::from_thm(thm2)],
             },
             serial: new_serial(),
@@ -786,6 +805,7 @@ impl ThmKernel {
             oracles: Self::union_oracles(&thm_f.oracles, &thm_x.oracles),
             derivation: Derivation::Rule {
                 name: "combination",
+                prop: new_prop,
                 premises: vec![ThmDeriv::from_thm(thm_f), ThmDeriv::from_thm(thm_x)],
             },
             serial: new_serial(),
@@ -828,6 +848,7 @@ impl ThmKernel {
             oracles: thm.oracles.clone(),
             derivation: Derivation::Rule {
                 name: "abstraction",
+                prop: new_prop,
                 premises: vec![ThmDeriv::from_thm(thm)],
             },
             serial: new_serial(),
@@ -866,7 +887,7 @@ impl ThmKernel {
             tpairs: vec![],
             shyps: vec![],
             oracles: vec![],
-            derivation: Derivation::Axiom { name: "beta_conversion" },
+            derivation: Derivation::Axiom { name: "beta_conversion", prop: new_prop },
             serial: new_serial(),
         })
     }
@@ -894,6 +915,7 @@ impl ThmKernel {
             oracles: thm.oracles.clone(),
             derivation: Derivation::Rule {
                 name: "implies_intr",
+                prop: new_prop,
                 premises: vec![ThmDeriv::from_thm(thm)],
             },
             serial: new_serial(),
@@ -925,6 +947,7 @@ impl ThmKernel {
             oracles: Self::union_oracles(&thm_imp.oracles, &thm_a.oracles),
             derivation: Derivation::Rule {
                 name: "implies_elim",
+                prop: new_prop,
                 premises: vec![ThmDeriv::from_thm(thm_imp), ThmDeriv::from_thm(thm_a)],
             },
             serial: new_serial(),
@@ -952,6 +975,7 @@ impl ThmKernel {
             oracles: thm.oracles.clone(),
             derivation: Derivation::Rule {
                 name: "forall_intr",
+                prop: new_prop,
                 premises: vec![ThmDeriv::from_thm(thm)],
             },
             serial: new_serial(),
@@ -979,6 +1003,7 @@ impl ThmKernel {
             oracles: thm.oracles.clone(),
             derivation: Derivation::Rule {
                 name: "forall_elim",
+                prop: new_prop,
                 premises: vec![ThmDeriv::from_thm(thm)],
             },
             serial: new_serial(),
@@ -1042,6 +1067,7 @@ impl ThmKernel {
             oracles: thm.oracles.clone(),
             derivation: Derivation::Rule {
                 name: "instantiate",
+                prop: new_prop,
                 premises: vec![ThmDeriv::from_thm(thm)],
             },
             serial: new_serial(),
@@ -1217,6 +1243,7 @@ impl ThmKernel {
             oracles: Self::union_oracles(&thm1.oracles, &thm2.oracles),
             derivation: Derivation::Rule {
                 name: "bicompose",
+                prop: new_prop,
                 premises: vec![ThmDeriv::from_thm(&thm1), ThmDeriv::from_thm(&thm2)],
             },
             serial: new_serial(),
@@ -1264,6 +1291,7 @@ impl ThmKernel {
             oracles: Self::union_oracles(&state.oracles, &eq_thm.oracles),
             derivation: Derivation::Rule {
                 name: "subst_premise",
+                prop: new_prop,
                 premises: vec![ThmDeriv::from_thm(eq_thm), ThmDeriv::from_thm(state)],
             },
             serial: new_serial(),
@@ -1387,6 +1415,7 @@ impl ThmKernel {
             oracles: Self::union_oracles(&thm1.oracles, &thm2.oracles),
             derivation: Derivation::Rule {
                 name: "bicompose_eresolve",
+                prop: new_prop,
                 premises: vec![ThmDeriv::from_thm(&thm1), ThmDeriv::from_thm(&thm2)],
             },
             serial: new_serial(),
@@ -1606,6 +1635,90 @@ mod tests {
         let t = CTerm::certify(Term::const_("t", Typ::dummy()));
         let thm = ThmKernel::reflexive(t);
         assert!(thm.is_unconditional());
+    }
+
+    #[test]
+    fn test_check_proof_rejects_tampered_theorem_prop() {
+        let t = CTerm::certify(Term::const_("t", Typ::base("nat")));
+        let mut thm = ThmKernel::reflexive(t);
+        thm.prop = prop("Tampered");
+
+        assert!(
+            thm.check_proof().is_err(),
+            "check_proof accepted a theorem whose prop no longer matches its derivation"
+        );
+    }
+
+    #[test]
+    fn test_check_proof_rejects_tampered_theorem_hyps() {
+        let t = CTerm::certify(Term::const_("t", Typ::base("nat")));
+        let mut thm = ThmKernel::reflexive(t);
+        thm.hyps = Hyps::singleton(prop("InjectedHyp"));
+
+        assert!(
+            thm.check_proof().is_err(),
+            "check_proof accepted a theorem whose hyps no longer match its derivation"
+        );
+    }
+
+    #[test]
+    fn test_check_proof_rejects_tampered_theorem_oracles() {
+        let t = CTerm::certify(Term::const_("t", Typ::base("nat")));
+        let mut thm = ThmKernel::reflexive(t);
+        thm.oracles.push(Arc::from("admitted:tampered"));
+
+        assert!(
+            thm.check_proof().is_err(),
+            "check_proof accepted a theorem whose oracle footprint no longer matches replay"
+        );
+    }
+
+    #[test]
+    fn test_check_proof_rejects_tampered_theorem_tpairs() {
+        let t = CTerm::certify(Term::const_("t", Typ::base("nat")));
+        let mut thm = ThmKernel::reflexive(t);
+        thm.tpairs.push((Term::var("x", 0, Typ::base("nat")), Term::var("y", 0, Typ::base("nat"))));
+
+        assert!(
+            thm.check_proof().is_err(),
+            "check_proof accepted a theorem whose tpairs no longer match replay"
+        );
+    }
+
+    #[test]
+    fn test_check_proof_rejects_tampered_premise_derivation() {
+        let t = CTerm::certify(Term::const_("t", Typ::base("nat")));
+        let refl = ThmKernel::reflexive(t);
+        let mut sym = ThmKernel::symmetric(&refl).unwrap();
+
+        let Derivation::Rule { premises, .. } = &mut sym.derivation else {
+            panic!("symmetric should record a rule derivation");
+        };
+        let Derivation::Axiom { prop: premise_prop, .. } = &mut premises[0].derivation else {
+            panic!("reflexive premise should record an axiom derivation");
+        };
+        *premise_prop = prop("TamperedPremise");
+
+        assert!(
+            sym.check_proof().is_err(),
+            "check_proof accepted a theorem with a tampered premise derivation"
+        );
+    }
+
+    #[test]
+    fn test_validate_proof_rechecks_stale_checked_body() {
+        let t = CTerm::certify(Term::const_("t", Typ::base("nat")));
+        let mut thm = ThmKernel::reflexive(t);
+        let mut body = thm.proof_body();
+
+        // Simulate legacy proposition-only checking having marked the body.
+        body.checked = true;
+        thm.hyps = Hyps::singleton(prop("InjectedHyp"));
+
+        assert!(
+            thm.validate_proof(&mut body).is_err(),
+            "validate_proof trusted ProofBody.checked without burden-aware replay"
+        );
     }
 
     #[test]
