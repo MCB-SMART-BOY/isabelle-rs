@@ -1,5 +1,10 @@
 # isabelle-rs v1.8.1+ → v1.9.0 移交提示词
 
+> Archive note: this is a historical v1.9.0 handoff snapshot. It is not the
+> current project status. For current status, read
+> [PROJECT_STATUS.md](PROJECT_STATUS.md), [TRUST.md](TRUST.md), and
+> [ROADMAP.md](ROADMAP.md).
+
 > 本会话：2026-06-04 | 主要成果：完成 Phases 49-54，v1.9.0 基础设施全部交付
 
 ---

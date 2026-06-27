@@ -2,6 +2,20 @@
 
 All notable changes to isabelle-rs.
 
+## [Unreleased]
+
+### Docs
+- Repositioned the project as a Rust research prototype of an
+  Isabelle/Pure-inspired LCF kernel with explicit oracle footprints,
+  closed-theorem acceptance, and minimal proofterm replay.
+- Added `docs/PROJECT_STATUS.md` as the canonical high-level status document.
+- Rewrote README, architecture, trust, gap-analysis, development, roadmap, and
+  session-transfer docs to distinguish full Isabelle parity from the narrower
+  trusted-kernel research slice.
+- Updated `~/.codex` reference/rules/skills so future Codex sessions prioritize
+  T4 replay expansion, parser/type boundary hardening, and admitted-reason
+  reduction.
+
 ## [2.2.1] — 2026-06-21
 
 ### Docs

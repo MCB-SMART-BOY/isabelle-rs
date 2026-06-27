@@ -1,173 +1,414 @@
-# 开发路线图 v26.1 (v2.2.1 — 信任工程已发布)
+# Roadmap
 
-> **当前版本: v2.2.1 — T1+T2(部分)+T3 信任工程, Tier2 真实证明率 85.8% (3277/3821), 178s**
-> **战略转向: 放弃追广度, 押注「内核可信 + 片段深度」。可信路线 A 基本完成, B 北极星。**
-> 见 [TRUST.md](TRUST.md)。
+This roadmap follows the current project positioning:
 
----
-
-## 总体策略 (v2.2.x 可信工程)
-
-```
-诚实化 ✅ — 把"100% verified"虚高指标变成由类型系统保证的真实证明率
-  ✅ T3 信任足迹: Thm.oracles 随 15 规则并集传播
-  ✅ ThmKernel::admit — 唯一"接受而不证明"入口
-  ✅ Tier2 真实证明率: 85.8% (3277 proved / 544 admitted)
-    ↓
-可信化 — 路线 A (T1+T2部分+T3) 基本完成: 系统永不说谎
-  ✅ T3 信任足迹
-  ✅ T2 内核加固 (部分): tpairs/shyps 并集传播 + alpha_eq Branch C binder 守卫 + combination 澄清
-  ✅ T1 后门收口: hol_rules/hol_consts/conjunction 假定理 → admit + pub(crate)
-  🔴 T2-4 解析边界: Free→Const + mk_var→Term::free, 才能安全收紧 alpha_eq Branch A/B
-  🟠 证明率攻坚: 缩小 544 admitted (瓶颈是结构化 Isar 回放, 非缺 simp 规则)
-  🔴 T4 独立复检: proofterm.rs check_proof 补完并接通 (de Bruijn, 北极星)
+```text
+Rust Isabelle/Pure-inspired LCF kernel prototype
+with explicit oracle footprints, closed-theorem acceptance,
+and minimal proofterm replay.
 ```
 
----
+The next phases should not chase broad Isabelle/HOL coverage first. The route is
+to harden the proof boundary, extend independent replay, then return to
+parser/type certification and admitted-lemma reduction.
 
-## 版本发布计划
+## Strategy
 
-| 版本 | 日期 | 状态 | 关键交付 |
-|------|------|:--:|------|
-| v2.2.1 | 2026-06-21 | ✅ current | 全项目文档审计同步 — 修正残留 100% 虚高声明, 统一真实证明率口径 |
-| v2.2.0 | 2026-06-21 | ✅ | **T1+T2+T3 信任工程 — 系统永不说谎; 真实证明率 85.8%; CI 26/26** |
-| v2.1.5 | 2026-06-17 | ✅ | Tier2 97/97 (3821/3821, +27 Library), 178s |
-| v2.1.4 | 2026-06-17 | ✅ | CI全绿 26/26, stable Rust 1.96.0, crates.io publish |
-| v2.1.2 | 2026-06-17 | ✅ | Isabelle-aligned depth, Tier2 70/70 154s, Metis ∃-skolemization |
-| v2.1.0 | 2026-06-17 | ✅ | IsarProof Arc, auto_exec 迭代化, Tier2 61/61 |
-| v2.0.0 | 2026-06-17 | ✅ | Isar优化 + Tier2 57/57 + Metis HOL.eq |
-| v1.9.0 | 2026-06-16 | ✅ | Route A 完成, Tier2 36/36 100%, Phase 3 完成 |
-| v1.8.1 | 2026-06-04 | ✅ | 5/5 core files 125/125, prove_condition 修复 |
-| v1.8.0 | 2026-06-03 | ✅ | Meson, 方法组合子, 属性链, verify_file(), Tier2/Tier3 |
-| v1.7.0 | 2026-06-03 | ✅ | BNF Lfp/Gfp 完整, Ctr_Sugar, Metis, Transfer/Lifting |
-| v1.5.0 | 2026-05-29 | ✅ | thy_header, HOL Simplifier, FM Arith |
-| v1.3.0 | 2026-05-28 | ✅ | IsarProof.apply(), AUTO_LIMIT |
-| v1.2.0 | 2026-05-27 | ✅ | tpairs/shyps, VerifyClassifier |
-| v1.0.0 | 2026-05-26 | ✅ | Property testing, CI/CD |
-| v0.7.0 | 2026-05-20 | ✅ | Isar engine, 25 methods, Session/Build, CLI |
-| v0.6.0 | 2026-05-15 | ✅ | Classical reasoner, Isar enhancements |
-| v0.5.0 | 2026-05-10 | ✅ | TypeEnv/CTerm, Nets, Safe Rules |
-| v0.4.0 | 2026-05-01 | ✅ | Complete Method, perf (24x speedup) |
-| v0.3.0 | 2026-04-20 | ✅ | Unify, rewrite, basic verification (88%) |
-| v0.2.0 | 2026-04-10 | ✅ | Kernel basics, Tactic, basic Methods |
-| v0.1.0 | 2026-04-01 | ✅ | LCF kernel prototype |
+Current status:
 
----
+| Track | Status |
+|---|---|
+| T2 primitive rule hardening | Main body done, but `alpha_eq` and `Typ::dummy()` remain known debts. |
+| Checked instantiation | Production paths closed over `instantiate_checked`. |
+| Admit/oracle tracking | Explicit, classified, and propagated. |
+| Closed theorem acceptance | Main path, session reporting, and final trusted tables use `is_closed_proved()`. |
+| T4 proofterm replay | Minimal replay prototype exists for six rules. |
+| HOL/Isar feature parity | Not current priority. |
 
-## 已完成 Phase 详细
+Priority order:
 
-### Phase 0-20: 内核 + Isar + Session/Build ✅
+1. Extend T4 proofterm replay rule coverage.
+2. Tighten parser/type/certification boundaries.
+3. Reduce admitted lemmas by reason.
+4. Expand HOL/Isar/tool coverage only where it reduces admitted counts without
+   weakening trust boundaries.
+5. Add optional replay gates to CLI/verification paths after replay covers the
+   main primitive rules.
 
-| 版本 | 阶段 | 关键交付 |
-|------|------|---------|
-| v0.1.0-v0.2.0 | Phase 0-4 | 内核基础 + Tactic + 基本 Method |
-| v0.3.0 | Phase 5-6 | 统一 + 重写 + 基本证明验证 (88%) |
-| v0.4.0 | Phase 7-8 | 完整 Method + 性能优化 (92.8%) |
-| v0.5.0 | Phase 9-10.2 | TypeEnv/CTerm + Nets + Safe Rules |
-| v0.6.0 | Phase 10.3-10.6 | 经典推理器基础 + Isar 完善 |
-| v0.7.0 | Phase 11-20 | Isar 引擎完整 + Session/Build + CLI |
+## Phase 0: Documentation and Codex Context Sync
 
-### Phase 21: 类型安全 ✅
-- `combination` → `Err(NotFunctionType)`, 0 `Typ::dummy()` fallback
-- `CTerm::certify_annotated` + `CTerm::require_non_dummy`
+Status: in progress for this update.
 
-### Phase 22: 经典推理器 ✅
-- `apply_safe_rules` 三阶段: match → elim_match → resolution
-- `fast_exec`/`best_exec`/`depth_exec`/`dup_step_exec`
+Goal:
 
-### Phase 23: induct/cases ✅
-- `lookup_theorem` DB 连接, `exec_induct` 重写, type-based rule lookup
+- Make README, docs, root `CLAUDE.md`, and `~/.codex` agree on the same project
+  positioning.
+- Remove misleading "Rust rewrite of Isabelle" and "feature complete" language.
+- Make `PROJECT_STATUS.md` the canonical high-level status.
 
-### Phase 24: Locale/Type Class ✅
-- 8 commands: locale, class, subclass, instance, interpretation, etc.
+Files:
 
-### Phase 25: Pretty Printer ✅
-- 20+ operators, 7 precedence levels, binders
+```text
+README.md
+CLAUDE.md
+docs/PROJECT_STATUS.md
+docs/TRUST.md
+docs/ARCHITECTURE.md
+docs/GAP_ANALYSIS.md
+docs/ROADMAP.md
+docs/DEVELOPMENT.md
+~/.codex/references/isabelle-rs.md
+~/.codex/rules/isabelle-rs.md
+~/.codex/skills/isabelle-rs-*/SKILL.md
+```
 
-### Phase 26: typedef/record ✅
-### Phase 27: Function 包 ✅
-### Phase 28: Inductive 包 ✅
-### Phase 29: 库验证扩展 ✅
-### Phase 30: 稳定化 ✅
-### Phase 31: Sledgehammer/TPTP ✅
-### Phase 32: LSP 完善 ✅
-### Phase 33: BNF/datatype 深化 ✅
-### Phase 34: 文档同步 ✅
-### Phase 35: 软件工程 Skills ✅
-### Phase 36: CI/CD ✅
-### Phase 37: 属性测试基础设施 ✅
-### Phase 38: 验证分类系统 ✅
-### Phase 39: tpairs/shyps ✅
-### Phase 40: thy_header 解析器 ✅
-### Phase 41: HOL 简化器 ✅
-### Phase 42: Fourier-Motzkin 算术 ✅
-### Phase 43-44: BNF Lfp/Gfp ✅
-### Phase 45-46: Transfer/Lifting ✅
-### Phase 47: Ctr_Sugar ✅
-### Phase 48: Metis ✅
+Done when:
 
----
+- All high-level docs describe the project as a research prototype, not a full
+  Isabelle rewrite.
+- All proof-rate language distinguishes `is_fully_proved()` from
+  `is_closed_proved()`.
+- The next engineering plan starts with T4 replay, not more HOL/Isar features.
 
-## v1.9.0 规划: "HOL 基础设施现代化"
+## Phase 1: T4 Replay Batch 1
 
-> **核心洞察**: Isabelle 的 23K 行 `hologic.ML` → isabelle-rs 仅 43 行 `term_builder.rs` — 差了 500 倍。
-> HOL term ops 散落 25+ 文件, `by simp` 规则不完整, 方法参数解析缺失。
+Target rules:
 
-### Phase 49: hologic.ML → hologic.rs (🥇 P0, 收益最大)
+```text
+beta_conversion
+forall_intr
+forall_elim
+```
 
-| 项目 | 内容 |
-|------|------|
-| **Isabelle 源** | `src/HOL/Tools/hologic.ML` (23K, 160+ API) |
-| **新建文件** | `src/hol/hologic.rs` (~1500 行) |
-| **核心 API** | `dest_Trueprop`/`mk_eq`/`dest_eq`/`mk_conj`/`dest_conj`/`mk_imp`/`dest_imp`/`mk_not`/`dest_not`/`mk_all`/`mk_exists`/`mk_mem`/`dest_mem`/`mk_set`/`mk_prod`/`dest_prod`/`mk_numeral`/`mk_if`/`dest_if` |
-| **验收** | 所有 API 有单元测试; 5 core files 无退化; ≥10 文件迁移到 hologic |
+Why first:
 
-### Phase 50: simpdata.ML → simpdata.rs (🥈 P0)
+- These rules are small enough to replay independently.
+- They stress de Bruijn substitution, free-variable side conditions, and binder
+  type checks.
+- They extend proof replay beyond implication/equality without involving full
+  unification or resolution.
 
-| 项目 | 内容 |
-|------|------|
-| **Isabelle 源** | `src/HOL/Tools/simpdata.ML` (7.2K) |
-| **新建文件** | `src/hol/simpdata.rs` (~600 行) |
-| **内容** | `init_hol_simpset()` 统一入口; `if_True`/`if_False`/`Let_def`/`case_split`; Quantifier1 量词简化 |
-| **验收** | `by simp` 通过率 +10%+ |
+Primary files:
 
-### Phase 51: args.ML (🥉 P0)
+```text
+src/core/thm.rs
+src/core/proofterm.rs
+src/core/logic.rs
+src/core/term.rs
+src/core/term_subst.rs
+tests/kernel_soundness.rs
+docs/KERNEL_RULES.md
+docs/KERNEL_ATTACK_TESTS.md
+docs/TRUST.md
+```
 
-| 项目 | 内容 |
-|------|------|
-| **Isabelle 源** | `src/Pure/Isar/args.ML` (6.8K) + `method.ML` (30K) |
-| **新建文件** | `src/isar/args.rs` (~800 行) |
-| **关键** | `Args.add`/`Args.del`/`Args.named_source`/`Args.goal_spec` |
-| **验收** | `simp add:` / `induct rule:` 可解析 |
+Implementation tasks:
 
-### Phase 52-54: 规范基础设施 (P1)
+- Add proofterm constructors or derivation records for each rule if missing.
+- Replay `beta_conversion` by checking the input is `(Abs body) arg` and using
+  the same bound substitution semantics as `ThmKernel::beta_conversion`.
+- Replay `forall_intr` with the same free-in-hypotheses side condition as the
+  kernel.
+- Replay `forall_elim` with binder/argument known-type compatibility.
+- Ensure replay compares `prop`, `hyps`, `tpairs`, and `oracles`.
 
-| Phase | 内容 | Isabelle 源 | 新/改文件 |
-|:---:|------|------------|-----------|
-| 52 | specification.ML | 19K | `src/isar/spec.rs` 增强 |
-| 53 | defs.ML 定义一致性 | 9.4K | `src/hol/defs.rs` 新建 |
-| 54 | typedecl.ML + local_defs.ML | 13K | `src/isar/typedecl.rs` 新建 |
+Required attack tests:
 
-### Post-v1.9.0
+- Replay `(λx. x) a` as `a`, not raw `Bound(0)`.
+- `forall_intr` replay rejects a variable free in hypotheses.
+- `forall_elim` replay rejects known binder/argument type mismatch.
+- Tampering final theorem fields after each rule makes `check_proof()` fail.
+- Applying the rule to an admitted premise fails independent replay by oracle
+  footprint.
 
-| Phase | 内容 | 优先级 |
-|:---:|------|:--:|
-| 55 | Tier2 验证扩展 | P1 |
-| 56 | Metis 真正集成 | P1 |
-| 57 | 属性系统完成 | P1 |
-| 58 | Sledgehammer 深化 | P2 |
-| 59 | Code Generator | P3 |
-| 60 | SMT 集成 | P3 |
+Done when:
 
----
+```bash
+cargo fmt --check
+cargo test core::proofterm::tests::
+cargo test core::thm::tests::
+cargo test --test kernel_soundness
+cargo test --lib core::
+cargo check
+```
 
-## 设计原则
+## Phase 2: T4 Replay Batch 2
 
-1. **渐进式替换，而非大爆炸重写**
-2. **先读 Isabelle 源码再写 Rust 代码**
-3. **多层 fallback 优于单点完美**
-4. **数据结构先行，集成后行**
-5. **保留 Isabelle 语法兼容**
-6. **`Typ::dummy()` 清零是最高优先级** ✅
-7. **改后跑 `test_verify_all_core_files` — 不能有退化**
-8. **对照 Isabelle 源码写，不要自己发明**
+Target rules:
+
+```text
+combination
+abstraction
+equal_intr
+equal_elim
+```
+
+Notes:
+
+- `combination` must mirror known function-domain compatibility checks.
+- `abstraction` must preserve the free-variable-in-hypotheses side condition.
+- Add `equal_intr` / `equal_elim` only if they are implemented or needed by
+  current derived rules; otherwise document them as missing Pure rules.
+
+Primary files:
+
+```text
+src/core/thm.rs
+src/core/proofterm.rs
+src/core/logic.rs
+src/core/types.rs
+tests/kernel_soundness.rs
+```
+
+Required attack tests:
+
+- Known argument-domain mismatch in `combination` fails replay.
+- `abstraction` cannot abstract a free variable from hypotheses.
+- Open premise burdens are preserved.
+- Oracle premise makes independent replay fail.
+- Unsupported equality rules are reported as unsupported, not as successful.
+
+Done when:
+
+- All supported rules replay successfully for positive cases.
+- All known side-condition attacks fail closed.
+- `docs/KERNEL_RULES.md` marks replay support per rule.
+
+## Phase 3: T4 Replay Batch 3
+
+Target rules:
+
+```text
+instantiate_checked
+generalize
+```
+
+Why this is risky:
+
+- Instantiation touches schematic variables, type variables, and environment
+  application.
+- Existing T2 hardening solved production instantiation, but replay must prove
+  the recorded instantiation is the same one.
+
+Primary files:
+
+```text
+src/core/thm.rs
+src/core/proofterm.rs
+src/core/envir.rs
+src/core/unify.rs
+src/core/term_subst.rs
+src/core/type_infer.rs
+```
+
+Required design decisions:
+
+- Proof records must include enough environment data to replay substitution.
+- Replay must call checked substitution semantics, not raw `env.apply_*`
+  without type checks.
+- If a replay environment contains dummy types, behavior must be documented and
+  tested.
+
+Required attack tests:
+
+- `?x::nat := b::bool` fails replay.
+- Schematic variable indices cannot be ignored.
+- Type-variable instantiation preserves known type constraints.
+- Successful instantiation preserves all burdens.
+
+Done when:
+
+- Production theorem instantiation and replay instantiation have the same
+  acceptance/rejection semantics for known concrete type mismatches.
+
+## Phase 4: T4 Replay Batch 4
+
+Target rules:
+
+```text
+bicompose
+bicompose_eresolve
+subst_premise
+```
+
+Why last:
+
+- These rules involve resolution, premise selection, unification, and
+  propagation of multiple theorem burdens.
+- They are the most likely place for `alpha_eq`, `Typ::dummy()`, and
+  `Option<Thm>` diagnostics to hide mistakes.
+
+Primary files:
+
+```text
+src/core/thm.rs
+src/core/proofterm.rs
+src/core/unify.rs
+src/core/envir.rs
+src/core/tactic.rs
+src/core/bires.rs
+```
+
+Required attack tests:
+
+- Resolution cannot cross known concrete type mismatches.
+- E-resolution cannot discharge the wrong hypothesis.
+- `subst_premise` cannot rewrite across Free/Const or Var/Free confusion once
+  strict `alpha_eq` is enabled.
+- Multi-premise burdens union exactly: `hyps`, `tpairs`, `shyps`, `oracles`.
+- Unsupported or failed resolution replay is distinguishable from proof
+  tampering.
+
+Done when:
+
+- Replay can validate the main proof-search generated derivations without
+  silently trusting unsupported rules.
+
+## Phase 5: Parser / Type / Certification Boundary
+
+Goal:
+
+Reduce kernel tolerance by making front-end terms better certified before they
+reach `ThmKernel`.
+
+Primary files:
+
+```text
+src/isar/term_parser.rs
+src/core/type_infer.rs
+src/core/types.rs
+src/core/thm.rs
+src/hol/hol_loader.rs
+src/theory/loader.rs
+```
+
+Tasks:
+
+- Make parser/loader distinguish `Const`, `Free`, `Var`, and `Bound` more
+  accurately.
+- Prefer annotated/certified terms at theorem construction sites.
+- Reduce `Typ::dummy()` in propositions accepted by kernel rules.
+- Replace semantic correction through `alpha_eq` with correct term
+  construction earlier in the pipeline.
+- Enable ignored Free/Const and Var/Free attack tests once representation is
+  aligned.
+
+Done when:
+
+- `alpha_eq` broad Free/Const suffix matching can be removed or narrowed.
+- `alpha_eq` Var/Free compatibility can be removed or narrowed.
+- Existing Tier2 proof rate does not rely on unsound kernel matching.
+
+## Phase 6: Admitted Lemma Reduction
+
+Goal:
+
+Shrink admitted counts by cause while preserving honest oracle footprints.
+
+Do not target "100%" by hiding fallback. Every remaining admitted fact must keep
+its `admitted:*` reason.
+
+Initial targets:
+
+```text
+Rings
+Lattices_Big
+Complete_Lattices
+Parity
+Power
+Map
+Order_Relation
+```
+
+Likely work areas:
+
+```text
+src/core/simplifier.rs
+src/tools/simp.rs
+src/isar/attrib.rs
+src/isar/method.rs
+src/isar/linarith.rs
+src/hol/hol_loader.rs
+```
+
+Tasks:
+
+- Categorize admitted lemmas by reason:
+  `admitted:proof_engine_failed`, `admitted:parser_gap`,
+  `admitted:unsupported_method`, `admitted:attribute_transformation`,
+  `admitted:datatype_stub`, `admitted:class_stub`, `admitted:metis_fallback`,
+  `admitted:simp_fallback`.
+- Improve named theorem handling for `field_simps`, `algebra_simps`, intro,
+  elim, dest, and simp attributes.
+- Add conditional rewrite support only where it can be justified by kernel
+  derivations or explicit admitted footprints.
+- Improve simp/linarith cooperation for arithmetic-heavy files.
+
+Done when:
+
+- Admitted count decreases with a reason-by-reason report.
+- No admitted path is reclassified as proved without a kernel derivation or
+  proof replay support.
+
+## Phase 7: Optional Proof Replay Integration
+
+Goal:
+
+Make independent replay available in verification workflows after enough
+primitive rules are supported.
+
+Tasks:
+
+- Add a CLI or test flag such as `--check-proof` or an equivalent verifier
+  option.
+- Make replay failures classify as:
+  unsupported rule, oracle/admitted theorem, tampered proof, or burden mismatch.
+- Keep replay optional until coverage is broad enough to avoid excessive false
+  negatives.
+- Never let replay success replace `is_closed_proved()`; closed theorem
+  acceptance remains required.
+
+Done when:
+
+- Core theorem batches can optionally run proof replay on closed proved results.
+- Unsupported rules are reported as coverage gaps, not trust failures.
+
+## Later Work
+
+Only after the above tracks are stable:
+
+- Broaden Isar grammar and structured proof coverage.
+- Improve HOL packages where they reduce admitted counts.
+- Build richer proof-state diagnostics for agents.
+- Extend LSP and WASM integration.
+- Consider Sledgehammer/SMT/Code Generator only as non-core research tracks.
+
+## Standing Verification Policy
+
+For docs-only changes:
+
+```bash
+cargo fmt --check
+cargo check
+```
+
+For kernel, proof replay, or theorem acceptance changes:
+
+```bash
+cargo fmt --check
+cargo test --test kernel_soundness
+cargo test core::proofterm::tests::
+cargo test core::thm::tests::
+cargo test --lib core::
+cargo check
+```
+
+For theory-wide claims:
+
+```bash
+RUST_MIN_STACK=268435456 cargo test test_verify_all_core_files -- --nocapture
+RUST_MIN_STACK=268435456 cargo test --test tier2_verify -- --nocapture
+```
+
+Do not report full `cargo test --lib` success unless the current checkout has
+verified the known theory-loader stack overflow is fixed.

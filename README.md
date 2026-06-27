@@ -1,129 +1,139 @@
 # Isabelle-rs
 
-> **用 Rust 重写 Isabelle — 打造更程序员友好的证明助手**
->
-> LCF trusted kernel · 信任足迹 (oracle 追踪) · 27 proof methods · Isar proof language
-> **CI ✅ · Rust 1.96.0 stable · Core 125/125 · Tier2 真实证明率 85.8% (3277/3821) · 178s**
->
-> 🔒 **诚实承诺**:系统永不谎称证明。每个定理可查信任足迹,admitted 与 proved
-> 由类型系统区分。见 [docs/TRUST.md](docs/TRUST.md)。
+Rust research prototype of an Isabelle/Pure-inspired LCF kernel.
 
----
+This repository is **not** a full Rust rewrite of Isabelle. The accurate current
+position is:
 
-## 快速开始
+```text
+A Rust implementation of an Isabelle/Pure-inspired LCF kernel
+with explicit oracle footprints, closed-theorem acceptance,
+and minimal proofterm replay.
+```
+
+The project has moved beyond a toy parser. Its current value is trusted-kernel
+engineering: theorem construction boundaries, admitted/oracle tracking, closed
+proved theorem statistics, and proof-object replay. It is still far from full
+Isabelle/HOL + Isar + PIDE + AFP feature parity.
+
+Read [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md) first for the canonical
+current status.
+
+## Quick Start
 
 ```bash
-git clone https://github.com/MCB-SMART-BOY/isabelle-rs && cd isabelle-rs
+cargo check
+cargo fmt --check
+cargo test --test kernel_soundness
+cargo test core::proofterm::tests::
+cargo test core::thm::tests::
+cargo test --lib core::
+```
 
-# 构建 (Rust 1.96.0 stable, edition 2024)
-cargo build
+Large theory runs usually need a larger stack:
 
-# 内核测试 (含信任足迹测试)
-cargo test --lib core::thm
-
-# 完整测试
-RUST_MIN_STACK=268435456 cargo test --lib
-
-# 核心验证 (5文件, 125定理)
+```bash
 RUST_MIN_STACK=268435456 cargo test test_verify_all_core_files -- --nocapture
-
-# Tier2 扩展验证 (97文件, 报告真实证明率, ~178s)
 RUST_MIN_STACK=268435456 cargo test --test tier2_verify -- --nocapture
 ```
 
----
+Do not claim full `cargo test --lib` success unless the known
+`theory::loader::tests::test_batch_scan_theories` stack-overflow issue is
+verified as fixed in the current checkout.
 
-## 验证结果
+## Trust Model
 
-> **"验证率" = 真实证明率** (`Thm::is_fully_proved()`,信任足迹为空)。
-> 处理但未证明的引理被 `admit` 为 oracle 定理,**不计入**证明率。
+The core rule is simple:
 
-| 级别 | 文件数 | 真证明 / 引理 | 真实证明率 | 时间 |
-|------|:-----:|:-----:|:-----:|:---:|
-| **Core (Tier1)** | 5/5 | 125/125 | 100% | ~35s |
-| **Tier2** | 97/97 | **3277/3821** | **85.8%** | **178s** |
-
-剩余 14.2% (544 条) 是 admitted——证明引擎尚无法闭合,被诚实标记为 oracle 依赖。
-集中在 Rings/Lattices_Big/Complete_Lattices 等代数化简与大算子密集文件。
-
-### Core 文件
-
-| HOL | Orderings | Set | Nat | List |
-|:--:|:--:|:--:|:--:|:--:|
-| 25/25 | 25/25 | 25/25 | 25/25 | 25/25 |
-
-### Tier2 覆盖 (97 文件)
-
-Fun, Product_Type, Sum_Type, Lattices, Groups, Rings, Relation, Map, Power,
-Complete_Lattices, Option, Boolean_Algebras, Parity, Record, Meson, Metis,
-Presburger, Quotient_Option/Sum/Product/Set, +27 Library (Case_Converter, Fib,
-Fraction_Field, Nonpos_Ints, Real_Mod, Transposition, Uprod, ...), +44 misc
-
----
-
-## 架构
-
-```
-.thy 源码 (1,473 文件)
-  → OuterSyntax::parse_spans() → CommandSpan[]
-  → TheoryProcessor::process_span()
-    ├─ lemma → IsarProof (Arc<IsarContext> 共享) → method dispatch → ThmKernel
-    └─ end  → LocalTheory::finalize() → Arc<Theory>
-
-六层证明验证:
-  0 → Safe rules 定点迭代 (match→elim_match→resolution)
-  1 → Built-in Var-override (预存储DB定理)
-  2 → Anonymous datatype axiom
-  3 → Isar structured proof (三模式状态机)
-  4 → exec_proof → 27 methods + chain fallback
-  5 → Admit as oracle (ThmKernel::admit "admitted" — 非静默公理, !is_fully_proved())
+```text
+proved lemma = no oracles + no hypotheses + no unresolved tpairs
 ```
 
----
+Important API distinction:
 
-## 关键特性
+```text
+is_fully_proved() == oracle-free
+is_closed_proved() == oracle-free + no hyps + no unresolved tpairs
+```
 
-| 组件 | 状态 | 说明 |
-|------|:--:|------|
-| **LCF 内核** | ✅ | 15 操作 + tpairs/shyps + **oracle 信任足迹**, 不可伪造定理 |
-| **信任模型 (T3)** | ✅ | `Thm::is_fully_proved()` / `oracles()`, admitted 由类型系统标记并传播 |
-| **Isar 引擎** | ✅ | 三模式 (Forward/Chain/Backward), 30+ 命令, Arc<IsarContext> 共享 |
-| **27 证明方法** | ✅ | auto/blast/simp/fast/best/metis/meson/arith/induct... |
-| **经典推理器** | ✅ | best/depth/dup_step + 三阶段 safe rules + discrimination nets |
-| **HOL 简化器** | ✅ | Conditional rewriting + ArithSolver/AsmSolver + cached Simplifier |
-| **算术** | ✅ | Fourier-Motzkin 变量消去 (nat/int 线性) |
-| **BNF/Ctr_Sugar** | ✅ | induction/coinduction/fold/rec + case/disc/sel/split/cong |
-| **Metis** | ✅ | Given-clause resolution + HOL.eq paramodulation + ∃-skolemization |
-| **Meson** | ✅ | Model elimination prover |
-| **auto_exec** | ✅ | 迭代化 DFS 栈 + Isabelle-aligned 深度限制 (8) |
-| **Transfer/Lifting** | 🟡 | 50% — transfer rule generation + quotient type theorems |
+`ThmKernel::assume(A)` constructs `A |- A`. It is a valid open theorem, not
+`|- A`, and must not be counted as a closed proved lemma.
 
----
+`ThmKernel::admit(ct, reason)` is the explicit accepted-without-proof entry
+point. Its oracle footprint is propagated through later kernel inferences.
 
-## 项目状态
+See [docs/TRUST.md](docs/TRUST.md).
 
-| 指标 | 值 |
-|------|-----|
-| 版本 | v2.2.1 |
-| Rust 代码 | ~55K LOC, 124 文件 |
-| 测试 | 700+ (642 lib + 76 integration), 含信任足迹测试 |
-| 真实证明率 | Tier2 85.8% (3277/3821), Core 125/125 |
-| 信任模型 | T3 oracle 足迹 ✅ — `is_fully_proved()` 区分 proved/admitted |
-| 编译警告 | **0** |
-| 栈需求 | 256MB (`RUST_MIN_STACK=268435456`) |
-| 文档 | [docs/TRUST.md](docs/TRUST.md) — de Bruijn 信任模型 |
+## Current Status
 
----
+| Area | Status |
+|---|---|
+| LCF-style `Thm` kernel | Research prototype with private theorem fields and hardened construction routes. |
+| Kernel primitive rules | Core subset implemented; several rounds of side-condition, type, burden, and oracle propagation audits done. |
+| Checked instantiation | Production proof-search paths use `instantiate_checked`; legacy infallible instantiation is not a production API. |
+| Oracle/admit tracking | Explicit `admitted:*` footprint tracking and propagation. |
+| Closed theorem acceptance | Session and final theory statistics use `is_closed_proved()`, not raw theorem entries. |
+| Searchable facts vs trusted table | `HolTheoremDb` is a proof-search fact index; final trusted theorem tables only accept closed proved theorems. |
+| Proofterm replay | Minimal burden-aware replay for `assume`, `reflexive`, `symmetric`, `transitive`, `implies_intr`, `implies_elim`. |
+| Isar/HOL/tools | Partial implementation; useful for experiments, not feature-compatible with Isabelle. |
+| LSP/WASM/PIDE | Skeletons only; not current priority. |
 
-## 工程文档
+Relative completion estimates:
 
-| 文档 | 内容 |
-|------|------|
-| [CLAUDE.md](CLAUDE.md) | 项目入口 — 铁律、模块图、已知问题 |
-| [.claude/rules/](.claude/rules/) | 领域约束 + 铁律 (globs 触发) |
-| [.claude/skills/](.claude/skills/) | 可执行工作流 (自然语言触发) |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 架构设计 |
-| [docs/TRUST.md](docs/TRUST.md) | 信任模型 (de Bruijn T1-T4, 真实证明率) |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | 开发路线图 |
-| [docs/GAP_ANALYSIS.md](docs/GAP_ANALYSIS.md) | vs Isabelle 差距分析 |
-| [CHANGELOG.md](CHANGELOG.md) | 版本历史 |
+| Scope | Estimate |
+|---|---:|
+| Full Isabelle/HOL + Isar + PIDE + AFP ecosystem | 15%-25% |
+| Isabelle/Pure-inspired Rust kernel research slice | 45%-60% |
+| Oracle footprints + closed theorem acceptance specialty | 65%-75% |
+| T4 proofterm replay/checker | 10%-20% |
+| HOL tools and automation | 10%-20% |
+
+## Known Trust Debts
+
+- `alpha_eq` still has broad Free/Const and Var/Free compatibility kept for
+  parser/loader compatibility. This is a real T2 debt and must be fixed at the
+  parser/type/certification boundary before tightening the kernel.
+- `Typ::dummy()` still appears at trusted boundaries. The direction is stricter
+  parsing, type inference, and `CTerm` certification, not more kernel tolerance.
+- Some proof-search APIs still collapse `KernelError` into `Option<Thm>`. This
+  is sound when rejected branches fail closed, but weak for auditability.
+- Proofterm replay is currently a minimal derivation replay checker, not full
+  Isabelle `proofterm.ML`.
+
+## Roadmap
+
+Current priority order:
+
+1. Extend T4 proofterm replay to more primitive kernel rules.
+2. Tighten parser/type/certification boundaries and reduce `Typ::dummy()`.
+3. Shrink admitted lemmas by cause, preserving explicit oracle footprints.
+4. Expand HOL/Isar coverage after trusted boundaries remain stable.
+5. Treat LSP/WASM/agent integration as later layers over a trustworthy kernel.
+
+Detailed plan: [docs/ROADMAP.md](docs/ROADMAP.md).
+
+## Documentation
+
+| Document | Purpose |
+|---|---|
+| [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md) | Canonical current positioning and status. |
+| [docs/TRUST.md](docs/TRUST.md) | Trust model, theorem acceptance, oracle/admit semantics. |
+| [docs/KERNEL_RULES.md](docs/KERNEL_RULES.md) | Kernel rule audit ledger. |
+| [docs/KERNEL_ATTACK_TESTS.md](docs/KERNEL_ATTACK_TESTS.md) | Soundness regression matrix. |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Current architecture and trusted-boundary data flow. |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Concrete next phases and acceptance gates. |
+| [docs/GAP_ANALYSIS.md](docs/GAP_ANALYSIS.md) | Honest comparison against Isabelle. |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Development and verification commands. |
+
+## Recommended Description
+
+Use this description externally:
+
+```text
+Isabelle-rs is a Rust research prototype of an Isabelle/Pure-inspired
+LCF-style proof kernel. It focuses on explicit oracle footprints,
+closed-theorem acceptance, and proof-object replay rather than broad
+Isabelle/HOL feature parity.
+```
+
+Avoid describing the project as a feature-complete Rust Isabelle.
