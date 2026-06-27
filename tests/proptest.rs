@@ -354,7 +354,7 @@ proptest! {
         let th = thm::ThmKernel::trivial(ct).unwrap();
         // Instantiate with empty env → same theorem
         let env = envir::Envir::init();
-        let inst = thm::ThmKernel::instantiate(&env, &th);
+        let inst = thm::ThmKernel::instantiate_checked(&env, &th).unwrap();
         assert!(inst.is_unconditional());
         // Empty substitution should not change the proposition
         assert_eq!(inst.prop().term(), th.prop().term());

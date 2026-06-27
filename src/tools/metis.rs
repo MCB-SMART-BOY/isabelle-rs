@@ -529,8 +529,14 @@ impl MetisProver {
                 unify::unifiers(&env, &[(concl1.clone(), prem2.clone())], &config)
             {
                 // Instantiate both clauses with the unifier
-                let thm1_inst = Arc::new(ThmKernel::instantiate(&unifier, &entry1.thm));
-                let thm2_inst = Arc::new(ThmKernel::instantiate(&unifier, &entry2.thm));
+                let (Ok(thm1_inst), Ok(thm2_inst)) = (
+                    ThmKernel::instantiate_checked(&unifier, &entry1.thm),
+                    ThmKernel::instantiate_checked(&unifier, &entry2.thm),
+                ) else {
+                    continue;
+                };
+                let thm1_inst = Arc::new(thm1_inst);
+                let thm2_inst = Arc::new(thm2_inst);
 
                 // Use bicompose to perform the resolution step
                 if let Some(resolvent) = ThmKernel::bicompose(true, &thm1_inst, &thm2_inst, i) {
@@ -575,7 +581,9 @@ impl MetisProver {
                 if let Some(unifier) =
                     unify::unifiers(&env, &[(prems[i].clone(), prems[j].clone())], &config)
                 {
-                    let thm_inst = ThmKernel::instantiate(&unifier, &entry.thm);
+                    let Ok(thm_inst) = ThmKernel::instantiate_checked(&unifier, &entry.thm) else {
+                        continue;
+                    };
 
                     // To factor: from A ==> A ==> B, derive A ==> B
                     // 1. Assume A (call it hyp)
@@ -650,8 +658,12 @@ impl MetisProver {
                 if let Some(unifier) =
                     unify::unifiers(&env, &[(lhs.clone(), tgt_prem.clone())], &config)
                 {
-                    let eq_inst = ThmKernel::instantiate(&unifier, &eq_entry.thm);
-                    let tgt_inst = ThmKernel::instantiate(&unifier, &target_entry.thm);
+                    let (Ok(eq_inst), Ok(tgt_inst)) = (
+                        ThmKernel::instantiate_checked(&unifier, &eq_entry.thm),
+                        ThmKernel::instantiate_checked(&unifier, &target_entry.thm),
+                    ) else {
+                        continue;
+                    };
 
                     // Use subst_premise: replace the i-th premise with the RHS
                     if let Some(paramodulated) =

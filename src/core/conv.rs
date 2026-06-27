@@ -86,10 +86,7 @@ pub fn rewr_conv(rule: Thm) -> Conv {
             }
 
             // Try to instantiate the rule
-            if let Some(inst) = match_term(lhs, &t) {
-                let inst_rule = instantiate_rule(&rule, &inst);
-                return Some(inst_rule);
-            }
+            return match_term(lhs, &t).and_then(|inst| instantiate_rule(&rule, &inst));
         }
         None
     })
@@ -394,14 +391,14 @@ fn match_term(pattern: &Term, target: &Term) -> Option<Vec<(Term, Term)>> {
 }
 
 /// Instantiate a theorem by substituting variables with terms.
-fn instantiate_rule(rule: &Thm, inst: &[(Term, Term)]) -> Thm {
+fn instantiate_rule(rule: &Thm, inst: &[(Term, Term)]) -> Option<Thm> {
     let mut env = crate::core::envir::Envir::empty(rule.maxidx());
     for (var, replacement) in inst {
         if let Term::Var { name, index, typ } = var {
             env.update(name.clone(), *index, typ.clone(), replacement.clone());
         }
     }
-    ThmKernel::instantiate(&env, rule)
+    ThmKernel::instantiate_checked(&env, rule).ok()
 }
 
 // =========================================================================

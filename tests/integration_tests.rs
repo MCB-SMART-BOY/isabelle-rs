@@ -70,7 +70,8 @@ fn test_kernel_15_ops() {
     // transitive may fail if types differ — ok
 
     // 12. instantiate
-    let _inst = ThmKernel::instantiate(&isabelle_rs::core::envir::Envir::init(), &goal);
+    let _inst =
+        ThmKernel::instantiate_checked(&isabelle_rs::core::envir::Envir::init(), &goal).unwrap();
 
     // 13. trivial
     let _triv = ThmKernel::trivial(t).unwrap();
@@ -102,8 +103,7 @@ end"#;
     let thm_count = proc.theorem_count();
     eprintln!("Test theory: {} theorems, {} errors", thm_count, errors.len());
 
-    // Should have at least the definition
-    assert!(thm_count >= 0, "Theorem count should be non-negative");
+    assert!(errors.is_empty(), "TheoryProcessor should not report errors: {errors:?}");
 }
 
 #[test]
