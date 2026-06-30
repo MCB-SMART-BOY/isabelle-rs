@@ -515,4 +515,27 @@ mod tests {
         assert_eq!(bindings[0].name.as_str(), "P");
         assert_eq!(bindings[0].replacement, f_const);
     }
+
+    #[test]
+    fn match_terms_binding_order_is_deterministic() {
+        // Pattern: ?P ==> ?Q  (P at index 1, Q at index 0 — reverse order)
+        // Target:  A ==> B
+        // Bindings should always be sorted by (name, index), regardless
+        // of traversal order.
+        let a = const_term("A", prop_ty());
+        let b = const_term("B", prop_ty());
+        let target = Term::Imp { premise: Box::new(a.clone()), conclusion: Box::new(b.clone()) };
+
+        for _ in 0..5 {
+            let p_var = var_term("P", 1, prop_ty());
+            let q_var = var_term("Q", 0, prop_ty());
+            let pattern = Term::Imp { premise: Box::new(p_var), conclusion: Box::new(q_var) };
+            let bindings = match_terms(&pattern, &target).unwrap();
+            assert_eq!(bindings.len(), 2);
+            // Sorted: P (index 1) < Q (index 0)? No — sort by name first.
+            // "P" < "Q" so P comes first.
+            assert_eq!(bindings[0].name.as_str(), "P");
+            assert_eq!(bindings[1].name.as_str(), "Q");
+        }
+    }
 }
