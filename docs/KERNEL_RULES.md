@@ -1,8 +1,16 @@
 # Kernel Rules Audit
 
-This document is the working audit ledger for `src/core/thm.rs`. The goal is not
-to mirror all of Isabelle/Pure yet, but to make every trusted constructor's
-logic rule, side conditions, trust-footprint behavior, and known gaps explicit.
+This document is the working audit ledger for legacy `src/core/thm.rs`. The
+goal is not to mirror all of Isabelle/Pure yet, but to make every trusted
+constructor's logic rule, side conditions, trust-footprint behavior, and known
+gaps explicit.
+
+The new strict-kernel target architecture lives in `src/kernel/`; its ADR and
+first primitive-rule contracts are documented in
+[ADR-0001-kernel-core-rewrite.md](ADR-0001-kernel-core-rewrite.md) and
+[KERNEL_PRIMITIVES.md](KERNEL_PRIMITIVES.md). New trusted work should prefer the
+strict nucleus and adapters over further compatibility patching in this legacy
+ledger.
 
 For high-level positioning and roadmap context, read
 [PROJECT_STATUS.md](PROJECT_STATUS.md) and [ROADMAP.md](ROADMAP.md). This file is
@@ -12,8 +20,12 @@ the rule-level ledger, not a claim of full Isabelle `thm.ML` equivalence.
 
 - `Thm` fields remain private; external code must use `ThmKernel`.
 - `assume` creates `A |- A`; it is not a theorem of `A` without hypotheses.
-- `is_fully_proved()` means oracle-free only; lemma acceptance must use
-  `is_closed_proved()` (oracle-free, no hypotheses, no unresolved `tpairs`).
+- `is_fully_proved()` means oracle-free only.
+- `is_closed_proved()` means oracle-free closed shape only; compatibility
+  theorems may satisfy it.
+- Trusted lemma acceptance must use `is_strict_closed_proved()` (strict
+  construction, oracle-free, no hypotheses, no unresolved `tpairs`, no dummy
+  types).
 - `admit` is the only intentional unproved-entry point and must tag `oracles`.
 - `instantiate_checked` is the production theorem-instantiation boundary; the
   old infallible `instantiate` entry point is not available in production code.
@@ -30,6 +42,40 @@ the rule-level ledger, not a claim of full Isabelle `thm.ML` equivalence.
   compatibility matching.
 - `Hyps::compat_alpha_eq` is an explicitly named legacy compatibility relation;
   it must not be used by trusted `ThmKernel` primitive rules.
+- `CTerm::certify_checked(term, type_env)` is the strict certification API for
+  new trusted paths. It rejects undeclared constants, ill-typed applications,
+  unbound de Bruijn indices, and residual `Typ::dummy()`.
+- `CTerm` now records `CertStatus::Checked` or `CertStatus::Compat`.
+  `CTerm::certify` / `certify_compat` / `certify_typed` produce compatibility
+  CTerms, not hard trusted certification.
+- Strict `ThmKernel::assume` and `ThmKernel::reflexive` reject compatibility
+  CTerms. Legacy behavior is explicitly named `assume_compat` /
+  `reflexive_compat`.
+- `ProofState::assume`, `Goal::init`, `ProofState::new_checked_goal`, and
+  `ProofState::set_subgoals_checked` now route proof-state local assumptions
+  and goal/subgoal obligations through checked certification plus strict
+  `ThmKernel::assume`. These theorem values are Strict open obligations, not
+  closed proved lemmas.
+- Proof-state checked certification uses an explicit `ProofCertContext`
+  derived from a theory/Isar context or supplied by tests. Consts and local
+  frees must be declared there before certification; checked proof goals no
+  longer auto-declare names from the raw term being certified.
+- `Thm` records `ThmTrust::{Strict, Compat, Admitted}`. Compatibility theorem
+  construction is tainted and cannot enter trusted theorem tables even if the
+  theorem is oracle-free and closed-shaped.
+- `Thm::check_kernel_invariants(KernelCheckMode::Strict)` is the strict audit
+  gate for theorem internals: it requires `ThmTrust::Strict`, checked
+  proposition/hypothesis CTerms, no dummy types in burdens, exact `maxidx`, no
+  strict theorem oracle footprint, and burden-aware replay for the currently
+  supported derivation subset.
+- `check_kernel_invariants(Strict)` is not a closed-lemma predicate. Strict
+  open theorems such as `A |- A` may pass it while still failing
+  `is_strict_closed_proved()`.
+- `check_kernel_invariants(Strict)` does not claim unsupported derivations have
+  been independently replayed. Unsupported strict derivations are structurally
+  audited until their replay rule is implemented.
+- `KernelCheckMode::Compat` performs structural consistency checks only; it is
+  for legacy/searchable facts and does not make a theorem trusted.
 - `Typ::dummy()` tolerance is a parser/loader boundary compromise, not a kernel
   proof principle.
 
@@ -37,9 +83,11 @@ the rule-level ledger, not a claim of full Isabelle `thm.ML` equivalence.
 
 | Rule | Anchor | Logical form | Side conditions | Propagation | Tests / status |
 |---|---|---|---|---|---|
-| `admit` | `ThmKernel::admit` | `|- A`, oracle-backed | caller supplies oracle name | empty `hyps/tpairs/shyps`; injects oracle | `test_admit_is_not_fully_proved` |
-| `assume` | `ThmKernel::assume` | `A |- A` | certified proposition input | no oracle | `test_assume`, `implies_intro_is_the_only_way_to_discharge_assume_here` |
-| `reflexive` | `ThmKernel::reflexive` | `|- t == t` | uses cterm type, may still be dummy | clean theorem | `test_reflexive`; dummy tightening pending |
+| `admit` | `ThmKernel::admit` | `|- A`, oracle-backed | caller supplies oracle name | empty `hyps/tpairs/shyps`; injects oracle; `ThmTrust::Admitted` | `test_admit_is_not_fully_proved`; `admitted_theorem_is_not_strict_trusted` |
+| `assume` | `ThmKernel::assume` | `A |- A` | checked CTerm, no dummy | no oracle; `ThmTrust::Strict` | `compat_cterm_cannot_enter_strict_assume`; legacy tests use `assume_compat` |
+| `assume_compat` | `ThmKernel::assume_compat` | `A |- A` | compatibility CTerm accepted | no oracle; `ThmTrust::Compat`; not a strict trusted entry | legacy parser/HOL/test scaffolding only |
+| `reflexive` | `ThmKernel::reflexive` | `|- t == t` | checked CTerm, no dummy; derived equality CTerm remains checked | clean theorem; `ThmTrust::Strict` | `checked_cterm_constructs_checked_reflexive_theorem` |
+| `reflexive_compat` | `ThmKernel::reflexive_compat` | `|- t == t` | compatibility CTerm accepted, may carry dummy | clean theorem shape but `ThmTrust::Compat` | `reflexive_compat_is_closed_shaped_but_not_strict_trusted` |
 | `symmetric` | `ThmKernel::symmetric` | `Γ |- t == u` to `Γ |- u == t` | input must be equality | clone all premise burdens | oracle and shyp propagation tests |
 | `transitive` | `ThmKernel::transitive` | `Γ |- t == u`, `Δ |- u == v` to `Γ∪Δ |- t == v` | middle terms strict-kernel alpha-equal; known middle-term and equality types compatible | union all premise burdens | type-mismatch and alpha-confusion attack tests |
 | `combination` | `ThmKernel::combination` | `f == g`, `x == y` to `f x == g y` | first equality type must be function; known argument type compatible with domain | union all premise burdens | known mismatch and well-typed tests |
@@ -51,9 +99,9 @@ the rule-level ledger, not a claim of full Isabelle `thm.ML` equivalence.
 | `forall_elim` | `ThmKernel::forall_elim` | `Γ |- !!x. P x` to `Γ |- P t` | input must be forall; known binder/argument types compatible | clone all premise burdens | binder/argument mismatch attack test |
 | `instantiate_checked` | `ThmKernel::instantiate_checked` | `Γ |- P` to `Γθ |- Pθ` | environment assignments must preserve known variable types | clone burdens; normalizes hyps/prop | ill-typed env attack test |
 | `instantiate_legacy` | `ThmKernel::instantiate_legacy` | test-only characterization of the removed infallible API | compiled only under `cfg(test)`; invalid environments leave theorem unchanged | clone burdens on success | internal no-unsound-theorem regression test |
-| `bicompose` | `ThmKernel::bicompose` | resolution/composition over a selected premise | selected premise exists; match/unify succeeds; known strict-alpha-match types compatible | union all premise burdens | alpha type-mismatch attack test |
-| `subst_premise` | `ThmKernel::subst_premise` | replace selected premise using `t == u` | selected premise strict-kernel alpha-equal to lhs; known lhs/premise types compatible | union all premise burdens | type-mismatch attack test |
-| `bicompose_eresolve` | `ThmKernel::bicompose_eresolve` | resolution with major-premise elimination | major premise matches available hyp/premise and conclusion matches subgoal; known types compatible | union all premise burdens | unifier type-mismatch attack test |
+| `bicompose` | `ThmKernel::bicompose` (⚠️ LEGACY CORE) | resolution/composition over a selected premise | selected premise exists; match/unify succeeds; known strict-alpha-match types compatible | union all premise burdens | alpha type-mismatch attack test |
+| `subst_premise` | `ThmKernel::subst_premise` (⚠️ LEGACY CORE) | replace selected premise using `t == u` | selected premise strict-kernel alpha-equal to lhs; known lhs/premise types compatible | union all premise burdens | type-mismatch attack test |
+| `bicompose_eresolve` | `ThmKernel::bicompose_eresolve` (⚠️ LEGACY CORE) | resolution with major-premise elimination | major premise matches available hyp/premise and conclusion matches subgoal; known types compatible | union all premise burdens | unifier type-mismatch attack test |
 
 ## Known Kernel Boundary Gaps
 
@@ -65,8 +113,33 @@ the rule-level ledger, not a claim of full Isabelle `thm.ML` equivalence.
   parser/loader boundary debt; do not use it in trusted `ThmKernel` rules.
 - `forall_elim` enforces known binder/argument type compatibility, but
   `Pure::mk_all`/`lambda` still frequently leaves binder types as `Typ::dummy()`.
-- `CTerm::certify` is not yet a hard certification boundary. It infers what it
-  can, but dummy types can still enter kernel rules.
+- `CTerm::certify_checked` is now available as a hard certification API, but
+  most legacy parser/HOL/Isar call sites still use best-effort `CTerm::certify`
+  or `certify_annotated`. Full trusted-path migration remains pending.
+- `ThmKernel::assume` and `ThmKernel::reflexive` are now strict checked-entry
+  rules. Existing legacy users were mechanically moved to `assume_compat` and
+  `reflexive_compat`; those call sites are visible migration debt, not TCB.
+- Proof-state local assumptions and goal/subgoal scaffolding have checked
+  constructors. `have`, `show`, and `obtain` obligations still use explicit
+  compatibility theorem scaffolding and remain separate proof-state migration
+  debt.
+- The checked proof-state constructors now reject undeclared constants and
+  undeclared local frees even when the raw term carries non-dummy type
+  annotations. This is a proof-context certification boundary, not just a
+  no-dummy wrapper.
+- `assume_compat` / `reflexive_compat` produce `ThmTrust::Compat`; final
+  trusted theory tables and verified counts use `is_strict_closed_proved()`, so
+  closed-shaped compatibility theorems remain searchable but untrusted.
+- `is_strict_closed_proved()` is a cheap trusted-acceptance predicate.
+  `check_kernel_invariants(Strict)` is the stronger audit predicate and should
+  be used in strict-kernel tests and future CI gates.
+- Passing `check_kernel_invariants(Strict)` means strict theorem internal
+  consistency, not final closed theorem acceptance. Final trusted tables still
+  use `is_strict_closed_proved()`.
+- Unsupported replay rules may pass structural strict invariants but still fail
+  `check_proof()` with an explicit unsupported-rule error.
+- `ThmKernel::assume_checked` and `ThmKernel::reflexive_checked` remain
+  transitional aliases for the strict names.
 - Several tactic-facing operations still return `Option<Thm>`, so a rejected
   type mismatch is observationally the same as an ordinary match failure. This
   is sound but weak for diagnostics; the eventual shape should be closer to
@@ -116,15 +189,15 @@ env" behavior characterized.
 
 | Call site | Status | Rationale |
 |---|---|---|
-| `ThmKernel::bicompose` | checked | Kernel resolution applies unifier through `instantiate_checked`; invalid env makes resolution fail. |
-| `ThmKernel::bicompose_eresolve` | checked | Elim-resolution applies unifier through `instantiate_checked`; invalid env makes resolution fail. |
+| `ThmKernel::bicompose` (⚠️ LEGACY CORE) | checked | Kernel resolution applies unifier through `instantiate_checked`; invalid env makes resolution fail. |
+| `ThmKernel::bicompose_eresolve` (⚠️ LEGACY CORE) | checked | Elim-resolution applies unifier through `instantiate_checked`; invalid env makes resolution fail. |
 | `ThmKernel::flexflex_resolve` | checked | Flex-flex resolution keeps the original theorem if checked instantiation fails. |
 | `core::conv::instantiate_rule` | checked | Rewrite-rule instantiation now returns `None` on invalid env instead of returning an unrelated rule. |
 | `tools::metis::try_all_resolutions` | checked | Clause resolution skips a unifier whose theorem instantiation is ill-typed. |
 | `tools::metis::try_factor` | checked | Factoring skips ill-typed theorem instantiation. |
 | `tools::metis::try_all_paramodulations` | checked | Paramodulation skips ill-typed equality/target instantiation. |
 | `core::simplifier` / `tools::simp` | not theorem instantiation | These paths use `env.norm_term` to instantiate RHS/conditions, but do not call `ThmKernel::instantiate`; they remain part of the broader `CTerm` hard-certification work. |
-| `core::tactic` | checked via kernel rules | Resolve/eresolve/simp tactics route through `bicompose` or `subst_premise`. |
+| `core::tactic` | checked via kernel rules | Resolve/eresolve/simp tactics route through `bicompose` or `subst_premise` (⚠️ LEGACY CORE). |
 | `core::bires` / `core::more_thm` | no direct instantiation | No migration needed in this pass. |
 | `isar::method` debug matcher use | no theorem construction | Direct `Envir` use inspected is matcher diagnostics, not theorem instantiation. |
 
@@ -163,8 +236,8 @@ precisely:
   helpers as the other multi-premise rules.
 - `beta_conversion` now substitutes the argument for `Bound(0)` via
   `term_subst::subst_bounds`, instead of returning the raw abstraction body.
-- `implies_elim`, `forall_elim`, `subst_premise`, `bicompose`, and
-  `bicompose_eresolve` now reject alpha/unifier matches when both sides carry
+- `implies_elim`, `forall_elim`, `subst_premise` (⚠️ LEGACY CORE), `bicompose` (⚠️ LEGACY CORE), and
+  `bicompose_eresolve` (⚠️ LEGACY CORE) now reject alpha/unifier matches when both sides carry
   known incompatible concrete types.
 - `instantiate_checked` rejects known ill-typed environment assignments before
   theorem instantiation; the old public infallible `instantiate` entry point is
@@ -175,18 +248,22 @@ precisely:
   `instantiate_checked`.
 - `isar::method` fallback admissions now use classified oracle names instead of
   one generic `"admitted"` tag for the audited exit sites.
-- Lemma statistics now require `Thm::is_closed_proved()`, not just an empty
+- Lemma statistics first stopped at `Thm::is_closed_proved()`, not just an empty
   oracle footprint; open `A |- A` theorems no longer count as proved lemmas.
+  The strict-kernel phase further requires `Thm::is_strict_closed_proved()` so
+  compatibility closed-shapes no longer count either.
 - Non-derivational theorem attribute transformations now use
   `admitted:attribute_transformation` instead of `assume`-wrapping the result.
 - `TheoryProcessor::process_source_verified` and final `LocalTheory` registration
-  now require `is_closed_proved()`; `accept_all` remains searchable in the local
-  index as an admitted theorem but does not enter the final closed theorem table.
-- `SessionBuilder` now reports closed proved theorem counts instead of indexed
-  theorem entries; `accept_all` files are not `FullSuccess`.
-- `HolTheoremDb` is explicitly a proof-search fact index. It may contain open
-  or admitted facts in `by_name`/nets, so trusted statistics must use
-  `closed_proved_count()` or the final `Theory` table.
+  now require `is_strict_closed_proved()`; `accept_all` remains searchable in
+  the local index as an admitted theorem but does not enter the final trusted
+  theorem table.
+- `SessionBuilder` now reports strict closed proved theorem counts instead of
+  indexed theorem entries; `accept_all` and compatibility-only files are not
+  `FullSuccess`.
+- `HolTheoremDb` is explicitly a proof-search fact index. It may contain open,
+  admitted, or compatibility facts in `by_name`/nets, so trusted statistics
+  must use strict `closed_proved_count()` or the final `Theory` table.
 - T4 proof replay has a minimal closed loop for
   `assume/reflexive/symmetric/transitive/implies_intr/implies_elim`. Tampering
   with a theorem proposition or nested premise derivation is rejected by

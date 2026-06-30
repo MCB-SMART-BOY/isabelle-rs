@@ -32,11 +32,18 @@ cargo test --lib 2>&1 | diff - test-before.log
 
 ## Project-Specific Safety Constraints
 
-### Kernel Code (`src/core/thm.rs`)
+### Legacy Kernel Code (`src/core/thm.rs`)
 - **NEVER** change `Thm` field visibility — must stay `pub(crate)`
 - **NEVER** expose `Thm { .. }` constructor outside `thm.rs`
 - **ALWAYS** preserve `ThmKernel` as sole public interface
 - **ALWAYS** keep 7 Thm fields: hyps, prop, maxidx, tpairs, shyps, derivation, serial
+
+### Strict Kernel Code (`src/kernel/`)
+- **NEVER** use crate-wide unchecked constructors for certified terms/theorems.
+- Internal constructors and certified-by-origin wrappers must be
+  `pub(in crate::kernel)` or narrower, not `pub(crate)`.
+- Legacy `src/core`, Isar, HOL, tools, and session modules must enter
+  strict kernel through `ProofContext` certification or explicit adapters.
 
 ### Method Dispatch (`src/isar/method.rs`)
 - **NEVER** reorder the six-layer fallback in `verify_lemma()`

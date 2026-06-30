@@ -145,10 +145,12 @@ pub fn process_span(&mut self, span: &CommandSpan) -> Result<()> {
 ```rust
 // ✅ 解释 "为什么" 而非 "是什么"
 // 使用 matching 而非 unification 避免意外实例化自由变量
+// ⚠️ LEGACY CORE — ThmKernel::bicompose_match is NOT in strict src/kernel/
 let thm = ThmKernel::bicompose_match(rule, goal, 0)?;
 
 // ❌ 重述代码
 // 将 rule 和 goal 进行 bicompose 匹配，索引为 0
+// ⚠️ LEGACY CORE — not available in strict src/kernel/
 let thm = ThmKernel::bicompose_match(rule, goal, 0)?;
 
 // ✅ 标记技术债务

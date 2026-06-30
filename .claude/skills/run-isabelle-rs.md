@@ -14,11 +14,15 @@ Build, run, test, and verify the isabelle-rs proof assistant.
 # 构建
 cargo build
 
+# 严格内核攻击测试 (最快, 32MB 栈)
+cargo test --test kernel_rewrite_soundness
+
 # 所有测试 (需要 256MB 栈)
 RUST_MIN_STACK=268435456 cargo test --lib
 
 # 内核测试 (快速, 32MB 栈)
 cargo test --lib core::thm
+cargo test --test kernel_soundness
 
 # 核心验证
 RUST_MIN_STACK=268435456 cargo test test_verify_all_core_files -- --nocapture
@@ -35,6 +39,7 @@ cargo fmt -- --check
 ## 栈需求
 | 测试 | 栈 |
 |------|:--:|
+| kernel_rewrite_soundness | 32MB |
 | Core kernel | 32MB |
 | Full lib | 256MB |
 | Core verification | 256MB |

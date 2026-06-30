@@ -6,27 +6,20 @@ version: 2.0
 ---
 # Isabelle-rs 项目规则
 
-> **用 Rust 重写 Isabelle，打造更程序员友好的证明助手。**
-> LCF trusted kernel + higher-order unification + Isar proof language.
+> **Rust-native Isabelle/Pure-inspired strict LCF kernel research prototype.**
+> 当前主线是 `src/kernel` 新 TCB + legacy quarantine，不是完整 Isabelle 替代品。
 
-## 项目状态 (v2.2.1)
+## 项目状态 (v2.3.0)
 
 | 指标 | 值 |
 |------|-----|
-| 内核 | 15 ops + tpairs/shyps + **oracle 信任足迹 (T3)**, 不可伪造 Thm |
-| **信任模型** | ✅ **T3**: `is_fully_proved()`/`oracles()` + `ThmKernel::admit`, 见 docs/TRUST.md |
-| 证明引擎 | Isar state machine (3 modes) + 27 proof methods |
-| 经典推理器 | best/depth/dup_step + three-stage safe rules |
-| HOL 简化器 | Conditional rewriting + solver plugins + Cached Simplifier |
-| Metis | Given-clause resolution + HOL.eq paramodulation + ∃-skolemization |
-| **Tier2 真实证明率** | **85.8% (3277/3821 proved, 544 admitted), 178s** |
-| Core | 5/5 files 100% (125/125) |
-| 编译 | 0 warnings |
-| IsarProof | Arc<IsarContext> shared context, auto_exec DFS stack |
-| 模块 | core (33), isar (19), hol (22), theory (8) + tools/server/lsp |
-| 代码 | ~55K Rust LOC, 124+ files |
-| 测试 | 700+ (642 lib + 76 integration), 含 4 信任足迹测试 |
-| **战略** | 放弃追广度, 押注「内核可信 + 片段深度」; 可信路线 A 先行 B 北极星 |
+| 新 TCB | `src/kernel/` strict nucleus; no dummy, no compat, no fallback theorem construction |
+| legacy 边界 | `src/core` / Isar / HOL / tools 进入 quarantine, 只通过 adapter 迁移 |
+| strict kernel rules | assume/reflexive/symmetric/transitive/beta/forall/combination/abstraction/equal/generalize/instantiate + `resolve1_match` prototype |
+| 信任模型 | `TrustedTheory` 只接收 `TrustedTheorem`; `SearchFactDb` 不能提升为 trusted |
+| 证明状态 | `ProofObligation` 与 theorem 分离; `assume(A)` 是 open theorem `A |- A` |
+| 测试 gate | `scripts/check-kernel-firewall.sh`; `cargo test --test kernel_rewrite_soundness` |
+| 战略 | 先完成 strict kernel 与 replay，再做 workspace/session/agent；不追 HOL/AFP 覆盖率 |
 
 ## 铁律 (15)
 

@@ -32,6 +32,11 @@ pub(in path)   → 仅指定路径可见
 无修饰          → 私有
 ```
 
+Strict `src/kernel/` exception: unchecked certification/theorem-construction
+helpers must not use `pub(crate)`. Use `pub(in crate::kernel)` or narrower so
+legacy `src/core`, Isar, HOL, tools, and session modules cannot bypass the
+strict certification boundary.
+
 ### 实际应用
 
 ```rust
@@ -42,6 +47,9 @@ pub fn combination(thm_f: &Thm, thm_x: &Thm) -> Result<Thm> { ... } // pub
 // ✅ 内部 API: 可自由重构
 pub(crate) fn normalize_env(env: &mut Envir) { ... }    // pub(crate)
 pub(super) fn apply_substitution(term: &Term, subst: &Subst) -> Term { ... } // pub(super)
+
+// ✅ strict src/kernel 内部逃生口: 只允许 kernel 内部模块调用
+pub(in crate::kernel) fn from_certified_subterm(term: Term) -> CTerm { ... }
 ```
 
 ## 模式 1: Trait 设计

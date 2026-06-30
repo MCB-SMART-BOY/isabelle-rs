@@ -24,6 +24,7 @@ current status.
 ```bash
 cargo check
 cargo fmt --check
+cargo test --test kernel_rewrite_soundness
 cargo test --test kernel_soundness
 cargo test core::proofterm::tests::
 cargo test core::thm::tests::
@@ -46,7 +47,8 @@ verified as fixed in the current checkout.
 The core rule is simple:
 
 ```text
-proved lemma = no oracles + no hypotheses + no unresolved tpairs
+trusted proved lemma =
+  strict kernel construction + no oracles + no hypotheses + no unresolved tpairs + no dummy types
 ```
 
 Important API distinction:
@@ -54,6 +56,7 @@ Important API distinction:
 ```text
 is_fully_proved() == oracle-free
 is_closed_proved() == oracle-free + no hyps + no unresolved tpairs
+is_strict_closed_proved() == strict construction + is_closed_proved() + no dummy types
 ```
 
 `ThmKernel::assume(A)` constructs `A |- A`. It is a valid open theorem, not
@@ -69,11 +72,12 @@ See [docs/TRUST.md](docs/TRUST.md).
 | Area | Status |
 |---|---|
 | LCF-style `Thm` kernel | Research prototype with private theorem fields and hardened construction routes. |
+| Strict kernel nucleus | `src/kernel` is the new TCB: no dummy type, no compat certification, separate `ProofObligation`, `TrustedTheory`, and `SearchFactDb`; includes primitive rules and `resolve1_match` prototype. |
 | Kernel primitive rules | Core subset implemented; several rounds of side-condition, type, burden, and oracle propagation audits done. |
 | Checked instantiation | Production proof-search paths use `instantiate_checked`; legacy infallible instantiation is not a production API. |
 | Oracle/admit tracking | Explicit `admitted:*` footprint tracking and propagation. |
-| Closed theorem acceptance | Session and final theory statistics use `is_closed_proved()`, not raw theorem entries. |
-| Searchable facts vs trusted table | `HolTheoremDb` is a proof-search fact index; final trusted theorem tables only accept closed proved theorems. |
+| Closed theorem acceptance | Session and final theory statistics use `is_strict_closed_proved()`, not raw theorem entries or compatibility closed-shapes. |
+| Searchable facts vs trusted table | `HolTheoremDb` is a proof-search fact index; final trusted theorem tables only accept strict closed proved theorems. |
 | Proofterm replay | Minimal burden-aware replay for `assume`, `reflexive`, `symmetric`, `transitive`, `implies_intr`, `implies_elim`. |
 | Isar/HOL/tools | Partial implementation; useful for experiments, not feature-compatible with Isabelle. |
 | LSP/WASM/PIDE | Skeletons only; not current priority. |

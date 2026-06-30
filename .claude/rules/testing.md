@@ -44,4 +44,4 @@ cargo test test_load_1000_from_full_hol -- --nocapture         # 5. 加载
 | Stack overflow < 128MB | 某函数仍递归 | 迭代化 |
 | `verify_lemma` None | 方法名未识别 | 检查 dispatch |
 | DB 0 theorems | `parse_lemmas` 静默失败 | 检查路径 |
-| `bicompose` None | 规则不匹配 | 检查 unify |
+| `bicompose` None | 规则不匹配 (⚠️ LEGACY core) | 检查 unify |

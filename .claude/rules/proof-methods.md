@@ -44,6 +44,13 @@ verify_lemma()
 
 ## Safe Rules — 三阶段匹配 (Phase 22 ✅)
 
+⚠️ The `ThmKernel::bicompose` calls below are **legacy `src/core/`** paths.
+They have NOT been migrated to strict `src/kernel/`. The strict kernel has a
+conservative `resolve1_match` prototype for one-way backward resolution, but
+full `bicompose` / `bicompose_eresolve` are still design-phase work (see
+`docs/RESOLUTION_DESIGN.md`). Do not use legacy safe-rule resolution as an
+implementation reference for `src/kernel/`.
+
 ```rust
 pub fn apply_safe_rules(state, premises) -> Thm {
     loop {

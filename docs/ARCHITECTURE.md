@@ -49,7 +49,8 @@ Core theorem classes:
 
 | Class | Shape | Trusted status |
 |---|---|---|
-| Closed proved theorem | `|- P`, no oracle, no `tpairs` | May enter final trusted theorem tables. |
+| Strict closed proved theorem | strict construction, `|- P`, no oracle, no `tpairs`, no dummy types | May enter final trusted theorem tables. |
+| Compat closed-shaped theorem | no oracle/hyps/`tpairs`, but legacy construction | Searchable only; not trusted output. |
 | Open theorem | `A1, ..., An |- P` | Valid theorem, but not a proved lemma. |
 | Admitted theorem | `|- P` with oracle footprint | Accepted for progress; never counted as independently proved. |
 | Searchable fact | Any theorem-like fact used by proof search | May be open/admitted; not automatically trusted output. |
@@ -57,14 +58,17 @@ Core theorem classes:
 The acceptance predicate for proved lemmas is:
 
 ```text
-thm.is_closed_proved()
-  == thm.oracles().is_empty()
+thm.is_strict_closed_proved()
+  == thm.trust_status() == ThmTrust::Strict
+  && thm.oracles().is_empty()
   && thm.hyps().is_empty()
   && thm.tpairs().is_empty()
+  && !thm.contains_dummy_type()
 ```
 
-`is_fully_proved()` means oracle-free only. It is not sufficient for lemma
-verification statistics.
+`is_closed_proved()` means closed shape only. `is_fully_proved()` means
+oracle-free only. Neither is sufficient for trusted lemma verification
+statistics once compatibility theorem construction is explicit.
 
 ### Admit / Oracle Entry
 
@@ -110,11 +114,12 @@ theorem_index / HolTheoremDb
 
 core::theory::Theory
   = final trusted theorem table
-  = must only contain `is_closed_proved()` facts
+  = must only contain `is_strict_closed_proved()` facts
 ```
 
-`SessionBuilder` reports closed proved theorem counts. It must not use raw
-indexed theorem entries as verified theorem statistics.
+`SessionBuilder` reports strict closed proved theorem counts. It must not use
+raw indexed theorem entries or compatibility closed-shapes as verified theorem
+statistics.
 
 ## Proofterm Replay Flow
 

@@ -98,11 +98,12 @@ Use these terms consistently:
 | Term | Meaning |
 |---|---|
 | oracle-free | `thm.is_fully_proved()`; no oracle footprint. |
-| closed proved | no oracle, no hypotheses, no unresolved `tpairs`; use `thm.is_closed_proved()`. |
+| closed proved shape | no oracle, no hypotheses, no unresolved `tpairs`; use `thm.is_closed_proved()` for shape only. |
+| strict closed proved | strict construction plus closed proved shape and no dummy types; use `thm.is_strict_closed_proved()` for trusted acceptance. |
 | open theorem | valid theorem with hypotheses, such as `A |- A`. |
 | admitted theorem | theorem accepted with explicit oracle footprint. |
 | searchable fact | fact available to proof search; may be open or admitted. |
-| trusted theorem table | final exported table; should only contain closed proved theorems. |
+| trusted theorem table | final exported table; should only contain strict closed proved theorems. |
 
 ## Proof Replay Development
 

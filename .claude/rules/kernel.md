@@ -2,8 +2,8 @@
 description: LCF 内核规则。ThmKernel 15操作, CTerm, tpairs, shyps, 类型感知等值构造。
 globs: src/core/thm.rs, src/core/logic.rs, src/core/drule.rs, src/core/more_thm.rs
 alwaysApply: false
-version: 3.0
-updated: 2026-05-29
+version: 3.1
+updated: 2026-06-30
 ---
 
 # 内核规则
@@ -17,9 +17,17 @@ updated: 2026-05-29
 ```
 原语 (12): assume, reflexive, symmetric, transitive, combination, abstraction,
            beta_conversion, implies_intr, implies_elim, forall_intr, forall_elim, instantiate
-内核派生 (3): bicompose, bicompose_eresolve, subst_premise
+内核派生 (3): bicompose, bicompose_eresolve, subst_premise  ← ⚠️ LEGACY CORE ONLY
 推导 (1): trivial
 ```
+
+**Note**: The three derived rules (`bicompose`, `bicompose_eresolve`, `subst_premise`)
+are **legacy `src/core/` only**. They have NOT been migrated to the strict
+`src/kernel/`. The strict kernel currently has a conservative `resolve1_match`
+prototype backed by strict matching and invariant replay; full `bicompose` /
+`bicompose_eresolve` remain design-phase work tracked in
+`docs/RESOLUTION_DESIGN.md`. Do not implement strict-kernel resolution by
+copying legacy `ThmKernel::bicompose`.
 
 ## Thm 结构体完整字段 (Phase 39 + T3 信任足迹)
 
@@ -46,7 +54,7 @@ pub struct Thm {
 - 禁止用 `ThmKernel::assume` 把未证明的命题伪装成已证 — 用 `admit`
 - 详见 [docs/TRUST.md](../../docs/TRUST.md)
 
-## T2 规则可靠 — 铁律 (v2.2.0)
+## T2 规则可靠 — 铁律 (v2.3.0)
 
 - **`tpairs`/`shyps` 必须并集传播** — 多前提规则用 `union_tpairs`/`union_shyps`,
   单前提 `clone`。当前恒空,但接入完整高阶合一后丢弃会不可靠。
@@ -94,9 +102,15 @@ Pure::strip_imp_prems(term)        // → (Vec<prem>, concl)
 Pure::extract_eq_type(const_typ)   // 从 Pure.eq 类型提取参数类型
 ```
 
-## Bicompose
+## Bicompose — ⚠️ LEGACY CORE ONLY
+
+These are the **legacy `src/core/`** bicompose signatures. They have NOT been
+migrated to the strict `src/kernel/`. Do NOT use these as implementation
+reference for strict-kernel resolution rules. See `docs/RESOLUTION_DESIGN.md`
+for the strict-kernel design.
 
 ```rust
+// LEGACY src/core/ — not available in src/kernel/
 ThmKernel::bicompose(true, rule, goal, i)              // 反向消解
 ThmKernel::bicompose(false, goal, rule, 0)             // 正向
 ThmKernel::bicompose_eresolve(true, rule, goal, 0, premises) // 消去消解

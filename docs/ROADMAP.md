@@ -18,23 +18,36 @@ Current status:
 
 | Track | Status |
 |---|---|
-| T2 primitive rule hardening | Strict kernel alpha-equivalence split out; `Typ::dummy()` and certification remain known debts. |
+| Strict kernel nucleus (`src/kernel/`) | Base primitive set implemented plus conservative `resolve1_match` prototype; ADR-0001 strangler pattern active. |
+| Legacy T2 primitive rule hardening | Strict kernel alpha-equivalence split out; `Typ::dummy()` and certification remain known debts in legacy core. |
 | Checked instantiation | Production paths closed over `instantiate_checked`. |
 | Admit/oracle tracking | Explicit, classified, and propagated. |
-| Closed theorem acceptance | Main path, session reporting, and final trusted tables use `is_closed_proved()`. |
-| T4 proofterm replay | Minimal replay prototype exists for six rules. |
+| Closed theorem acceptance | Main path, session reporting, and final trusted tables use `is_strict_closed_proved()`. |
+| T4 proofterm replay | Legacy proofterm replay remains minimal; strict `src/kernel` invariant replay covers its implemented derivations. |
 | HOL/Isar feature parity | Not current priority. |
+
+Architecture vision: ADR-0002 establishes a layered platform architecture
+(strangler kernel → workspace → session → agent → plugin). The phases below
+follow the dependency order: kernel first, then workspace, then session/agent
+infrastructure.
 
 Priority order:
 
-1. Tighten kernel equality/certification boundaries.
-2. Extend T4 proofterm replay rule coverage after strict kernel semantics are
-   stable.
-3. Reduce admitted lemmas by reason.
-4. Expand HOL/Isar/tool coverage only where it reduces admitted counts without
+1. Stabilize strict `src/kernel` nucleus: keep the firewall clean, normalize
+   resolution substitutions, and make `resolve1_match` limits explicit.
+2. Establish a structured compatibility matrix for legacy adapters
+   (Core → Isar proof state → HOL bootstrap → Tier2 smoke).
+3. Extend strict-kernel replay/invariant coverage only after rule contracts and
+   compatibility boundaries are stable.
+4. Reduce admitted lemmas by classified reason.
+5. Split into Cargo workspace (`isabelle-kernel` crate first).
+6. Design session incremental engine (snapshot/rollback/content-addressed cache).
+7. Build `isabelle.toml` project system (Lake-style).
+8. Design Agent Proof Protocol (APP).
+9. Expand HOL/Isar/tool coverage only where it reduces admitted counts without
    weakening trust boundaries.
-5. Add optional replay gates to CLI/verification paths after replay covers the
-   main primitive rules.
+10. Harden WASM plugin sandbox boundaries.
+11. AFP large-scale benchmark.
 
 ## Phase 0: Baseline and Documentation Sync
 
@@ -71,7 +84,7 @@ Done when:
 - All high-level docs describe the project as a research prototype, not a full
   Isabelle rewrite.
 - All proof-rate language distinguishes `is_fully_proved()` from
-  `is_closed_proved()`.
+  `is_strict_closed_proved()`.
 - The next engineering plan starts with T4 replay, not more HOL/Isar features.
 
 Current baseline commits:
@@ -108,6 +121,13 @@ Next strict-boundary tasks:
 - Add theorem invariant checks for primitive-rule outputs.
 - Add a strict-kernel mode that requires strict certification and invariant
   checks before counting trusted results.
+
+## Legacy Replay Backlog
+
+The sections below preserve the legacy `src/core` proofterm replay backlog.
+They are not the active strict-kernel architecture plan. New trusted kernel
+work should first land in `src/kernel`; legacy replay work is useful only when
+it supports an adapter or a compatibility audit without weakening the new TCB.
 
 ## Phase 2: T4 Replay Batch 1
 
@@ -265,15 +285,17 @@ Done when:
 Target rules:
 
 ```text
-bicompose
-bicompose_eresolve
-subst_premise
+bicompose (⚠️ LEGACY CORE — strict-kernel design in docs/RESOLUTION_DESIGN.md)
+bicompose_eresolve (⚠️ LEGACY CORE)
+subst_premise (⚠️ LEGACY CORE)
 ```
 
 Why last:
 
 - These rules involve resolution, premise selection, unification, and
   propagation of multiple theorem burdens.
+- The strict-kernel resolution family (`resolve1`/`bicompose` in `src/kernel/`)
+  will need its own T4 replay strategy; see `docs/RESOLUTION_DESIGN.md`.
 - They are the most likely place for `alpha_eq`, `Typ::dummy()`, and
   `Option<Thm>` diagnostics to hide mistakes.
 
@@ -292,7 +314,7 @@ Required attack tests:
 
 - Resolution cannot cross known concrete type mismatches.
 - E-resolution cannot discharge the wrong hypothesis.
-- `subst_premise` cannot rewrite across Free/Const or Var/Free confusion once
+- `subst_premise` (⚠️ LEGACY CORE) cannot rewrite across Free/Const or Var/Free confusion once
   strict `alpha_eq` is enabled.
 - Multi-premise burdens union exactly: `hyps`, `tpairs`, `shyps`, `oracles`.
 - Unsupported or failed resolution replay is distinguishable from proof
@@ -404,13 +426,328 @@ Tasks:
   unsupported rule, oracle/admitted theorem, tampered proof, or burden mismatch.
 - Keep replay optional until coverage is broad enough to avoid excessive false
   negatives.
-- Never let replay success replace `is_closed_proved()`; closed theorem
+- Never let replay success replace `is_strict_closed_proved()`; strict closed theorem
   acceptance remains required.
 
 Done when:
 
-- Core theorem batches can optionally run proof replay on closed proved results.
+- Core theorem batches can optionally run proof replay on strict closed proved results.
 - Unsupported rules are reported as coverage gaps, not trust failures.
+
+## Phase 9: Compatibility Matrix
+
+Goal:
+
+Establish structured, measurable compatibility tracking rather than anecdotal
+claims.
+
+Primary files:
+
+```text
+tests/compatibility/
+docs/COMPATIBILITY.md
+```
+
+Tasks:
+
+- Define compatibility levels:
+  ```text
+  Level 0: Core syntax compatibility
+  Level 1: Pure compatibility
+  Level 2: HOL-Main compatibility
+  Level 3: Library compatibility
+  Level 4: AFP selected benchmark (20 entries)
+  Level 5: AFP large-scale compatibility
+  Level 6: Major tools compatibility
+  ```
+- Build CI that reports per-file proved/admitted/oracle counts.
+- Track admitted count per version as a regression gate.
+- Compare output with reference Isabelle where applicable.
+
+Done when:
+
+- Each version has a published compatibility report.
+- Admitted count never increases between versions.
+
+## Phase 10: Cargo Workspace Split
+
+Goal:
+
+Extract `isabelle-kernel` as the first independent crate, enforcing the
+dependency direction established by ADR-0002.
+
+Primary deliverable:
+
+```text
+crates/isabelle-kernel/  — strict TCB, minimal deps, no tokio/LSP/WASM
+```
+
+Tasks:
+
+- Move `src/kernel/` to `crates/isabelle-kernel/src/`.
+- Define `isabelle-kernel/Cargo.toml` with minimal dependencies.
+- Ensure `isabelle-kernel` compiles and tests independently.
+- Establish the dependency rule: no other crate may be depended on by the kernel.
+- Legacy `src/core/` stays in the root crate until migration is complete.
+
+Done when:
+
+```bash
+cargo test -p isabelle-kernel
+cargo test --test kernel_rewrite_soundness
+```
+
+## Phase 11: Session Incremental Engine
+
+Goal:
+
+Design and implement a content-addressed incremental checking engine with
+snapshot/rollback, serving as shared infrastructure for both LSP and Agent
+protocol.
+
+Primary files:
+
+```text
+crates/isabelle-session/src/
+```
+
+Key API:
+
+```rust
+pub trait ProofSession {
+    fn snapshot(&self) -> SnapshotId;
+    fn apply_command(&mut self, span: CommandSpan) -> Result<StateDiff>;
+    fn rollback(&mut self, snapshot: SnapshotId);
+    fn goals(&self) -> Vec<GoalView>;
+    fn diagnostics(&self) -> Vec<Diagnostic>;
+}
+```
+
+Cache structure:
+
+```text
+target/isabelle/
+  cache/
+    spans/
+    theories/
+    thms/
+    proofcerts/
+  diagnostics.db
+  graph.db
+```
+
+Done when:
+
+- Snapshot/rollback round-trips preserve theorem state.
+- Incremental checking correctly invalidates only changed spans.
+- Parallel build produces deterministic results.
+
+## Phase 12: isabelle.toml Project System
+
+Goal:
+
+Lake-style project scaffolding with dependency locking and toolchain pinning.
+
+Primary deliverable:
+
+```bash
+isabelle-rs new my_project
+isabelle-rs build
+isabelle-rs test
+isabelle-rs fmt
+isabelle-rs lsp
+isabelle-rs doc
+isabelle-rs add AFP/Graph_Theory
+```
+
+Project structure:
+
+```text
+my_project/
+  isabelle.toml
+  isabelle.lock
+  toolchain.toml
+  src/
+    Main.thy
+  tests/
+  docs/
+  target/
+```
+
+Configuration features (`isabelle.toml`):
+
+```toml
+[build]
+parallel = true
+incremental = true
+deny_admit = true       # CI gate: no admitted theorems
+max_oracles = 0          # CI gate: no oracle dependencies
+trust_report = true      # generate per-build trust report
+proof_certificates = true # generate proof certificates
+```
+
+Done when:
+
+- `isabelle-rs new` scaffolds a working project.
+- `isabelle-rs build` produces a trust report.
+- `deny_admit = true` fails the build when any theorem is admitted.
+
+## Phase 13: Agent Proof Protocol (APP)
+
+Goal:
+
+Design a structured protocol for machine proof search that operates at the
+proof-state level, not the text level.
+
+Primary files:
+
+```text
+crates/isabelle-agent/src/
+```
+
+Core API:
+
+```text
+proof/open_project
+proof/open_theory
+proof/get_state
+proof/get_goals
+proof/search_facts
+proof/apply_command
+proof/try_method
+proof/rollback
+proof/replay
+proof/minimize
+proof/trust_report
+proof/export_certificate
+```
+
+`get_goals` returns structured JSON:
+
+```json
+{
+  "state_id": "s42",
+  "mode": "ProofBackward",
+  "goals": [
+    {
+      "id": "g0",
+      "target": "xs @ [] = xs",
+      "variables": [{"name": "xs", "type": "'a list"}],
+      "hypotheses": [],
+      "suggestions": [
+        {"kind": "induction", "on": "xs"},
+        {"kind": "simp", "facts": ["append_Nil"]}
+      ]
+    }
+  ]
+}
+```
+
+`apply_command` returns a state diff:
+
+```json
+{
+  "before": "s42",
+  "after": "s43",
+  "accepted": true,
+  "new_goals": [],
+  "diagnostics": [],
+  "trust_delta": {"oracles_added": [], "admitted_added": []}
+}
+```
+
+Design principle:
+
+```text
+                 ┌──────────────┐
+VS Code/Neovim ← │ isabelle-lsp  │
+                 └──────┬───────┘
+                        │
+                 ┌──────▼───────┐
+                 │ isabelle-session │
+                 └──────▲───────┘
+                        │
+Agent/Codex/Claude ← ┌──┴──────────┐
+                     │ isabelle-agent │
+                     └──────────────┘
+```
+
+LSP serves humans; APP serves machines. Both share the session layer.
+
+Done when:
+
+- Agent can call `get_goals` and receive structured goal state.
+- Agent can `apply_command` and receive a state diff.
+- Agent can `rollback` to a previous snapshot.
+- `trust_report` accurately reflects oracle/admitted footprint.
+
+## Phase 14: WASM Plugin Sandbox Hardening
+
+Goal:
+
+Enforce capability boundaries on WASM plugins: plugins must not construct
+trusted theorems directly, modify kernel state, bypass oracle footprint, or
+silently admit.
+
+Primary files:
+
+```text
+crates/isabelle-plugin-wasm/src/
+```
+
+Plugin capabilities (allowed):
+
+```text
+custom tactic
+proof search strategy
+domain-specific simplifier
+theorem search extension
+Agent strategy plugin
+document generation plugin
+```
+
+Plugin restrictions (forbidden):
+
+```text
+direct trusted theorem construction
+kernel state modification
+oracle footprint bypass
+silent admit
+```
+
+Plugin return boundary: proof script, proof term, method suggestion, fact
+ranking, diagnostic — never a raw theorem.
+
+Done when:
+
+- Plugin capability violations are rejected at the WASM boundary.
+- Plugin-produced proof scripts must pass kernel checking before theorem acceptance.
+
+## Phase 15: AFP Large-Scale Benchmark
+
+Goal:
+
+Systematic compatibility measurement against AFP entries.
+
+Primary files:
+
+```text
+tests/afp/
+```
+
+Tasks:
+
+- Select 20 representative AFP entries.
+- Build automated compatibility CI.
+- Track per-entry proved/admitted/oracle counts.
+- Require admitted count to be non-increasing between versions.
+- Publish per-version compatibility report.
+
+Done when:
+
+- 20 AFP entries have compatibility status.
+- CI gate rejects admitted-count regressions.
+- Compatibility report is generated per release.
 
 ## Later Work
 
@@ -418,9 +755,9 @@ Only after the above tracks are stable:
 
 - Broaden Isar grammar and structured proof coverage.
 - Improve HOL packages where they reduce admitted counts.
-- Build richer proof-state diagnostics for agents.
-- Extend LSP and WASM integration.
+- Extend LSP integration with richer IDE features.
 - Consider Sledgehammer/SMT/Code Generator only as non-core research tracks.
+- WASM plugin marketplace and registry.
 
 ## Standing Verification Policy
 
@@ -436,6 +773,7 @@ For kernel, proof replay, or theorem acceptance changes:
 ```bash
 cargo fmt --check
 cargo test --test kernel_soundness
+cargo test --test kernel_rewrite_soundness
 cargo test core::proofterm::tests::
 cargo test core::thm::tests::
 cargo test --lib core::

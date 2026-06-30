@@ -60,6 +60,7 @@ fn my_new_method_exec(state: &Thm, depth: usize, premises: &[Arc<Thm>]) -> Vec<T
     // RULE 3: Use nets, not linear scan
     let db = HolTheoremDb::get();
     for rule in db.intro_net().lookup(&current.prem(0).unwrap_or(/* fallback */)) {
+        // ⚠️ LEGACY core ThmKernel::bicompose — not in strict src/kernel/
         if let Some(result) = ThmKernel::bicompose(true, rule, &current, 0) {
             if result.nprems() == 0 { return vec![result]; }
             let sub = Self::my_new_method_exec(&result, depth + 1, premises);

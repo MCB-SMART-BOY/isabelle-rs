@@ -33,7 +33,7 @@ These are semantic and engineering estimates, not line-count percentages.
 | LCF `Thm` kernel | 50%-60% | Research prototype with recent soundness hardening. |
 | Primitive inference rules | 40%-55% | Important subset implemented; coverage and Isabelle equivalence incomplete. |
 | Oracle/admit tracking | 65%-75% | Strong project area: explicit footprints and propagation. |
-| Closed theorem acceptance | ~70% | Main statistics and final trusted tables use closed proved filters. |
+| Closed theorem acceptance | ~70% | Main statistics and final trusted tables use strict closed proved filters. |
 | Proofterm replay/checker | 10%-20% | Minimal derivation replay, not full Isabelle proofterm checker. |
 | Isar proof engine | 25%-35% | Partial state machine and method dispatch. |
 | Simplifier / automation | 10%-20% | Useful prototypes, far from HOL Tools. |
@@ -68,7 +68,8 @@ The project makes these statuses explicit:
 
 ```text
 oracle-free theorem
-closed proved theorem
+closed proved shape
+strict closed proved theorem
 open theorem with hypotheses
 admitted theorem
 searchable fact
@@ -78,7 +79,7 @@ trusted theorem table entry
 This distinction is central. In particular:
 
 ```text
-is_fully_proved() != is_closed_proved()
+is_fully_proved() != is_closed_proved() != is_strict_closed_proved()
 ```
 
 ### Attack-Test-Driven Kernel Work
@@ -152,12 +153,12 @@ equal_intr
 equal_elim
 instantiate_checked
 generalize
-bicompose
-bicompose_eresolve
-subst_premise
+bicompose ⚠️ LEGACY CORE
+bicompose_eresolve ⚠️ LEGACY CORE
+subst_premise ⚠️ LEGACY CORE
 ```
 
-The harder rules are `instantiate_checked`, `bicompose*`, `subst_premise`, and
+The harder rules are `instantiate_checked`, `bicompose*` (⚠️ LEGACY CORE), `subst_premise` (⚠️ LEGACY CORE), and
 `abstraction`, because they interact with unification, variable discipline,
 typing, and theorem burdens.
 

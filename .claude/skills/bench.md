@@ -2,7 +2,7 @@
 name: bench
 description: Run the complete test matrix at correct stack sizes. Check suite pass/fail status and identify regressions.
 category: meta
-version: 2.2.1
+version: 2.3.0
 triggers: [benchmark, performance, test all, regression test]
 permissions: [Bash:cargo test, Bash:RUST_MIN_STACK]
 ---
@@ -15,6 +15,8 @@ Run the complete test matrix to check for regressions and performance issues.
 
 ```bash
 # Tier 1: Fast kernel tests (32MB stack)
+./scripts/check-kernel-firewall.sh
+cargo test --test kernel_rewrite_soundness
 cargo test --lib core::thm
 cargo test --lib core::unify
 cargo test --lib tools::metis
@@ -35,14 +37,16 @@ cargo test --test integration_tests
 cargo test --test proptest
 ```
 
-## Expected Results (v2.2.1)
+## Expected Results (v2.3.0)
 
 | Suite | Expected | Notes |
 |-------|----------|-------|
+| `scripts/check-kernel-firewall.sh` | clean | strict `src/kernel` has no legacy dependency or forbidden trust-boundary pattern |
+| `kernel_rewrite_soundness` | 124 pass | strict kernel nucleus + resolution prototype attacks |
 | `core::thm` | 12 pass | LCF kernel |
 | `cargo check --lib` | **0 warnings** | Required per SOP |
 | `test_verify_all_core_files` | **5/5 files, 125/125 (100%)** | Core verification |
-| `tier2_verify` | **97/97 files; 真实证明率 85.8% (3277/3821 proved, 544 admitted)** | 178s (3.0 min) |
+| `tier2_verify` | legacy compatibility benchmark | Do not treat old proof rate as strict-kernel acceptance |
 | `--lib` full | 700+ pass | 1 known skip (ctr_sugar) |
 
 ## Quick Sanity Check

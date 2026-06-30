@@ -109,7 +109,7 @@ pub fn process_source_bad(source: &str) -> Theory {
 ## 模式 4: 内存安全保证
 
 ```rust
-// LCF 内核通过设计保证安全性:
+// Legacy src/core LCF 内核通过设计保证安全性:
 // 1. Thm 没有公开构造器 → 不能凭空构造定理
 // 2. ThmKernel 是唯一创建 Thm 的路径 → 集中审计
 // 3. CTerm 通过 certify 构造 → 类型检查必经之路
@@ -121,7 +121,9 @@ pub struct Thm {
     pub(crate) maxidx: usize,   // 最大索引
     pub(crate) derivation: Derivation, // 推导历史
 }
-// Thm 字段是 pub(crate) → 外部 crate 不能直接构造
+// Legacy Thm 字段是 pub(crate) → 外部 crate 不能直接构造。
+// Strict src/kernel 更窄：认证/定理构造 helper 必须是
+// pub(in crate::kernel) 或更窄，不能对整个 crate 开放。
 ```
 
 ## 模式 5: Cryptographic Integrity (未来)
