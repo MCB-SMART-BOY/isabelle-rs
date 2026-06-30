@@ -416,7 +416,7 @@ mod tests {
     fn test_reconstruct_trivial() {
         let a = Term::const_("A", Typ::base("prop"));
         let ct = CTerm::certify(a);
-        let thm = ThmKernel::assume(ct);
+        let thm = ThmKernel::assume_compat(ct);
         let premises = vec![("p0".to_string(), Arc::new(thm))];
 
         let recon = ProofReconstructor::new(premises);

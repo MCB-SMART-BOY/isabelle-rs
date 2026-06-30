@@ -460,8 +460,10 @@ mod tests {
     fn test_fact_morphism() {
         use crate::core::thm::{CTerm, ThmKernel};
 
-        let fact_thm =
-            Arc::new(ThmKernel::assume(CTerm::certify(Term::const_("P", Typ::base("bool")))));
+        let fact_thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(Term::const_(
+            "P",
+            Typ::base("bool"),
+        ))));
 
         let m = Morphism::fact_morphism(move |name: &str| {
             if name == "my_fact" { Some(Arc::clone(&fact_thm)) } else { None }

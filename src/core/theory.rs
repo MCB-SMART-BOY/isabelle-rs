@@ -159,10 +159,13 @@ impl Theory {
 
     /// Add a proved theorem to the theory.
     ///
-    /// The theorem must be closed, oracle-free, and its propositions must be
-    /// built from constants declared in this theory.
+    /// The theorem must be strict-kernel constructed, closed, oracle-free, and
+    /// its propositions must be built from constants declared in this theory.
     pub fn add_theorem(&mut self, name: impl Into<Symbol>, thm: Thm) {
-        assert!(thm.is_closed_proved(), "stored theorems must be closed proved theorems");
+        assert!(
+            thm.is_strict_closed_proved(),
+            "stored theorems must be strict closed proved theorems"
+        );
         self.theorems.insert(name.into(), Arc::new(thm));
     }
 
@@ -271,6 +274,7 @@ impl ProofContext {
 mod tests {
     use super::{
         super::thm::{CTerm, ThmKernel},
+        super::types::TypeEnv,
         *,
     };
 
@@ -300,9 +304,13 @@ mod tests {
         let pure = Theory::pure();
         let mut my_theory = Theory::begin("MyTheory", vec![Arc::clone(&pure)]);
 
-        // Prove A ==> A in this theory
-        let a = CTerm::certify(Term::const_("A", Typ::base("prop")));
+        // Prove A ==> A in this theory through the strict kernel boundary.
+        let mut env = TypeEnv::new();
+        let prop_t = Typ::base("prop");
+        env.declare_const("A", prop_t.clone());
+        let a = CTerm::certify_checked(Term::const_("A", prop_t), &env).unwrap();
         let thm = ThmKernel::trivial(a).unwrap();
+        assert!(thm.is_strict_closed_proved());
 
         my_theory.add_theorem("trivial", thm);
         assert!(my_theory.lookup_theorem("trivial").is_some());

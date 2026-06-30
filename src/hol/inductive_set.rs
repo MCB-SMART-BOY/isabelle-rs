@@ -161,7 +161,7 @@ pub fn inductive_set_to_lemmas(def: &InductiveSetDef) -> Vec<crate::hol::hol_loa
     let theorems = def.generate_theorems();
 
     for (name, term, attrs) in theorems {
-        let thm = ThmKernel::assume(CTerm::certify_annotated(term));
+        let thm = ThmKernel::assume_compat(CTerm::certify_annotated(term));
         lemmas.push(crate::hol::hol_loader::ParsedLemma {
             name,
             attributes: attrs,

@@ -132,7 +132,7 @@ mod tests {
     #[test]
     fn test_implies_intr_list() {
         let a = prop("A");
-        let assumed = ThmKernel::assume(a.clone());
+        let assumed = ThmKernel::assume_compat(a.clone());
         let result = implies_intr_list(&[a.clone()], &assumed).unwrap();
         assert!(result.is_unconditional());
     }
@@ -141,7 +141,7 @@ mod tests {
     fn test_compose_trivial() {
         let a = prop("A");
         let trivial = ThmKernel::trivial(a.clone()).unwrap();
-        let assumed = ThmKernel::assume(a.clone());
+        let assumed = ThmKernel::assume_compat(a.clone());
         let result = compose(&assumed, &trivial, 0);
         assert!(result.is_some());
         assert!(result.unwrap().is_ok());

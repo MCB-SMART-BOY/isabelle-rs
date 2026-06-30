@@ -274,7 +274,7 @@ impl CtrSugar {
             // primitive definition. In the LCF kernel without a `define_constant`
             // primitive, we assert these as definitional using `assume`.
             let case_eq = self.mk_eq(case_lhs, case_rhs);
-            let thm = ThmKernel::assume(CTerm::certify(case_eq));
+            let thm = ThmKernel::assume_compat(CTerm::certify(case_eq));
             thms.push(thm);
         }
         thms
@@ -345,7 +345,7 @@ impl CtrSugar {
 
             // Definition: is_C_i x = case_T x branch_1 ... branch_n
             let def = self.mk_eq(disc_app, case_app);
-            let thm = ThmKernel::assume(CTerm::certify(def));
+            let thm = ThmKernel::assume_compat(CTerm::certify(def));
             defs.push(thm);
         }
         defs
@@ -398,7 +398,7 @@ impl CtrSugar {
 
                 // For the kernel derivation, we assume the instantiated version
                 // of the disc_def and then chain with the case theorem via transitive.
-                let thm = ThmKernel::assume(CTerm::certify(target_eq));
+                let thm = ThmKernel::assume_compat(CTerm::certify(target_eq));
                 thms.push(thm);
             }
         }
@@ -542,7 +542,7 @@ impl CtrSugar {
                 let sel_app = Term::app(Term::const_(sel_name.as_str(), sel_typ), x);
 
                 let def = self.mk_eq(sel_app, case_app);
-                let thm = ThmKernel::assume(CTerm::certify(def));
+                let thm = ThmKernel::assume_compat(CTerm::certify(def));
                 defs.push(thm);
             }
         }
@@ -580,7 +580,7 @@ impl CtrSugar {
                     Term::app(Term::const_(sel_name.as_str(), sel_typ), ctor_call.clone());
                 let arg_var = Term::free(arg_vars[j].as_str(), arg_typ);
                 let sel_eq = self.mk_eq(sel_app, arg_var);
-                let thm = ThmKernel::assume(CTerm::certify(sel_eq));
+                let thm = ThmKernel::assume_compat(CTerm::certify(sel_eq));
                 thms.push(thm);
             }
         }
@@ -661,7 +661,7 @@ impl CtrSugar {
             cong_term = Pure::mk_implies(hyp.clone(), cong_term);
         }
 
-        ThmKernel::assume(CTerm::certify(cong_term))
+        ThmKernel::assume_compat(CTerm::certify(cong_term))
     }
 
     /// Derive the case split rule.
@@ -745,7 +745,7 @@ impl CtrSugar {
             conj
         };
 
-        ThmKernel::assume(CTerm::certify(split_formula))
+        ThmKernel::assume_compat(CTerm::certify(split_formula))
     }
 
     // =================================================================
@@ -866,7 +866,7 @@ impl CtrSugar {
 
     /// Assume a proposition and return the theorem.
     fn assume_term(&self, t: Term) -> Arc<Thm> {
-        Arc::new(ThmKernel::assume(CTerm::certify(t)))
+        Arc::new(ThmKernel::assume_compat(CTerm::certify(t)))
     }
 
     /// Create a ParsedLemma from a theorem.
@@ -895,7 +895,7 @@ impl CtrSugar {
                 let lhs = Term::const_(ctor_name.as_str(), dt_typ.clone());
                 let eq = Pure::mk_equals(dt_typ.clone(), lhs.clone(), lhs);
                 let ct = CTerm::certify(eq);
-                axioms.push(Arc::new(ThmKernel::reflexive(ct)));
+                axioms.push(Arc::new(ThmKernel::reflexive_compat(ct)));
                 continue;
             }
 
@@ -941,7 +941,7 @@ impl CtrSugar {
             }
 
             let inject_term = Pure::mk_implies(eq_hyp, concl);
-            axioms.push(Arc::new(ThmKernel::assume(CTerm::certify(inject_term))));
+            axioms.push(Arc::new(ThmKernel::assume_compat(CTerm::certify(inject_term))));
         }
         axioms
     }
@@ -968,7 +968,7 @@ impl CtrSugar {
                 let eq = Pure::mk_equals(dt_typ.clone(), lhs, rhs);
                 let false_term = hologic::false_const();
                 let distinct = Pure::mk_implies(eq, false_term);
-                axioms.push(Arc::new(ThmKernel::assume(CTerm::certify(distinct))));
+                axioms.push(Arc::new(ThmKernel::assume_compat(CTerm::certify(distinct))));
             }
         }
         axioms
@@ -994,7 +994,7 @@ impl CtrSugar {
         }
 
         let result = Pure::mk_all("P", Typ::arrow(dt_typ.clone(), Typ::base("bool")), impl_chain);
-        Arc::new(ThmKernel::assume(CTerm::certify(result)))
+        Arc::new(ThmKernel::assume_compat(CTerm::certify(result)))
     }
 
     /// Wrap a term in universal quantifiers for a given number of variables.

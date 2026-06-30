@@ -385,7 +385,7 @@ impl MetisProver {
         if neg_ids.is_empty() {
             // Fallback: add as single clause
             let neg_ct = CTerm::certify(negated_goal_term);
-            let neg_thm = ThmKernel::assume(neg_ct);
+            let neg_thm = ThmKernel::assume_compat(neg_ct);
             self.add_clause(Arc::new(neg_thm), ClauseOrigin::NegatedGoal, true);
         }
 
@@ -440,7 +440,7 @@ impl MetisProver {
             term = Pure::mk_implies(lit.clone(), term);
         }
         let ct = CTerm::certify(term);
-        Some(ThmKernel::assume(ct))
+        Some(ThmKernel::assume_compat(ct))
     }
 
     /// The given-clause algorithm: repeatedly select a passive clause
@@ -597,7 +597,7 @@ impl MetisProver {
 
                     let prem_a = prems_inst[i].clone();
                     let ct_a = CTerm::certify(prem_a.clone());
-                    let assume_a = ThmKernel::assume(ct_a.clone());
+                    let assume_a = ThmKernel::assume_compat(ct_a.clone());
 
                     // Apply the clause to the assumption
                     let mut current = Arc::new(thm_inst.clone());
@@ -1571,7 +1571,7 @@ pub fn reconstruct_atp_proof(
     let false_const = hologic::false_const();
     let negated = Pure::mk_implies(goal_prop, false_const);
     let neg_ct = CTerm::certify(negated);
-    let neg_thm = ThmKernel::assume(neg_ct);
+    let neg_thm = ThmKernel::assume_compat(neg_ct);
     prover.add_clause(Arc::new(neg_thm), ClauseOrigin::NegatedGoal, true);
 
     // 3. Run the given-clause loop to verify the proof
@@ -1855,7 +1855,7 @@ impl MetisReplay {
         for prem in prems.iter() {
             if **prem == *goal_term {
                 let ct = CTerm::certify(goal_term.clone());
-                let goal_assume = ThmKernel::assume(ct);
+                let goal_assume = ThmKernel::assume_compat(ct);
                 if let Ok(result) = ThmKernel::implies_elim(thm, &goal_assume) {
                     return Some(Arc::new(result));
                 }
@@ -1898,7 +1898,7 @@ mod tests {
     /// Helper: create a theorem by assuming a proposition.
     fn assume_prop(name: &str) -> Thm {
         let ct = CTerm::certify(prop_const(name));
-        ThmKernel::assume(ct)
+        ThmKernel::assume_compat(ct)
     }
 
     // =================================================================
@@ -1996,8 +1996,8 @@ mod tests {
         let ct1 = CTerm::certify(clause1);
         let ct2 = CTerm::certify(clause2);
 
-        let thm1 = ThmKernel::assume(ct1);
-        let thm2 = ThmKernel::assume(ct2);
+        let thm1 = ThmKernel::assume_compat(ct1);
+        let thm2 = ThmKernel::assume_compat(ct2);
 
         let mut prover = MetisProver::with_limits(100);
         let id1 = prover.add_clause(Arc::new(thm1), ClauseOrigin::Premise(0), false);
@@ -2033,8 +2033,8 @@ mod tests {
         let ct1 = CTerm::certify(clause1);
         let ct2 = CTerm::certify(clause2);
 
-        let thm1 = ThmKernel::assume(ct1);
-        let thm2 = ThmKernel::assume(ct2);
+        let thm1 = ThmKernel::assume_compat(ct1);
+        let thm2 = ThmKernel::assume_compat(ct2);
 
         let result = ThmKernel::implies_elim(&thm2, &thm1);
         assert!(result.is_ok());
@@ -2050,7 +2050,7 @@ mod tests {
 
         let clause = imp(a.clone(), imp(a.clone(), b.clone()));
         let ct = CTerm::certify(clause);
-        let thm = ThmKernel::assume(ct);
+        let thm = ThmKernel::assume_compat(ct);
 
         let mut prover = MetisProver::with_limits(100);
         let id = prover.add_clause(Arc::new(thm.clone()), ClauseOrigin::Premise(0), false);
@@ -2075,7 +2075,7 @@ mod tests {
         let a = prop_const("A");
         let goal_term = imp(a.clone(), a.clone());
         let goal_ct = CTerm::certify(goal_term);
-        let _goal = ThmKernel::assume(goal_ct);
+        let _goal = ThmKernel::assume_compat(goal_ct);
 
         let _prover = MetisProver::with_limits(1000);
         // No premises needed — the negated goal should lead to contradiction immediately
@@ -2107,9 +2107,9 @@ mod tests {
         let ct2 = CTerm::certify(prem2);
         let ct_goal = CTerm::certify(goal_term);
 
-        let thm1 = ThmKernel::assume(ct1);
-        let thm2 = ThmKernel::assume(ct2);
-        let goal = ThmKernel::assume(ct_goal);
+        let thm1 = ThmKernel::assume_compat(ct1);
+        let thm2 = ThmKernel::assume_compat(ct2);
+        let goal = ThmKernel::assume_compat(ct_goal);
 
         let mut prover = MetisProver::with_limits(1000);
         prover.add_premises(&[Arc::new(thm1), Arc::new(thm2)]);
@@ -2128,9 +2128,9 @@ mod tests {
         let ct_not_a = CTerm::certify(not_a);
         let ct_b = CTerm::certify(b.clone());
 
-        let thm_a = ThmKernel::assume(ct_a);
-        let thm_not_a = ThmKernel::assume(ct_not_a);
-        let goal = ThmKernel::assume(ct_b);
+        let thm_a = ThmKernel::assume_compat(ct_a);
+        let thm_not_a = ThmKernel::assume_compat(ct_not_a);
+        let goal = ThmKernel::assume_compat(ct_b);
 
         let mut prover = MetisProver::with_limits(1000);
         prover.add_premises(&[Arc::new(thm_a), Arc::new(thm_not_a)]);
@@ -2144,7 +2144,7 @@ mod tests {
         // Check that false is correctly detected as contradiction
         let false_term = hologic::false_const();
         let ct = CTerm::certify(false_term.clone());
-        let thm = ThmKernel::assume(ct);
+        let thm = ThmKernel::assume_compat(ct);
 
         let entry = ClauseEntry::from_thm(0, Arc::new(thm), ClauseOrigin::Premise(0));
         assert!(entry.is_contradiction());
@@ -2176,15 +2176,15 @@ fof(f3, plain, q, inference(resolution, [], [f1, f2])).
         let q = prop_const("Q");
         let goal_term = imp(p.clone(), q.clone());
         let goal_ct = CTerm::certify(goal_term.clone());
-        let goal = ThmKernel::assume(goal_ct);
+        let goal = ThmKernel::assume_compat(goal_ct);
 
         // Create premises matching the TSTP steps
         let ct_p = CTerm::certify(p.clone());
-        let thm_p = ThmKernel::assume(ct_p);
+        let thm_p = ThmKernel::assume_compat(ct_p);
 
         let pq_term = imp(p, q.clone());
         let ct_pq = CTerm::certify(pq_term);
-        let thm_pq = ThmKernel::assume(ct_pq);
+        let thm_pq = ThmKernel::assume_compat(ct_pq);
 
         let premises: Vec<Arc<Thm>> = vec![Arc::new(thm_p), Arc::new(thm_pq)];
 

@@ -62,7 +62,7 @@ impl Typedecl {
         ParsedLemma {
             name: format!("{}.type", self.name),
             attributes: vec!["typedecl".to_string()],
-            theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(term))),
+            theorem: Arc::new(ThmKernel::assume_compat(CTerm::certify_annotated(term))),
             proof_script: None,
             alias_for: None,
             source_loc: None,
@@ -137,7 +137,7 @@ impl Specification {
             lemmas.push(ParsedLemma {
                 name: format!("spec_{}", name),
                 attributes: attrs,
-                theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(term))),
+                theorem: Arc::new(ThmKernel::assume_compat(CTerm::certify_annotated(term))),
                 proof_script: None,
                 alias_for: None,
                 source_loc: None,
@@ -184,7 +184,7 @@ impl LocalDef {
         ParsedLemma {
             name: format!("def_{}", self.name),
             attributes: vec!["def".to_string()],
-            theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(def_term))),
+            theorem: Arc::new(ThmKernel::assume_compat(CTerm::certify_annotated(def_term))),
             proof_script: None,
             alias_for: None,
             source_loc: None,
@@ -292,7 +292,7 @@ impl Definition {
         ParsedLemma {
             name: format!("def_{}", self.name),
             attributes: self.attributes.clone(),
-            theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(prop))),
+            theorem: Arc::new(ThmKernel::assume_compat(CTerm::certify_annotated(prop))),
             proof_script: None,
             alias_for: Some(vec![self.name.clone()]),
             source_loc: None,
@@ -368,10 +368,9 @@ impl Axiomatization {
             lemmas.push(ParsedLemma {
                 name: format!("ax_{}", name),
                 attributes: vec!["axiom".to_string()],
-                theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(Term::const_(
-                    name.as_str(),
-                    Typ::base("prop"),
-                )))),
+                theorem: Arc::new(ThmKernel::assume_compat(CTerm::certify_annotated(
+                    Term::const_(name.as_str(), Typ::base("prop")),
+                ))),
                 proof_script: None,
                 alias_for: Some(vec![name.clone()]),
                 source_loc: None,
@@ -383,7 +382,7 @@ impl Axiomatization {
             lemmas.push(ParsedLemma {
                 name: format!("axiom_{}", i),
                 attributes: vec!["axiom".to_string()],
-                theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(ax.clone()))),
+                theorem: Arc::new(ThmKernel::assume_compat(CTerm::certify_annotated(ax.clone()))),
                 proof_script: None,
                 alias_for: None,
                 source_loc: None,
@@ -423,7 +422,7 @@ impl Abbreviation {
         ParsedLemma {
             name: format!("abbrev_{}", self.name),
             attributes: vec!["abbreviation".to_string()],
-            theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(Term::const_(
+            theorem: Arc::new(ThmKernel::assume_compat(CTerm::certify_annotated(Term::const_(
                 self.name.as_str(),
                 Typ::base("prop"),
             )))),
@@ -474,7 +473,7 @@ impl TypeAbbrev {
         ParsedLemma {
             name: format!("type_{}", self.name),
             attributes: vec!["type_abbrev".to_string()],
-            theorem: Arc::new(ThmKernel::assume(CTerm::certify_annotated(Term::const_(
+            theorem: Arc::new(ThmKernel::assume_compat(CTerm::certify_annotated(Term::const_(
                 self.name.as_str(),
                 Typ::base("type"),
             )))),

@@ -730,7 +730,7 @@ impl LinArithSolver {
             && a == b
         {
             let goal_term = goal.to_term(typ)?;
-            let refl_thm = ThmKernel::reflexive(CTerm::certify(goal_term));
+            let refl_thm = ThmKernel::reflexive_compat(CTerm::certify(goal_term));
             return self.discharge_premises(state, &refl_thm);
         }
 
@@ -780,7 +780,7 @@ impl LinArithSolver {
                 return Some(current);
             }
             let prem0 = current.prem(0)?;
-            let assume_thm = ThmKernel::assume(CTerm::certify(prem0));
+            let assume_thm = ThmKernel::assume_compat(CTerm::certify(prem0));
             current = ThmKernel::bicompose(false, &assume_thm, &current, 0)?;
         }
 
@@ -844,7 +844,7 @@ impl LinArithSolver {
     /// Try direct entailment from a single premise.
     fn try_direct_entailment(&self, state: &Thm, _goal: &Atom, _typ: ArithType) -> Option<Thm> {
         let prem_term = state.prem(0)?;
-        let assume_prem = ThmKernel::assume(CTerm::certify(prem_term));
+        let assume_prem = ThmKernel::assume_compat(CTerm::certify(prem_term));
         let result = ThmKernel::bicompose(false, &assume_prem, state, 0)?;
         if result.nprems() == 0 {
             return Some(result);
@@ -893,7 +893,7 @@ impl LinArithSolver {
         // Try assumption: if any premise directly matches the goal
         if state.nprems() == 1 {
             let prem_term = state.prem(0)?;
-            let assume_thm = ThmKernel::assume(CTerm::certify(prem_term));
+            let assume_thm = ThmKernel::assume_compat(CTerm::certify(prem_term));
             if let Some(result) = ThmKernel::bicompose(false, &assume_thm, state, 0)
                 && result.nprems() == 0
             {
@@ -1382,7 +1382,7 @@ mod tests {
         let n = nat_var("n");
         let goal_term = mk_hol_eq(n.clone(), n);
         let goal_cterm = CTerm::certify(goal_term);
-        let state = ThmKernel::assume(goal_cterm);
+        let state = ThmKernel::assume_compat(goal_cterm);
         let result = arith_tac(&state, &[]);
         assert_eq!(result.len(), 1);
     }
@@ -1397,7 +1397,7 @@ mod tests {
         let prem1 = mk_less(x, y.clone());
         let prem2 = mk_less(y, z);
         let stmt = Pure::mk_implies(prem1, Pure::mk_implies(prem2, goal));
-        let state = ThmKernel::assume(CTerm::certify(stmt));
+        let state = ThmKernel::assume_compat(CTerm::certify(stmt));
         let result = arith_tac(&state, &[]);
         assert!(!result.is_empty());
     }
@@ -1410,7 +1410,7 @@ mod tests {
         let false_prem = mk_hol_eq(zero, suc_n);
         let goal = Term::const_("False", Typ::base("prop"));
         let stmt = Pure::mk_implies(false_prem, goal);
-        let state = ThmKernel::assume(CTerm::certify(stmt));
+        let state = ThmKernel::assume_compat(CTerm::certify(stmt));
         let result = arith_tac(&state, &[]);
         assert!(!result.is_empty());
     }
@@ -1427,7 +1427,7 @@ mod tests {
         let prem1 = mk_less(x_plus_3, y.clone());
         let prem2 = mk_less(y, x_plus_1);
         let stmt = Pure::mk_implies(prem1, Pure::mk_implies(prem2, goal));
-        let state = ThmKernel::assume(CTerm::certify(stmt));
+        let state = ThmKernel::assume_compat(CTerm::certify(stmt));
         let result = arith_tac(&state, &[]);
         assert!(!result.is_empty());
     }
@@ -1439,7 +1439,7 @@ mod tests {
         let goal = mk_hol_eq(n.clone(), m.clone());
         let prem = mk_hol_eq(mk_suc(n), mk_suc(m));
         let stmt = Pure::mk_implies(prem, goal);
-        let state = ThmKernel::assume(CTerm::certify(stmt));
+        let state = ThmKernel::assume_compat(CTerm::certify(stmt));
         let result = arith_tac(&state, &[]);
         assert!(!result.is_empty());
     }
@@ -1449,7 +1449,7 @@ mod tests {
         let n = nat_var("n");
         let zero = nat_const(0);
         let goal = mk_less(zero, mk_suc(n));
-        let state = ThmKernel::assume(CTerm::certify(goal));
+        let state = ThmKernel::assume_compat(CTerm::certify(goal));
         let result = arith_tac(&state, &[]);
         assert!(!result.is_empty());
     }

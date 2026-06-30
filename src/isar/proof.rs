@@ -29,12 +29,13 @@ use std::sync::Arc;
 
 use crate::{
     core::{
+        error::KernelError,
         term::Term,
         theory::Theory,
-        thm::{CTerm, Thm, ThmKernel},
+        thm::{CTerm, KernelCheckMode, Thm, ThmKernel},
         types::Typ,
     },
-    isar::proof_context::IsarContext,
+    isar::proof_context::{IsarContext, ProofCertContext},
 };
 
 // =========================================================================
@@ -76,7 +77,8 @@ pub struct Goal {
     pub statement: Term,
     /// Facts to be used when proving this goal (`using`).
     pub using: Vec<Thm>,
-    /// The goal as a theorem: `subgoals ⟹ statement`.
+    /// The goal as a Strict open theorem (`statement |- statement`).
+    /// This represents a proof obligation, not a closed proved lemma.
     pub goal_thm: Thm,
     /// The parent goal's statement (for `show` refinement).
     /// When non-empty, the `show` result must match this.
@@ -84,14 +86,54 @@ pub struct Goal {
 }
 
 impl Goal {
+    /// Initialize a proof goal from a checked proposition.
+    ///
+    /// The internal theorem is a Strict open theorem `A |- A`, representing a
+    /// proof obligation. It is not a closed proved lemma and must not be
+    /// registered in trusted theorem tables.
+    pub fn from_checked_prop(kind: &str, stmt_ct: CTerm) -> Result<Self, KernelError> {
+        let statement = stmt_ct.term().clone();
+        let goal_thm = ThmKernel::assume(stmt_ct)?;
+        goal_thm.check_kernel_invariants(KernelCheckMode::Strict)?;
+        Ok(Goal { kind: kind.to_string(), statement, using: Vec::new(), goal_thm, refines: None })
+    }
+
+    /// Initialize a goal from a statement term certified against an explicit
+    /// proof context.
+    pub fn init_checked_in_context(
+        ctx: &ProofCertContext,
+        kind: &str,
+        stmt: Term,
+    ) -> Result<Self, KernelError> {
+        let stmt_ct = ctx.certify_prop(stmt)?;
+        Self::from_checked_prop(kind, stmt_ct)
+    }
+
+    /// Initialize a goal through the checked path using an empty Pure context.
+    ///
+    /// This intentionally does not auto-declare constants or frees from the
+    /// term itself. Call `init_checked_in_context` when user/theory constants
+    /// or local frees are expected.
+    pub fn init_checked(kind: &str, stmt: Term) -> Result<Self, KernelError> {
+        Self::init_checked_in_context(&ProofCertContext::new(), kind, stmt)
+    }
+
+    pub fn init_in_isar_context(
+        kind: &str,
+        stmt: Term,
+        ctx: &IsarContext,
+    ) -> Result<Self, KernelError> {
+        let cert_ctx = ProofCertContext::from_isar_context(ctx);
+        Self::init_checked_in_context(&cert_ctx, kind, stmt)
+    }
+
     /// Initialize a goal from a statement term.
-    /// Creates `statement ⟹ statement` as the initial goal theorem.
-    /// Uses `certify_annotated` to look up types from the TypeEnv before
-    /// certifying, giving kernel rules proper type information.
+    ///
+    /// This is now a checked proof-goal boundary. Parser/type-context gaps
+    /// should be fixed before calling this path; do not silently fall back to
+    /// compatibility theorem construction here.
     pub fn init(kind: &str, stmt: Term) -> Self {
-        let stmt_ct = CTerm::certify_annotated(stmt.clone());
-        let goal_thm = ThmKernel::assume(stmt_ct);
-        Goal { kind: kind.to_string(), statement: stmt, using: Vec::new(), goal_thm, refines: None }
+        Self::init_checked(kind, stmt).expect("Goal::init requires a checked proposition")
     }
 
     /// Number of remaining subgoals.
@@ -498,7 +540,8 @@ impl IsarProof {
         self.assert_forward();
         self.open_block();
         self.enter_backward();
-        let goal = Goal::init("lemma", stmt.clone());
+        let goal = Goal::init_in_isar_context("lemma", stmt.clone(), &self.top().context)
+            .expect("lemma statement requires proof-context certification");
         self.set_goal(goal);
         self.reset_facts();
     }
@@ -516,7 +559,8 @@ impl IsarProof {
         self.assert_forward();
         self.open_block();
         self.enter_backward();
-        let goal = Goal::init("have", stmt);
+        let goal = Goal::init_in_isar_context("have", stmt, &self.top().context)
+            .expect("have statement requires proof-context certification");
         self.set_goal(goal);
         self.reset_facts();
         self
@@ -530,7 +574,8 @@ impl IsarProof {
         let parent_stmt = self.find_goal().map(|g| g.statement.clone());
         self.open_block();
         self.enter_backward();
-        let mut goal = Goal::init("show", stmt.clone());
+        let mut goal = Goal::init_in_isar_context("show", stmt.clone(), &self.top().context)
+            .expect("show statement requires proof-context certification");
         goal.kind = format!("show({name})");
         goal.refines = parent_stmt; // Track what we need to refine
         self.set_goal(goal);
@@ -855,11 +900,31 @@ impl IsarProof {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
+    use crate::core::thm::ThmTrust;
 
     fn init() -> IsarProof {
         let theory = Theory::pure();
         IsarProof::init(theory)
+    }
+
+    fn init_with_props(names: &[&str]) -> IsarProof {
+        let pure = Theory::pure();
+        let mut theory = Theory::begin("Test", vec![pure]);
+        for name in names {
+            theory.declare_const(*name, Typ::base("prop"));
+        }
+        IsarProof::init(Arc::new(theory))
+    }
+
+    fn cert_ctx(names: &[&str]) -> ProofCertContext {
+        let mut ctx = ProofCertContext::new();
+        for name in names {
+            ctx.declare_const(name, Typ::base("prop"));
+        }
+        ctx
     }
 
     fn prop(name: &str) -> Term {
@@ -867,8 +932,57 @@ mod tests {
     }
 
     #[test]
+    fn proof_goal_checked_constructor_is_strict_open_theorem() {
+        let ctx = cert_ctx(&["A"]);
+        let goal = Goal::init_checked_in_context(&ctx, "lemma", prop("A")).unwrap();
+
+        assert_eq!(goal.goal_thm.trust_status(), ThmTrust::Strict);
+        assert_eq!(goal.goal_thm.hyps().len(), 1);
+        assert!(!goal.goal_thm.is_strict_closed_proved());
+    }
+
+    #[test]
+    fn proof_goal_checked_constructor_passes_strict_invariant() {
+        let ctx = cert_ctx(&["A"]);
+        let goal = Goal::init_checked_in_context(&ctx, "lemma", prop("A")).unwrap();
+
+        goal.goal_thm.check_kernel_invariants(KernelCheckMode::Strict).unwrap();
+    }
+
+    #[test]
+    fn proof_goal_checked_constructor_rejects_compat_cterm() {
+        let compat = CTerm::certify(prop("A"));
+        let result = Goal::from_checked_prop("lemma", compat);
+
+        assert!(matches!(result, Err(KernelError::CompatCTerm { .. })));
+    }
+
+    #[test]
+    fn proof_goal_checked_constructor_rejects_dummy_type() {
+        let result = Goal::init_checked("lemma", Term::free("x", Typ::dummy()));
+
+        assert!(matches!(result, Err(KernelError::DummyType { .. })));
+    }
+
+    #[test]
+    fn proof_goal_checked_constructor_rejects_undeclared_const() {
+        let result = Goal::init_checked("lemma", prop("Fake.const"));
+
+        assert!(matches!(result, Err(KernelError::UndeclaredConstant(_))));
+    }
+
+    #[test]
+    fn proof_goal_checked_constructor_accepts_declared_const() {
+        let ctx = cert_ctx(&["Declared"]);
+        let goal = Goal::init_checked_in_context(&ctx, "lemma", prop("Declared")).unwrap();
+
+        assert_eq!(goal.goal_thm.trust_status(), ThmTrust::Strict);
+        assert!(!goal.goal_thm.is_strict_closed_proved());
+    }
+
+    #[test]
     fn test_lemma_apply_done() {
-        let mut p = init();
+        let mut p = init_with_props(&["A"]);
         assert_eq!(p.level(), 1);
         assert_eq!(p.mode(), ProofMode::Forward);
         p.lemma("foo", prop("A"));
@@ -883,7 +997,7 @@ mod tests {
 
     #[test]
     fn test_have_show() {
-        let mut p = init();
+        let mut p = init_with_props(&["P", "A"]);
         p.lemma("test", prop("P"));
         p.proof(); // need to be in Forward mode for have
         p.have("hA", prop("A"));
@@ -894,7 +1008,7 @@ mod tests {
 
     #[test]
     fn test_fix_assume() {
-        let mut p = init();
+        let mut p = init_with_props(&["A", "Px"]);
         p.lemma("test", prop("A"));
         p.proof();
         p.fix(&[("x", Typ::base("nat"))]);
@@ -904,7 +1018,7 @@ mod tests {
 
     #[test]
     fn test_block_structure() {
-        let mut p = init();
+        let mut p = init_with_props(&["A"]);
 
         p.lemma("main", prop("A"));
 
@@ -927,7 +1041,7 @@ mod tests {
 
     #[test]
     fn test_next_block() {
-        let mut p = init();
+        let mut p = init_with_props(&["A", "P", "Q"]);
         p.lemma("main", prop("A"));
         p.proof();
         p.have("first", prop("P"));
@@ -940,17 +1054,17 @@ mod tests {
 
     #[test]
     fn test_chaining() {
-        let mut p = init();
+        let mut p = init_with_props(&["P", "A"]);
         p.lemma("test", prop("P"));
         p.proof();
-        let thm = ThmKernel::assume(CTerm::certify(prop("A")));
+        let thm = ThmKernel::assume_compat(CTerm::certify(prop("A")));
         p.from(vec![thm]);
         assert_eq!(p.mode(), ProofMode::Chain);
     }
 
     #[test]
     fn test_sorry() {
-        let mut p = init();
+        let mut p = init_with_props(&["VeryHard"]);
 
         p.lemma("unfinished", prop("VeryHard"));
         p.sorry();
@@ -960,7 +1074,7 @@ mod tests {
 
     #[test]
     fn test_full_nesting() {
-        let mut p = init();
+        let mut p = init_with_props(&["A", "B"]);
         assert_eq!(p.level(), 1);
 
         p.lemma("outer", prop("A"));
@@ -984,7 +1098,7 @@ mod tests {
 
     #[test]
     fn test_method_dispatch() {
-        let mut p = init();
+        let mut p = init_with_props(&["A"]);
         p.lemma("test", prop("A"));
         // Apply the actual "assumption" method
         p.apply("assumption");
@@ -994,7 +1108,7 @@ mod tests {
 
     #[test]
     fn test_calculational() {
-        let mut p = init();
+        let mut p = init_with_props(&["a_eq_d", "a_eq_b", "b_eq_c"]);
         p.lemma("calc", prop("a_eq_d"));
         p.proof();
 
@@ -1014,7 +1128,7 @@ mod tests {
 
     #[test]
     fn test_obtain() {
-        let mut p = init();
+        let mut p = init_with_props(&["exists_conclusion", "Px"]);
         p.lemma("main", prop("exists_conclusion"));
         p.proof();
 
@@ -1026,7 +1140,7 @@ mod tests {
 
     #[test]
     fn test_theorem_extraction() {
-        let mut p = init();
+        let mut p = init_with_props(&["True"]);
         p.lemma("my_lemma", prop("True"));
         p.done();
 
@@ -1036,7 +1150,7 @@ mod tests {
 
     #[test]
     fn test_moreover_ultimately() {
-        let mut p = init();
+        let mut p = init_with_props(&["conclusion", "F1", "F2", "F3"]);
         p.lemma("main", prop("conclusion"));
         p.proof();
 

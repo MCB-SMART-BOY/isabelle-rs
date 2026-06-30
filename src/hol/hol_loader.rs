@@ -210,8 +210,9 @@ impl ParsedLemma {
             let mut term = thm_mut.prop().term().clone();
             if term.type_annotate(env) {
                 // Re-create the theorem with annotated type
-                *thm_mut =
-                    crate::core::thm::ThmKernel::assume(crate::core::thm::CTerm::certify(term));
+                *thm_mut = crate::core::thm::ThmKernel::assume_compat(
+                    crate::core::thm::CTerm::certify(term),
+                );
                 return true;
             }
         }
@@ -701,7 +702,7 @@ pub fn generate_datatype_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
         lemmas.push(ParsedLemma {
             name: format!("{}.induct", def.name),
             attributes: vec!["induct".to_string()],
-            theorem: Arc::new(ThmKernel::assume(CTerm::certify(induct_term))),
+            theorem: Arc::new(ThmKernel::assume_compat(CTerm::certify(induct_term))),
             proof_script: None,
             alias_for: None,
             source_loc: None,
@@ -731,7 +732,7 @@ pub fn generate_datatype_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
         lemmas.push(ParsedLemma {
             name: format!("{}.inject", def.name),
             attributes: vec!["simp".to_string()],
-            theorem: Arc::new(ThmKernel::assume(CTerm::certify(inject_term))),
+            theorem: Arc::new(ThmKernel::assume_compat(CTerm::certify(inject_term))),
             proof_script: None,
             alias_for: None,
             source_loc: None,
@@ -756,7 +757,7 @@ pub fn generate_datatype_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
             lemmas.push(ParsedLemma {
                 name: format!("{}.distinct", def.name),
                 attributes: vec!["simp".to_string()],
-                theorem: Arc::new(ThmKernel::assume(CTerm::certify(distinct_term))),
+                theorem: Arc::new(ThmKernel::assume_compat(CTerm::certify(distinct_term))),
                 proof_script: None,
                 alias_for: None,
                 source_loc: None,
@@ -798,7 +799,7 @@ pub fn generate_datatype_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
     lemmas.push(ParsedLemma {
         name: format!("{}.exhaust", def.name),
         attributes: vec!["elim".to_string()],
-        theorem: Arc::new(ThmKernel::assume(CTerm::certify(exhaust_term))),
+        theorem: Arc::new(ThmKernel::assume_compat(CTerm::certify(exhaust_term))),
         proof_script: None,
         alias_for: None,
         source_loc: None,
@@ -830,7 +831,7 @@ pub fn generate_datatype_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
         lemmas.push(ParsedLemma {
             name: format!("{}.case", def.name),
             attributes: vec!["simp".to_string()],
-            theorem: Arc::new(ThmKernel::assume(CTerm::certify(case_term))),
+            theorem: Arc::new(ThmKernel::assume_compat(CTerm::certify(case_term))),
             proof_script: None,
             alias_for: None,
             source_loc: None,
@@ -903,7 +904,7 @@ pub fn generate_bnf_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
         lemmas.push(ParsedLemma {
             name: format!("{}.map", def.name),
             attributes: vec!["simp".to_string(), "bnf".to_string()],
-            theorem: Arc::new(ThmKernel::assume(CTerm::certify(map_term))),
+            theorem: Arc::new(ThmKernel::assume_compat(CTerm::certify(map_term))),
             proof_script: None,
             alias_for: None,
             source_loc: None,
@@ -939,7 +940,7 @@ pub fn generate_bnf_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
             lemmas.push(ParsedLemma {
                 name: format!("{}.set_{}", def.name, tp_idx + 1),
                 attributes: vec!["simp".to_string(), "bnf".to_string()],
-                theorem: Arc::new(ThmKernel::assume(CTerm::certify(set_term))),
+                theorem: Arc::new(ThmKernel::assume_compat(CTerm::certify(set_term))),
                 proof_script: None,
                 alias_for: None,
                 source_loc: None,
@@ -958,7 +959,7 @@ pub fn generate_bnf_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
         lemmas.push(ParsedLemma {
             name: format!("{}.rel", def.name),
             attributes: vec!["bnf".to_string()],
-            theorem: Arc::new(ThmKernel::assume(CTerm::certify(rel_term))),
+            theorem: Arc::new(ThmKernel::assume_compat(CTerm::certify(rel_term))),
             proof_script: None,
             alias_for: None,
             source_loc: None,
@@ -973,7 +974,7 @@ pub fn generate_bnf_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
     lemmas.push(ParsedLemma {
         name: format!("{}.pred", def.name),
         attributes: vec!["bnf".to_string()],
-        theorem: Arc::new(ThmKernel::assume(CTerm::certify(pred_term))),
+        theorem: Arc::new(ThmKernel::assume_compat(CTerm::certify(pred_term))),
         proof_script: None,
         alias_for: None,
         source_loc: None,
@@ -1279,10 +1280,12 @@ fn parse_lemmas_cmd(lines: &[&str], i: &mut usize) -> Option<Vec<ParsedLemma>> {
                 continue;
             }
             // Create a lemma entry: prop is a placeholder, theorem will be resolved later
-            let theorem =
-                Arc::new(crate::core::thm::ThmKernel::assume(crate::core::thm::CTerm::certify(
-                    crate::core::term::Term::const_("True", crate::core::types::Typ::base("prop")),
-                )));
+            let theorem = Arc::new(crate::core::thm::ThmKernel::assume_compat(
+                crate::core::thm::CTerm::certify(crate::core::term::Term::const_(
+                    "True",
+                    crate::core::types::Typ::base("prop"),
+                )),
+            ));
             results.push(ParsedLemma {
                 name,
                 attributes: attrs.clone(),
@@ -1450,7 +1453,7 @@ fn parse_one_line(lines: &[&str], i: &mut usize) -> Option<Vec<ParsedLemma>> {
     while let Some(stmt) = extract_quoted(remaining) {
         let conv = convert_syntax(&stmt);
         if let Some(term) = parse_term(&conv) {
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(term)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(term)));
             let lemma_name = if stmt_idx == 0 {
                 if name.is_empty() {
                     let preview: String = stmt.chars().take(30).collect();
@@ -1694,7 +1697,7 @@ fn parse_structured_stmt(
         for (show_name, show_stmt) in &shows_clauses {
             let conv = convert_syntax(show_stmt);
             let term = parse_term(&conv)?;
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(term)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(term)));
             let name = if show_name.is_empty() {
                 if lemma_name.is_empty() {
                     let preview: String = show_stmt.chars().take(30).collect();
@@ -1737,7 +1740,7 @@ fn parse_structured_stmt(
         for prem in premises.iter().rev() {
             term = Pure::mk_implies(prem.clone(), term);
         }
-        let thm = Arc::new(ThmKernel::assume(CTerm::certify(term)));
+        let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(term)));
         let name = if show_name.is_empty() {
             if lemma_name.is_empty() {
                 let preview: String = show_stmt.chars().take(30).collect();
@@ -2279,7 +2282,7 @@ pub fn load_all_theories() -> Result<HolTheoremDb, String> {
 /// This is not the final trusted theorem table. It intentionally stores parsed,
 /// generated, builtin, open, and admitted facts for proof search. Consumers that
 /// report proved lemmas or export trusted theory theorems must use
-/// `Thm::is_closed_proved()` or the final `Theory` table instead.
+/// `Thm::is_strict_closed_proved()` or the final `Theory` table instead.
 pub struct HolTheoremDb {
     pub intros: Vec<Arc<crate::core::thm::Thm>>,
     pub elims: Vec<Arc<crate::core::thm::Thm>>,
@@ -2336,12 +2339,12 @@ impl HolTheoremDb {
         self.all.len()
     }
 
-    /// Count facts in `all` that are closed proved theorems.
+    /// Count facts in `all` that are strict closed proved theorems.
     ///
     /// This is useful for audits, but the final trusted theorem table is
     /// `core::theory::Theory`, not this proof-search database.
     pub fn closed_proved_count(&self) -> usize {
-        self.all.iter().filter(|thm| thm.is_closed_proved()).count()
+        self.all.iter().filter(|thm| thm.is_strict_closed_proved()).count()
     }
 
     /// Check if a lemma has a "safe" intro attribute: `[intro!]`
@@ -2756,7 +2759,7 @@ impl HolTheoremDb {
         if !db.by_name.contains_key("refl") {
             let t = Term::var("t", 0, Typ::dummy());
             let stmt = mk_eq(&eq_const, t.clone(), t);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("refl".into(), Arc::clone(&thm));
             db.simps.push(Arc::clone(&thm));
             db.all.push(thm);
@@ -2771,7 +2774,7 @@ impl HolTheoremDb {
             let ps = Term::app(p.clone(), s);
             let pt = Term::app(p, t);
             let stmt = Pure::mk_implies(eq, Pure::mk_implies(ps, pt));
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("subst".into(), Arc::clone(&thm));
             db.elims.push(Arc::clone(&thm));
             db.all.push(thm);
@@ -2783,7 +2786,7 @@ impl HolTheoremDb {
             let q = Term::var("Q", 1, prop_typ.clone());
             let imp = Pure::mk_implies(p.clone(), q.clone());
             let stmt = Pure::mk_implies(imp, Pure::mk_implies(p, q));
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("mp".into(), Arc::clone(&thm));
             db.intros.push(Arc::clone(&thm));
             db.elims.push(Arc::clone(&thm));
@@ -2796,7 +2799,7 @@ impl HolTheoremDb {
             let q = Term::var("Q", 1, prop_typ.clone());
             let stmt =
                 Pure::mk_implies(Pure::mk_implies(p.clone(), q.clone()), Pure::mk_implies(p, q));
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("impI".into(), Arc::clone(&thm));
             db.intros.push(Arc::clone(&thm));
             db.all.push(thm);
@@ -2814,7 +2817,7 @@ impl HolTheoremDb {
                 Typ::arrow(prop_typ.clone(), Typ::arrow(prop_typ.clone(), prop_typ.clone())),
             );
             let stmt = Term::app(Term::app(disj, eq_true), eq_false);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("True_or_False".into(), Arc::clone(&thm));
             db.all.push(thm);
         }
@@ -2826,7 +2829,7 @@ impl HolTheoremDb {
             let not_c = hologic::not_const();
             let not_p = Term::app(not_c, p.clone());
             let stmt = Pure::mk_implies(not_p, Pure::mk_implies(p, r));
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("notE".into(), Arc::clone(&thm));
             db.elims.push(Arc::clone(&thm));
             db.all.push(thm);
@@ -2841,7 +2844,7 @@ impl HolTheoremDb {
             let not_p = Term::app(not_c, p.clone());
             let p_imp_q = Pure::mk_implies(p, q);
             let stmt = Pure::mk_implies(not_q, Pure::mk_implies(p_imp_q, not_p));
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("contrapos_nn".into(), Arc::clone(&thm));
             db.elims.push(Arc::clone(&thm));
             db.all.push(thm);
@@ -2856,7 +2859,7 @@ impl HolTheoremDb {
             let not_p = Term::app(not_c, p.clone());
             let p_imp_not_q = Pure::mk_implies(p, not_q);
             let stmt = Pure::mk_implies(q, Pure::mk_implies(p_imp_not_q, not_p));
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("contrapos_pn".into(), Arc::clone(&thm));
             db.elims.push(Arc::clone(&thm));
             db.all.push(thm);
@@ -2869,7 +2872,7 @@ impl HolTheoremDb {
             let eq_st = mk_eq(&eq_const, s.clone(), t.clone());
             let eq_ts = mk_eq(&eq_const, t, s);
             let stmt = Pure::mk_implies(eq_st, eq_ts);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("sym".into(), Arc::clone(&thm));
             db.simps.push(Arc::clone(&thm));
             db.all.push(thm);
@@ -2884,7 +2887,7 @@ impl HolTheoremDb {
             let eq_st = mk_eq(&eq_const, s, t.clone());
             let eq_rt = mk_eq(&eq_const, r, t);
             let stmt = Pure::mk_implies(eq_rs, Pure::mk_implies(eq_st, eq_rt));
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("trans".into(), Arc::clone(&thm));
             db.all.push(thm);
         }
@@ -2897,7 +2900,7 @@ impl HolTheoremDb {
             let imp_qp = Pure::mk_implies(q.clone(), p.clone());
             let eq_pq = mk_eq(&eq_const, p, q);
             let stmt = Pure::mk_implies(imp_pq, Pure::mk_implies(imp_qp, eq_pq));
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("iffI".into(), Arc::clone(&thm));
             db.intros.push(Arc::clone(&thm));
             db.all.push(thm);
@@ -2915,7 +2918,7 @@ impl HolTheoremDb {
             let not_st = Term::app(not_c.clone(), eq_st);
             let not_ts = Term::app(not_c, eq_ts);
             let stmt = Pure::mk_implies(not_st, not_ts);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("not_sym".into(), Arc::clone(&thm));
             db.all.push(thm);
         }
@@ -2927,7 +2930,7 @@ impl HolTheoremDb {
             let true_c = hologic::true_const();
             let eq_f_t = mk_eq(&eq_const, false_c, true_c);
             let stmt = Pure::mk_implies(eq_f_t, p);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("False_neq_True".into(), Arc::clone(&thm));
             db.elims.push(Arc::clone(&thm));
             db.all.push(thm);
@@ -2944,7 +2947,7 @@ impl HolTheoremDb {
             let q_imp_r = Pure::mk_implies(q, r.clone());
             let stmt =
                 Pure::mk_implies(p_or_q, Pure::mk_implies(p_imp_r, Pure::mk_implies(q_imp_r, r)));
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("disjE".into(), Arc::clone(&thm));
             db.elims.push(Arc::clone(&thm));
             db.all.push(thm);
@@ -2953,7 +2956,7 @@ impl HolTheoremDb {
         // Pure reflexive (meta-equality) — needed for kernel resolution
         if !db.by_name.contains_key("Pure.refl") {
             let t = Term::var("t", 0, Typ::dummy());
-            let thm = Arc::new(ThmKernel::reflexive(CTerm::certify(t)));
+            let thm = Arc::new(ThmKernel::reflexive_compat(CTerm::certify(t)));
             db.by_name.insert("Pure.refl".into(), Arc::clone(&thm));
             db.all.push(thm);
         }
@@ -2965,7 +2968,7 @@ impl HolTheoremDb {
             let eq_ab = mk_eq(&eq_const, a.clone(), b.clone());
             let eq_ba = mk_eq(&eq_const, b, a);
             let stmt = Pure::mk_implies(eq_ab, eq_ba);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("eq_commute".into(), Arc::clone(&thm));
             db.simps.push(Arc::clone(&thm));
             db.all.push(thm);
@@ -2980,7 +2983,7 @@ impl HolTheoremDb {
             let ps = Term::app(p.clone(), s);
             let pt = Term::app(p, t);
             let stmt = Pure::mk_implies(eq_ts, Pure::mk_implies(ps, pt));
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("ssubst".into(), Arc::clone(&thm));
             db.elims.push(Arc::clone(&thm));
             db.all.push(thm);
@@ -2996,7 +2999,7 @@ impl HolTheoremDb {
             let fy = Term::app(f, y);
             let eq_f = mk_eq(&eq_const, fx, fy);
             let stmt = Pure::mk_implies(eq_xy, eq_f);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("arg_cong".into(), Arc::clone(&thm));
             db.all.push(thm);
         }
@@ -3011,7 +3014,7 @@ impl HolTheoremDb {
             let gx = Term::app(g, x);
             let eq_app = mk_eq(&eq_const, fx, gx);
             let stmt = Pure::mk_implies(eq_fg, eq_app);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("fun_cong".into(), Arc::clone(&thm));
             db.all.push(thm);
         }
@@ -3028,7 +3031,7 @@ impl HolTheoremDb {
             let m = mk_var("m", 0);
             let lhs = mk_plus(&plus_c, m.clone(), Term::const_("0", Typ::dummy()));
             let stmt = mk_eq(&eq_const, lhs, m);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("add_0_right".into(), Arc::clone(&thm));
             db.simps.push(Arc::clone(&thm));
             db.all.push(thm);
@@ -3040,7 +3043,7 @@ impl HolTheoremDb {
             let lhs = mk_plus(&plus_c, m.clone(), mk_suc(&suc_c, n.clone()));
             let rhs = mk_suc(&suc_c, mk_plus(&plus_c, m, n));
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("add_Suc_right".into(), Arc::clone(&thm));
             db.simps.push(Arc::clone(&thm));
             db.all.push(thm);
@@ -3050,7 +3053,7 @@ impl HolTheoremDb {
             let m = mk_var("m", 0);
             let lhs = mk_plus(&plus_c, Term::const_("0", Typ::dummy()), m.clone());
             let stmt = mk_eq(&eq_const, lhs, m);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("add_0".into(), Arc::clone(&thm));
             db.simps.push(Arc::clone(&thm));
             db.all.push(thm);
@@ -3060,7 +3063,7 @@ impl HolTheoremDb {
             let m = mk_var("m", 0);
             let lhs = mk_times(&times_c, m, Term::const_("0", Typ::dummy()));
             let stmt = mk_eq(&eq_const, lhs, Term::const_("0", Typ::dummy()));
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("mult_0_right".into(), Arc::clone(&thm));
             db.simps.push(Arc::clone(&thm));
             db.all.push(thm);
@@ -3072,7 +3075,7 @@ impl HolTheoremDb {
             let lhs = mk_times(&times_c, m.clone(), mk_suc(&suc_c, n.clone()));
             let rhs = mk_plus(&plus_c, m.clone(), mk_times(&times_c, m, n));
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("mult_Suc_right".into(), Arc::clone(&thm));
             db.simps.push(Arc::clone(&thm));
             db.all.push(thm);
@@ -3084,7 +3087,7 @@ impl HolTheoremDb {
             let lhs = mk_plus(&plus_c, a.clone(), b.clone());
             let rhs = mk_plus(&plus_c, b, a);
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("add_commute".into(), Arc::clone(&thm));
             db.simps.push(Arc::clone(&thm));
             db.all.push(thm);
@@ -3097,7 +3100,7 @@ impl HolTheoremDb {
             let lhs = mk_plus(&plus_c, mk_plus(&plus_c, a.clone(), b.clone()), c.clone());
             let rhs = mk_plus(&plus_c, a, mk_plus(&plus_c, b, c));
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("add_assoc".into(), Arc::clone(&thm));
             db.simps.push(Arc::clone(&thm));
             db.all.push(thm);
@@ -3107,7 +3110,7 @@ impl HolTheoremDb {
             let n = mk_var("n", 0);
             let n_lt_n = Term::app(Term::app(less_c.clone(), n.clone()), n);
             let stmt = Term::app(not_c.clone(), n_lt_n);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("less_irrefl".into(), Arc::clone(&thm));
             db.simps.push(Arc::clone(&thm));
             db.all.push(thm);
@@ -3116,7 +3119,7 @@ impl HolTheoremDb {
         if !db.by_name.contains_key("le_refl") {
             let n = mk_var("n", 0);
             let stmt = Term::app(Term::app(le_c.clone(), n.clone()), n);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("le_refl".into(), Arc::clone(&thm));
             db.simps.push(Arc::clone(&thm));
             db.all.push(thm);
@@ -3130,7 +3133,7 @@ impl HolTheoremDb {
             let b_lt_c = Term::app(Term::app(less_c.clone(), b), c.clone());
             let a_lt_c = Term::app(Term::app(less_c.clone(), a), c);
             let stmt = Pure::mk_implies(a_lt_b, Pure::mk_implies(b_lt_c, a_lt_c));
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("less_trans".into(), Arc::clone(&thm));
             db.all.push(thm);
         }
@@ -3143,7 +3146,7 @@ impl HolTheoremDb {
             let b_le_c = Term::app(Term::app(le_c.clone(), b), c.clone());
             let a_le_c = Term::app(Term::app(le_c.clone(), a), c);
             let stmt = Pure::mk_implies(a_le_b, Pure::mk_implies(b_le_c, a_le_c));
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("le_trans".into(), Arc::clone(&thm));
             db.all.push(thm);
         }
@@ -3152,7 +3155,7 @@ impl HolTheoremDb {
             let n = mk_var("n", 0);
             let n_lt_0 = Term::app(Term::app(less_c.clone(), n), Term::const_("0", Typ::dummy()));
             let stmt = Term::app(not_c.clone(), n_lt_0);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("not_less0".into(), Arc::clone(&thm));
             db.all.push(thm);
         }
@@ -3163,7 +3166,7 @@ impl HolTheoremDb {
                 Term::app(less_c.clone(), Term::const_("0", Typ::dummy())),
                 mk_suc(&suc_c, n),
             );
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("zero_less_Suc".into(), Arc::clone(&thm));
             db.all.push(thm);
         }
@@ -3177,7 +3180,7 @@ impl HolTheoremDb {
             let eq_suc_0 = mk_eq(&eq_const, mk_suc(&suc_c, n), Term::const_("0", Typ::dummy()));
             let not_c = hologic::not_const();
             let stmt = Term::app(not_c, eq_suc_0);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("Suc_not_Zero".into(), Arc::clone(&thm));
             db.simps.push(Arc::clone(&thm));
             db.all.push(thm);
@@ -3188,7 +3191,7 @@ impl HolTheoremDb {
             let eq_0_suc = mk_eq(&eq_const, Term::const_("0", Typ::dummy()), mk_suc(&suc_c, n));
             let not_c = hologic::not_const();
             let stmt = Term::app(not_c, eq_0_suc);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("Zero_not_Suc".into(), Arc::clone(&thm));
             db.simps.push(Arc::clone(&thm));
             db.all.push(thm);
@@ -3199,7 +3202,7 @@ impl HolTheoremDb {
             let r = Term::var("R", 0, prop_typ.clone());
             let eq_suc_0 = mk_eq(&eq_const, mk_suc(&suc_c, m), Term::const_("0", Typ::dummy()));
             let stmt = Pure::mk_implies(eq_suc_0, r);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("Suc_neq_Zero".into(), Arc::clone(&thm));
             db.elims.push(Arc::clone(&thm));
             db.all.push(thm);
@@ -3210,7 +3213,7 @@ impl HolTheoremDb {
             let r = Term::var("R", 0, prop_typ.clone());
             let eq_0_suc = mk_eq(&eq_const, Term::const_("0", Typ::dummy()), mk_suc(&suc_c, m));
             let stmt = Pure::mk_implies(eq_0_suc, r);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("Zero_neq_Suc".into(), Arc::clone(&thm));
             db.elims.push(Arc::clone(&thm));
             db.all.push(thm);
@@ -3221,7 +3224,7 @@ impl HolTheoremDb {
             let eq_n_sucn = mk_eq(&eq_const, n.clone(), mk_suc(&suc_c, n));
             let not_c = hologic::not_const();
             let stmt = Term::app(not_c, eq_n_sucn);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("n_not_Suc_n".into(), Arc::clone(&thm));
             db.simps.push(Arc::clone(&thm));
             db.all.push(thm);
@@ -3232,7 +3235,7 @@ impl HolTheoremDb {
             let eq_sucn_n = mk_eq(&eq_const, mk_suc(&suc_c, n.clone()), n);
             let not_c = hologic::not_const();
             let stmt = Term::app(not_c, eq_sucn_n);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("Suc_n_not_n".into(), Arc::clone(&thm));
             db.simps.push(Arc::clone(&thm));
             db.all.push(thm);
@@ -3244,7 +3247,7 @@ impl HolTheoremDb {
             let eq_suc = mk_eq(&eq_const, mk_suc(&suc_c, x.clone()), mk_suc(&suc_c, y.clone()));
             let eq_xy = mk_eq(&eq_const, x, y);
             let stmt = Pure::mk_implies(eq_suc, eq_xy);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("Suc_inject".into(), Arc::clone(&thm));
             db.all.push(thm);
         }
@@ -3258,7 +3261,7 @@ impl HolTheoremDb {
             let eq_prod = mk_eq(&eq_const, lhs, rhs);
             let eq_mn = mk_eq(&eq_const, m, n);
             let stmt = mk_eq(&eq_const, eq_prod, eq_mn);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("mult_cancel1".into(), Arc::clone(&thm));
             db.simps.push(Arc::clone(&thm));
             db.all.push(thm);
@@ -3288,7 +3291,7 @@ impl HolTheoremDb {
             );
             let concl = Term::app(p.clone(), n);
             let stmt = Pure::mk_implies(p0, Pure::mk_implies(all_term, concl));
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             db.by_name.insert("nat.induct".into(), Arc::clone(&thm));
             db.intros.push(Arc::clone(&thm));
             db.all.push(thm);
@@ -3680,8 +3683,13 @@ mod lemma_tests {
 
     #[test]
     fn test_hol_theorem_db_counts_closed_proved_facts_separately() {
-        let true_ct = CTerm::certify(Term::const_("True", Typ::base("prop")));
+        let mut env = TypeEnv::new();
+        let prop_t = Typ::base("prop");
+        env.declare_const("True", prop_t.clone());
+        let true_ct = CTerm::certify_checked(Term::const_("True", prop_t), &env)
+            .expect("declared proposition should certify");
         let thm = ThmKernel::trivial(true_ct).expect("trivial True theorem");
+        assert!(thm.is_strict_closed_proved());
         let lemmas = vec![ParsedLemma {
             name: "closed_fact".into(),
             attributes: Vec::new(),
@@ -3695,7 +3703,7 @@ mod lemma_tests {
 
         assert_eq!(db.searchable_fact_count(), 1);
         assert_eq!(db.closed_proved_count(), 1);
-        assert!(db.by_name.get("closed_fact").is_some_and(|thm| thm.is_closed_proved()));
+        assert!(db.by_name.get("closed_fact").is_some_and(|thm| thm.is_strict_closed_proved()));
     }
 
     #[test]
@@ -4102,7 +4110,7 @@ mod lemma_tests {
 
     // Helper: create a test lemma with specified attributes
     fn create_test_lemma(name: &str, attrs: &[String], term: &Term) -> ParsedLemma {
-        let thm = ThmKernel::assume(CTerm::certify(term.clone()));
+        let thm = ThmKernel::assume_compat(CTerm::certify(term.clone()));
         ParsedLemma {
             name: name.to_string(),
             attributes: attrs.to_vec(),
@@ -4733,7 +4741,7 @@ pub fn generate_class_lemmas(def: &ClassDef) -> Vec<ParsedLemma> {
             Some(t) => t,
             None => Term::const_(prop.as_str(), Typ::base("prop")),
         };
-        let thm = ThmKernel::assume(CTerm::certify(term));
+        let thm = ThmKernel::assume_compat(CTerm::certify(term));
         lemmas.push(ParsedLemma {
             name: name.clone(),
             attributes: attrs.clone(),

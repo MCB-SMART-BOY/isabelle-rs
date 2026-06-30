@@ -23,7 +23,7 @@ mod sledgehammer_e2e {
     fn make_simple_goal() -> Thm {
         let a = Term::const_("A", Typ::base("prop"));
         let ct = CTerm::certify(a);
-        ThmKernel::assume(ct)
+        ThmKernel::assume_compat(ct)
     }
 
     #[test]
@@ -81,7 +81,7 @@ fof(f2, plain, p(a), inference(assumption, [], [f1])).
         // Create premises and try to reconstruct
         let a = Term::const_("A", Typ::base("prop"));
         let ct = CTerm::certify(a);
-        let thm = ThmKernel::assume(ct);
+        let thm = ThmKernel::assume_compat(ct);
         let premises = vec![("p0".to_string(), Arc::new(thm))];
 
         let mut recon = ProofReconstructor::new(premises);
@@ -113,7 +113,7 @@ fof(f2, plain, p(a), inference(assumption, [], [f1])).
         let a = Term::const_("A", Typ::base("prop"));
         let ct = CTerm::certify(a.clone());
         let goal = ThmKernel::trivial(ct).unwrap();
-        let assume_a = ThmKernel::assume(CTerm::certify(a));
+        let assume_a = ThmKernel::assume_compat(CTerm::certify(a));
 
         let premises = vec![("assume_A".to_string(), Arc::new(assume_a))];
 
@@ -132,7 +132,7 @@ fof(f2, plain, p(a), inference(assumption, [], [f1])).
         // Create a simple goal: A = A
         let a = Term::const_("A", Typ::base("prop"));
         let ct = CTerm::certify(a);
-        let goal = ThmKernel::assume(ct);
+        let goal = ThmKernel::assume_compat(ct);
 
         let tptp_str = tptp::goal_to_tptp_fof(&goal, "test");
         assert!(tptp_str.contains("fof(test, conjecture"));
@@ -156,7 +156,7 @@ fof(goal, conjecture, p(a), inference(assumption, [], [premise_0])).
         // Create a premise matching the TSTP
         let p = Term::const_("p", Typ::base("prop"));
         let ct = CTerm::certify(p);
-        let thm = ThmKernel::assume(ct);
+        let thm = ThmKernel::assume_compat(ct);
         let premises = vec![("premise_0".to_string(), Arc::new(thm))];
 
         let mut recon = ProofReconstructor::new(premises);

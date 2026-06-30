@@ -3,70 +3,82 @@
 
 use isabelle_rs::{
     core::{
+        term::Term,
         theory::Theory,
         thm::{CTerm, ThmKernel},
-        types::Typ,
+        types::{Typ, TypeEnv},
     },
     hol::hol_loader::*,
     theory::loader::TheoryProcessor,
 };
 
+fn declare_term(term: &Term, env: &mut TypeEnv) {
+    match term {
+        Term::Const { name, typ } if !typ.is_dummy() && !name.as_ref().starts_with("Pure.") => {
+            env.declare_const(name.as_ref(), typ.clone());
+        },
+        Term::Free { name, typ } if !typ.is_dummy() => {
+            env.declare_free(name.as_ref(), typ.clone());
+        },
+        Term::Abs { body, .. } => declare_term(body, env),
+        Term::App { func, arg } => {
+            declare_term(func, env);
+            declare_term(arg, env);
+        },
+        Term::Const { .. } | Term::Free { .. } | Term::Var { .. } | Term::Bound(_) => {},
+    }
+}
+
+fn checked_cterm(term: Term) -> CTerm {
+    let mut env = TypeEnv::new();
+    declare_term(&term, &mut env);
+    CTerm::certify_checked(term, &env).expect("integration fixture should certify as checked")
+}
+
 #[test]
 fn test_kernel_15_ops() {
     // Verify all 15 kernel operations are functional
-    let t = CTerm::certify(isabelle_rs::core::term::Term::const_("A", Typ::base("prop")));
+    let t = checked_cterm(Term::const_("A", Typ::base("prop")));
 
     // 1. assume
-    let thm = ThmKernel::assume(t.clone());
+    let thm = ThmKernel::assume(t.clone()).unwrap();
     assert_eq!(thm.nprems(), 0);
 
     // 2. reflexive
-    let refl = ThmKernel::reflexive(t.clone());
+    let refl = ThmKernel::reflexive(t.clone()).unwrap();
 
     // 3. symmetric
     let _sym = ThmKernel::symmetric(&refl).unwrap();
 
     // 4. combination
-    let f = CTerm::certify(isabelle_rs::core::term::Term::abs(
-        "x",
-        Typ::dummy(),
-        isabelle_rs::core::term::Term::bound(0),
-    ));
-    let x = CTerm::certify(isabelle_rs::core::term::Term::const_("a", Typ::dummy()));
-    let rf = ThmKernel::reflexive(f.clone());
-    let rx = ThmKernel::reflexive(x.clone());
-    let _comb = ThmKernel::combination(&rf, &rx); // may Err if types are dummy — expected
+    let bool_t = Typ::base("bool");
+    let f = checked_cterm(Term::abs("x", bool_t.clone(), Term::bound(0)));
+    let x = checked_cterm(Term::const_("a", bool_t.clone()));
+    let rf = ThmKernel::reflexive(f.clone()).unwrap();
+    let rx = ThmKernel::reflexive(x.clone()).unwrap();
+    let _comb = ThmKernel::combination(&rf, &rx).unwrap();
 
     // 5. abstraction
-    let _abs = ThmKernel::abstraction("x", Typ::dummy(), &refl);
+    let _abs = ThmKernel::abstraction("x", bool_t.clone(), &refl).unwrap();
 
     // 6. beta_conversion
-    let app = isabelle_rs::core::term::Term::app(
-        isabelle_rs::core::term::Term::abs(
-            "x",
-            Typ::dummy(),
-            isabelle_rs::core::term::Term::bound(0),
-        ),
-        isabelle_rs::core::term::Term::const_("c", Typ::dummy()),
-    );
-    let ct = CTerm::certify(app);
-    let _beta = ThmKernel::beta_conversion(ct);
+    let app = Term::app(Term::abs("x", bool_t.clone(), Term::bound(0)), Term::const_("c", bool_t));
+    let ct = checked_cterm(app);
+    let _beta = ThmKernel::beta_conversion(ct).unwrap();
 
     // 7-8. implies_intr/implies_elim
     let hyp = t.clone();
-    let goal = ThmKernel::assume(hyp.clone());
+    let goal = ThmKernel::assume(hyp.clone()).unwrap();
     let imp = ThmKernel::implies_intr(&t, &goal).unwrap();
     let _mp = ThmKernel::implies_elim(&imp, &goal).unwrap();
 
     // 9-10. forall_intr/forall_elim
-    let _all = ThmKernel::forall_intr("x", Typ::dummy(), &goal).unwrap();
+    let _all = ThmKernel::forall_intr("x", Typ::base("bool"), &goal).unwrap();
     // forall_elim requires matching types, may fail with dummy
 
     // 11. transitive
-    let a = CTerm::certify(isabelle_rs::core::term::Term::const_("a", Typ::dummy()));
-    let b = CTerm::certify(isabelle_rs::core::term::Term::const_("b", Typ::dummy()));
-    let _ra = ThmKernel::reflexive(a);
-    let _rb = ThmKernel::reflexive(b);
+    let a = checked_cterm(Term::const_("a", Typ::base("nat")));
+    let _ra = ThmKernel::reflexive(a).unwrap();
     // transitive may fail if types differ — ok
 
     // 12. instantiate
@@ -193,7 +205,7 @@ fn test_tptp_export() {
         q.term().clone(),
     );
     let goal_term = Pure::mk_implies(pq, p.term().clone());
-    let goal = ThmKernel::assume(CTerm::certify(goal_term));
+    let goal = ThmKernel::assume_compat(CTerm::certify(goal_term));
 
     let tptp = goal_to_tptp_fof(&goal, "test");
     assert!(tptp.contains("fof(test"));
@@ -217,7 +229,7 @@ fn test_printer_tptp_roundtrip() {
     let printed = print_term(&eq);
     assert_eq!(printed, "a = b");
 
-    let goal = ThmKernel::assume(CTerm::certify(eq));
+    let goal = ThmKernel::assume_compat(CTerm::certify(eq));
     let tptp = goal_to_tptp_fof(&goal, "roundtrip");
     assert!(tptp.contains("="));
     eprintln!("Roundtrip: {} → TPTP", printed);

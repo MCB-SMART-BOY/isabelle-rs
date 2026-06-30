@@ -30,9 +30,9 @@ pub fn subst(thm_eq: &Thm, thm: &Thm) -> Option<Thm> {
 
     // Use combination + transitive to produce P(t) == P(u)
     // Then combine with thm via implies_elim
-    let refl_p = ThmKernel::reflexive(CTerm::certify(new_prop.clone()));
+    let refl_p = ThmKernel::reflexive_compat(CTerm::certify(new_prop.clone()));
     let ct = CTerm::certify(prop.clone());
-    ThmKernel::transitive(&ThmKernel::reflexive(ct), &refl_p).ok()
+    ThmKernel::transitive(&ThmKernel::reflexive_compat(ct), &refl_p).ok()
 }
 
 fn replace_in_term(term: &Term, from: &Term, to: &Term) -> Option<Term> {
@@ -129,7 +129,7 @@ mod tests {
     #[test]
     fn test_rs_resolves() {
         let a = prop("A");
-        let assumed = ThmKernel::assume(a.clone());
+        let assumed = ThmKernel::assume_compat(a.clone());
         let trivial = ThmKernel::trivial(a).unwrap();
         let result = rs(&assumed, &trivial);
         assert!(result.is_some());

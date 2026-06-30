@@ -182,7 +182,7 @@ impl MesonProver {
         }
 
         if self.prove_iter_deepen(&all_clauses) {
-            Some(Arc::new(ThmKernel::assume(CTerm::certify(goal.prop().term().clone()))))
+            Some(Arc::new(ThmKernel::assume_compat(CTerm::certify(goal.prop().term().clone()))))
         } else {
             None
         }
@@ -286,18 +286,19 @@ mod tests {
     #[test]
     fn test_meson_contradiction() {
         let premises: Vec<Arc<Thm>> = vec![
-            Arc::new(ThmKernel::assume(CTerm::certify(a()))),
-            Arc::new(ThmKernel::assume(CTerm::certify(hologic::mk_not(a())))),
+            Arc::new(ThmKernel::assume_compat(CTerm::certify(a()))),
+            Arc::new(ThmKernel::assume_compat(CTerm::certify(hologic::mk_not(a())))),
         ];
-        let goal = ThmKernel::assume(CTerm::certify(Term::const_("False", Typ::base("prop"))));
+        let goal =
+            ThmKernel::assume_compat(CTerm::certify(Term::const_("False", Typ::base("prop"))));
         let result = meson_tac(&goal, &premises);
         assert!(!result.is_empty());
     }
 
     #[test]
     fn test_meson_assume() {
-        let premises = vec![Arc::new(ThmKernel::assume(CTerm::certify(a())))];
-        let goal = ThmKernel::assume(CTerm::certify(a()));
+        let premises = vec![Arc::new(ThmKernel::assume_compat(CTerm::certify(a())))];
+        let goal = ThmKernel::assume_compat(CTerm::certify(a()));
         let result = meson_tac(&goal, &premises);
         assert!(!result.is_empty());
     }

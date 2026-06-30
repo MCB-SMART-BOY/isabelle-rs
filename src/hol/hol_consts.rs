@@ -32,7 +32,7 @@ pub fn true_intr() -> Thm {
     // By reflexive: (%x. x) = (%x. x)
     let id_lam = Term::abs("x", Typ::base("prop"), Term::bound(0));
     let ct = CTerm::certify(id_lam);
-    ThmKernel::reflexive(ct)
+    ThmKernel::reflexive_compat(ct)
 }
 
 /// Truth elimination: `P == True ⟹ P`
@@ -83,7 +83,8 @@ mod tests {
     #[test]
     fn test_false_elim() {
         let p = CTerm::certify(Term::const_("P", Typ::base("prop")));
-        let false_thm = ThmKernel::assume(CTerm::certify(Term::const_("False", Typ::base("prop"))));
+        let false_thm =
+            ThmKernel::assume_compat(CTerm::certify(Term::const_("False", Typ::base("prop"))));
         let result = false_elim(&false_thm, p);
         assert_eq!(result.prop().term(), &Term::const_("P", Typ::base("prop")));
     }
@@ -98,7 +99,7 @@ mod tests {
         assert!(!goal.is_fully_proved(), "false_elim must be admitted, not proved");
         assert_eq!(&*goal.oracles()[0], STUB_ORACLE);
 
-        let p_thm = ThmKernel::assume(p);
+        let p_thm = ThmKernel::assume_compat(p);
         let eqt = eq_true_intr(&p_thm);
         assert!(!eqt.is_fully_proved(), "eq_true_intr must be admitted, not proved");
 

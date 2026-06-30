@@ -32,7 +32,7 @@ use super::{
     logic::Pure,
     term::Term,
     thm::{CTerm, Derivation, Hyps},
-    types::Typ,
+    types::{Typ, TypeEnv},
 };
 
 // =========================================================================
@@ -578,8 +578,27 @@ mod tests {
         Term::free(name, Typ::base("nat"))
     }
 
-    fn cterm(term: Term) -> CTerm {
-        CTerm::certify(term)
+    fn declare_term(term: &Term, env: &mut TypeEnv) {
+        match term {
+            Term::Const { name, typ } if !typ.is_dummy() && !name.as_ref().starts_with("Pure.") => {
+                env.declare_const(name.as_ref(), typ.clone());
+            },
+            Term::Free { name, typ } if !typ.is_dummy() => {
+                env.declare_free(name.as_ref(), typ.clone());
+            },
+            Term::Var { .. } | Term::Bound(_) | Term::Const { .. } | Term::Free { .. } => {},
+            Term::Abs { body, .. } => declare_term(body, env),
+            Term::App { func, arg } => {
+                declare_term(func, env);
+                declare_term(arg, env);
+            },
+        }
+    }
+
+    fn checked_cterm(term: Term) -> CTerm {
+        let mut env = TypeEnv::new();
+        declare_term(&term, &mut env);
+        CTerm::certify_checked(term, &env).unwrap()
     }
 
     fn refl_prop(name: &str) -> Term {
@@ -587,8 +606,8 @@ mod tests {
         Pure::mk_equals(Typ::base("nat"), t.clone(), t)
     }
 
-    fn eq_cterm(typ: Typ, lhs: Term, rhs: Term) -> CTerm {
-        CTerm::certify(Pure::mk_equals(typ, lhs, rhs))
+    fn checked_eq_cterm(typ: Typ, lhs: Term, rhs: Term) -> CTerm {
+        checked_cterm(Pure::mk_equals(typ, lhs, rhs))
     }
 
     #[test]
@@ -617,32 +636,35 @@ mod tests {
 
     #[test]
     fn assume_replay_succeeds_but_is_open() {
-        let a = cterm(prop("A"));
-        let thm = ThmKernel::assume(a);
+        let a = checked_cterm(prop("A"));
+        let thm = ThmKernel::assume(a).unwrap();
         assert!(thm.check_proof().is_ok());
         assert!(thm.is_fully_proved());
         assert!(!thm.is_closed_proved());
+        assert!(!thm.is_strict_closed_proved());
     }
 
     #[test]
     fn reflexive_replay_succeeds_and_is_closed_proved() {
-        let thm = ThmKernel::reflexive(cterm(nat("a")));
+        let thm = ThmKernel::reflexive(checked_cterm(nat("a"))).unwrap();
         assert!(thm.check_proof().is_ok());
         assert!(thm.is_closed_proved());
+        assert!(thm.is_strict_closed_proved());
     }
 
     #[test]
     fn symmetric_replay_succeeds() {
-        let refl = ThmKernel::reflexive(cterm(nat("a")));
+        let refl = ThmKernel::reflexive(checked_cterm(nat("a"))).unwrap();
         let sym = ThmKernel::symmetric(&refl).unwrap();
         assert!(sym.check_proof().is_ok());
         assert!(sym.is_closed_proved());
+        assert!(sym.is_strict_closed_proved());
     }
 
     #[test]
     fn symmetric_replay_preserves_open_premise_hyps() {
-        let eq = eq_cterm(Typ::base("nat"), nat("a"), nat("a"));
-        let open_eq = ThmKernel::assume(eq);
+        let eq = checked_eq_cterm(Typ::base("nat"), nat("a"), nat("a"));
+        let open_eq = ThmKernel::assume(eq).unwrap();
         let sym = ThmKernel::symmetric(&open_eq).unwrap();
 
         assert!(sym.check_proof().is_ok());
@@ -654,7 +676,7 @@ mod tests {
     #[test]
     fn supported_replay_rejects_oracle_premise() {
         let admitted = ThmKernel::admit(
-            eq_cterm(Typ::base("nat"), nat("a"), nat("a")),
+            checked_eq_cterm(Typ::base("nat"), nat("a"), nat("a")),
             "admitted:proof_engine_failed",
         );
         let sym = ThmKernel::symmetric(&admitted).unwrap();
@@ -665,10 +687,11 @@ mod tests {
 
     #[test]
     fn transitive_replay_succeeds() {
-        let refl = ThmKernel::reflexive(cterm(nat("a")));
+        let refl = ThmKernel::reflexive(checked_cterm(nat("a"))).unwrap();
         let trans = ThmKernel::transitive(&refl, &refl).unwrap();
         assert!(trans.check_proof().is_ok());
         assert!(trans.is_closed_proved());
+        assert!(trans.is_strict_closed_proved());
     }
 
     #[test]
@@ -682,8 +705,8 @@ mod tests {
 
         assert_ne!(mid_x, mid_y, "test requires syntactically distinct alpha terms");
 
-        let left = ThmKernel::assume(eq_cterm(fn_typ.clone(), lhs, mid_x));
-        let right = ThmKernel::assume(eq_cterm(fn_typ, mid_y, rhs));
+        let left = ThmKernel::assume(checked_eq_cterm(fn_typ.clone(), lhs, mid_x)).unwrap();
+        let right = ThmKernel::assume(checked_eq_cterm(fn_typ, mid_y, rhs)).unwrap();
         let trans = ThmKernel::transitive(&left, &right).unwrap();
 
         assert!(trans.check_proof().is_ok());
@@ -693,13 +716,14 @@ mod tests {
 
     #[test]
     fn implies_intro_and_elim_replay_succeed() {
-        let a = cterm(prop("A"));
-        let assumed = ThmKernel::assume(a.clone());
+        let a = checked_cterm(prop("A"));
+        let assumed = ThmKernel::assume(a.clone()).unwrap();
         let identity = ThmKernel::implies_intr(&a, &assumed).unwrap();
         assert!(identity.check_proof().is_ok());
         assert!(identity.is_closed_proved());
+        assert!(identity.is_strict_closed_proved());
 
-        let minor = ThmKernel::assume(a);
+        let minor = ThmKernel::assume(a).unwrap();
         let eliminated = ThmKernel::implies_elim(&identity, &minor).unwrap();
         assert!(eliminated.check_proof().is_ok());
         assert!(eliminated.is_fully_proved());
@@ -708,7 +732,7 @@ mod tests {
 
     #[test]
     fn admitted_theorem_does_not_pass_kernel_replay() {
-        let admitted = ThmKernel::admit(cterm(prop("A")), "admitted:proof_engine_failed");
+        let admitted = ThmKernel::admit(checked_cterm(prop("A")), "admitted:proof_engine_failed");
         assert!(!admitted.is_fully_proved());
         assert!(!admitted.is_closed_proved());
         assert!(admitted.check_proof().is_err());
@@ -717,8 +741,8 @@ mod tests {
     #[test]
     fn unsupported_rule_is_reported_separately_from_tampering() {
         let beta = Term::app(Term::abs("x", Typ::base("nat"), Term::bound(0)), nat("a"));
-        let thm = ThmKernel::beta_conversion(CTerm::certify_typed(beta, Typ::base("nat")))
-            .expect("well-formed beta conversion");
+        let thm =
+            ThmKernel::beta_conversion(checked_cterm(beta)).expect("well-formed beta conversion");
 
         let err = thm.check_proof().expect_err("beta replay is not implemented yet");
         assert!(

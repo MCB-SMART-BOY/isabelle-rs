@@ -124,7 +124,7 @@ mod tests {
 
     fn make_lemma(name: &str, proof: &str) -> ParsedLemma {
         let term = Term::const_(name, Typ::base("prop"));
-        let thm = ThmKernel::assume(CTerm::certify(term));
+        let thm = ThmKernel::assume_compat(CTerm::certify(term));
         ParsedLemma {
             name: name.to_string(),
             attributes: vec![],

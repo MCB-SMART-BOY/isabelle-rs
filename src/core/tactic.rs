@@ -58,7 +58,7 @@ pub fn assume_tac(i: usize) -> TacticFn {
             if st.hyps().contains(&goal_ct) {
                 // The goal is already a hypothesis — we can close it via
                 // the bicompose kernel with an assumption rule
-                let assume_rule = ThmKernel::assume(goal_ct);
+                let assume_rule = ThmKernel::assume_compat(goal_ct);
                 if let Some(result) = ThmKernel::bicompose(false, &assume_rule, st, i) {
                     return vec![result];
                 }
@@ -341,9 +341,9 @@ fn revcut_rl() -> Thm {
     let v = CTerm::certify(Term::free("V", Typ::base("prop")));
     let _w = CTerm::certify(Term::free("W", Typ::base("prop")));
 
-    let assume_v = ThmKernel::assume(v.clone());
+    let assume_v = ThmKernel::assume_compat(v.clone());
     // Build: V ⟹ W
-    let v_imp_w = ThmKernel::assume(CTerm::certify(Term::app(
+    let v_imp_w = ThmKernel::assume_compat(CTerm::certify(Term::app(
         Term::app(
             Term::const_(
                 "Pure.imp",
@@ -392,12 +392,12 @@ mod tests {
 
     fn trivial_goal() -> Thm {
         let ct = CTerm::certify(prop("A"));
-        ThmKernel::assume(ct)
+        ThmKernel::assume_compat(ct)
     }
 
     fn goal_with_hyp() -> Thm {
         let a = CTerm::certify(prop("A"));
-        ThmKernel::implies_intr(&a, &ThmKernel::assume(a.clone())).unwrap()
+        ThmKernel::implies_intr(&a, &ThmKernel::assume_compat(a.clone())).unwrap()
     }
 
     #[test]
@@ -498,7 +498,7 @@ mod tests {
 
         // make_elim of A should produce: ⟦A; A ⟹ R⟧ ⟹ R
         let a = CTerm::certify(prop("A"));
-        let rule = ThmKernel::assume(a);
+        let rule = ThmKernel::assume_compat(a);
         let elim = make_elim(&rule);
         // This may or may not succeed depending on bicompose details
         // The key invariant: if it succeeds, it should have more prems than original

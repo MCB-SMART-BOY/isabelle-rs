@@ -17,13 +17,18 @@
 //! 4. **Derivations**: theorems carry proof terms (or oracle tags)
 //! 5. **Maxidx**: proper tracking for fresh variable generation
 
-use std::{fmt, sync::Arc};
+use std::{
+    collections::HashMap,
+    fmt,
+    hash::{Hash, Hasher},
+    sync::Arc,
+};
 
 use super::{
     error::KernelError,
     logic::Pure,
     term::Term,
-    types::{Sort, Typ},
+    types::{Sort, Typ, TypeEnv},
 };
 
 // =========================================================================
@@ -32,16 +37,69 @@ use super::{
 
 /// A certified term — a term that has been type-checked against a theory
 /// signature. In Isabelle, `cterm` is an abstract type.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum CertStatus {
+    /// Strictly checked against an explicit `TypeEnv`.
+    Checked,
+    /// Best-effort compatibility wrapper for legacy parser/HOL paths.
+    Compat,
+}
+
+/// The construction boundary that produced a theorem.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ThmTrust {
+    /// Constructed only through strict checked kernel inputs and strict rules.
+    Strict,
+    /// Constructed through a legacy/best-effort compatibility path.
+    Compat,
+    /// Accepted through an oracle/admit footprint, or derived from one.
+    Admitted,
+}
+
+/// How hard theorem invariants should be checked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum KernelCheckMode {
+    /// Legacy/searchable fact mode. Checks structural consistency only.
+    Compat,
+    /// Trusted kernel mode. Requires strict construction provenance and no
+    /// dummy-typed theorem burdens.
+    Strict,
+}
+
+/// A certified term — a term paired with certification metadata.
+#[derive(Clone)]
 pub struct CTerm {
     term: Term,
     maxidx: usize,
     /// The type of this term (Typ::dummy() if unknown).
     term_type: Typ,
+    cert_status: CertStatus,
+}
+
+impl PartialEq for CTerm {
+    fn eq(&self, other: &Self) -> bool {
+        self.term == other.term && self.maxidx == other.maxidx && self.term_type == other.term_type
+    }
+}
+
+impl Eq for CTerm {}
+
+impl Hash for CTerm {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.term.hash(state);
+        self.maxidx.hash(state);
+        self.term_type.hash(state);
+    }
 }
 
 impl CTerm {
-    /// Create a certified term (type will be inferred if dummy).
+    /// Compatibility certification.
+    ///
+    /// This is the historical best-effort wrapper: it infers a top-level type
+    /// when possible, may consult the global HOL type database, and may still
+    /// return a `CTerm` whose type is `Typ::dummy()`. It exists for legacy
+    /// parser/loader/HOL compatibility and must not be treated as a hard
+    /// trusted certification boundary.
     pub fn certify(term: Term) -> Self {
         let maxidx = Self::compute_maxidx(&term);
         // Try to infer type from the term structure
@@ -52,13 +110,56 @@ impl CTerm {
         } else {
             term_type
         };
-        CTerm { term, maxidx, term_type }
+        CTerm { term, maxidx, term_type, cert_status: CertStatus::Compat }
     }
 
-    /// Create a certified term with explicit type.
+    /// Compatibility alias for callers that need the legacy best-effort
+    /// behavior explicitly.
+    pub fn certify_compat(term: Term) -> Self {
+        Self::certify(term)
+    }
+
+    /// Strict certification against an explicit type environment.
+    ///
+    /// This is the trusted certification entry point for new kernel-facing
+    /// code. It rejects unknown constants, ill-typed applications, unbound
+    /// de Bruijn indices, and any residual `Typ::dummy()` in the certified
+    /// term or its inferred type. It never performs parser compatibility
+    /// repairs such as Free/Const name fallback.
+    pub fn certify_checked(term: Term, type_env: &TypeEnv) -> Result<Self, KernelError> {
+        let (term, term_type) = Self::certify_checked_term(term, type_env, &[])?;
+        if term_type.contains_dummy() || Self::term_contains_dummy_type(&term) {
+            return Err(KernelError::DummyType { op: "CTerm::certify_checked" });
+        }
+        let maxidx = Self::compute_maxidx(&term);
+        Ok(CTerm { term, maxidx, term_type, cert_status: CertStatus::Checked })
+    }
+
+    /// Mark a kernel-derived term as checked after a primitive rule has
+    /// constructed it from already checked inputs.
+    ///
+    /// This does not perform parser/type inference repairs. It only verifies
+    /// that the derived term has a non-dummy apparent type and no embedded
+    /// dummy annotations.
+    pub(crate) fn certify_derived_checked(
+        term: Term,
+        op: &'static str,
+    ) -> Result<Self, KernelError> {
+        let maxidx = Self::compute_maxidx(&term);
+        let term_type = Self::infer_type(&term);
+        if term_type.contains_dummy() || Self::term_contains_dummy_type(&term) {
+            return Err(KernelError::DummyType { op });
+        }
+        Ok(CTerm { term, maxidx, term_type, cert_status: CertStatus::Checked })
+    }
+
+    /// Create a compatibility CTerm with an explicit top-level type.
+    ///
+    /// This bypasses structural type checking and is therefore compatibility
+    /// certification, not a trusted checked term.
     pub fn certify_typed(term: Term, typ: Typ) -> Self {
         let maxidx = Self::compute_maxidx(&term);
-        CTerm { term, maxidx, term_type: typ }
+        CTerm { term, maxidx, term_type: typ, cert_status: CertStatus::Compat }
     }
 
     pub fn term(&self) -> &Term {
@@ -70,6 +171,17 @@ impl CTerm {
     pub fn term_type(&self) -> &Typ {
         &self.term_type
     }
+    pub fn cert_status(&self) -> CertStatus {
+        self.cert_status
+    }
+    pub fn is_checked(&self) -> bool {
+        self.cert_status == CertStatus::Checked
+    }
+
+    /// Require strict checked certification.
+    pub fn require_checked(&self, op: &'static str) -> Result<(), KernelError> {
+        if self.is_checked() { Ok(()) } else { Err(KernelError::CompatCTerm { op }) }
+    }
 
     /// Require non-dummy type — fails if the type is Typ::dummy().
     /// Use this at kernel rule boundaries to ensure type safety.
@@ -79,6 +191,43 @@ impl CTerm {
         } else {
             Ok(&self.term_type)
         }
+    }
+
+    /// Require that neither the top-level type nor embedded term annotations
+    /// contain `Typ::dummy()`.
+    pub fn require_no_dummy_types(&self, op: &'static str) -> Result<(), KernelError> {
+        if self.contains_dummy_type() { Err(KernelError::DummyType { op }) } else { Ok(()) }
+    }
+
+    /// Whether this certified term still contains a dummy type annotation.
+    pub fn contains_dummy_type(&self) -> bool {
+        self.term_type.contains_dummy() || Self::term_contains_dummy_type(&self.term)
+    }
+
+    /// Whether a raw term contains any dummy type annotation.
+    pub fn term_contains_dummy_type(term: &Term) -> bool {
+        let mut stack = vec![term];
+        while let Some(t) = stack.pop() {
+            match t {
+                Term::Const { typ, .. } | Term::Free { typ, .. } | Term::Var { typ, .. } => {
+                    if typ.contains_dummy() {
+                        return true;
+                    }
+                },
+                Term::Abs { typ, body, .. } => {
+                    if typ.contains_dummy() {
+                        return true;
+                    }
+                    stack.push(body);
+                },
+                Term::App { func, arg } => {
+                    stack.push(arg);
+                    stack.push(func);
+                },
+                Term::Bound(_) => {},
+            }
+        }
+        false
     }
 
     /// Create a certified term, attempting to annotate dummy types from the
@@ -105,6 +254,161 @@ impl CTerm {
                 if let Some((_, ret)) = ft.dest_fun() { ret.clone() } else { Typ::dummy() }
             },
             _ => Typ::dummy(),
+        }
+    }
+
+    fn certify_checked_term(
+        term: Term,
+        type_env: &TypeEnv,
+        bound_types: &[Typ],
+    ) -> Result<(Term, Typ), KernelError> {
+        match term {
+            Term::Const { name, typ } => {
+                let typ = if typ.is_dummy() {
+                    type_env
+                        .const_type(name.as_ref())
+                        .cloned()
+                        .ok_or_else(|| KernelError::UndeclaredConstant(name.to_string()))?
+                } else {
+                    if let Some(declared) = type_env.const_type(name.as_ref()) {
+                        if !Self::type_scheme_matches(declared, &typ) {
+                            return Err(KernelError::TypeMismatch {
+                                expected: declared.clone(),
+                                actual: typ,
+                            });
+                        }
+                    } else {
+                        return Err(KernelError::UndeclaredConstant(name.to_string()));
+                    }
+                    typ
+                };
+                Self::ensure_type_has_no_dummy(&typ, "CTerm::certify_checked")?;
+                Ok((Term::Const { name, typ: typ.clone() }, typ))
+            },
+            Term::Free { name, typ } => {
+                let typ = if typ.is_dummy() {
+                    type_env
+                        .frees
+                        .get(name.as_ref())
+                        .cloned()
+                        .ok_or(KernelError::DummyType { op: "CTerm::certify_checked" })?
+                } else {
+                    if let Some(declared) = type_env.frees.get(name.as_ref())
+                        && declared != &typ
+                    {
+                        return Err(KernelError::TypeMismatch {
+                            expected: declared.clone(),
+                            actual: typ,
+                        });
+                    }
+                    typ
+                };
+                Self::ensure_type_has_no_dummy(&typ, "CTerm::certify_checked")?;
+                Ok((Term::Free { name, typ: typ.clone() }, typ))
+            },
+            Term::Var { name, index, typ } => {
+                Self::ensure_type_has_no_dummy(&typ, "CTerm::certify_checked")?;
+                Ok((Term::Var { name, index, typ: typ.clone() }, typ))
+            },
+            Term::Bound(index) => {
+                let typ = bound_types
+                    .get(index)
+                    .cloned()
+                    .ok_or(KernelError::DummyType { op: "CTerm::certify_checked" })?;
+                Self::ensure_type_has_no_dummy(&typ, "CTerm::certify_checked")?;
+                Ok((Term::Bound(index), typ))
+            },
+            Term::Abs { name, typ, body } => {
+                Self::ensure_type_has_no_dummy(&typ, "CTerm::certify_checked")?;
+                let mut scoped = Vec::with_capacity(bound_types.len() + 1);
+                scoped.push(typ.clone());
+                scoped.extend_from_slice(bound_types);
+                let (body, body_typ) = Self::certify_checked_term(*body, type_env, &scoped)?;
+                let abs_typ = Typ::arrow(typ.clone(), body_typ);
+                Ok((Term::Abs { name, typ, body: Box::new(body) }, abs_typ))
+            },
+            Term::App { func, arg } => {
+                let (func, func_typ) = Self::certify_checked_term(*func, type_env, bound_types)?;
+                let (arg, arg_typ) = Self::certify_checked_term(*arg, type_env, bound_types)?;
+                let (expected_arg, result_typ) = func_typ
+                    .dest_fun()
+                    .map(|(from, to)| (from.clone(), to.clone()))
+                    .ok_or_else(|| KernelError::NotFunctionType(func_typ.clone()))?;
+                let mut subst = HashMap::new();
+                if !Self::type_scheme_match_inner(&expected_arg, &arg_typ, &mut subst) {
+                    return Err(KernelError::TypeMismatch {
+                        expected: expected_arg,
+                        actual: arg_typ,
+                    });
+                }
+                let result_typ = Self::apply_type_scheme_subst(&result_typ, &subst);
+                Self::ensure_type_has_no_dummy(&result_typ, "CTerm::certify_checked")?;
+                Ok((Term::App { func: Box::new(func), arg: Box::new(arg) }, result_typ))
+            },
+        }
+    }
+
+    fn ensure_type_has_no_dummy(typ: &Typ, op: &'static str) -> Result<(), KernelError> {
+        if typ.contains_dummy() { Err(KernelError::DummyType { op }) } else { Ok(()) }
+    }
+
+    fn type_scheme_matches(scheme: &Typ, actual: &Typ) -> bool {
+        let mut subst = HashMap::new();
+        Self::type_scheme_match_inner(scheme, actual, &mut subst)
+    }
+
+    fn type_scheme_match_inner(
+        scheme: &Typ,
+        actual: &Typ,
+        subst: &mut HashMap<String, Typ>,
+    ) -> bool {
+        if actual.contains_dummy() {
+            return false;
+        }
+        match scheme {
+            Typ::TFree { name, .. } => {
+                Self::bind_type_scheme_var(format!("F:{}", name.as_ref()), actual, subst)
+            },
+            Typ::TVar { name, index, .. } => {
+                Self::bind_type_scheme_var(format!("V:{}:{index}", name.as_ref()), actual, subst)
+            },
+            Typ::Type { name: n1, args: a1 } => match actual {
+                Typ::Type { name: n2, args: a2 } if n1 == n2 && a1.len() == a2.len() => a1
+                    .iter()
+                    .zip(a2.iter())
+                    .all(|(left, right)| Self::type_scheme_match_inner(left, right, subst)),
+                _ => false,
+            },
+        }
+    }
+
+    fn bind_type_scheme_var(key: String, actual: &Typ, subst: &mut HashMap<String, Typ>) -> bool {
+        if actual.contains_dummy() {
+            return false;
+        }
+        match subst.get(&key) {
+            Some(bound) => bound == actual,
+            None => {
+                subst.insert(key, actual.clone());
+                true
+            },
+        }
+    }
+
+    fn apply_type_scheme_subst(typ: &Typ, subst: &HashMap<String, Typ>) -> Typ {
+        match typ {
+            Typ::TFree { name, .. } => {
+                subst.get(&format!("F:{}", name.as_ref())).cloned().unwrap_or_else(|| typ.clone())
+            },
+            Typ::TVar { name, index, .. } => subst
+                .get(&format!("V:{}:{index}", name.as_ref()))
+                .cloned()
+                .unwrap_or_else(|| typ.clone()),
+            Typ::Type { name, args } => {
+                let args =
+                    args.iter().map(|arg| Self::apply_type_scheme_subst(arg, subst)).collect();
+                Typ::Type { name: name.clone(), args }
+            },
         }
     }
 
@@ -138,7 +442,7 @@ impl CTerm {
 
 impl fmt::Debug for CTerm {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "CTerm({:?})", self.term)
+        write!(f, "CTerm({:?}, {:?})", self.term, self.cert_status)
     }
 }
 
@@ -307,6 +611,7 @@ pub(crate) struct ThmDeriv {
     pub(crate) hyps: Hyps,
     pub(crate) tpairs: Vec<(Term, Term)>,
     pub(crate) oracles: Vec<Arc<str>>,
+    pub(crate) trust: ThmTrust,
     pub(crate) derivation: Derivation,
 }
 
@@ -358,6 +663,13 @@ pub struct Thm {
     /// proved result only if this is empty and no hypotheses or unresolved
     /// tpairs remain.
     oracles: Vec<Arc<str>>,
+    /// How this theorem crossed the trusted construction boundary.
+    ///
+    /// This is independent from the oracle footprint. A compatibility theorem
+    /// may be oracle-free and closed-shaped, but it is not a strict trusted
+    /// theorem until it is rebuilt through checked CTerms and strict kernel
+    /// rules.
+    trust: ThmTrust,
     derivation: Derivation,
     serial: u64,
 }
@@ -370,6 +682,7 @@ impl ThmDeriv {
             hyps: thm.hyps.clone(),
             tpairs: thm.tpairs.clone(),
             oracles: thm.oracles.clone(),
+            trust: thm.trust,
             derivation: thm.derivation.clone(),
         }
     }
@@ -403,7 +716,7 @@ impl Thm {
         &self.shyps
     }
     pub fn has_oracles(&self) -> bool {
-        matches!(self.derivation, Derivation::Oracle { .. })
+        !self.oracles.is_empty()
     }
 
     /// The oracle trust footprint: the unproved assertions (oracles, `sorry`,
@@ -420,13 +733,164 @@ impl Thm {
     pub fn is_fully_proved(&self) -> bool {
         self.oracles.is_empty()
     }
-    /// Whether this theorem is both oracle-free and closed for lemma
-    /// acceptance/statistics.
+    /// Whether this theorem is both oracle-free and closed-shaped.
+    ///
+    /// This does not imply strict trusted acceptance: compatibility theorems
+    /// can be oracle-free and closed-shaped. Final trusted tables and verified
+    /// statistics must use `is_strict_closed_proved()`.
     pub fn is_closed_proved(&self) -> bool {
         self.is_fully_proved() && self.is_closed()
     }
+    /// The construction boundary used for this theorem.
+    pub fn trust_status(&self) -> ThmTrust {
+        self.trust
+    }
+    /// Whether this theorem was constructed through strict kernel paths.
+    pub fn is_strict_kernel_theorem(&self) -> bool {
+        self.trust == ThmTrust::Strict
+    }
+    /// Whether this theorem was constructed through compatibility paths.
+    pub fn is_compat_theorem(&self) -> bool {
+        self.trust == ThmTrust::Compat
+    }
+    /// Whether this theorem depends on an admitted/oracle source.
+    pub fn is_admitted_theorem(&self) -> bool {
+        self.trust == ThmTrust::Admitted || !self.oracles.is_empty()
+    }
+    /// Whether this theorem contains any residual dummy type annotation.
+    pub fn contains_dummy_type(&self) -> bool {
+        self.prop.contains_dummy_type()
+            || self.hyps.iter().any(CTerm::contains_dummy_type)
+            || self.tpairs.iter().any(|(t, u)| {
+                CTerm::term_contains_dummy_type(t) || CTerm::term_contains_dummy_type(u)
+            })
+    }
+    /// Strict trusted theorem-table eligibility.
+    pub fn is_strict_closed_proved(&self) -> bool {
+        self.is_strict_kernel_theorem()
+            && self.is_closed_proved()
+            && self.prop.is_checked()
+            && self.hyps.iter().all(CTerm::is_checked)
+            && !self.contains_dummy_type()
+    }
     pub fn serial(&self) -> u64 {
         self.serial
+    }
+
+    fn invariant_error(message: impl Into<String>) -> KernelError {
+        KernelError::KernelInvariant { op: "Thm::check_kernel_invariants", message: message.into() }
+    }
+
+    fn cterm_actual_maxidx(ct: &CTerm) -> usize {
+        usize::max(CTerm::compute_maxidx(ct.term()), ct.term_type().maxidx())
+    }
+
+    fn actual_maxidx(&self) -> usize {
+        let mut maxidx = Self::cterm_actual_maxidx(&self.prop);
+        for hyp in self.hyps.iter() {
+            maxidx = usize::max(maxidx, Self::cterm_actual_maxidx(hyp));
+        }
+        for (left, right) in &self.tpairs {
+            maxidx = usize::max(maxidx, CTerm::compute_maxidx(left));
+            maxidx = usize::max(maxidx, CTerm::compute_maxidx(right));
+        }
+        maxidx
+    }
+
+    fn require_cterm_structural(
+        ct: &CTerm,
+        label: &'static str,
+        mode: KernelCheckMode,
+    ) -> Result<(), KernelError> {
+        let actual_maxidx = Self::cterm_actual_maxidx(ct);
+        if ct.maxidx() != actual_maxidx {
+            return Err(Self::invariant_error(format!(
+                "{label} CTerm maxidx mismatch: stored {}, actual {actual_maxidx}",
+                ct.maxidx()
+            )));
+        }
+
+        if mode == KernelCheckMode::Strict {
+            ct.require_checked("Thm::check_kernel_invariants")?;
+            ct.require_no_dummy_types("Thm::check_kernel_invariants")?;
+            if ct.term_type() != &Pure::prop_type() {
+                return Err(Self::invariant_error(format!(
+                    "{label} is not a Pure proposition: type {:?}",
+                    ct.term_type()
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn derivation_replay_supported(deriv: &Derivation) -> bool {
+        match deriv {
+            Derivation::Oracle { .. } => false,
+            Derivation::Axiom { name, .. } => matches!(*name, "assume" | "reflexive"),
+            Derivation::Rule { name, premises, .. } => {
+                matches!(*name, "symmetric" | "transitive" | "implies_intr" | "implies_elim")
+                    && premises
+                        .iter()
+                        .all(|premise| Self::derivation_replay_supported(&premise.derivation))
+            },
+        }
+    }
+
+    /// Check theorem construction invariants.
+    ///
+    /// `Compat` mode is for legacy/searchable facts and only checks structural
+    /// self-consistency. `Strict` mode is the trusted-kernel gate: it requires
+    /// strict construction provenance, checked proposition/hypothesis CTerms,
+    /// no residual dummy types, no oracle footprint, exact `maxidx`, and
+    /// burden-aware proof replay for the currently supported replay subset.
+    pub fn check_kernel_invariants(&self, mode: KernelCheckMode) -> Result<(), KernelError> {
+        if mode == KernelCheckMode::Strict && self.trust != ThmTrust::Strict {
+            return Err(Self::invariant_error(format!(
+                "strict invariant requires ThmTrust::Strict, found {:?}",
+                self.trust
+            )));
+        }
+
+        Self::require_cterm_structural(&self.prop, "proposition", mode)?;
+        for hyp in self.hyps.iter() {
+            Self::require_cterm_structural(hyp, "hypothesis", mode)?;
+        }
+
+        let actual_maxidx = self.actual_maxidx();
+        if self.maxidx != actual_maxidx {
+            return Err(Self::invariant_error(format!(
+                "theorem maxidx mismatch: stored {}, actual {actual_maxidx}",
+                self.maxidx
+            )));
+        }
+
+        if self.trust == ThmTrust::Strict && !self.oracles.is_empty() {
+            return Err(Self::invariant_error("strict theorem carries an oracle/admit footprint"));
+        }
+        if self.trust == ThmTrust::Admitted && self.oracles.is_empty() {
+            return Err(Self::invariant_error("admitted theorem has no oracle/admit footprint"));
+        }
+
+        if mode == KernelCheckMode::Strict {
+            if self.contains_dummy_type() {
+                return Err(Self::invariant_error(
+                    "strict theorem contains Typ::dummy in prop/hyps/tpairs",
+                ));
+            }
+            if self.tpairs.iter().any(|(left, right)| {
+                CTerm::term_contains_dummy_type(left) || CTerm::term_contains_dummy_type(right)
+            }) {
+                return Err(Self::invariant_error("strict theorem has dummy-typed tpairs"));
+            }
+            if Self::derivation_replay_supported(&self.derivation) {
+                self.check_proof().map_err(|err| {
+                    Self::invariant_error(format!("proof replay burden mismatch: {err}"))
+                })?;
+            }
+        }
+
+        Ok(())
     }
 
     /// Number of subgoals (premises in the prop chain).
@@ -574,6 +1038,40 @@ impl ThmKernel {
         out
     }
 
+    fn trust_from_premises(premises: &[&Thm]) -> ThmTrust {
+        if premises.iter().any(|thm| thm.trust == ThmTrust::Admitted || !thm.oracles.is_empty()) {
+            ThmTrust::Admitted
+        } else if premises.iter().all(|thm| thm.trust == ThmTrust::Strict) {
+            ThmTrust::Strict
+        } else {
+            ThmTrust::Compat
+        }
+    }
+
+    fn trust_from_premises_and_cterms(premises: &[&Thm], cterms: &[&CTerm]) -> ThmTrust {
+        match Self::trust_from_premises(premises) {
+            ThmTrust::Admitted => ThmTrust::Admitted,
+            ThmTrust::Strict if cterms.iter().all(|ct| ct.is_checked()) => ThmTrust::Strict,
+            _ => ThmTrust::Compat,
+        }
+    }
+
+    fn trust_from_cterm(ct: &CTerm) -> ThmTrust {
+        if ct.is_checked() { ThmTrust::Strict } else { ThmTrust::Compat }
+    }
+
+    fn certify_rule_prop(
+        term: Term,
+        trust: ThmTrust,
+        op: &'static str,
+    ) -> Result<CTerm, KernelError> {
+        if trust == ThmTrust::Strict {
+            CTerm::certify_derived_checked(term, op)
+        } else {
+            Ok(CTerm::certify(term))
+        }
+    }
+
     /// Whether two known concrete types are incompatible.
     ///
     /// `dummy`, `TVar`, and `TFree` remain potentially compatible: these are
@@ -647,6 +1145,7 @@ impl ThmKernel {
             tpairs: vec![],
             shyps: vec![],
             oracles: vec![oracle],
+            trust: ThmTrust::Admitted,
             derivation: Derivation::Oracle { name: name.to_string(), prop: ct },
             serial: new_serial(),
         }
@@ -658,7 +1157,7 @@ impl ThmKernel {
     /// —————— (assume)
     /// A ⊢ A
     /// ```
-    pub fn assume(ct: CTerm) -> Thm {
+    pub fn assume_compat(ct: CTerm) -> Thm {
         Thm {
             hyps: Hyps::singleton(ct.clone()),
             prop: ct.clone(),
@@ -666,9 +1165,27 @@ impl ThmKernel {
             tpairs: vec![],
             shyps: vec![],
             oracles: vec![],
+            trust: ThmTrust::Compat,
             derivation: Derivation::Axiom { name: "assume", prop: ct },
             serial: new_serial(),
         }
+    }
+
+    /// Strict assumption entry point for checked `CTerm`s: `A |- A`.
+    ///
+    /// Compatibility CTerms must use `assume_compat` and cannot enter this
+    /// trusted theorem-construction path.
+    pub fn assume(ct: CTerm) -> Result<Thm, KernelError> {
+        ct.require_checked("ThmKernel::assume")?;
+        ct.require_no_dummy_types("ThmKernel::assume")?;
+        let mut thm = Self::assume_compat(ct);
+        thm.trust = ThmTrust::Strict;
+        Ok(thm)
+    }
+
+    /// Transitional strict alias retained while callers migrate.
+    pub fn assume_checked(ct: CTerm) -> Result<Thm, KernelError> {
+        Self::assume(ct)
     }
 
     // =================================================================
@@ -683,7 +1200,7 @@ impl ThmKernel {
     /// —————— (reflexive)
     /// ⊢ t ≡ t
     /// ```
-    pub fn reflexive(ct: CTerm) -> Thm {
+    pub fn reflexive_compat(ct: CTerm) -> Thm {
         let t = ct.term().clone();
         // Use the type from the certified term (Typ::dummy() if unknown)
         let typ = ct.term_type().clone();
@@ -697,9 +1214,39 @@ impl ThmKernel {
             tpairs: vec![],
             shyps: vec![],
             oracles: vec![],
+            trust: ThmTrust::Compat,
             derivation: Derivation::Axiom { name: "reflexive", prop: new_prop },
             serial: new_serial(),
         }
+    }
+
+    /// Strict reflexivity entry point for checked `CTerm`s: `|- t == t`.
+    pub fn reflexive(ct: CTerm) -> Result<Thm, KernelError> {
+        ct.require_checked("ThmKernel::reflexive")?;
+        ct.require_no_dummy_types("ThmKernel::reflexive")?;
+        let t = ct.term().clone();
+        let typ = ct.term_type().clone();
+        let new_prop = CTerm::certify_derived_checked(
+            Pure::mk_equals(typ, t.clone(), t),
+            "ThmKernel::reflexive",
+        )?;
+
+        Ok(Thm {
+            hyps: Hyps::empty(),
+            prop: new_prop.clone(),
+            maxidx: ct.maxidx(),
+            tpairs: vec![],
+            shyps: vec![],
+            oracles: vec![],
+            trust: ThmTrust::Strict,
+            derivation: Derivation::Axiom { name: "reflexive", prop: new_prop },
+            serial: new_serial(),
+        })
+    }
+
+    /// Transitional strict alias retained while callers migrate.
+    pub fn reflexive_checked(ct: CTerm) -> Result<Thm, KernelError> {
+        Self::reflexive(ct)
     }
 
     // =================================================================
@@ -711,7 +1258,12 @@ impl ThmKernel {
         let (t, u, eq_typ) = Pure::dest_equals_with_type(thm.prop.term())
             .ok_or_else(|| KernelError::NotEquality(thm.prop.term().clone()))?;
 
-        let new_prop = CTerm::certify(Pure::mk_equals(eq_typ, u.clone(), t.clone()));
+        let trust = Self::trust_from_premises(&[thm]);
+        let new_prop = Self::certify_rule_prop(
+            Pure::mk_equals(eq_typ, u.clone(), t.clone()),
+            trust,
+            "ThmKernel::symmetric",
+        )?;
 
         Ok(Thm {
             hyps: thm.hyps.clone(),
@@ -720,6 +1272,7 @@ impl ThmKernel {
             tpairs: thm.tpairs.clone(),
             shyps: thm.shyps.clone(),
             oracles: thm.oracles.clone(),
+            trust,
             derivation: Derivation::Rule {
                 name: "symmetric",
                 prop: new_prop,
@@ -753,7 +1306,12 @@ impl ThmKernel {
             return Err(KernelError::TypeMismatch { expected: eq_typ1, actual: eq_typ2 });
         }
 
-        let new_prop = CTerm::certify(Pure::mk_equals(eq_typ1, t.clone(), v.clone()));
+        let trust = Self::trust_from_premises(&[thm1, thm2]);
+        let new_prop = Self::certify_rule_prop(
+            Pure::mk_equals(eq_typ1, t.clone(), v.clone()),
+            trust,
+            "ThmKernel::transitive",
+        )?;
 
         Ok(Thm {
             hyps: thm1.hyps.union(&thm2.hyps),
@@ -762,6 +1320,7 @@ impl ThmKernel {
             tpairs: Self::union_tpairs(&thm1.tpairs, &thm2.tpairs),
             shyps: Self::union_shyps(&thm1.shyps, &thm2.shyps),
             oracles: Self::union_oracles(&thm1.oracles, &thm2.oracles),
+            trust,
             derivation: Derivation::Rule {
                 name: "transitive",
                 prop: new_prop,
@@ -824,6 +1383,7 @@ impl ThmKernel {
             tpairs: Self::union_tpairs(&thm_f.tpairs, &thm_x.tpairs),
             shyps: Self::union_shyps(&thm_f.shyps, &thm_x.shyps),
             oracles: Self::union_oracles(&thm_f.oracles, &thm_x.oracles),
+            trust: Self::trust_from_premises(&[thm_f, thm_x]),
             derivation: Derivation::Rule {
                 name: "combination",
                 prop: new_prop,
@@ -867,6 +1427,7 @@ impl ThmKernel {
             tpairs: thm.tpairs.clone(),
             shyps: thm.shyps.clone(),
             oracles: thm.oracles.clone(),
+            trust: Self::trust_from_premises(&[thm]),
             derivation: Derivation::Rule {
                 name: "abstraction",
                 prop: new_prop,
@@ -899,7 +1460,12 @@ impl ThmKernel {
         // (which is the application's result type = body type after beta reduction)
         let typ = ct.term_type().clone();
 
-        let new_prop = CTerm::certify(Pure::mk_equals(typ, ct.term().clone(), reduced));
+        let trust = Self::trust_from_cterm(&ct);
+        let new_prop = Self::certify_rule_prop(
+            Pure::mk_equals(typ, ct.term().clone(), reduced),
+            trust,
+            "ThmKernel::beta_conversion",
+        )?;
 
         Ok(Thm {
             hyps: Hyps::empty(),
@@ -908,6 +1474,7 @@ impl ThmKernel {
             tpairs: vec![],
             shyps: vec![],
             oracles: vec![],
+            trust,
             derivation: Derivation::Axiom { name: "beta_conversion", prop: new_prop },
             serial: new_serial(),
         })
@@ -924,8 +1491,12 @@ impl ThmKernel {
             return Err(KernelError::HypothesisNotFound);
         }
 
-        let new_prop =
-            CTerm::certify(Pure::mk_implies(assumption.term().clone(), thm.prop.term().clone()));
+        let trust = Self::trust_from_premises_and_cterms(&[thm], &[assumption]);
+        let new_prop = Self::certify_rule_prop(
+            Pure::mk_implies(assumption.term().clone(), thm.prop.term().clone()),
+            trust,
+            "ThmKernel::implies_intr",
+        )?;
 
         Ok(Thm {
             hyps: thm.hyps.remove(assumption),
@@ -934,6 +1505,7 @@ impl ThmKernel {
             tpairs: thm.tpairs.clone(),
             shyps: thm.shyps.clone(),
             oracles: thm.oracles.clone(),
+            trust,
             derivation: Derivation::Rule {
                 name: "implies_intr",
                 prop: new_prop,
@@ -957,7 +1529,8 @@ impl ThmKernel {
             return Err(KernelError::AntecedentMismatch);
         }
         Self::ensure_known_term_types_compatible(a, thm_a.prop.term())?;
-        let new_prop = CTerm::certify(b.clone());
+        let trust = Self::trust_from_premises(&[thm_imp, thm_a]);
+        let new_prop = Self::certify_rule_prop(b.clone(), trust, "ThmKernel::implies_elim")?;
 
         Ok(Thm {
             hyps: thm_imp.hyps.union(&thm_a.hyps),
@@ -966,6 +1539,7 @@ impl ThmKernel {
             tpairs: Self::union_tpairs(&thm_imp.tpairs, &thm_a.tpairs),
             shyps: Self::union_shyps(&thm_imp.shyps, &thm_a.shyps),
             oracles: Self::union_oracles(&thm_imp.oracles, &thm_a.oracles),
+            trust,
             derivation: Derivation::Rule {
                 name: "implies_elim",
                 prop: new_prop,
@@ -994,6 +1568,7 @@ impl ThmKernel {
             tpairs: thm.tpairs.clone(),
             shyps: thm.shyps.clone(),
             oracles: thm.oracles.clone(),
+            trust: Self::trust_from_premises(&[thm]),
             derivation: Derivation::Rule {
                 name: "forall_intr",
                 prop: new_prop,
@@ -1022,6 +1597,7 @@ impl ThmKernel {
             tpairs: thm.tpairs.clone(),
             shyps: thm.shyps.clone(),
             oracles: thm.oracles.clone(),
+            trust: Self::trust_from_premises_and_cterms(&[thm], &[&ct]),
             derivation: Derivation::Rule {
                 name: "forall_elim",
                 prop: new_prop,
@@ -1086,6 +1662,7 @@ impl ThmKernel {
             tpairs: thm.tpairs.clone(),
             shyps: thm.shyps.clone(),
             oracles: thm.oracles.clone(),
+            trust: Self::trust_from_premises(&[thm]),
             derivation: Derivation::Rule {
                 name: "instantiate",
                 prop: new_prop,
@@ -1262,6 +1839,7 @@ impl ThmKernel {
             tpairs: Self::union_tpairs(&thm1.tpairs, &thm2.tpairs),
             shyps: Self::union_shyps(&thm1.shyps, &thm2.shyps),
             oracles: Self::union_oracles(&thm1.oracles, &thm2.oracles),
+            trust: Self::trust_from_premises(&[&thm1, &thm2]),
             derivation: Derivation::Rule {
                 name: "bicompose",
                 prop: new_prop,
@@ -1310,6 +1888,7 @@ impl ThmKernel {
             tpairs: Self::union_tpairs(&state.tpairs, &eq_thm.tpairs),
             shyps: Self::union_shyps(&state.shyps, &eq_thm.shyps),
             oracles: Self::union_oracles(&state.oracles, &eq_thm.oracles),
+            trust: Self::trust_from_premises(&[state, eq_thm]),
             derivation: Derivation::Rule {
                 name: "subst_premise",
                 prop: new_prop,
@@ -1434,6 +2013,7 @@ impl ThmKernel {
             tpairs: Self::union_tpairs(&thm1.tpairs, &thm2.tpairs),
             shyps: Self::union_shyps(&thm1.shyps, &thm2.shyps),
             oracles: Self::union_oracles(&thm1.oracles, &thm2.oracles),
+            trust: Self::trust_from_premises(&[&thm1, &thm2]),
             derivation: Derivation::Rule {
                 name: "bicompose_eresolve",
                 prop: new_prop,
@@ -1448,7 +2028,11 @@ impl ThmKernel {
     // =================================================================
 
     pub fn trivial(ct: CTerm) -> Result<Thm, KernelError> {
-        let assumed = ThmKernel::assume(ct.clone());
+        let assumed = if ct.is_checked() {
+            ThmKernel::assume(ct.clone())?
+        } else {
+            ThmKernel::assume_compat(ct.clone())
+        };
         ThmKernel::implies_intr(&ct, &assumed)
     }
 
@@ -1627,42 +2211,83 @@ fn collect_type_sorts(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{envir::Envir, types::Symbol};
+    use crate::core::{
+        envir::Envir,
+        types::{Symbol, TypeEnv},
+    };
 
     fn prop(name: &str) -> CTerm {
-        CTerm::certify(Term::const_(name, Typ::base("prop")))
+        checked_prop(name)
+    }
+
+    fn checked_prop(name: &str) -> CTerm {
+        let mut env = TypeEnv::new();
+        env.declare_const(name, Typ::base("prop"));
+        CTerm::certify_checked(Term::const_(name, Typ::base("prop")), &env).unwrap()
+    }
+
+    fn declare_term(term: &Term, env: &mut TypeEnv) {
+        match term {
+            Term::Const { name, typ } if !typ.is_dummy() && !name.as_ref().starts_with("Pure.") => {
+                env.declare_const(name.as_ref(), typ.clone());
+            },
+            Term::Free { name, typ } if !typ.is_dummy() => {
+                env.declare_free(name.as_ref(), typ.clone());
+            },
+            Term::Abs { body, .. } => declare_term(body, env),
+            Term::App { func, arg } => {
+                declare_term(func, env);
+                declare_term(arg, env);
+            },
+            Term::Const { .. } | Term::Free { .. } | Term::Var { .. } | Term::Bound(_) => {},
+        }
+    }
+
+    fn checked_cterm(term: Term) -> CTerm {
+        let mut env = TypeEnv::new();
+        declare_term(&term, &mut env);
+        CTerm::certify_checked(term, &env).unwrap()
+    }
+
+    fn checked_const(name: &str, typ: Typ) -> CTerm {
+        let mut env = TypeEnv::new();
+        env.declare_const(name, typ.clone());
+        CTerm::certify_checked(Term::const_(name, typ), &env).unwrap()
     }
 
     #[test]
     fn test_assume() {
-        let a = prop("A");
-        let thm = ThmKernel::assume(a.clone());
+        let a = checked_prop("A");
+        let thm = ThmKernel::assume(a.clone()).unwrap();
         assert_eq!(thm.hyps().len(), 1);
         assert_eq!(thm.prop(), &a);
+        assert_eq!(thm.trust_status(), ThmTrust::Strict);
     }
 
     #[test]
     fn test_trivial() {
-        let a = prop("A");
+        let a = checked_prop("A");
         let thm = ThmKernel::trivial(a).unwrap();
         assert!(thm.is_unconditional());
         let (x, y) = Pure::dest_implies(thm.prop.term()).expect("Not an implication");
         assert_eq!(x, &Term::const_("A", Typ::base("prop")));
         assert_eq!(y, &Term::const_("A", Typ::base("prop")));
+        assert_eq!(thm.trust_status(), ThmTrust::Strict);
     }
 
     #[test]
-    fn test_reflexive() {
+    fn test_reflexive_compat_accepts_dummy_cterm() {
         let t = CTerm::certify(Term::const_("t", Typ::dummy()));
-        let thm = ThmKernel::reflexive(t);
+        let thm = ThmKernel::reflexive_compat(t);
         assert!(thm.is_unconditional());
+        assert_eq!(thm.trust_status(), ThmTrust::Compat);
     }
 
     #[test]
     fn test_check_proof_rejects_tampered_theorem_prop() {
-        let t = CTerm::certify(Term::const_("t", Typ::base("nat")));
-        let mut thm = ThmKernel::reflexive(t);
-        thm.prop = prop("Tampered");
+        let t = checked_const("t", Typ::base("nat"));
+        let mut thm = ThmKernel::reflexive(t).unwrap();
+        thm.prop = checked_prop("Tampered");
 
         assert!(
             thm.check_proof().is_err(),
@@ -1672,9 +2297,9 @@ mod tests {
 
     #[test]
     fn test_check_proof_rejects_tampered_theorem_hyps() {
-        let t = CTerm::certify(Term::const_("t", Typ::base("nat")));
-        let mut thm = ThmKernel::reflexive(t);
-        thm.hyps = Hyps::singleton(prop("InjectedHyp"));
+        let t = checked_const("t", Typ::base("nat"));
+        let mut thm = ThmKernel::reflexive(t).unwrap();
+        thm.hyps = Hyps::singleton(checked_prop("InjectedHyp"));
 
         assert!(
             thm.check_proof().is_err(),
@@ -1684,8 +2309,8 @@ mod tests {
 
     #[test]
     fn test_check_proof_rejects_tampered_theorem_oracles() {
-        let t = CTerm::certify(Term::const_("t", Typ::base("nat")));
-        let mut thm = ThmKernel::reflexive(t);
+        let t = checked_const("t", Typ::base("nat"));
+        let mut thm = ThmKernel::reflexive(t).unwrap();
         thm.oracles.push(Arc::from("admitted:tampered"));
 
         assert!(
@@ -1696,8 +2321,8 @@ mod tests {
 
     #[test]
     fn test_check_proof_rejects_tampered_theorem_tpairs() {
-        let t = CTerm::certify(Term::const_("t", Typ::base("nat")));
-        let mut thm = ThmKernel::reflexive(t);
+        let t = checked_const("t", Typ::base("nat"));
+        let mut thm = ThmKernel::reflexive(t).unwrap();
         thm.tpairs.push((Term::var("x", 0, Typ::base("nat")), Term::var("y", 0, Typ::base("nat"))));
 
         assert!(
@@ -1708,8 +2333,8 @@ mod tests {
 
     #[test]
     fn test_check_proof_rejects_tampered_premise_derivation() {
-        let t = CTerm::certify(Term::const_("t", Typ::base("nat")));
-        let refl = ThmKernel::reflexive(t);
+        let t = checked_const("t", Typ::base("nat"));
+        let refl = ThmKernel::reflexive(t).unwrap();
         let mut sym = ThmKernel::symmetric(&refl).unwrap();
 
         let Derivation::Rule { premises, .. } = &mut sym.derivation else {
@@ -1718,7 +2343,7 @@ mod tests {
         let Derivation::Axiom { prop: premise_prop, .. } = &mut premises[0].derivation else {
             panic!("reflexive premise should record an axiom derivation");
         };
-        *premise_prop = prop("TamperedPremise");
+        *premise_prop = checked_prop("TamperedPremise");
 
         assert!(
             sym.check_proof().is_err(),
@@ -1728,17 +2353,153 @@ mod tests {
 
     #[test]
     fn test_validate_proof_rechecks_stale_checked_body() {
-        let t = CTerm::certify(Term::const_("t", Typ::base("nat")));
-        let mut thm = ThmKernel::reflexive(t);
+        let t = checked_const("t", Typ::base("nat"));
+        let mut thm = ThmKernel::reflexive(t).unwrap();
         let mut body = thm.proof_body();
 
         // Simulate legacy proposition-only checking having marked the body.
         body.checked = true;
-        thm.hyps = Hyps::singleton(prop("InjectedHyp"));
+        thm.hyps = Hyps::singleton(checked_prop("InjectedHyp"));
 
         assert!(
             thm.validate_proof(&mut body).is_err(),
             "validate_proof trusted ProofBody.checked without burden-aware replay"
+        );
+    }
+
+    #[test]
+    fn test_strict_reflexive_passes_strict_invariants() {
+        let t = checked_const("t", Typ::base("nat"));
+        let thm = ThmKernel::reflexive(t).unwrap();
+
+        assert!(thm.check_kernel_invariants(KernelCheckMode::Strict).is_ok());
+        assert!(thm.check_kernel_invariants(KernelCheckMode::Compat).is_ok());
+    }
+
+    #[test]
+    fn test_strict_open_theorem_passes_strict_invariants_but_not_closed_proved() {
+        let a = checked_prop("A");
+        let thm = ThmKernel::assume(a).unwrap();
+
+        assert_eq!(thm.trust_status(), ThmTrust::Strict);
+        assert!(thm.check_kernel_invariants(KernelCheckMode::Strict).is_ok());
+        assert!(thm.check_proof().is_ok());
+        assert!(thm.is_fully_proved());
+        assert!(!thm.is_closed_proved());
+        assert!(!thm.is_strict_closed_proved());
+    }
+
+    #[test]
+    fn test_unsupported_strict_replay_is_structural_only() {
+        let nat = Typ::base("nat");
+        let mut env = TypeEnv::new();
+        env.declare_const("a", nat.clone());
+        let redex =
+            Term::app(Term::abs("x", nat, Term::bound(0)), Term::const_("a", Typ::base("nat")));
+        let ct = CTerm::certify_checked(redex, &env).unwrap();
+        let thm = ThmKernel::beta_conversion(ct).unwrap();
+
+        assert_eq!(thm.trust_status(), ThmTrust::Strict);
+        assert!(thm.check_kernel_invariants(KernelCheckMode::Strict).is_ok());
+        let err = thm
+            .check_proof()
+            .expect_err("beta_conversion is still outside replay-supported subset");
+        assert!(
+            err.contains("unsupported axiom proof rule: beta_conversion"),
+            "unexpected replay error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_compat_reflexive_fails_strict_invariants() {
+        let t = CTerm::certify(Term::const_("t", Typ::base("nat")));
+        let thm = ThmKernel::reflexive_compat(t);
+
+        assert!(thm.check_kernel_invariants(KernelCheckMode::Compat).is_ok());
+        assert!(thm.check_kernel_invariants(KernelCheckMode::Strict).is_err());
+    }
+
+    #[test]
+    fn test_admitted_theorem_fails_strict_invariants() {
+        let thm = ThmKernel::admit(prop("A"), "admitted:invariant_test");
+
+        assert!(thm.check_kernel_invariants(KernelCheckMode::Compat).is_ok());
+        assert!(thm.check_kernel_invariants(KernelCheckMode::Strict).is_err());
+    }
+
+    #[test]
+    fn test_strict_invariant_rejects_dummy_tainted_theorem() {
+        let t = checked_const("t", Typ::base("nat"));
+        let mut thm = ThmKernel::reflexive(t).unwrap();
+        thm.prop.term_type = Typ::dummy();
+
+        assert!(
+            matches!(
+                thm.check_kernel_invariants(KernelCheckMode::Strict),
+                Err(KernelError::DummyType { .. }) | Err(KernelError::KernelInvariant { .. })
+            ),
+            "strict invariant accepted a dummy-tainted theorem"
+        );
+    }
+
+    #[test]
+    fn test_strict_invariant_rejects_tampered_maxidx() {
+        let t = checked_const("t", Typ::base("nat"));
+        let mut thm = ThmKernel::reflexive(t).unwrap();
+        thm.maxidx = 17;
+
+        assert!(
+            matches!(
+                thm.check_kernel_invariants(KernelCheckMode::Strict),
+                Err(KernelError::KernelInvariant { .. })
+            ),
+            "strict invariant accepted a tampered maxidx"
+        );
+    }
+
+    #[test]
+    fn test_strict_invariant_rejects_tampered_hyps() {
+        let t = checked_const("t", Typ::base("nat"));
+        let mut thm = ThmKernel::reflexive(t).unwrap();
+        thm.hyps = Hyps::singleton(checked_prop("InjectedHyp"));
+
+        assert!(
+            matches!(
+                thm.check_kernel_invariants(KernelCheckMode::Strict),
+                Err(KernelError::KernelInvariant { .. })
+            ),
+            "strict invariant accepted tampered hypotheses"
+        );
+    }
+
+    #[test]
+    fn test_strict_invariant_rejects_tampered_oracles() {
+        let t = checked_const("t", Typ::base("nat"));
+        let mut thm = ThmKernel::reflexive(t).unwrap();
+        thm.oracles.push(Arc::from("admitted:tampered"));
+
+        assert!(
+            matches!(
+                thm.check_kernel_invariants(KernelCheckMode::Strict),
+                Err(KernelError::KernelInvariant { .. })
+            ),
+            "strict invariant accepted an oracle-tainted strict theorem"
+        );
+    }
+
+    #[test]
+    fn test_strict_invariant_rejects_tampered_tpairs() {
+        let t = checked_const("t", Typ::base("nat"));
+        let mut thm = ThmKernel::reflexive(t).unwrap();
+        thm.tpairs
+            .push((Term::const_("lhs", Typ::base("nat")), Term::const_("rhs", Typ::base("nat"))));
+
+        assert!(
+            matches!(
+                thm.check_kernel_invariants(KernelCheckMode::Strict),
+                Err(KernelError::KernelInvariant { .. })
+            ),
+            "strict invariant accepted tampered tpairs"
         );
     }
 
@@ -1770,7 +2531,7 @@ mod tests {
         let a = prop("A");
         let b = prop("B");
         let imp = Pure::mk_implies(a.term().clone(), b.term().clone());
-        let thm = ThmKernel::assume(CTerm::certify(imp));
+        let thm = ThmKernel::assume(checked_cterm(imp)).unwrap();
         assert_eq!(thm.nprems(), 1); // A is the only premise
         assert_eq!(thm.concl(), b.term().clone()); // B is the conclusion
     }
@@ -1778,7 +2539,7 @@ mod tests {
     #[test]
     fn test_instantiate_idempotent() {
         let a = prop("A");
-        let thm = ThmKernel::assume(a.clone());
+        let thm = ThmKernel::assume(a.clone()).unwrap();
         let env = Envir::init();
         let result = ThmKernel::instantiate_checked(&env, &thm).unwrap();
         assert_eq!(result.prop(), thm.prop());
@@ -1793,7 +2554,7 @@ mod tests {
         // Result should have 0 premises (A discharged)
         let a = prop("A");
         let state = ThmKernel::trivial(a.clone()).unwrap();
-        let assume_a = ThmKernel::assume(a.clone());
+        let assume_a = ThmKernel::assume(a.clone()).unwrap();
         let result = ThmKernel::bicompose(false, &assume_a, &state, 0);
         assert!(result.is_some());
         assert_eq!(result.unwrap().nprems(), 0);
@@ -1809,9 +2570,11 @@ mod tests {
         let b = prop("B");
         let c = prop("C");
         let thm =
-            ThmKernel::assume(CTerm::certify(Pure::mk_implies(b.term().clone(), a.term().clone())));
+            ThmKernel::assume(checked_cterm(Pure::mk_implies(b.term().clone(), a.term().clone())))
+                .unwrap();
         let state =
-            ThmKernel::assume(CTerm::certify(Pure::mk_implies(a.term().clone(), c.term().clone())));
+            ThmKernel::assume(checked_cterm(Pure::mk_implies(a.term().clone(), c.term().clone())))
+                .unwrap();
         let result = ThmKernel::bicompose(false, &thm, &state, 0);
         assert!(result.is_some());
         let r = result.unwrap();
@@ -1820,7 +2583,7 @@ mod tests {
     }
 
     #[test]
-    fn test_beta_conversion_ok() {
+    fn test_beta_conversion_compat_accepts_dummy_redex() {
         // (λx. x) A → A
         let lam = Term::abs("x", Typ::dummy(), Term::bound(0));
         let a = Term::free("a", Typ::dummy());
@@ -1836,7 +2599,7 @@ mod tests {
         let nat = Typ::base("nat");
         let lam = Term::abs("x", nat.clone(), Term::bound(0));
         let a = Term::free("a", nat.clone());
-        let app = CTerm::certify_typed(Term::app(lam, a.clone()), nat.clone());
+        let app = checked_cterm(Term::app(lam, a.clone()));
 
         let thm = ThmKernel::beta_conversion(app).unwrap();
         let (_, rhs) = Pure::dest_equals(thm.prop().term()).expect("beta result is equality");
@@ -1845,7 +2608,7 @@ mod tests {
     }
 
     #[test]
-    fn test_beta_conversion_err() {
+    fn test_beta_conversion_compat_non_application_err() {
         // Non-application should return Err, not panic
         let t = CTerm::certify(Term::const_("x", Typ::dummy()));
         let result = ThmKernel::beta_conversion(t);
@@ -1866,7 +2629,7 @@ mod tests {
         env.update(x_name.clone(), 0, nat.clone(), zero.clone());
 
         let var_term = Term::var("x", 0, nat);
-        let thm = ThmKernel::assume(CTerm::certify(var_term));
+        let thm = ThmKernel::assume(checked_cterm(var_term)).unwrap();
         let result = ThmKernel::instantiate_checked(&env, &thm).unwrap();
         // The var should be replaced by zero
         assert_eq!(result.prop().term(), &zero);
@@ -1880,7 +2643,7 @@ mod tests {
         let bool_t = Typ::base("bool");
         let pred = Term::const_("P", Typ::arrow(nat.clone(), Typ::base("prop")));
         let var_term = Term::var("x", 0, nat.clone());
-        let thm = ThmKernel::assume(CTerm::certify(Term::app(pred, var_term)));
+        let thm = ThmKernel::assume_compat(CTerm::certify(Term::app(pred, var_term)));
 
         let mut env = Envir::empty(0);
         env.update("x".into(), 0, nat, Term::const_("True", bool_t));
@@ -1925,7 +2688,7 @@ mod tests {
         let t = CTerm::certify(Term::const_("t", Typ::base("nat")));
         let u = CTerm::certify(Term::const_("u", Typ::base("nat")));
         let eq = Pure::mk_equals(Typ::base("nat"), t.term().clone(), u.term().clone());
-        let admitted_eq = ThmKernel::admit(CTerm::certify(eq), "admitted");
+        let admitted_eq = ThmKernel::admit(checked_cterm(eq), "admitted");
         assert!(!admitted_eq.is_fully_proved());
 
         // symmetric is a sound rule, but its input was admitted.
@@ -1943,11 +2706,12 @@ mod tests {
         let u = Term::const_("u", nat.clone());
         let v = Term::const_("v", nat.clone());
 
-        let proved_tu = ThmKernel::reflexive(CTerm::certify(t.clone())); // ⊢ t ≡ t  (clean)
+        let proved_tu = ThmKernel::reflexive(checked_cterm(t.clone())).unwrap(); // ⊢ t ≡ t
         assert!(proved_tu.is_fully_proved());
+        assert!(proved_tu.is_strict_kernel_theorem());
 
         let admitted_tv = ThmKernel::admit(
-            CTerm::certify(Pure::mk_equals(nat.clone(), t.clone(), v.clone())),
+            checked_cterm(Pure::mk_equals(nat.clone(), t.clone(), v.clone())),
             "admitted",
         );
         // transitive(t≡t, t≡v) = t≡v, tainted by the admitted premise.
@@ -1956,10 +2720,11 @@ mod tests {
         assert_eq!(res.oracles().len(), 1);
 
         // transitive of two clean reflexives stays clean.
-        let r1 = ThmKernel::reflexive(CTerm::certify(u.clone()));
-        let r2 = ThmKernel::reflexive(CTerm::certify(u));
+        let r1 = ThmKernel::reflexive(checked_cterm(u.clone())).unwrap();
+        let r2 = ThmKernel::reflexive(checked_cterm(u)).unwrap();
         let clean = ThmKernel::transitive(&r1, &r2).unwrap();
         assert!(clean.is_fully_proved());
+        assert!(clean.is_strict_closed_proved());
     }
 
     #[test]
@@ -2002,7 +2767,7 @@ mod tests {
         let nat = Typ::base("nat");
         let eq =
             Pure::mk_equals(nat.clone(), Term::const_("a", nat.clone()), Term::const_("b", nat));
-        let base = ThmKernel::reflexive(CTerm::certify(eq));
+        let base = ThmKernel::reflexive(checked_cterm(eq)).unwrap();
         let sort = Sort::new(vec![Arc::from("order")]);
         let tagged = ThmKernel::add_shyp(&base, sort.clone());
         assert_eq!(tagged.shyps().len(), 1);
@@ -2020,12 +2785,11 @@ mod tests {
         let a = Term::const_("a", nat.clone());
         let b = Term::const_("b", nat.clone());
         let c = Term::const_("c", nat.clone());
-        let ab = ThmKernel::reflexive(CTerm::certify(Pure::mk_equals(
-            nat.clone(),
-            a.clone(),
-            a.clone(),
-        )));
-        let bc = ThmKernel::reflexive(CTerm::certify(Pure::mk_equals(nat.clone(), a.clone(), a)));
+        let ab =
+            ThmKernel::reflexive(checked_cterm(Pure::mk_equals(nat.clone(), a.clone(), a.clone())))
+                .unwrap();
+        let bc = ThmKernel::reflexive(checked_cterm(Pure::mk_equals(nat.clone(), a.clone(), a)))
+            .unwrap();
         let s1 = Sort::new(vec![Arc::from("order")]);
         let s2 = Sort::new(vec![Arc::from("finite")]);
         let _ = (b, c); // terms above kept reflexive for a valid transitive chain
@@ -2052,10 +2816,10 @@ mod tests {
 
         // f ≡ f at type nat→bool
         let f = Term::const_("f", fn_typ.clone());
-        let f_eq = ThmKernel::reflexive(CTerm::certify_typed(f, fn_typ));
+        let f_eq = ThmKernel::reflexive(checked_cterm(f)).unwrap();
         // x ≡ x at type int (mismatched against the nat domain)
         let x = Term::const_("x", int.clone());
-        let x_eq = ThmKernel::reflexive(CTerm::certify_typed(x, int));
+        let x_eq = ThmKernel::reflexive(checked_cterm(x)).unwrap();
 
         let res = ThmKernel::combination(&f_eq, &x_eq);
         assert!(
@@ -2070,9 +2834,9 @@ mod tests {
         let nat = Typ::base("nat");
         let fn_typ = Typ::arrow(nat.clone(), nat.clone());
         let f = Term::const_("f", fn_typ.clone());
-        let f_eq = ThmKernel::reflexive(CTerm::certify_typed(f, fn_typ));
+        let f_eq = ThmKernel::reflexive(checked_cterm(f)).unwrap();
         let x = Term::const_("x", nat.clone());
-        let x_eq = ThmKernel::reflexive(CTerm::certify_typed(x, nat));
+        let x_eq = ThmKernel::reflexive(checked_cterm(x)).unwrap();
 
         let res = ThmKernel::combination(&f_eq, &x_eq);
         assert!(res.is_ok(), "well-typed congruence rejected: {res:?}");

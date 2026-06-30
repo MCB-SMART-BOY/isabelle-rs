@@ -117,7 +117,7 @@ impl LocalTheory {
         self.new_axioms.push((format!("{name}_def"), eq.clone()));
         // Return the definition as a theorem
         let ct = CTerm::certify(eq);
-        let thm = ThmKernel::assume(ct);
+        let thm = ThmKernel::assume_compat(ct);
         Arc::new(thm)
     }
 
@@ -126,7 +126,7 @@ impl LocalTheory {
     pub fn axiomatize(&mut self, name: &str, prop: Term) -> Arc<Thm> {
         self.new_axioms.push((name.to_string(), prop.clone()));
         let ct = CTerm::certify(prop);
-        let thm = ThmKernel::assume(ct);
+        let thm = ThmKernel::assume_compat(ct);
         Arc::new(thm)
     }
 

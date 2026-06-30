@@ -70,8 +70,8 @@ pub fn verify_stats() -> (usize, usize) {
     VERIFY_STATS.with(|c| c.get())
 }
 
-fn is_closed_proved_outcome(thm: &Thm) -> bool {
-    thm.is_closed_proved() && LAST_OUTCOME.with(|c| c.get()) != VerifyOutcome::AxiomAccepted
+fn is_strict_closed_proved_outcome(thm: &Thm) -> bool {
+    thm.is_strict_closed_proved() && LAST_OUTCOME.with(|c| c.get()) != VerifyOutcome::AxiomAccepted
 }
 
 // =========================================================================
@@ -788,7 +788,7 @@ impl Method {
                 return Some(current);
             }
             let prem = current.prem(0)?;
-            let goal = ThmKernel::assume(CTerm::certify(prem));
+            let goal = ThmKernel::assume_compat(CTerm::certify(prem));
             let solved = Self::dfs_search(&goal, bound, &acc)
                 .or_else(|| Self::auto_exec(&goal, 0, &acc).into_iter().find(|r| r.nprems() == 0));
             if let Some(sg) = solved {
@@ -2617,7 +2617,7 @@ fn solve_subgoals(state: &Thm, premises: &[Arc<Thm>]) -> Option<Thm> {
     for _i in 0..state.nprems().min(15) {
         // Limit subgoals for performance
         let prem = current.prem(0)?;
-        let goal = ThmKernel::assume(CTerm::certify(prem));
+        let goal = ThmKernel::assume_compat(CTerm::certify(prem));
         // Quick check: if subgoal is already in hyps, assume_tac can solve it
         if goal.nprems() == 0 {
             return Some(current);
@@ -3179,7 +3179,7 @@ fn apply_of(mut thm: Arc<Thm>, args: Vec<String>, db: &HolTheoremDb) -> Arc<Thm>
         if arg == "_" {
             // Consume first premise by assuming it
             if let Some(prem) = thm.prem(0) {
-                let assume_thm = ThmKernel::assume(CTerm::certify(prem));
+                let assume_thm = ThmKernel::assume_compat(CTerm::certify(prem));
                 if let Some(new_thm) = ThmKernel::bicompose(false, &assume_thm, &thm, 0) {
                     thm = Arc::new(new_thm);
                 }
@@ -3520,7 +3520,7 @@ pub fn verify_file_diagnostic(source: &str) -> Vec<(String, String, bool)> {
                 continue;
             }
             let script = lem.proof_script.clone().unwrap_or_default();
-            let proved = verify_lemma(lem).is_some_and(|thm| is_closed_proved_outcome(&thm));
+            let proved = verify_lemma(lem).is_some_and(|thm| is_strict_closed_proved_outcome(&thm));
             out.push((lem.name.clone(), script, proved));
         }
         LOCAL_THEOREM_INDEX.with(|idx| idx.borrow_mut().clear());
@@ -3556,7 +3556,7 @@ pub fn verify_lemmas_batch(lemmas: &[ParsedLemma]) -> (usize, usize) {
                 // closed-proved predicate (oracle-free, no hyps, no unresolved
                 // tpairs). Secondary: the exit-site tag, which additionally
                 // catches proof-engine shortcuts that accepted the statement.
-                let proved = is_closed_proved_outcome(&thm);
+                let proved = is_strict_closed_proved_outcome(&thm);
                 if proved {
                     verified += 1;
                 }
@@ -3611,9 +3611,11 @@ pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
 
     let proof = lem.proof_script.as_ref()?;
     let (prems, concl) = Pure::strip_imp_prems(lem.theorem.prop().term());
-    let premises: Vec<Arc<Thm>> =
-        prems.iter().map(|p| Arc::new(ThmKernel::assume(CTerm::certify((*p).clone())))).collect();
-    let goal = ThmKernel::assume(CTerm::certify(lem.theorem.prop().term().clone()));
+    let premises: Vec<Arc<Thm>> = prems
+        .iter()
+        .map(|p| Arc::new(ThmKernel::assume_compat(CTerm::certify((*p).clone()))))
+        .collect();
+    let goal = ThmKernel::assume_compat(CTerm::certify(lem.theorem.prop().term().clone()));
 
     // Fast path: single-method proofs that are trivially dispatchable
     if (proof == "by simp"
@@ -3964,7 +3966,7 @@ mod tests {
         // assume_tac requires subgoal in hyps
         // Create state: {A} ⊢ A (nprems=0 — already solved)
         let a = CTerm::certify(Term::const_("A", Typ::base("prop")));
-        let state = ThmKernel::assume(a);
+        let state = ThmKernel::assume_compat(a);
         assert_eq!(state.nprems(), 0); // trivially true
         let results = Method::Assumption.execute(&state, &[]);
         // On a state with nprems=0, assume_tac(0) fails (no subgoal 0)
@@ -4005,14 +4007,14 @@ mod tests {
         let bar = Term::const_("bar", Typ::base("nat"));
         let def_eq =
             crate::core::logic::Pure::mk_equals(Typ::base("nat"), foo.clone(), bar.clone());
-        let def_thm = Arc::new(ThmKernel::assume(CTerm::certify(def_eq)));
+        let def_thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(def_eq)));
 
         // Create goal state: [foo = bar] ==> (foo = bar)
         // This gives a state with nprems=1, where the subgoal is "foo = bar"
         let eq_term =
             crate::core::logic::Pure::mk_equals(Typ::base("nat"), foo.clone(), bar.clone());
         let goal_imp = crate::core::logic::Pure::mk_implies(eq_term.clone(), eq_term.clone());
-        let state = ThmKernel::assume(CTerm::certify(goal_imp));
+        let state = ThmKernel::assume_compat(CTerm::certify(goal_imp));
         assert_eq!(state.nprems(), 1, "state should have 1 subgoal");
 
         // Apply unfold foo_def (should rewrite foo to bar in subgoal)
@@ -4032,7 +4034,7 @@ mod tests {
         let bar = Term::const_("bar", Typ::base("nat"));
         let def_eq =
             crate::core::logic::Pure::mk_equals(Typ::base("nat"), foo.clone(), bar.clone());
-        let def_thm = Arc::new(ThmKernel::assume(CTerm::certify(def_eq)));
+        let def_thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(def_eq)));
 
         // Create goal state: [f(foo) = f(bar)] ==> (f(foo) = f(bar))
         // Subgoal is f(foo) = f(bar), and unfold should rewrite foo→bar inside
@@ -4042,7 +4044,7 @@ mod tests {
         let eq_term =
             crate::core::logic::Pure::mk_equals(Typ::base("nat"), f_foo.clone(), f_bar.clone());
         let goal_imp = crate::core::logic::Pure::mk_implies(eq_term.clone(), eq_term.clone());
-        let state = ThmKernel::assume(CTerm::certify(goal_imp));
+        let state = ThmKernel::assume_compat(CTerm::certify(goal_imp));
         assert_eq!(state.nprems(), 1);
 
         let method = Method::Unfold(vec![def_thm]);
@@ -4061,14 +4063,14 @@ mod tests {
         let bar = Term::const_("bar", Typ::base("nat"));
         let def_eq =
             crate::core::logic::Pure::mk_equals(Typ::base("nat"), foo.clone(), bar.clone());
-        let def_thm = Arc::new(ThmKernel::assume(CTerm::certify(def_eq)));
+        let def_thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(def_eq)));
 
         // Create goal state: [bar = foo] ==> (bar = foo)
         // Subgoal: bar = foo, fold should rewrite bar→foo giving foo = foo
         let eq_term =
             crate::core::logic::Pure::mk_equals(Typ::base("nat"), bar.clone(), foo.clone());
         let goal_imp = crate::core::logic::Pure::mk_implies(eq_term.clone(), eq_term.clone());
-        let state = ThmKernel::assume(CTerm::certify(goal_imp));
+        let state = ThmKernel::assume_compat(CTerm::certify(goal_imp));
         assert_eq!(state.nprems(), 1);
 
         let method = Method::Fold(vec![def_thm]);
@@ -4109,10 +4111,10 @@ mod tests {
         // A ==> A by assumption — pass assume(A) as premise
         let a = CTerm::certify(Term::const_("A", Typ::base("prop")));
         let a_imp_a = crate::core::logic::Pure::mk_implies(a.term().clone(), a.term().clone());
-        let goal = ThmKernel::assume(CTerm::certify(a_imp_a));
+        let goal = ThmKernel::assume_compat(CTerm::certify(a_imp_a));
         // goal: {A==>A} ⊢ A==>A, nprems=1, subgoal=A
         // Provide assume(A) as external premise so assume_tac can match
-        let assume_a = Arc::new(ThmKernel::assume(a.clone()));
+        let assume_a = Arc::new(ThmKernel::assume_compat(a.clone()));
         let result = prove_auto(&goal, &[assume_a]);
         assert!(result.is_some(), "auto should prove A ==> A with premise");
         assert_eq!(result.unwrap().nprems(), 0);
@@ -4122,7 +4124,7 @@ mod tests {
     fn test_prove_assume_multi() {
         // [A] ==> A (assume A from hyps)
         let a = Term::const_("A", Typ::base("prop"));
-        let state = ThmKernel::assume(CTerm::certify(a.clone()));
+        let state = ThmKernel::assume_compat(CTerm::certify(a.clone()));
         // state: {A} ⊢ A, nprems=0 but still open under hypothesis A.
         assert_eq!(state.nprems(), 0);
     }
@@ -4131,12 +4133,12 @@ mod tests {
     fn test_open_oracle_free_theorem_is_not_closed_proved_outcome() {
         LAST_OUTCOME.with(|c| c.set(VerifyOutcome::Proved));
         let a = CTerm::certify(Term::const_("A", Typ::base("prop")));
-        let thm = ThmKernel::assume(a);
+        let thm = ThmKernel::assume_compat(a);
 
         assert!(thm.is_fully_proved(), "assume has no oracle footprint");
         assert!(!thm.is_closed(), "assume leaves an ambient hypothesis");
         assert!(!thm.is_closed_proved());
-        assert!(!super::is_closed_proved_outcome(&thm));
+        assert!(!super::is_strict_closed_proved_outcome(&thm));
     }
 
     #[test]
@@ -4144,7 +4146,7 @@ mod tests {
         let a = Term::const_("A", Typ::base("prop"));
         let b = Term::const_("B", Typ::base("prop"));
         let imp = Pure::mk_implies(a, b);
-        let thm = Arc::new(ThmKernel::assume(CTerm::certify(imp)));
+        let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(imp)));
         let db = HolTheoremDb::new();
 
         let transformed = super::apply_attributes(thm, &[String::from("rule_format")], &db);
@@ -4166,14 +4168,15 @@ mod tests {
         let lem = ParsedLemma {
             name: "target".into(),
             attributes: Vec::new(),
-            theorem: Arc::new(ThmKernel::assume(CTerm::certify(goal))),
+            theorem: Arc::new(ThmKernel::assume_compat(CTerm::certify(goal))),
             proof_script: Some("by (rule open_rule)".into()),
             alias_for: None,
             source_loc: None,
         };
 
         let mut db = HolTheoremDb::new();
-        db.by_name.insert("open_rule".into(), Arc::new(ThmKernel::assume(CTerm::certify(a))));
+        db.by_name
+            .insert("open_rule".into(), Arc::new(ThmKernel::assume_compat(CTerm::certify(a))));
 
         reset_verify_stats();
         let (verified, attempted) =
@@ -4210,8 +4213,8 @@ mod tests {
         let a_imp_b = Pure::mk_implies(a.clone(), b.clone());
         // State: {A, A==>B} ⊢ B
         // Build by: assume(A==>B), then implies_elim with assume(A)
-        let assume_ab = ThmKernel::assume(CTerm::certify(a_imp_b));
-        let assume_a = ThmKernel::assume(CTerm::certify(a));
+        let assume_ab = ThmKernel::assume_compat(CTerm::certify(a_imp_b));
+        let assume_a = ThmKernel::assume_compat(CTerm::certify(a));
         // implies_elim: from (A==>B) and A, get B
         let result = ThmKernel::implies_elim(&assume_ab, &assume_a).unwrap();
         // result: {A, A==>B} ⊢ B, nprems=0
@@ -4295,13 +4298,13 @@ mod tests {
         eprintln!("sym nprems={}, prop head={}", sym.nprems(), &sym_str[..sym_str.len().min(200)]);
         // Parse sym statement directly (ASCII form after convert_syntax)
         if let Some(parsed) = crate::isar::term_parser::parse_term("s = t ==> t = s") {
-            let thm = ThmKernel::assume(CTerm::certify(parsed.clone()));
+            let thm = ThmKernel::assume_compat(CTerm::certify(parsed.clone()));
             eprintln!("Parsed sym nprems={}", thm.nprems());
             eprintln!("Parsed sym term: {:?}", parsed);
         }
         // Check a simple A==>A
         let simple = crate::isar::term_parser::parse_term("A ==> A").unwrap();
-        let simple_thm = ThmKernel::assume(CTerm::certify(simple));
+        let simple_thm = ThmKernel::assume_compat(CTerm::certify(simple));
         eprintln!("Simple A==>A nprems={}", simple_thm.nprems());
         // Create a goal: [length xs = length ys] ==> (length xs = length ys)
         let xs = Term::free("xs", Typ::base("list"));
@@ -4312,7 +4315,7 @@ mod tests {
             Term::app(Term::const_("length", Typ::dummy()), ys.clone()),
         );
         let goal_imp = crate::core::logic::Pure::mk_implies(eq_term.clone(), eq_term.clone());
-        let goal = ThmKernel::assume(CTerm::certify(goal_imp));
+        let goal = ThmKernel::assume_compat(CTerm::certify(goal_imp));
         eprintln!("Goal: {} premises, concl={:?}", goal.nprems(), goal.concl());
         // Try resolve_tac
         let results = crate::core::tactic::resolve_tac(&[(**induct_rule).clone()], 0)(&goal);
@@ -4353,15 +4356,15 @@ mod tests {
         let b = Term::const_("B", Typ::base("prop"));
         // A ==> A is a known-valid goal — exec_proof with "by assumption" should handle it
         let goal = Pure::mk_implies(a.clone(), a.clone());
-        let state = ThmKernel::assume(CTerm::certify(goal));
-        let assume_a = Arc::new(ThmKernel::assume(CTerm::certify(a.clone())));
+        let state = ThmKernel::assume_compat(CTerm::certify(goal));
+        let assume_a = Arc::new(ThmKernel::assume_compat(CTerm::certify(a.clone())));
         // exec_proof with "by assumption" should succeed with the premise
         let result = exec_proof(&state, "by assumption", &[assume_a]);
         assert!(result.is_some(), "assumption should prove A ==> A");
         assert_eq!(result.unwrap().nprems(), 0);
         // Also test: exec_proof with a non-matching rule should return None, not crash
         let goal2 = Pure::mk_implies(a.clone(), b.clone());
-        let state2 = ThmKernel::assume(CTerm::certify(goal2));
+        let state2 = ThmKernel::assume_compat(CTerm::certify(goal2));
         let result2 = exec_proof(&state2, "by (rule sym)", &[]);
         // sym won't match A ==> B; it's OK if the engine proves it or not,
         // as long as it doesn't crash
@@ -4375,8 +4378,8 @@ mod tests {
         let a = Term::const_("A", Typ::base("prop"));
         let goal_term = Pure::mk_implies(a.clone(), a.clone());
         // goal: {A==>A} ⊢ A==>A, nprems=1, subgoal=A
-        let state = ThmKernel::assume(CTerm::certify(goal_term));
-        let assume_a = Arc::new(ThmKernel::assume(CTerm::certify(a.clone())));
+        let state = ThmKernel::assume_compat(CTerm::certify(goal_term));
+        let assume_a = Arc::new(ThmKernel::assume_compat(CTerm::certify(a.clone())));
         let result = exec_proof(&state, "by assumption", &[assume_a]);
         assert!(result.is_some(), "exec_proof should succeed with premise");
         assert_eq!(result.unwrap().nprems(), 0);
@@ -4541,7 +4544,7 @@ mod integration_tests {
             eprintln!("Found lemma: {} with proof: {:?}", lem.name, lem.proof_script);
             let result = verify_lemma(lem);
             match result {
-                Some(thm) if is_closed_proved_outcome(&thm) => {
+                Some(thm) if is_strict_closed_proved_outcome(&thm) => {
                     eprintln!("CLOSED PROVED: {} -> {:?}", lem.name, thm.prop().term())
                 },
                 Some(thm) => eprintln!("ACCEPTED/OPEN: {} -> {:?}", lem.name, thm.prop().term()),
@@ -4559,7 +4562,7 @@ mod integration_tests {
                 );
                 let result = verify_lemma(lem);
                 let status = match result {
-                    Some(ref thm) if is_closed_proved_outcome(thm) => "CLOSED PROVED",
+                    Some(ref thm) if is_strict_closed_proved_outcome(thm) => "CLOSED PROVED",
                     Some(_) => "ACCEPTED/OPEN",
                     None => "FAILED",
                 };
@@ -4598,7 +4601,7 @@ mod benchmark_tests {
             let mut verified = 0usize;
             let start = std::time::Instant::now();
             for lem in with_proofs.iter().take(sample) {
-                if verify_lemma(lem).is_some_and(|thm| is_closed_proved_outcome(&thm)) {
+                if verify_lemma(lem).is_some_and(|thm| is_strict_closed_proved_outcome(&thm)) {
                     verified += 1;
                 }
             }
@@ -4632,7 +4635,7 @@ mod benchmark_tests {
             let t0 = Instant::now();
             let result = verify_lemma(lem);
             let dt = t0.elapsed().as_secs_f64();
-            let proved = result.as_ref().is_some_and(|thm| is_closed_proved_outcome(thm));
+            let proved = result.as_ref().is_some_and(|thm| is_strict_closed_proved_outcome(thm));
             if proved {
                 verified += 1;
             }

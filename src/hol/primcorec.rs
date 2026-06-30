@@ -377,7 +377,7 @@ pub fn primcorec_to_lemmas(def: &PrimcorecDef) -> Vec<crate::hol::hol_loader::Pa
     let theorems = def.generate_theorems();
 
     for (name, term, attrs) in theorems {
-        let thm = ThmKernel::assume(CTerm::certify(term));
+        let thm = ThmKernel::assume_compat(CTerm::certify(term));
         lemmas.push(crate::hol::hol_loader::ParsedLemma {
             name,
             attributes: attrs,

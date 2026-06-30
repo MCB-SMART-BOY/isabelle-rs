@@ -78,7 +78,7 @@ pub struct BuildResult {
     pub loaded: usize,
     /// Total number of theories found.
     pub total: usize,
-    /// Total number of closed proved theorems registered in final theories.
+    /// Total number of strict closed proved theorems registered in final theories.
     pub theorems: usize,
     /// Number of failed theories.
     pub failed: usize,
@@ -471,7 +471,28 @@ mod tests {
 
         let result = builder.build();
         assert_eq!(result.loaded, 1);
-        assert_eq!(result.theorems, 0, "admitted accept_all facts are not closed proved");
+        assert_eq!(result.theorems, 0, "admitted accept_all facts are not strict closed proved");
+        assert_eq!(builder.theorem_count_for("Test"), 0);
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_compat_proof_does_not_report_session_verified_theorems() {
+        let source =
+            "theory Test imports Pure begin\nlemma trivial: \"A ==> A\"\nby assumption\nend";
+        let path = write_temp_theory("compat_not_verified", source);
+        let tf = TheoryFile { name: "Test".into(), path: path.clone(), imports: Vec::new() };
+
+        let mut builder = SessionBuilder::new();
+        builder.files.insert(tf.name.clone(), tf);
+        builder.order = vec!["Test".into()];
+
+        let result = builder.build();
+        assert_eq!(
+            result.theorems, 0,
+            "compat theorem construction must not count as strict verified"
+        );
         assert_eq!(builder.theorem_count_for("Test"), 0);
 
         let _ = std::fs::remove_file(path);

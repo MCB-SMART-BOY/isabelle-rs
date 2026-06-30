@@ -206,7 +206,7 @@ mod tests {
         let q = CTerm::certify(Term::const_("Q", Typ::base("prop")));
         let pq = Term::app(Term::app(hologic::conj_const(), p.term().clone()), q.term().clone());
         let goal_term = Pure::mk_implies(pq, p.term().clone());
-        let goal = ThmKernel::assume(CTerm::certify(goal_term));
+        let goal = ThmKernel::assume_compat(CTerm::certify(goal_term));
 
         let tptp = goal_to_tptp_fof(&goal, "test");
         assert!(tptp.contains("conjecture"));
@@ -219,7 +219,7 @@ mod tests {
         let px = Term::app(Term::const_("p", Typ::dummy()), Term::bound(0));
         let all = Term::abs("X", Typ::dummy(), px);
         let all_prop = Term::app(hologic::all_const(Typ::dummy()), all);
-        let goal = ThmKernel::assume(CTerm::certify(all_prop));
+        let goal = ThmKernel::assume_compat(CTerm::certify(all_prop));
 
         let tptp = goal_to_tptp_fof(&goal, "quant");
         assert!(tptp.contains("! [X]"));
@@ -232,7 +232,7 @@ mod tests {
             Term::app(hologic::eq_const(Typ::dummy()), Term::const_("a", Typ::dummy())),
             Term::const_("b", Typ::dummy()),
         );
-        let goal = ThmKernel::assume(CTerm::certify(eq));
+        let goal = ThmKernel::assume_compat(CTerm::certify(eq));
         let tptp = goal_to_tptp_fof(&goal, "eq_test");
         assert!(tptp.contains("="));
     }

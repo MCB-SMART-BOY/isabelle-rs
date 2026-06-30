@@ -265,7 +265,7 @@ pub fn hol_basic_simp_rules() -> Vec<RewriteRule> {
 /// Build a rewrite rule from a proposition term.
 fn add_rule(rules: &mut Vec<RewriteRule>, name: &str, prop: Term) {
     let ct = CTerm::certify(prop);
-    let thm = ThmKernel::assume(ct);
+    let thm = ThmKernel::assume_compat(ct);
     if let Some(rule) = RewriteRule::from_thm(Arc::new(thm)) {
         rules.push(rule);
     }
@@ -379,7 +379,7 @@ pub fn mk_meta_eq(th: &Thm) -> Option<Thm> {
     if let Some((lhs, rhs)) = hologic::dest_eq(prop) {
         let meta_eq = Pure::mk_equals(Typ::base("prop"), lhs.clone(), rhs.clone());
         let ct = CTerm::certify(meta_eq);
-        let refl = ThmKernel::reflexive(ct);
+        let refl = ThmKernel::reflexive_compat(ct);
         Some(refl)
     } else {
         None
@@ -393,7 +393,7 @@ pub fn mk_eq_True(th: &Thm) -> Option<Thm> {
     let tru = hologic::mk_Trueprop(hologic::true_const());
     let eq = Pure::mk_equals(Typ::base("prop"), p, tru);
     let ct = CTerm::certify(eq);
-    Some(ThmKernel::assume(ct))
+    Some(ThmKernel::assume_compat(ct))
 }
 
 // ============================================================================

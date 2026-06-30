@@ -19,7 +19,7 @@ mod comprehensive {
     fn test_full_implies_roundtrip() {
         let a = term::Term::const_("A", types::Typ::base("prop"));
         let ct = thm::CTerm::certify(a);
-        let assume_a = thm::ThmKernel::assume(ct.clone());
+        let assume_a = thm::ThmKernel::assume_compat(ct.clone());
 
         // Introduce: A ==> A
         let imp = thm::ThmKernel::implies_intr(&ct, &assume_a).unwrap();
@@ -52,7 +52,7 @@ mod comprehensive {
         // Create a theorem
         let a = term::Term::const_("A", types::Typ::base("prop"));
         let ct = thm::CTerm::certify(a.clone());
-        let thm = thm::ThmKernel::assume(ct);
+        let thm = thm::ThmKernel::assume_compat(ct);
 
         // Get proof body
         let mut body = thm.proof_body();
@@ -142,7 +142,7 @@ mod comprehensive {
         // Test flex-flex resolution
         let a = term::Term::const_("A", types::Typ::base("prop"));
         let ct = thm::CTerm::certify(a);
-        let thm = thm::ThmKernel::assume(ct);
+        let thm = thm::ThmKernel::assume_compat(ct);
 
         // Theorem should start with empty tpairs
         assert!(thm.tpairs().is_empty());
@@ -156,7 +156,7 @@ mod comprehensive {
     fn test_full_shyps_pipeline() {
         let a = term::Term::const_("A", types::Typ::base("prop"));
         let ct = thm::CTerm::certify(a);
-        let thm = thm::ThmKernel::assume(ct);
+        let thm = thm::ThmKernel::assume_compat(ct);
 
         // Start with empty shyps
         assert!(thm.shyps().is_empty());

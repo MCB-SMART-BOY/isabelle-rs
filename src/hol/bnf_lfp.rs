@@ -286,7 +286,7 @@ impl BnfLfp {
 
         // The induction rule is an axiom of the datatype. We certify it as an assumption.
         let cterm = CTerm::certify(result);
-        Some(ThmKernel::assume(cterm))
+        Some(ThmKernel::assume_compat(cterm))
     }
 
     /// Build one constructor's induction premise.
@@ -383,7 +383,7 @@ impl BnfLfp {
             lemmas.push(ParsedLemma {
                 name: format!("{}.fold_{}", self.datatype.name, ctor_name),
                 attributes: vec!["simp".to_string(), "bnf_lfp".to_string()],
-                theorem: Arc::new(ThmKernel::assume(cterm)),
+                theorem: Arc::new(ThmKernel::assume_compat(cterm)),
                 proof_script: None,
                 alias_for: None,
                 source_loc: None,
@@ -529,7 +529,7 @@ impl BnfLfp {
             lemmas.push(ParsedLemma {
                 name: format!("{}.rec_{}", self.datatype.name, ctor_name),
                 attributes: vec!["simp".to_string(), "bnf_lfp".to_string()],
-                theorem: Arc::new(ThmKernel::assume(cterm)),
+                theorem: Arc::new(ThmKernel::assume_compat(cterm)),
                 proof_script: None,
                 alias_for: None,
                 source_loc: None,
@@ -711,7 +711,7 @@ impl BnfLfp {
         );
 
         let cterm = CTerm::certify(result);
-        Some(ThmKernel::assume(cterm))
+        Some(ThmKernel::assume_compat(cterm))
     }
 
     /// Build one constructor case for the coinduction premise.
@@ -771,7 +771,7 @@ impl BnfLfp {
             lemmas.push(ParsedLemma {
                 name: format!("{}.unfold_{}", self.datatype.name, ctor_name),
                 attributes: vec!["simp".to_string(), "bnf_lfp".to_string()],
-                theorem: Arc::new(ThmKernel::assume(cterm)),
+                theorem: Arc::new(ThmKernel::assume_compat(cterm)),
                 proof_script: None,
                 alias_for: None,
                 source_loc: None,
@@ -792,7 +792,7 @@ impl BnfLfp {
             lemmas.push(ParsedLemma {
                 name: format!("{}.corec_{}", self.datatype.name, ctor_name),
                 attributes: vec!["simp".to_string(), "bnf_lfp".to_string()],
-                theorem: Arc::new(ThmKernel::assume(cterm)),
+                theorem: Arc::new(ThmKernel::assume_compat(cterm)),
                 proof_script: None,
                 alias_for: None,
                 source_loc: None,
@@ -995,7 +995,7 @@ impl BnfLfp {
             result = Pure::mk_all(&name, var_typ, result);
         }
 
-        Some(ThmKernel::assume(CTerm::certify(result)))
+        Some(ThmKernel::assume_compat(CTerm::certify(result)))
     }
 
     /// Prove: `map_T id = id`
@@ -1021,7 +1021,7 @@ impl BnfLfp {
         let rhs = id_abs;
 
         let eq = Pure::mk_equals(id_type, lhs, rhs);
-        Some(ThmKernel::assume(CTerm::certify(eq)))
+        Some(ThmKernel::assume_compat(CTerm::certify(eq)))
     }
 
     /// Prove: `map_T (g o f) = map_T g o map_T f`
@@ -1087,7 +1087,7 @@ impl BnfLfp {
         result = Pure::mk_all("f", Typ::arrow(Typ::dummy(), Typ::dummy()), result);
         result = Pure::mk_all("g", Typ::arrow(Typ::dummy(), Typ::dummy()), result);
 
-        Some(ThmKernel::assume(CTerm::certify(result)))
+        Some(ThmKernel::assume_compat(CTerm::certify(result)))
     }
 
     // =================================================================
@@ -1104,7 +1104,7 @@ impl BnfLfp {
             lemmas.push(ParsedLemma {
                 name: format!("{}.set_{}", self.datatype.name, ctor_name),
                 attributes: vec!["simp".to_string(), "bnf".to_string()],
-                theorem: Arc::new(ThmKernel::assume(cterm)),
+                theorem: Arc::new(ThmKernel::assume_compat(cterm)),
                 proof_script: None,
                 alias_for: None,
                 source_loc: None,
@@ -1178,7 +1178,7 @@ impl BnfLfp {
         result = Pure::mk_all("x", Typ::dummy(), result);
         result = Pure::mk_all("R", Typ::dummy(), result);
 
-        Some(ThmKernel::assume(CTerm::certify(result)))
+        Some(ThmKernel::assume_compat(CTerm::certify(result)))
     }
 
     // =================================================================
@@ -1233,7 +1233,7 @@ impl BnfLfp {
         result = Pure::mk_all("x", Typ::dummy(), result);
         result = Pure::mk_all("P", Typ::dummy(), result);
 
-        Some(ThmKernel::assume(CTerm::certify(result)))
+        Some(ThmKernel::assume_compat(CTerm::certify(result)))
     }
 
     fn build_pred_case(

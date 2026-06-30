@@ -62,7 +62,7 @@ fn main() {
                 total_ok += 1;
                 total_thms += thms;
                 if !cli.quiet {
-                    println!("✅ {} ({} theorems)", path.display(), thms);
+                    println!("✅ {} ({} strict proved theorems)", path.display(), thms);
                 }
             },
             Err(errs) => {
@@ -78,7 +78,10 @@ fn main() {
     }
 
     if cli.stats || cli.files.len() > 1 {
-        println!("Total: {} ok, {} failed, {} theorems", total_ok, total_fail, total_thms);
+        println!(
+            "Total: {} ok, {} failed, {} strict proved theorems",
+            total_ok, total_fail, total_thms
+        );
     }
 }
 
@@ -88,7 +91,11 @@ fn compile_file(path: &PathBuf) -> Result<usize, Vec<String>> {
     let mut proc = TheoryProcessor::with_parent(parent, file_name);
     let source = std::fs::read_to_string(path).map_err(|e| vec![format!("Cannot read: {e}")])?;
     let _thy = proc.process_source(&source);
-    if proc.errors().is_empty() { Ok(proc.theorem_count()) } else { Err(proc.errors().to_vec()) }
+    if proc.errors().is_empty() {
+        Ok(proc.closed_theorem_count())
+    } else {
+        Err(proc.errors().to_vec())
+    }
 }
 
 fn batch_compile(dir: &PathBuf, quiet: bool, accept_all: bool) {
@@ -111,7 +118,7 @@ fn batch_compile(dir: &PathBuf, quiet: bool, accept_all: bool) {
             println!("║  Total files:     {:<4}               ║", result.total);
             println!("║  Succeeded:       {:<4}               ║", result.loaded);
             println!("║  Failed:          {:<4}               ║", result.failed);
-            println!("║  Theorems:        {:<4}               ║", result.theorems);
+            println!("║  Strict proved:   {:<4}               ║", result.theorems);
             println!("╚══════════════════════════════════════╝");
 
             if !result.error_messages.is_empty() && !quiet {

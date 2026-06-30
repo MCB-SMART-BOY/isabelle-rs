@@ -11,11 +11,134 @@
 use std::{collections::HashMap, sync::Arc};
 
 use crate::core::{
+    error::KernelError,
     term::Term,
     theory::{ProofContext as CoreProofContext, Theory},
-    thm::Thm,
-    types::{Symbol, Typ},
+    thm::{CTerm, Thm},
+    types::{Symbol, Typ, TypeEnv},
 };
+
+// =========================================================================
+// Proof Certification Context
+// =========================================================================
+
+/// Minimal context used to certify proof-state propositions through the
+/// strict `CTerm::certify_checked` boundary.
+///
+/// This is deliberately explicit: constants and local frees must already be
+/// declared in the context. The checked path must not trust type annotations
+/// carried by a raw `Term` as self-declaration evidence.
+#[derive(Clone, Debug)]
+pub struct ProofCertContext {
+    type_env: TypeEnv,
+}
+
+impl Default for ProofCertContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ProofCertContext {
+    /// Create a context containing only Pure builtins.
+    pub fn new() -> Self {
+        ProofCertContext { type_env: TypeEnv::new() }
+    }
+
+    pub fn from_type_env(type_env: TypeEnv) -> Self {
+        ProofCertContext { type_env }
+    }
+
+    /// Create a certification context from a theory signature.
+    pub fn from_theory(theory: &Theory) -> Self {
+        let mut ctx = Self::new();
+        for decl in theory.signature().consts() {
+            ctx.declare_const(decl.name.as_ref(), decl.typ.clone());
+        }
+        ctx
+    }
+
+    pub fn type_env(&self) -> &TypeEnv {
+        &self.type_env
+    }
+
+    pub fn declare_const(&mut self, name: &str, typ: Typ) {
+        self.type_env.declare_const(name, typ);
+    }
+
+    pub fn declare_free(&mut self, name: &str, typ: Typ) {
+        self.type_env.declare_free(name, typ);
+    }
+
+    pub fn with_const(mut self, name: &str, typ: Typ) -> Self {
+        self.declare_const(name, typ);
+        self
+    }
+
+    pub fn with_free(mut self, name: &str, typ: Typ) -> Self {
+        self.declare_free(name, typ);
+        self
+    }
+
+    /// Certify a proposition against this explicit proof context.
+    pub fn certify_prop(&self, prop: Term) -> Result<CTerm, KernelError> {
+        self.require_declared_names(&prop)?;
+        let ct = CTerm::certify_checked(prop, &self.type_env)?;
+        if ct.term_type() != &Typ::base("prop") {
+            return Err(KernelError::TypeMismatch {
+                expected: Typ::base("prop"),
+                actual: ct.term_type().clone(),
+            });
+        }
+        Ok(ct)
+    }
+
+    fn require_declared_names(&self, term: &Term) -> Result<(), KernelError> {
+        let mut stack = vec![term];
+        while let Some(term) = stack.pop() {
+            match term {
+                Term::Const { name, .. } => {
+                    if self.type_env.const_type(name.as_ref()).is_none() {
+                        return Err(KernelError::UndeclaredConstant(name.to_string()));
+                    }
+                },
+                Term::Free { name, typ } => {
+                    if !self.type_env.frees.contains_key(name.as_ref()) {
+                        return if typ.contains_dummy() {
+                            Err(KernelError::DummyType { op: "ProofCertContext::certify_prop" })
+                        } else {
+                            Err(KernelError::KernelInvariant {
+                                op: "ProofCertContext::certify_prop",
+                                message: format!("undeclared local free `{}`", name.as_ref()),
+                            })
+                        };
+                    }
+                },
+                Term::Var { typ, .. } => {
+                    if typ.contains_dummy() {
+                        return Err(KernelError::DummyType {
+                            op: "ProofCertContext::certify_prop",
+                        });
+                    }
+                },
+                Term::Bound(_) => {},
+                Term::Abs { typ, body, .. } => {
+                    if typ.contains_dummy() {
+                        return Err(KernelError::DummyType {
+                            op: "ProofCertContext::certify_prop",
+                        });
+                    }
+                    stack.push(body)
+                },
+                Term::App { func, arg } => {
+                    stack.push(arg);
+                    stack.push(func);
+                },
+            }
+        }
+        Ok(())
+    }
+}
 
 // =========================================================================
 // Case — a proof case from case analysis
@@ -225,6 +348,18 @@ impl IsarContext {
 
     pub fn assumptions(&self) -> &[Term] {
         self.core.assumptions()
+    }
+}
+
+impl ProofCertContext {
+    /// Build a strict certification context from the current Isar proof
+    /// context: theory constants plus locally fixed free variables.
+    pub fn from_isar_context(ctx: &IsarContext) -> Self {
+        let mut cert = ProofCertContext::from_theory(ctx.theory());
+        for (name, typ) in ctx.fixes() {
+            cert.declare_free(name.as_ref(), typ.clone());
+        }
+        cert
     }
 }
 

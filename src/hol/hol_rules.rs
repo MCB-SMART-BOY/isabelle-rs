@@ -175,9 +175,11 @@ mod tests {
     fn test_mp() {
         let p = prop("P");
         let q = prop("Q");
-        let p_imp_q =
-            ThmKernel::assume(CTerm::certify(Pure::mk_implies(p.term().clone(), q.term().clone())));
-        let p_thm = ThmKernel::assume(p.clone());
+        let p_imp_q = ThmKernel::assume_compat(CTerm::certify(Pure::mk_implies(
+            p.term().clone(),
+            q.term().clone(),
+        )));
+        let p_thm = ThmKernel::assume_compat(p.clone());
         let result = mp(&p_imp_q, &p_thm).unwrap();
         assert_eq!(result.prop().term(), q.term());
     }
@@ -185,7 +187,7 @@ mod tests {
     #[test]
     fn test_all_elim() {
         let p = prop("P");
-        let thm_p = ThmKernel::assume(p);
+        let thm_p = ThmKernel::assume_compat(p);
         let thm_all = all_intr("x", Typ::base("nat"), &thm_p).expect("forall_intr should succeed");
         let t = CTerm::certify(Term::const_("t", Typ::base("nat")));
         let result = all_elim(t, &thm_all).unwrap();
@@ -196,8 +198,8 @@ mod tests {
     fn test_conj_intr_elim() {
         let p = prop("P");
         let q = prop("Q");
-        let thm_p = ThmKernel::assume(p);
-        let thm_q = ThmKernel::assume(q);
+        let thm_p = ThmKernel::assume_compat(p);
+        let thm_q = ThmKernel::assume_compat(q);
         let conj = conj_intr(&thm_p, &thm_q);
         assert!(conj.prop().term().is_app());
         // T1: connective stubs are admitted, NOT genuine proofs — they must
@@ -209,7 +211,7 @@ mod tests {
     #[test]
     fn test_disj_intr() {
         let p = prop("P");
-        let thm_p = ThmKernel::assume(p.clone());
+        let thm_p = ThmKernel::assume_compat(p.clone());
         let q = Term::const_("Q", Typ::base("prop"));
         let disj = disj_intr1(&thm_p, &q);
         assert!(disj.prop().term().is_app());
@@ -218,7 +220,7 @@ mod tests {
     #[test]
     fn test_all_intr_elim_roundtrip() {
         let p = prop("P");
-        let thm_p = ThmKernel::assume(p);
+        let thm_p = ThmKernel::assume_compat(p);
         let thm_all = all_intr("x", Typ::base("nat"), &thm_p).expect("forall_intr should succeed");
         assert!(Pure::dest_all(thm_all.prop().term()).is_some());
     }

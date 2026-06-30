@@ -12,10 +12,12 @@
 use std::sync::Arc;
 
 use crate::core::{
+    error::KernelError,
     term::Term,
-    thm::{CTerm, Thm, ThmKernel},
+    thm::{CTerm, KernelCheckMode, Thm, ThmKernel},
     types::Typ,
 };
+use crate::isar::proof_context::ProofCertContext;
 
 /// The proof state during a structured Isar proof.
 #[derive(Debug, Clone)]
@@ -53,6 +55,34 @@ impl ProofState {
         ProofState::Ready { goal }
     }
 
+    fn checked_goal_theorem(ct: CTerm) -> Result<Thm, KernelError> {
+        let goal = ThmKernel::assume(ct)?;
+        goal.check_kernel_invariants(KernelCheckMode::Strict)?;
+        Ok(goal)
+    }
+
+    /// Create a proof state from a checked goal proposition.
+    ///
+    /// The internal goal theorem is a Strict open theorem (`A |- A`), not a
+    /// closed proved lemma.
+    pub fn new_checked_goal(ct: CTerm) -> Result<Self, KernelError> {
+        Ok(Self::new(Self::checked_goal_theorem(ct)?))
+    }
+
+    /// Create a proof state from a raw term through checked certification.
+    pub fn new_checked_goal_from_term(prop: Term) -> Result<Self, KernelError> {
+        Self::new_checked_goal_from_term_in_context(&ProofCertContext::new(), prop)
+    }
+
+    /// Create a proof state from a raw term certified against an explicit
+    /// proof context.
+    pub fn new_checked_goal_from_term_in_context(
+        ctx: &ProofCertContext,
+        prop: Term,
+    ) -> Result<Self, KernelError> {
+        Self::new_checked_goal(ctx.certify_prop(prop)?)
+    }
+
     /// Begin the proof (after `proof` command).
     pub fn begin_proof(&mut self) {
         if let ProofState::Ready { goal } = self {
@@ -76,6 +106,50 @@ impl ProofState {
             *subgoals = new_subgoals;
             *current_subgoal = 0;
         }
+    }
+
+    /// Set subgoals from checked proposition CTerms.
+    pub fn set_subgoals_checked(&mut self, new_subgoals: Vec<CTerm>) -> Result<(), KernelError> {
+        let new_subgoals = new_subgoals
+            .into_iter()
+            .map(Self::checked_goal_theorem)
+            .collect::<Result<Vec<_>, _>>()?;
+        if let ProofState::Proving { subgoals, current_subgoal, .. } = self {
+            *subgoals = new_subgoals;
+            *current_subgoal = 0;
+            Ok(())
+        } else {
+            Err(KernelError::KernelInvariant {
+                op: "ProofState::set_subgoals_checked",
+                message: "checked subgoals require an active Proving state".to_string(),
+            })
+        }
+    }
+
+    /// Set subgoals from raw proposition terms through checked certification.
+    pub fn set_subgoals_checked_from_terms(
+        &mut self,
+        new_subgoals: Vec<Term>,
+    ) -> Result<(), KernelError> {
+        let new_subgoals = new_subgoals
+            .into_iter()
+            .map(|subgoal| ProofCertContext::new().certify_prop(subgoal))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.set_subgoals_checked(new_subgoals)
+    }
+
+    /// Set subgoals from raw proposition terms certified against an explicit
+    /// proof context.
+    pub fn set_subgoals_checked_from_terms_in_context(
+        &mut self,
+        ctx: &ProofCertContext,
+        new_subgoals: Vec<Term>,
+    ) -> Result<(), KernelError> {
+        let new_subgoals = new_subgoals
+            .into_iter()
+            .map(|subgoal| ctx.certify_prop(subgoal))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.set_subgoals_checked(new_subgoals)
     }
 
     /// Get the current subgoal (if any).
@@ -145,12 +219,45 @@ impl ProofState {
         }
     }
 
-    /// Assume a proposition (Isar `assume "A"`).
-    pub fn assume(&mut self, prop: Term) {
+    fn certify_local_proposition(prop: Term) -> Result<CTerm, KernelError> {
+        ProofCertContext::new().certify_prop(prop)
+    }
+
+    /// Add a checked local assumption (`A |- A`) to the active proof state.
+    pub fn assume_checked(&mut self, ct: CTerm) -> Result<Arc<Thm>, KernelError> {
+        let thm = ThmKernel::assume(ct)?;
+        thm.check_kernel_invariants(KernelCheckMode::Strict)?;
+        let thm = Arc::new(thm);
+
         if let ProofState::Proving { facts, .. } = self {
-            let assume_thm = ThmKernel::assume(CTerm::certify(prop));
-            facts.push(Arc::new(assume_thm));
+            facts.push(Arc::clone(&thm));
+            Ok(thm)
+        } else {
+            Err(KernelError::KernelInvariant {
+                op: "ProofState::assume_checked",
+                message: "local assumptions require an active Proving state".to_string(),
+            })
         }
+    }
+
+    /// Assume a proposition (Isar `assume "A"`).
+    ///
+    /// This is now a strict proof-state entry point: the proposition must be
+    /// certifiable without compatibility repairs and the resulting theorem is
+    /// an open Strict theorem (`A |- A`), not a closed proved lemma.
+    pub fn assume(&mut self, prop: Term) -> Result<Arc<Thm>, KernelError> {
+        let ct = Self::certify_local_proposition(prop)?;
+        self.assume_checked(ct)
+    }
+
+    /// Assume a proposition certified against an explicit proof context.
+    pub fn assume_in_context(
+        &mut self,
+        ctx: &ProofCertContext,
+        prop: Term,
+    ) -> Result<Arc<Thm>, KernelError> {
+        let ct = ctx.certify_prop(prop)?;
+        self.assume_checked(ct)
     }
 
     /// Add a fact (from `using`, `note`, or `have`).
@@ -167,7 +274,7 @@ impl ProofState {
         method: &str,
         all_premises: &[Arc<Thm>],
     ) -> Option<Arc<Thm>> {
-        let goal = ThmKernel::assume(CTerm::certify(stmt.clone()));
+        let goal = ThmKernel::assume_compat(CTerm::certify(stmt.clone()));
         let mut combined_prems: Vec<Arc<Thm>> =
             all_premises.iter().chain(self.get_premises().iter()).cloned().collect();
         // Include chained fact if present
@@ -186,7 +293,7 @@ impl ProofState {
     /// Stores the result for final composition in `qed`.
     pub fn show(&mut self, stmt: &Term, method: &str, all_premises: &[Arc<Thm>]) -> Option<Thm> {
         let actual_stmt = self.resolve_case_stmt(stmt);
-        let goal = ThmKernel::assume(CTerm::certify(actual_stmt));
+        let goal = ThmKernel::assume_compat(CTerm::certify(actual_stmt));
         let mut combined_prems: Vec<Arc<Thm>> =
             all_premises.iter().chain(self.get_premises().iter()).cloned().collect();
         // Include chained fact if present
@@ -335,17 +442,209 @@ impl ProofState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::thm::ThmTrust;
+
+    fn cert_ctx(names: &[&str]) -> ProofCertContext {
+        let mut ctx = ProofCertContext::new();
+        for name in names {
+            ctx.declare_const(name, Typ::base("prop"));
+        }
+        ctx
+    }
+
+    fn checked_prop(name: &str) -> CTerm {
+        cert_ctx(&[name]).certify_prop(Term::const_(name, Typ::base("prop"))).unwrap()
+    }
+
+    fn proving_state() -> ProofState {
+        let mut state = ProofState::new_checked_goal(checked_prop("Goal")).unwrap();
+        state.begin_proof();
+        state
+    }
+
+    fn assert_strict_open_goal(goal: &Thm) {
+        assert_eq!(goal.trust_status(), ThmTrust::Strict);
+        goal.check_kernel_invariants(KernelCheckMode::Strict).unwrap();
+        assert!(!goal.is_strict_closed_proved());
+    }
 
     #[test]
     fn test_proof_state_lifecycle() {
-        let a = Term::const_("A", Typ::base("prop"));
-        let goal = ThmKernel::assume(CTerm::certify(a.clone()));
-        let mut state = ProofState::new(goal);
-        state.begin_proof();
+        let ctx = cert_ctx(&["Px"]);
+        let mut state = proving_state();
         state.fix("x", Typ::base("nat"));
-        state.assume(Term::const_("Px", Typ::base("prop")));
+        let assumed = state.assume_in_context(&ctx, Term::const_("Px", Typ::base("prop"))).unwrap();
         let prems = state.get_premises();
         assert_eq!(prems.len(), 1);
+        assert_eq!(assumed.trust_status(), ThmTrust::Strict);
+    }
+
+    #[test]
+    fn proof_state_checked_goal_is_strict_open_theorem() {
+        let state = ProofState::new_checked_goal(checked_prop("Goal")).unwrap();
+
+        let ProofState::Ready { goal } = state else {
+            panic!("new checked goal should start in Ready state");
+        };
+        assert_strict_open_goal(&goal);
+    }
+
+    #[test]
+    fn proof_state_checked_goal_passes_strict_invariant() {
+        let ctx = cert_ctx(&["Goal"]);
+        let state = ProofState::new_checked_goal_from_term_in_context(
+            &ctx,
+            Term::const_("Goal", Typ::base("prop")),
+        )
+        .unwrap();
+
+        let ProofState::Ready { goal } = state else {
+            panic!("new checked goal should start in Ready state");
+        };
+        goal.check_kernel_invariants(KernelCheckMode::Strict).unwrap();
+    }
+
+    #[test]
+    fn proof_state_checked_goal_not_closed_proved() {
+        let state = ProofState::new_checked_goal(checked_prop("Goal")).unwrap();
+
+        let ProofState::Ready { goal } = state else {
+            panic!("new checked goal should start in Ready state");
+        };
+        assert!(!goal.is_strict_closed_proved());
+    }
+
+    #[test]
+    fn proof_state_checked_goal_rejects_compat_cterm() {
+        let compat = CTerm::certify(Term::const_("Goal", Typ::base("prop")));
+        let result = ProofState::new_checked_goal(compat);
+
+        assert!(matches!(result, Err(KernelError::CompatCTerm { .. })));
+    }
+
+    #[test]
+    fn proof_state_checked_goal_rejects_dummy_type() {
+        let result = ProofState::new_checked_goal_from_term(Term::free("x", Typ::dummy()));
+
+        assert!(matches!(result, Err(KernelError::DummyType { .. })));
+    }
+
+    #[test]
+    fn checked_subgoal_scaffolding_preserves_strict_trust() {
+        let ctx = cert_ctx(&["NilCase", "ConsCase"]);
+        let mut state = proving_state();
+        state
+            .set_subgoals_checked_from_terms_in_context(
+                &ctx,
+                vec![
+                    Term::const_("NilCase", Typ::base("prop")),
+                    Term::const_("ConsCase", Typ::base("prop")),
+                ],
+            )
+            .unwrap();
+
+        let current = state.get_current_subgoal().expect("checked subgoal should be active");
+        assert_strict_open_goal(current);
+    }
+
+    #[test]
+    fn proof_state_local_assumption_is_strict_open_theorem() {
+        let ctx = cert_ctx(&["A"]);
+        let mut state = proving_state();
+        let thm = state.assume_in_context(&ctx, Term::const_("A", Typ::base("prop"))).unwrap();
+
+        assert_eq!(thm.trust_status(), ThmTrust::Strict);
+        assert_eq!(thm.hyps().len(), 1);
+        assert_eq!(thm.prop().term(), &Term::const_("A", Typ::base("prop")));
+    }
+
+    #[test]
+    fn proof_state_local_assumption_passes_strict_invariant() {
+        let ctx = cert_ctx(&["A"]);
+        let mut state = proving_state();
+        let thm = state.assume_in_context(&ctx, Term::const_("A", Typ::base("prop"))).unwrap();
+
+        thm.check_kernel_invariants(KernelCheckMode::Strict).unwrap();
+    }
+
+    #[test]
+    fn proof_state_local_assumption_not_closed_proved() {
+        let ctx = cert_ctx(&["A"]);
+        let mut state = proving_state();
+        let thm = state.assume_in_context(&ctx, Term::const_("A", Typ::base("prop"))).unwrap();
+
+        assert!(!thm.is_strict_closed_proved());
+    }
+
+    #[test]
+    fn proof_state_checked_assumption_rejects_compat_cterm() {
+        let mut state = proving_state();
+        let compat = CTerm::certify(Term::const_("A", Typ::base("prop")));
+        let result = state.assume_checked(compat);
+
+        assert!(matches!(result, Err(KernelError::CompatCTerm { .. })));
+    }
+
+    #[test]
+    fn proof_state_checked_assumption_rejects_dummy_type() {
+        let mut state = proving_state();
+        let result = state.assume(Term::free("x", Typ::dummy()));
+
+        assert!(matches!(result, Err(KernelError::DummyType { .. })));
+    }
+
+    #[test]
+    fn proof_state_checked_goal_rejects_undeclared_const() {
+        let result =
+            ProofState::new_checked_goal_from_term(Term::const_("Fake.const", Typ::base("prop")));
+
+        assert!(matches!(result, Err(KernelError::UndeclaredConstant(_))));
+    }
+
+    #[test]
+    fn proof_state_checked_goal_accepts_declared_const() {
+        let ctx = cert_ctx(&["Declared"]);
+        let state = ProofState::new_checked_goal_from_term_in_context(
+            &ctx,
+            Term::const_("Declared", Typ::base("prop")),
+        )
+        .unwrap();
+
+        let ProofState::Ready { goal } = state else {
+            panic!("declared const goal should start in Ready state");
+        };
+        assert_strict_open_goal(&goal);
+    }
+
+    #[test]
+    fn proof_state_checked_assumption_accepts_declared_local_free() {
+        let ctx = ProofCertContext::new().with_free("x", Typ::base("prop"));
+        let mut state = proving_state();
+        let thm = state.assume_in_context(&ctx, Term::free("x", Typ::base("prop"))).unwrap();
+
+        assert_eq!(thm.trust_status(), ThmTrust::Strict);
+        assert!(!thm.is_strict_closed_proved());
+    }
+
+    #[test]
+    fn proof_state_checked_goal_rejects_undeclared_free() {
+        let result = ProofState::new_checked_goal_from_term(Term::free("x", Typ::base("prop")));
+
+        assert!(matches!(result, Err(KernelError::KernelInvariant { .. })));
+    }
+
+    #[test]
+    fn proof_state_checked_goal_rejects_ill_typed_application() {
+        let mut ctx = ProofCertContext::new();
+        ctx.declare_const("F", Typ::arrow(Typ::base("nat"), Typ::base("prop")));
+        ctx.declare_const("b", Typ::base("bool"));
+        let ill_typed = Term::app(
+            Term::const_("F", Typ::arrow(Typ::base("nat"), Typ::base("prop"))),
+            Term::const_("b", Typ::base("bool")),
+        );
+        let result = ProofState::new_checked_goal_from_term_in_context(&ctx, ill_typed);
+
+        assert!(matches!(result, Err(KernelError::TypeMismatch { .. })));
     }
 }
 
@@ -453,7 +752,9 @@ pub fn interpret_proof_script(
             // Strip quotes if present (Isar syntax uses "..." to delimit propositions)
             let term_str = rest.trim_matches('"');
             if let Some(prop) = parse_term_from_script(term_str) {
-                state.assume(prop);
+                if state.assume(prop).is_err() {
+                    return None;
+                }
             }
             i += 1;
             continue;
@@ -833,7 +1134,7 @@ fn parse_and_exec_obtain(
     }
 
     // Add the obtained proposition as an assumption
-    let assume_thm = ThmKernel::assume(CTerm::certify(prop_term.clone()));
+    let assume_thm = ThmKernel::assume_compat(CTerm::certify(prop_term.clone()));
     state.add_fact(Arc::new(assume_thm));
 
     // Try to verify the existential using the method (if not empty)
@@ -920,14 +1221,22 @@ mod isar_tests {
         types::Typ,
     };
 
+    fn cert_ctx(names: &[&str]) -> ProofCertContext {
+        let mut ctx = ProofCertContext::new();
+        for name in names {
+            ctx.declare_const(name, Typ::base("prop"));
+        }
+        ctx
+    }
+
     #[test]
     fn test_structured_have_show() {
         // Test that the ProofState can execute have/show logic
         let a = Term::const_("A", Typ::base("prop"));
-        let goal = ThmKernel::assume(CTerm::certify(a.clone()));
-        let mut state = ProofState::new(goal);
+        let ctx = cert_ctx(&["A"]);
+        let mut state = ProofState::new_checked_goal_from_term_in_context(&ctx, a.clone()).unwrap();
         state.begin_proof();
-        state.assume(a.clone());
+        state.assume_in_context(&ctx, a.clone()).unwrap();
         let prems = state.get_premises();
         assert_eq!(prems.len(), 1, "Should have one assumed fact");
         // show "A" by assumption: A is in premises, so assumption tactic works
@@ -942,7 +1251,7 @@ mod isar_tests {
         // Simulate: lemma "A = A" by (rule refl)
         let a = Term::free("A", Typ::dummy());
         let eq = Pure::mk_equals(Typ::dummy(), a.clone(), a.clone());
-        let goal = ThmKernel::assume(CTerm::certify(eq));
+        let goal = ThmKernel::assume_compat(CTerm::certify(eq));
         let mut state = ProofState::new(goal);
 
         let script = "by (rule refl)";
@@ -955,8 +1264,8 @@ mod isar_tests {
     fn test_let_binding() {
         // Test the `let` command parsing and expansion
         let a = Term::const_("A", Typ::base("prop"));
-        let goal = ThmKernel::assume(CTerm::certify(a.clone()));
-        let mut state = ProofState::new(goal);
+        let ctx = cert_ctx(&["A"]);
+        let mut state = ProofState::new_checked_goal_from_term_in_context(&ctx, a.clone()).unwrap();
         state.begin_proof();
 
         // Define a let binding
@@ -989,11 +1298,11 @@ mod isar_tests {
         let a = Term::const_("A", Typ::base("prop"));
         let b = Term::const_("B", Typ::base("prop"));
         let stmt = Pure::mk_implies(a.clone(), Pure::mk_implies(b.clone(), a.clone()));
-        let goal = ThmKernel::assume(CTerm::certify(stmt));
-        let mut state = ProofState::new(goal);
+        let ctx = cert_ctx(&["A", "B"]);
+        let mut state = ProofState::new_checked_goal_from_term_in_context(&ctx, stmt).unwrap();
         state.begin_proof();
         // assume A
-        state.assume(a.clone());
+        state.assume_in_context(&ctx, a.clone()).unwrap();
         // have "B" by ... would use actual proof
         // show "A" by assumption
         let prems = state.get_premises();
@@ -1013,20 +1322,32 @@ mod induction_tests {
         types::Typ,
     };
 
+    fn cert_ctx(names: &[&str]) -> ProofCertContext {
+        let mut ctx = ProofCertContext::new();
+        for name in names {
+            ctx.declare_const(name, Typ::base("prop"));
+        }
+        ctx
+    }
+
     #[test]
     fn test_induction_subgoals() {
         // Simulate: proof (induct xs) creates subgoals
         let a = Term::const_("A", Typ::base("prop"));
-        let goal = ThmKernel::assume(CTerm::certify(a.clone()));
-        let mut state = ProofState::new(goal);
+        let ctx = cert_ctx(&["A", "NilCase", "ConsCase"]);
+        let mut state = ProofState::new_checked_goal_from_term_in_context(&ctx, a.clone()).unwrap();
         state.begin_proof();
 
         // Set up fake subgoals (simulating induction on a list)
-        let nil_goal =
-            ThmKernel::assume(CTerm::certify(Term::const_("NilCase", Typ::base("prop"))));
-        let cons_goal =
-            ThmKernel::assume(CTerm::certify(Term::const_("ConsCase", Typ::base("prop"))));
-        state.set_subgoals(vec![nil_goal, cons_goal.clone()]);
+        state
+            .set_subgoals_checked_from_terms_in_context(
+                &ctx,
+                vec![
+                    Term::const_("NilCase", Typ::base("prop")),
+                    Term::const_("ConsCase", Typ::base("prop")),
+                ],
+            )
+            .unwrap();
 
         // case Nil — should select first subgoal
         state.case_("Nil");
@@ -1047,11 +1368,14 @@ mod induction_tests {
     fn test_resolve_case_stmt() {
         // Test that ?case resolves to the current subgoal
         let subgoal_term = Term::const_("P(Nil)", Typ::base("prop"));
-        let subgoal = ThmKernel::assume(CTerm::certify(subgoal_term.clone()));
-        let goal = ThmKernel::assume(CTerm::certify(Term::const_("MainGoal", Typ::base("prop"))));
-        let mut state = ProofState::new(goal);
+        let ctx = cert_ctx(&["MainGoal", "P(Nil)"]);
+        let mut state = ProofState::new_checked_goal_from_term_in_context(
+            &ctx,
+            Term::const_("MainGoal", Typ::base("prop")),
+        )
+        .unwrap();
         state.begin_proof();
-        state.set_subgoals(vec![subgoal]);
+        state.set_subgoals_checked_from_terms_in_context(&ctx, vec![subgoal_term.clone()]).unwrap();
 
         let resolved = state.resolve_case_stmt(&Term::const_("?case", Typ::base("prop")));
         eprintln!("Resolved ?case to: {:?}", resolved);

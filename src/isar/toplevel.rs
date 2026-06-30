@@ -346,7 +346,7 @@ impl Toplevel {
         let name = parts[0].trim();
         self.state.add_theorem(
             name,
-            std::sync::Arc::new(crate::core::thm::ThmKernel::assume(
+            std::sync::Arc::new(crate::core::thm::ThmKernel::assume_compat(
                 crate::core::thm::CTerm::certify(Term::const_("True", Typ::base("prop"))),
             )),
         );

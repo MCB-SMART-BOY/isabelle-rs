@@ -336,7 +336,7 @@ mod tests {
         // Create a simple goal: A ==> A
         let a = Term::const_("A", Typ::base("prop"));
         let ct = CTerm::certify(a.clone());
-        let assume_a = ThmKernel::assume(ct.clone());
+        let assume_a = ThmKernel::assume_compat(ct.clone());
         let goal = ThmKernel::trivial(ct).unwrap();
 
         let tptp = hammer.generate_tptp(&goal, &[assume_a]);

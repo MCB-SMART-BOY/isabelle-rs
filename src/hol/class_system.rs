@@ -150,7 +150,7 @@ pub fn instance_to_lemmas(decl: &InstanceDecl) -> Vec<crate::hol::hol_loader::Pa
 
     let instance_name = format!("instance_{}_{}", decl.type_name, decl.class_name);
     let instance_term = Term::const_(instance_name.as_str(), Typ::base("prop"));
-    let thm = ThmKernel::assume(CTerm::certify(instance_term));
+    let thm = ThmKernel::assume_compat(CTerm::certify(instance_term));
 
     lemmas.push(crate::hol::hol_loader::ParsedLemma {
         name: format!("{}.{}.instance", decl.type_name, decl.class_name),
@@ -170,7 +170,7 @@ pub fn subclass_to_lemmas(decl: &SubclassDecl) -> Vec<crate::hol::hol_loader::Pa
 
     let subclass_name = format!("subclass_{}_subseteq_{}", decl.sub_class, decl.super_class);
     let subclass_term = Term::const_(subclass_name.as_str(), Typ::base("prop"));
-    let thm = ThmKernel::assume(CTerm::certify(subclass_term));
+    let thm = ThmKernel::assume_compat(CTerm::certify(subclass_term));
 
     lemmas.push(crate::hol::hol_loader::ParsedLemma {
         name: format!("{}.subclass_{}", decl.sub_class, decl.super_class),

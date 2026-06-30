@@ -148,7 +148,8 @@ impl TheoryProcessor {
     }
 
     /// Process with verification statistics: (theory, verified_count, total_count).
-    /// "Verified" means closed proved: no oracles, no hypotheses, no unresolved tpairs.
+    /// "Verified" means strict closed proved: strict construction, no oracles,
+    /// no hypotheses, no unresolved tpairs, and no dummy types.
     pub fn process_source_verified(&mut self, source: &str) -> (Arc<Theory>, usize, usize) {
         let thy = self.process_source(source);
         let verified = self.closed_theorem_count();
@@ -506,7 +507,7 @@ impl TheoryProcessor {
 
         let theorems = def.generate_theorems();
         for (thm_name, term, attrs) in &theorems {
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify_annotated(term.clone())));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify_annotated(term.clone())));
             self.add_theorem_with_attrs(thm_name.clone(), Arc::clone(&thm), attrs.clone());
         }
     }
@@ -560,7 +561,8 @@ impl TheoryProcessor {
             let fundef = FunDef::new(def.name.clone(), def.typ.clone(), def.equations.clone());
             let theorems = fundef.generate_theorems();
             for (thm_name, term, attrs) in &theorems {
-                let thm = Arc::new(ThmKernel::assume(CTerm::certify_annotated(term.clone())));
+                let thm =
+                    Arc::new(ThmKernel::assume_compat(CTerm::certify_annotated(term.clone())));
                 self.add_theorem_with_attrs(thm_name.clone(), Arc::clone(&thm), attrs.clone());
             }
         }
@@ -608,7 +610,7 @@ impl TheoryProcessor {
         let def = FunDef::new(name.to_string(), typ_str.to_string(), equations);
         let theorems = def.generate_theorems();
         for (thm_name, term, attrs) in &theorems {
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify_annotated(term.clone())));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify_annotated(term.clone())));
             self.add_theorem_with_attrs(thm_name.clone(), Arc::clone(&thm), attrs.clone());
         }
     }
@@ -674,8 +676,9 @@ impl TheoryProcessor {
                     // Generate theorems
                     let thms = cls.generate_theorems();
                     for (thm_name, term, attrs) in &thms {
-                        let thm =
-                            Arc::new(ThmKernel::assume(CTerm::certify_annotated(term.clone())));
+                        let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify_annotated(
+                            term.clone(),
+                        )));
                         self.add_theorem_with_attrs(
                             thm_name.clone(),
                             Arc::clone(&thm),
@@ -741,7 +744,7 @@ impl TheoryProcessor {
         let prefix = int_name.as_deref().unwrap_or(locale_name);
         let thm_name = format!("{}.interpretation_{}", prefix, locale_name);
         let thm_term = Term::const_(thm_name.as_str(), Typ::base("prop"));
-        let thm = Arc::new(ThmKernel::assume(CTerm::certify_annotated(thm_term)));
+        let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify_annotated(thm_term)));
         self.theorem_index.insert(thm_name.clone(), Arc::clone(&thm));
         self.theorems.push((thm_name, thm));
     }
@@ -1081,7 +1084,7 @@ impl TheoryProcessor {
         // Record all theorems into the local theory
         if let Some(ref mut local) = self.local {
             for (name, thm) in &self.theorems {
-                if thm.as_ref().is_closed_proved() {
+                if thm.as_ref().is_strict_closed_proved() {
                     local.note_theorem(name, Arc::clone(thm));
                 }
             }
@@ -1102,9 +1105,10 @@ impl TheoryProcessor {
         self.theorems.len()
     }
 
-    /// Get the count of accumulated theorem-index entries that are closed proved lemmas.
+    /// Get the count of accumulated theorem-index entries that are strict
+    /// closed proved lemmas.
     pub fn closed_theorem_count(&self) -> usize {
-        self.theorems.iter().filter(|(_, thm)| thm.as_ref().is_closed_proved()).count()
+        self.theorems.iter().filter(|(_, thm)| thm.as_ref().is_strict_closed_proved()).count()
     }
 
     /// Look up a theorem by name from the local index.
@@ -1390,7 +1394,7 @@ mod tests {
         assert!(proc.errors().is_empty(), "Errors: {:?}", proc.errors());
         assert_eq!(total, 1);
         assert_eq!(proc.theorem_count(), 1);
-        assert_eq!(verified, 0, "accepted theorem must not count as closed proved");
+        assert_eq!(verified, 0, "accepted theorem must not count as strict closed proved");
         assert_eq!(proc.closed_theorem_count(), 0);
 
         let thm = proc.lookup_theorem("trivial").expect("accept_all should index the theorem");
@@ -1403,7 +1407,7 @@ mod tests {
         );
         assert!(
             thy.lookup_theorem("trivial").is_none(),
-            "accepted theorem must not enter the closed proved theorem table"
+            "accepted theorem must not enter the strict trusted theorem table"
         );
     }
 }

@@ -179,6 +179,22 @@ pub enum KernelError {
          = note: `Typ::dummy()` is forbidden in kernel inference rules"
     )]
     DummyType { op: &'static str },
+
+    /// E0014: Compatibility CTerm supplied to a strict trusted operation.
+    #[error(
+        "E0014: compatibility CTerm in operation `{op}`\n  \
+         = help: use `CTerm::certify_checked(term, type_env)` before trusted theorem construction\n  \
+         = note: best-effort `CTerm::certify` / `certify_compat` values are not part of the trusted kernel boundary"
+    )]
+    CompatCTerm { op: &'static str },
+
+    /// E0015: Kernel invariant violation.
+    #[error(
+        "E0015: kernel invariant violation in `{op}`\n  \
+         {message}\n  \
+         = help: strict trusted theorems must satisfy the kernel construction invariants"
+    )]
+    KernelInvariant { op: &'static str, message: String },
 }
 
 impl KernelError {
@@ -197,6 +213,8 @@ impl KernelError {
             KernelError::BetaConversion(_) => "E0011",
             KernelError::NotFunctionType(_) => "E0012",
             KernelError::DummyType { .. } => "E0013",
+            KernelError::CompatCTerm { .. } => "E0014",
+            KernelError::KernelInvariant { .. } => "E0015",
         }
     }
 

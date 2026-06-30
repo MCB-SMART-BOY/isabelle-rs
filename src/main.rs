@@ -149,11 +149,11 @@ fn demo_kernel() {
     println!("─── Theorem Kernel (Trusted Core) ───");
 
     let a = CTerm::certify(Term::const_("A", Typ::base("prop")));
-    let thm_a = ThmKernel::assume(a.clone());
+    let thm_a = ThmKernel::assume_compat(a.clone());
     println!("Assume: {thm_a}");
 
     let t = CTerm::certify(Term::const_("t", Typ::dummy()));
-    let thm_refl = ThmKernel::reflexive(t);
+    let thm_refl = ThmKernel::reflexive_compat(t);
     println!("Reflexive: {thm_refl}");
 
     println!("✅ The trusted kernel is operational!");

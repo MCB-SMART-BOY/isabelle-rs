@@ -158,6 +158,15 @@ impl Typ {
     pub fn is_dummy(&self) -> bool {
         matches!(self, Typ::Type { name, args } if name.as_ref() == "dummy" && args.is_empty())
     }
+    pub fn contains_dummy(&self) -> bool {
+        match self {
+            Typ::Type { name, args } => {
+                (name.as_ref() == "dummy" && args.is_empty())
+                    || args.iter().any(Typ::contains_dummy)
+            },
+            Typ::TFree { .. } | Typ::TVar { .. } => false,
+        }
+    }
     pub fn maxidx(&self) -> usize {
         match self {
             Typ::TVar { index, .. } => *index,

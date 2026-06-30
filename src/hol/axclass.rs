@@ -105,7 +105,7 @@ pub fn axclass_to_lemmas(cls: &AxClass) -> Vec<crate::hol::hol_loader::ParsedLem
     // Add class-specific theorems
     let class_def_name = format!("class.{}.def", cls.name);
     let class_def_term = Term::const_(class_def_name.as_str(), Typ::base("prop"));
-    let thm = ThmKernel::assume(CTerm::certify(class_def_term));
+    let thm = ThmKernel::assume_compat(CTerm::certify(class_def_term));
 
     lemmas.push(crate::hol::hol_loader::ParsedLemma {
         name: format!("{}.class_def", cls.name),

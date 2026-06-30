@@ -13,7 +13,7 @@ use super::{theory::Theory, thm::Thm};
 pub fn add_fact(theory: &mut Theory, name: &str, thms: Vec<Arc<Thm>>) {
     // Simplified: store in the theory
     for thm in thms {
-        if thm.is_closed_proved() {
+        if thm.is_strict_closed_proved() {
             theory.add_theorem(name, thm.as_ref().clone());
         }
     }
@@ -46,15 +46,19 @@ mod tests {
     use crate::core::{
         term::Term,
         thm::{CTerm, ThmKernel},
-        types::Typ,
+        types::{Typ, TypeEnv},
     };
 
     #[test]
     fn test_all_named_thms() {
         let pure = Theory::pure();
         let mut thy = Theory::begin("Test", vec![pure]);
-        let a = CTerm::certify(Term::const_("A", Typ::base("prop")));
+        let mut env = TypeEnv::new();
+        let prop_t = Typ::base("prop");
+        env.declare_const("A", prop_t.clone());
+        let a = CTerm::certify_checked(Term::const_("A", prop_t), &env).unwrap();
         let thm = ThmKernel::trivial(a).unwrap();
+        assert!(thm.is_strict_closed_proved());
         thy.add_theorem("my_thm", thm);
 
         let named = all_named_thms(&thy);

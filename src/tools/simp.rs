@@ -84,7 +84,7 @@ impl Solver for ArithSolver {
         // Use the linarith module to try proving the goal.
         // We create a proof state with the goal and try the arith tactic.
         let goal_ct = CTerm::certify(goal.clone());
-        let state = ThmKernel::assume(goal_ct);
+        let state = ThmKernel::assume_compat(goal_ct);
         let premises: Vec<Arc<Thm>> = context.iter().map(|t| Arc::new(t.clone())).collect();
         let results = linarith::arith_tac(&state, &premises);
         // If arith_tac closed the goal (0 premises), we have a proof
@@ -103,7 +103,7 @@ impl Solver for AsmSolver {
     fn solve(&self, goal: &Term, _context: &[Thm]) -> Option<Thm> {
         // Check if the goal is trivially true
         if is_trivial_true(goal) {
-            return Some(ThmKernel::reflexive(CTerm::certify(goal.clone())));
+            return Some(ThmKernel::reflexive_compat(CTerm::certify(goal.clone())));
         }
         None
     }
@@ -143,7 +143,11 @@ impl HolSimplifier {
         let beta_conv: crate::core::simplifier::Conv = Arc::new(|t: &Term| {
             use crate::core::term_subst;
             let reduced = term_subst::beta_norm(t);
-            if &reduced == t { None } else { Some(ThmKernel::reflexive(CTerm::certify(reduced))) }
+            if &reduced == t {
+                None
+            } else {
+                Some(ThmKernel::reflexive_compat(CTerm::certify(reduced)))
+            }
         });
         hs.kernel.add_conv(beta_conv);
         hs
@@ -346,10 +350,10 @@ impl HolSimplifier {
                 } else {
                     let new_term = Term::app(new_func, new_arg);
                     let f_thm = func_thm.unwrap_or_else(|| {
-                        ThmKernel::reflexive(CTerm::certify(func.as_ref().clone()))
+                        ThmKernel::reflexive_compat(CTerm::certify(func.as_ref().clone()))
                     });
                     let a_thm = arg_thm.unwrap_or_else(|| {
-                        ThmKernel::reflexive(CTerm::certify(arg.as_ref().clone()))
+                        ThmKernel::reflexive_compat(CTerm::certify(arg.as_ref().clone()))
                     });
                     if let Ok(comb_thm) = ThmKernel::combination(&f_thm, &a_thm) {
                         (new_term, Some(comb_thm))
@@ -527,7 +531,7 @@ impl HolSimplifier {
             let lhs = mk_conj(&conj_c, true_c.clone(), p.clone());
             let rhs = p.clone();
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -540,7 +544,7 @@ impl HolSimplifier {
             let lhs = mk_conj(&conj_c, false_c.clone(), p);
             let rhs = false_c.clone();
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -553,7 +557,7 @@ impl HolSimplifier {
             let lhs = mk_conj(&conj_c, p.clone(), true_c.clone());
             let rhs = p.clone();
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -566,7 +570,7 @@ impl HolSimplifier {
             let lhs = mk_conj(&conj_c, p, false_c.clone());
             let rhs = false_c.clone();
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -579,7 +583,7 @@ impl HolSimplifier {
             let lhs = mk_disj(&disj_c, true_c.clone(), p);
             let rhs = true_c.clone();
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -592,7 +596,7 @@ impl HolSimplifier {
             let lhs = mk_disj(&disj_c, false_c.clone(), p.clone());
             let rhs = p.clone();
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -605,7 +609,7 @@ impl HolSimplifier {
             let lhs = mk_disj(&disj_c, p, true_c.clone());
             let rhs = true_c.clone();
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -618,7 +622,7 @@ impl HolSimplifier {
             let lhs = mk_disj(&disj_c, p.clone(), false_c.clone());
             let rhs = p.clone();
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -631,7 +635,7 @@ impl HolSimplifier {
             let lhs = mk_imp(&imp_const, true_c.clone(), p.clone());
             let rhs = p.clone();
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -644,7 +648,7 @@ impl HolSimplifier {
             let lhs = mk_imp(&imp_const, false_c.clone(), p);
             let rhs = true_c.clone();
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -657,7 +661,7 @@ impl HolSimplifier {
             let lhs = mk_imp(&imp_const, p, true_c.clone());
             let rhs = true_c.clone();
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -670,7 +674,7 @@ impl HolSimplifier {
             let lhs = mk_imp(&imp_const, p.clone(), false_c.clone());
             let rhs = mk_not(&not_c, p.clone());
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -681,7 +685,7 @@ impl HolSimplifier {
             let lhs = mk_not(&not_c, true_c.clone());
             let rhs = false_c.clone();
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -692,7 +696,7 @@ impl HolSimplifier {
             let lhs = mk_not(&not_c, false_c.clone());
             let rhs = true_c.clone();
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -708,7 +712,7 @@ impl HolSimplifier {
             let lhs = Term::apps(if_c.clone(), [true_c.clone(), a.clone(), b.clone()]);
             let rhs = a.clone();
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -724,7 +728,7 @@ impl HolSimplifier {
             let lhs = Term::apps(if_c, [false_c.clone(), a.clone(), b.clone()]);
             let rhs = b.clone();
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -738,7 +742,7 @@ impl HolSimplifier {
             let lhs = Term::app(all_c.clone(), Term::abs(x_name, dummy_typ.clone(), body));
             let rhs = true_c.clone();
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -752,7 +756,7 @@ impl HolSimplifier {
             let lhs = Term::app(ex_c.clone(), Term::abs(x_name, dummy_typ, body));
             let rhs = false_c.clone();
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -1033,7 +1037,7 @@ mod tests {
         // Create a simple proof state
         let true_c = hologic::true_const();
         let goal_ct = CTerm::certify(true_c);
-        let state = ThmKernel::assume(goal_ct);
+        let state = ThmKernel::assume_compat(goal_ct);
         let results = tac(&state);
         // Tactic should not panic
         let _ = results;

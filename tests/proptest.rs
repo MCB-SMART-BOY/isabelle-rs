@@ -118,10 +118,42 @@ fn arb_bool_term() -> impl Strategy<Value = term::Term> {
 // Helper: create equality theorems
 // =========================================================================
 
+fn declare_term(term: &term::Term, env: &mut types::TypeEnv) {
+    match term {
+        term::Term::Const { name, typ }
+            if !typ.is_dummy() && !name.as_ref().starts_with("Pure.") =>
+        {
+            env.declare_const(name.as_ref(), typ.clone());
+        },
+        term::Term::Free { name, typ } if !typ.is_dummy() => {
+            env.declare_free(name.as_ref(), typ.clone());
+        },
+        term::Term::Abs { body, .. } => declare_term(body, env),
+        term::Term::App { func, arg } => {
+            declare_term(func, env);
+            declare_term(arg, env);
+        },
+        term::Term::Const { .. }
+        | term::Term::Free { .. }
+        | term::Term::Var { .. }
+        | term::Term::Bound(_) => {},
+    }
+}
+
+fn checked_cterm(term: term::Term) -> thm::CTerm {
+    let mut env = types::TypeEnv::new();
+    declare_term(&term, &mut env);
+    thm::CTerm::certify_checked(term, &env).expect("property fixture should certify as checked")
+}
+
+fn checked_prop(name: &str) -> thm::CTerm {
+    checked_cterm(term::Term::const_(name, types::Typ::base("prop")))
+}
+
 /// Creates a reflexive theorem `⊢ t ≡ t` from a term.
 fn mk_refl(t: &term::Term) -> thm::Thm {
-    let ct = thm::CTerm::certify(t.clone());
-    thm::ThmKernel::reflexive(ct)
+    thm::ThmKernel::reflexive(checked_cterm(t.clone()))
+        .expect("reflexive property fixture should be strict")
 }
 
 // =========================================================================
@@ -166,8 +198,8 @@ proptest! {
     #[test]
     fn prop_assume_has_self_in_hyps(name in arb_prop_name()) {
         let t = term::Term::const_(name.as_str(), types::Typ::base("prop"));
-        let ct = thm::CTerm::certify(t.clone());
-        let th = thm::ThmKernel::assume(ct.clone());
+        let ct = checked_cterm(t.clone());
+        let th = thm::ThmKernel::assume(ct.clone()).unwrap();
         // The proposition must equal the input
         assert_eq!(th.prop().term(), ct.term());
         // The hypothesis set must contain the assumption
@@ -180,22 +212,23 @@ proptest! {
     #[test]
     fn prop_reflexive_is_unconditional(typ in arb_type()) {
         let t = term::Term::const_("c", typ);
-        let ct = thm::CTerm::certify(t);
-        let th = thm::ThmKernel::reflexive(ct);
-        // Always succeeds (returns Thm, not Result)
+        let ct = checked_cterm(t);
+        let th = thm::ThmKernel::reflexive(ct).unwrap();
         assert!(th.is_unconditional());
         // Must be an equality
         assert!(logic::Pure::dest_equals(th.prop().term()).is_some());
+        assert!(th.is_strict_closed_proved());
     }
 
     /// reflexive: the type of the equality term is prop.
     #[test]
     fn prop_reflexive_is_prop(typ in arb_type()) {
         let t = term::Term::const_("x", typ);
-        let ct = thm::CTerm::certify(t);
-        let th = thm::ThmKernel::reflexive(ct);
+        let ct = checked_cterm(t);
+        let th = thm::ThmKernel::reflexive(ct).unwrap();
         // The prop must be typed as prop
         assert_eq!(th.prop().term_type(), &types::Typ::base("prop"));
+        assert!(th.is_strict_closed_proved());
     }
 }
 
@@ -217,12 +250,9 @@ proptest! {
 
     /// symmetric on reflexive gives same proposition form.
     #[test]
-    fn prop_symmetric_preserves_hyps(typ in arb_type()) {
-        let t = term::Term::const_("x", typ);
-        let ct = thm::CTerm::certify(t.clone());
-        // assume x ⊢ x (an implication, not equality)
-        let th = thm::ThmKernel::assume(ct);
-        // symmetric on a non-equality should fail
+    fn prop_symmetric_rejects_non_equality_assumption(name in arb_prop_name()) {
+        let ct = checked_prop(name.as_str());
+        let th = thm::ThmKernel::assume(ct).unwrap();
         let result = thm::ThmKernel::symmetric(&th);
         assert!(result.is_err());
     }
@@ -249,12 +279,13 @@ proptest! {
     #[test]
     fn prop_implies_intro_elim_roundtrip(name in arb_prop_name()) {
         let t = term::Term::const_(name.as_str(), types::Typ::base("prop"));
-        let ct = thm::CTerm::certify(t.clone());
-        let assume_th = thm::ThmKernel::assume(ct.clone());
+        let ct = checked_cterm(t.clone());
+        let assume_th = thm::ThmKernel::assume(ct.clone()).unwrap();
 
         // Introduce implication: ⊢ A ==> A
         let imp = thm::ThmKernel::implies_intr(&ct, &assume_th).unwrap();
         assert!(imp.is_unconditional());
+        assert!(imp.is_strict_closed_proved());
         assert!(logic::Pure::dest_implies(imp.prop().term()).is_some());
 
         // Eliminate: if we re-assume A, we get A back
@@ -267,15 +298,15 @@ proptest! {
     fn prop_implies_intr_fails_without_hyp(name in arb_prop_name()) {
         // Use distinct names: the input name for A, a fixed different name for B
         let b_name = if name == "B" { "C" } else { "B" };
-        let a = thm::CTerm::certify(term::Term::const_(
+        let a = checked_cterm(term::Term::const_(
             name.as_str(),
             types::Typ::base("prop"),
         ));
-        let b = thm::CTerm::certify(term::Term::const_(
+        let b = checked_cterm(term::Term::const_(
             b_name,
             types::Typ::base("prop"),
         ));
-        let assume_b = thm::ThmKernel::assume(b.clone());
+        let assume_b = thm::ThmKernel::assume(b.clone()).unwrap();
         // A is not in the hyps of assume_b (which contains only b)
         let result = thm::ThmKernel::implies_intr(&a, &assume_b);
         assert!(result.is_err(), "A ({name}) should not be in hyps of assume({b_name})");
@@ -287,14 +318,12 @@ proptest! {
     #[test]
     fn prop_forall_intr_on_unconditional(name in arb_var_name()) {
         let t = term::Term::const_("A", types::Typ::base("prop"));
-        let ct = thm::CTerm::certify(t.clone());
-        // Create an unconditional theorem via trivial(assume(A))
-        let _assume_th = thm::ThmKernel::assume(ct.clone());
+        let ct = checked_cterm(t.clone());
         let triv = thm::ThmKernel::trivial(ct).unwrap();
         // triv is unconditional (no hyps), so forall_intr should succeed
         let all = thm::ThmKernel::forall_intr(
             name.as_str(),
-            types::Typ::dummy(),
+            types::Typ::base("bool"),
             &triv,
         );
         assert!(all.is_ok());
@@ -304,9 +333,10 @@ proptest! {
     #[test]
     fn prop_trivial_is_unconditional(name in arb_prop_name()) {
         let t = term::Term::const_(name.as_str(), types::Typ::base("prop"));
-        let ct = thm::CTerm::certify(t);
+        let ct = checked_cterm(t);
         let th = thm::ThmKernel::trivial(ct).unwrap();
         assert!(th.is_unconditional());
+        assert!(th.is_strict_closed_proved());
         // trivial(A) gives A ==> A
         assert!(logic::Pure::dest_implies(th.prop().term()).is_some());
     }
@@ -316,22 +346,20 @@ proptest! {
     /// beta_conversion: (λx. t) x ≡ t, always unconditional.
     #[test]
     fn prop_beta_conversion_is_unconditional(
-        (var_name, body) in (arb_var_name(), arb_bool_term())
+        var_name in arb_var_name()
     ) {
         let abs = term::Term::abs(
             var_name.as_str(),
             types::Typ::base("bool"),
-            body.clone(),
+            term::Term::bound(0),
         );
         let var = term::Term::free(var_name.as_str(), types::Typ::base("bool"));
         let app = term::Term::app(abs, var);
-        let ct = thm::CTerm::certify(app);
-        let result = thm::ThmKernel::beta_conversion(ct);
-        // May fail if not a proper redex, but if it succeeds:
-        if let Ok(th) = result {
-            assert!(th.is_unconditional());
-            assert!(logic::Pure::dest_equals(th.prop().term()).is_some());
-        }
+        let ct = checked_cterm(app);
+        let th = thm::ThmKernel::beta_conversion(ct).unwrap();
+        assert!(th.is_unconditional());
+        assert!(th.is_strict_closed_proved());
+        assert!(logic::Pure::dest_equals(th.prop().term()).is_some());
     }
 
     /// beta_conversion on non-redex should fail.
@@ -339,7 +367,7 @@ proptest! {
     fn prop_beta_conversion_fails_non_redex(name in arb_prop_name()) {
         // A non-application shouldn't beta-convert
         let t = term::Term::const_(name.as_str(), types::Typ::base("bool"));
-        let ct = thm::CTerm::certify(t);
+        let ct = checked_cterm(t);
         let result = thm::ThmKernel::beta_conversion(ct);
         assert!(result.is_err());
     }
@@ -350,7 +378,7 @@ proptest! {
     #[test]
     fn prop_instantiate_preserves_unconditional(name in arb_prop_name()) {
         let t = term::Term::const_(name.as_str(), types::Typ::base("prop"));
-        let ct = thm::CTerm::certify(t);
+        let ct = checked_cterm(t);
         let th = thm::ThmKernel::trivial(ct).unwrap();
         // Instantiate with empty env → same theorem
         let env = envir::Envir::init();
@@ -370,8 +398,8 @@ proptest! {
     #[test]
     fn prop_implies_intr_removes_hyp(name in arb_prop_name()) {
         let a = term::Term::const_(name.as_str(), types::Typ::base("prop"));
-        let ct_a = thm::CTerm::certify(a);
-        let assume_a = thm::ThmKernel::assume(ct_a.clone());
+        let ct_a = checked_cterm(a);
+        let assume_a = thm::ThmKernel::assume(ct_a.clone()).unwrap();
         // Before: hyps = {A}
         assert_eq!(assume_a.hyps().len(), 1);
         // After implies_intr: hyps should be empty

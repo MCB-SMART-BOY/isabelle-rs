@@ -42,7 +42,7 @@ pub fn no_conv() -> Conv {
 
 /// All-conversion: `t ≡ t` (reflexivity).
 pub fn all_conv() -> Conv {
-    Arc::new(|t| Some(ThmKernel::reflexive(CTerm::certify(t.clone()))))
+    Arc::new(|t| Some(ThmKernel::reflexive_compat(CTerm::certify(t.clone()))))
 }
 
 /// Try `conv1`; if it fails, try `conv2`.
@@ -58,7 +58,7 @@ pub fn arg_conv(i: usize, conv: Conv) -> Conv {
                 conv(arg).and_then(|thm| {
                     let (_, _rhs) = Pure::dest_equals(thm.prop().term())?;
                     ThmKernel::combination(
-                        &ThmKernel::reflexive(CTerm::certify(func.as_ref().clone())),
+                        &ThmKernel::reflexive_compat(CTerm::certify(func.as_ref().clone())),
                         &thm,
                     )
                     .ok()
@@ -87,7 +87,7 @@ pub fn fun_conv(conv: Conv) -> Conv {
         Term::App { func, arg: _ } => conv(func).and_then(|thm| {
             ThmKernel::combination(
                 &thm,
-                &ThmKernel::reflexive(CTerm::certify(func.as_ref().clone())),
+                &ThmKernel::reflexive_compat(CTerm::certify(func.as_ref().clone())),
             )
             .ok()
         }),
@@ -254,10 +254,10 @@ impl Simplifier {
                 } else {
                     let new_term = Term::app(new_func, new_arg);
                     let f_thm = func_thm.unwrap_or_else(|| {
-                        ThmKernel::reflexive(CTerm::certify(func.as_ref().clone()))
+                        ThmKernel::reflexive_compat(CTerm::certify(func.as_ref().clone()))
                     });
                     let a_thm = arg_thm.unwrap_or_else(|| {
-                        ThmKernel::reflexive(CTerm::certify(arg.as_ref().clone()))
+                        ThmKernel::reflexive_compat(CTerm::certify(arg.as_ref().clone()))
                     });
                     if let Ok(comb_thm) = ThmKernel::combination(&f_thm, &a_thm) {
                         (new_term, Some(comb_thm))
@@ -370,7 +370,7 @@ pub fn beta_simp() -> Simplifier {
             None
         } else {
             // We should prove t ≡ reduced, but for now return reflexivity on reduced
-            Some(ThmKernel::reflexive(CTerm::certify(reduced)))
+            Some(ThmKernel::reflexive_compat(CTerm::certify(reduced)))
         }
     });
 
@@ -445,7 +445,7 @@ mod tests {
     fn test_rewrite_identity() {
         // Rewrite rule: ⊢ ?x ≡ ?x (reflexive — does nothing)
         let a = Term::free("a", Typ::dummy());
-        let refl_thm = Arc::new(ThmKernel::reflexive(CTerm::certify(a.clone())));
+        let refl_thm = Arc::new(ThmKernel::reflexive_compat(CTerm::certify(a.clone())));
         let rule = RewriteRule::from_thm(refl_thm).unwrap();
         let simp = Simplifier::new(vec![rule]);
 
@@ -495,7 +495,7 @@ mod conditional_tests {
         let y = Term::free("y", nat.clone());
         let eq = Pure::mk_equals(nat.clone(), x.clone(), y.clone());
         let prop = Pure::mk_implies(a.clone(), eq);
-        let thm = ThmKernel::assume(CTerm::certify(prop));
+        let thm = ThmKernel::assume_compat(CTerm::certify(prop));
         let rule = RewriteRule::from_thm(Arc::new(thm));
         assert!(rule.is_some());
         let rule = rule.unwrap();
@@ -511,7 +511,7 @@ mod conditional_tests {
         let x = Term::free("x", nat.clone());
         let y = Term::free("y", nat.clone());
         let eq = Pure::mk_equals(nat.clone(), x.clone(), y.clone());
-        let thm = ThmKernel::assume(CTerm::certify(eq));
+        let thm = ThmKernel::assume_compat(CTerm::certify(eq));
         let rule = RewriteRule::from_thm(Arc::new(thm));
         assert!(rule.is_some());
         let rule = rule.unwrap();
@@ -531,7 +531,7 @@ mod conditional_tests {
         let eq_cond = Pure::mk_equals(nat.clone(), x.clone(), zero.clone());
         let eq_concl = Pure::mk_equals(nat.clone(), fx, f0.clone());
         let prop = Pure::mk_implies(eq_cond, eq_concl);
-        let thm = ThmKernel::assume(CTerm::certify(prop));
+        let thm = ThmKernel::assume_compat(CTerm::certify(prop));
 
         let rule = RewriteRule::from_thm(Arc::new(thm)).unwrap();
         let simp = Simplifier::new(vec![rule]);
