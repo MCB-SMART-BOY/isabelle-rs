@@ -1,13 +1,15 @@
 # Resolution / Bicompose Family — Design and Status
 
 This is the **design and implementation-status document** for the strict-kernel
-(`src/kernel/`) resolution family: `resolve1_match`, future `bicompose`,
-future `bicompose_eresolve`, and future `subst_premise`.
+(`src/kernel/`) resolution family: `resolve1_match`, conservative
+`subst_premise`, future `bicompose`, and future `bicompose_eresolve`.
 
-**STATUS**: Conservative prototype. `KernelRules::resolve1_match` is
-implemented with strict one-way matching, deterministic substitutions, invariant
-replay, and attack tests. Full `bicompose`, `bicompose_eresolve`, lifting,
-freshening, flex-flex pairs, and higher-order unification remain design-phase.
+**STATUS**: Conservative prototype. `KernelRules::resolve1_match` and
+`KernelRules::subst_premise` are implemented with invariant replay and attack
+tests. `resolve1_match` uses strict one-way matching and deterministic
+substitutions. `subst_premise` is prop-equality only and fixed lhs -> rhs. Full
+`bicompose`, `bicompose_eresolve`, lifting, freshening, flex-flex pairs, and
+higher-order unification remain design-phase.
 
 ## Relationship to `KERNEL_PRIMITIVES.md`
 
@@ -173,9 +175,9 @@ with premise solving. It should be implemented after `bicompose` is stable.
 
 ## 4. Conservative `subst_premise` Contract (Premise Rewriting)
 
-`subst_premise` is the next strict-resolution design target. This section
-describes the **first strict-kernel version only**. It is deliberately smaller
-than Isabelle's full premise-rewriting machinery.
+`subst_premise` is implemented as a conservative strict-resolution rule. This
+section describes the **first strict-kernel version only**. It is deliberately
+smaller than Isabelle's full premise-rewriting machinery.
 
 ```text
 input:
@@ -256,9 +258,9 @@ construction.
 
 `subst_premise` is the goal-state version of this operation. It rewrites the
 selected subgoal in an implication chain rather than consuming a standalone
-minor theorem. A first implementation can conceptually decompose the goal into
-premises and rebuild it with `Term::replace_subgoal_with_premises`, but it must
-record its own derivation and support invariant replay.
+minor theorem. The strict implementation decomposes the goal into premises and
+rebuilds it with `Term::replace_subgoal_with_premises`; it records its own
+derivation and supports invariant replay.
 
 ### Out Of Scope For First Version
 
@@ -276,10 +278,10 @@ integration with simplifier rewrite indexing
 Those extensions must be designed and tested separately. They must not be
 smuggled into the first version.
 
-### Planned Attack Tests
+### Implemented Attack Tests
 
-The first strict implementation should add these planned tests before or with
-code. They are not implemented by this design-only document.
+The first strict implementation covers these tests in
+`src/kernel/rules.rs` and `tests/kernel_rewrite_soundness.rs`.
 
 | Test | What it checks |
 |---|---|
@@ -294,7 +296,7 @@ code. They are not implemented by this design-only document.
 | `subst_premise_invariant_check_passes` | Valid output replays through strict invariant checking. |
 | `subst_premise_tampered_result_rejected` | Replay rejects forged proposition, wrong replacement, or dropped hypotheses. |
 
-Additional negative tests after first implementation:
+Additional negative coverage:
 
 - selected subgoal equals rhs `B`, not lhs `A`, and is rejected unless caller
   explicitly supplies a symmetric equality theorem;
@@ -630,9 +632,9 @@ enum KernelError {
 
 ### Q7: `subst_premise` vs `bicompose` Ordering
 
-**Recommendation**: implement conservative `subst_premise` next, then full
-`bicompose`, then `bicompose_eresolve`. The minimal `resolve1_match` prototype
-already exists, but it does not replace `subst_premise`.
+**Recommendation**: implement full `bicompose` next, then
+`bicompose_eresolve`. The minimal `resolve1_match` prototype and conservative
+`subst_premise` now exist, but they do not replace full bicomposition.
 
 The first `subst_premise` version exercises premise indexing, propositional
 equality elimination, hypothesis union, and invariant replay without requiring
@@ -650,7 +652,7 @@ unification.
 | `union_hyps` + substitution | ✅ Implemented for `resolve1_match` | Applies substitution to rule and goal hyps before union |
 | Strict matcher (`match_terms` + `match_terms_certified`) | ✅ Implemented | Internal (`pub(in crate::kernel)`) only; no public Term→CTerm API |
 | `resolve1_match` | ✅ Prototype implemented | Conservative one-way backward resolution; shared subgoal-splicing helper; invariant replay covered |
-| conservative `subst_premise` | Design only | Next main-line design target; prop equality only, lhs→rhs only, no unification |
+| conservative `subst_premise` | ✅ Implemented | Prop equality only, lhs→rhs only, exact selected-subgoal match, no unification; invariant replay and attack tests covered |
 | Full unification | Not started | Deferred |
 | Lifting / freshening | Not started | Deferred (caller responsibility for v1) |
 | `tpairs` / flex-flex | Not in strict kernel | Deferred |
@@ -667,7 +669,7 @@ unification.
    derivation replay is not HashMap-order dependent.
 3. ✅ **`resolve1_match`** — minimal backward resolution using strict matching only.
    No lifting, no flex-flex, no elimination premise solving.
-4. **Conservative `subst_premise`** — prop equality only, lhs→rhs only,
+4. ✅ **Conservative `subst_premise`** — prop equality only, lhs→rhs only,
    exact selected-subgoal match, no unification, no symmetric rewrite.
 5. **`bicompose`** — full backward resolution (builds on the same implication-chain
    and matching foundations, not by copying legacy core).
@@ -695,7 +697,7 @@ Each resolution rule needs:
 - Round-trip: `bicompose` then `implies_intr` list → recovers original rule.
 - Multiple independent resolutions produce consistent results.
 
-Planned `subst_premise` attack tests:
+Implemented `subst_premise` attack tests:
 
 - `subst_premise_basic`
 - `subst_premise_rejects_object_equality`

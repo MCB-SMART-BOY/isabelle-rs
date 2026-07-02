@@ -162,12 +162,14 @@ instantiate_checked
 generalize
 bicompose ⚠️ LEGACY CORE
 bicompose_eresolve ⚠️ LEGACY CORE
-subst_premise ⚠️ LEGACY CORE
+subst_premise ✅ strict conservative version implemented
 ```
 
-The harder rules are `instantiate_checked`, `bicompose*` (⚠️ LEGACY CORE), `subst_premise` (⚠️ LEGACY CORE), and
-`abstraction`, because they interact with unification, variable discipline,
-typing, and theorem burdens.
+The harder remaining rules are `instantiate_checked`, `bicompose*`
+(⚠️ LEGACY CORE), and `abstraction`, because they interact with unification,
+variable discipline, typing, and theorem burdens. Strict `subst_premise` now
+has only the conservative propositional-equality version; legacy-core
+`subst_premise` remains compatibility debt.
 
 ### Isar
 

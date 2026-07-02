@@ -53,8 +53,8 @@ Priority order:
 Near-term main line remains strict-kernel and proof-boundary work:
 
 ```text
-subst_premise design
-resolve1 / bicompose / resolution-family design
+stabilize conservative subst_premise implementation
+bicompose / resolution-family design
 admitted reason inventory and reduction
 strict replay / invariant coverage
 legacy adapter compatibility matrix
@@ -313,7 +313,7 @@ Target rules:
 ```text
 bicompose (⚠️ LEGACY CORE — strict-kernel design in docs/RESOLUTION_DESIGN.md)
 bicompose_eresolve (⚠️ LEGACY CORE)
-subst_premise (⚠️ LEGACY CORE)
+subst_premise (strict conservative version implemented; legacy-core version remains compatibility debt)
 ```
 
 Why last:
@@ -340,8 +340,9 @@ Required attack tests:
 
 - Resolution cannot cross known concrete type mismatches.
 - E-resolution cannot discharge the wrong hypothesis.
-- `subst_premise` (⚠️ LEGACY CORE) cannot rewrite across Free/Const or Var/Free confusion once
-  strict `alpha_eq` is enabled.
+- Legacy-core `subst_premise` cannot rewrite across Free/Const or Var/Free
+  confusion once strict `alpha_eq` is enabled; strict `subst_premise` already
+  uses exact selected-subgoal matching.
 - Multi-premise burdens union exactly: `hyps`, `tpairs`, `shyps`, `oracles`.
 - Unsupported or failed resolution replay is distinguishable from proof
   tampering.

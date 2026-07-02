@@ -2107,6 +2107,124 @@ fn equal_elim_preserves_open_minor_hypothesis() {
     check_kernel_thm(&result).unwrap();
 }
 
+// ---------------------------------------------------------------------------
+// subst_premise
+// ---------------------------------------------------------------------------
+
+fn raw_imp_chain(names: &[&str]) -> RawTerm {
+    assert!(!names.is_empty());
+    let mut terms: Vec<RawTerm> = names.iter().map(|name| prop(name)).collect();
+    let mut current = terms.pop().unwrap();
+    for premise in terms.into_iter().rev() {
+        current = RawTerm::imp(premise, current);
+    }
+    current
+}
+
+#[test]
+fn subst_premise_basic() {
+    let ctx = ctx_with_props(&["A", "B", "R"]);
+    let eq = KernelRules::assume(ctx.certify_prop(RawTerm::eq(prop("A"), prop("B"))).unwrap())
+        .into_kernel();
+    let goal =
+        KernelRules::assume(ctx.certify_prop(raw_imp_chain(&["A", "R"])).unwrap()).into_kernel();
+
+    let result = KernelRules::subst_premise(&eq, &goal, 0).unwrap();
+
+    assert_eq!(result.prop(), &ctx.certify_prop(raw_imp_chain(&["B", "R"])).unwrap());
+    check_kernel_thm(&result).unwrap();
+}
+
+#[test]
+fn subst_premise_rejects_object_equality() {
+    let mut sig = Signature::new();
+    sig.declare_const("x", ty("nat"));
+    sig.declare_const("y", ty("nat"));
+    sig.declare_const("A", Ty::prop());
+    sig.declare_const("R", Ty::prop());
+    let ctx = ProofContext::new(sig);
+
+    let eq = KernelRules::assume(
+        ctx.certify_prop(RawTerm::eq(
+            RawTerm::const_("x", ty("nat")),
+            RawTerm::const_("y", ty("nat")),
+        ))
+        .unwrap(),
+    )
+    .into_kernel();
+    let goal =
+        KernelRules::assume(ctx.certify_prop(raw_imp_chain(&["A", "R"])).unwrap()).into_kernel();
+
+    let err = KernelRules::subst_premise(&eq, &goal, 0).unwrap_err();
+    assert!(matches!(err, KernelError::NotProposition(_)));
+}
+
+#[test]
+fn subst_premise_rejects_out_of_range() {
+    let ctx = ctx_with_props(&["A", "B", "R"]);
+    let eq = KernelRules::assume(ctx.certify_prop(RawTerm::eq(prop("A"), prop("B"))).unwrap())
+        .into_kernel();
+    let goal =
+        KernelRules::assume(ctx.certify_prop(raw_imp_chain(&["A", "R"])).unwrap()).into_kernel();
+
+    let err = KernelRules::subst_premise(&eq, &goal, 1).unwrap_err();
+    assert!(matches!(err, KernelError::SubgoalIndexOutOfRange { index: 1, nprems: 1 }));
+}
+
+#[test]
+fn subst_premise_rejects_mismatch() {
+    let ctx = ctx_with_props(&["A", "B", "C", "R"]);
+    let eq = KernelRules::assume(ctx.certify_prop(RawTerm::eq(prop("A"), prop("B"))).unwrap())
+        .into_kernel();
+    let goal =
+        KernelRules::assume(ctx.certify_prop(raw_imp_chain(&["C", "R"])).unwrap()).into_kernel();
+
+    let err = KernelRules::subst_premise(&eq, &goal, 0).unwrap_err();
+    assert!(matches!(err, KernelError::AntecedentMismatch));
+}
+
+#[test]
+fn subst_premise_rejects_symmetric_direction() {
+    let ctx = ctx_with_props(&["A", "B", "R"]);
+    let eq = KernelRules::assume(ctx.certify_prop(RawTerm::eq(prop("A"), prop("B"))).unwrap())
+        .into_kernel();
+    let goal =
+        KernelRules::assume(ctx.certify_prop(raw_imp_chain(&["B", "R"])).unwrap()).into_kernel();
+
+    let err = KernelRules::subst_premise(&eq, &goal, 0).unwrap_err();
+    assert!(matches!(err, KernelError::AntecedentMismatch));
+}
+
+#[test]
+fn subst_premise_selected_index_is_goal_subgoal() {
+    let ctx = ctx_with_props(&["A", "C", "D", "R"]);
+    let eq = KernelRules::assume(ctx.certify_prop(RawTerm::eq(prop("C"), prop("D"))).unwrap())
+        .into_kernel();
+    let goal = KernelRules::assume(ctx.certify_prop(raw_imp_chain(&["A", "C", "R"])).unwrap())
+        .into_kernel();
+
+    let wrong_index = KernelRules::subst_premise(&eq, &goal, 0).unwrap_err();
+    assert!(matches!(wrong_index, KernelError::AntecedentMismatch));
+
+    let result = KernelRules::subst_premise(&eq, &goal, 1).unwrap();
+    assert_eq!(result.prop(), &ctx.certify_prop(raw_imp_chain(&["A", "D", "R"])).unwrap());
+}
+
+#[test]
+fn subst_premise_preserves_other_subgoals_and_hypotheses() {
+    let ctx = ctx_with_props(&["H", "A", "B", "C", "R"]);
+    let eq = KernelRules::assume(ctx.certify_prop(RawTerm::eq(prop("A"), prop("B"))).unwrap())
+        .into_kernel();
+    let goal = KernelRules::assume(ctx.certify_prop(raw_imp_chain(&["H", "A", "C", "R"])).unwrap())
+        .into_kernel();
+
+    let result = KernelRules::subst_premise(&eq, &goal, 1).unwrap();
+
+    assert_eq!(result.prop(), &ctx.certify_prop(raw_imp_chain(&["H", "B", "C", "R"])).unwrap());
+    assert_eq!(result.hyps().len(), 2);
+    check_kernel_thm(&result).unwrap();
+}
+
 // ============================================================
 // generalize — Free → Var (schematic generalisation)
 // ============================================================

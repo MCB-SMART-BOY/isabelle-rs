@@ -51,6 +51,14 @@ pub enum Derivation {
         equality: Box<KernelThm>,
         minor: Box<KernelThm>,
     },
+    SubstPremise {
+        /// Propositional equality theorem `A == B`.
+        equality: Box<KernelThm>,
+        /// Goal state `G1 ==> ... ==> A ==> ... ==> R`.
+        goal_state: Box<KernelThm>,
+        /// The selected goal subgoal index (0-based).
+        selected_subgoal_index: usize,
+    },
     Generalize {
         /// The free variables that were schematicised, in order.
         frees: Vec<(Name, Ty)>,

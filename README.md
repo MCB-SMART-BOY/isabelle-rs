@@ -72,7 +72,7 @@ See [docs/TRUST.md](docs/TRUST.md).
 | Area | Status |
 |---|---|
 | LCF-style `Thm` kernel | Research prototype with private theorem fields and hardened construction routes. |
-| Strict kernel nucleus | `src/kernel` is the new TCB: no dummy type, no compat certification, separate `ProofObligation`, `TrustedTheory`, and `SearchFactDb`; includes primitive rules and `resolve1_match` prototype. |
+| Strict kernel nucleus | `src/kernel` is the new TCB: no dummy type, no compat certification, separate `ProofObligation`, `TrustedTheory`, and `SearchFactDb`; includes primitive rules, `resolve1_match`, and conservative `subst_premise`. |
 | Kernel primitive rules | Core subset implemented; several rounds of side-condition, type, burden, and oracle propagation audits done. |
 | Checked instantiation | Production proof-search paths use `instantiate_checked`; legacy infallible instantiation is not a production API. |
 | Oracle/admit tracking | Explicit `admitted:*` footprint tracking and propagation. |
@@ -108,7 +108,7 @@ Relative completion estimates:
 
 Current priority order (aligned with ADR-0002 layered platform vision):
 
-1. Stabilize strict `src/kernel` nucleus (15 primitives + `resolve1_match` prototype) with firewall checks and compatibility matrix.
+1. Stabilize strict `src/kernel` nucleus (15 primitives + `resolve1_match` + conservative `subst_premise`) with firewall checks and compatibility matrix, then design full `bicompose`.
 2. Extend strict-kernel invariant replay coverage after rule contracts and adapter boundaries are stable.
 3. Reduce admitted lemmas by classified reason.
 4. Split into Cargo workspace (`isabelle-kernel` crate first).
@@ -131,7 +131,7 @@ Detailed plan: [docs/ROADMAP.md](docs/ROADMAP.md).
 | [docs/TRUST.md](docs/TRUST.md) | Trust model, theorem acceptance, oracle/admit semantics. |
 | [docs/KERNEL_RULES.md](docs/KERNEL_RULES.md) | Kernel rule audit ledger. |
 | [docs/KERNEL_PRIMITIVES.md](docs/KERNEL_PRIMITIVES.md) | Strict-kernel base primitive rule contracts. |
-| [docs/RESOLUTION_DESIGN.md](docs/RESOLUTION_DESIGN.md) | Resolution family design and `resolve1_match` status. |
+| [docs/RESOLUTION_DESIGN.md](docs/RESOLUTION_DESIGN.md) | Resolution family design and `resolve1_match` / `subst_premise` status. |
 | [docs/HPC_SYMBOLIC_COMPUTE_DESIGN.md](docs/HPC_SYMBOLIC_COMPUTE_DESIGN.md) | Design-only untrusted CPU/GPU symbolic compute layer for candidate generation and prefiltering. |
 | [docs/KERNEL_ATTACK_TESTS.md](docs/KERNEL_ATTACK_TESTS.md) | Soundness regression matrix. |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Current architecture and trusted-boundary data flow. |

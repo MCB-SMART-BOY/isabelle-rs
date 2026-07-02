@@ -41,6 +41,12 @@ proofterm checking; it means the listed trusted-boundary regressions are covered
 | Let `resolve1_match` drift from the implication-chain subgoal replacement helper | result proposition is built through `Term::replace_subgoal_with_premises` and checked against the helper semantics | `src/kernel/rules.rs::resolve1_matches_replace_subgoal_helper_semantics` |
 | Forge an empty-premise `resolve1_match` result that keeps the solved subgoal | invariant replay recomputes the selected-subgoal deletion and rejects theorem fields that still contain the solved premise | `src/kernel/rules.rs::resolve1_empty_rule_premises_tamper_kept_subgoal_rejected` |
 | Tamper a strict `resolve1_match` result or recorded substitution | invariant replay recomputes the strict match and rejects mismatched theorem fields/substitution | `src/kernel/rules.rs::{resolve1_invariant_check_passes,resolve1_tampered_result_rejected,resolve1_invariant_with_multiple_bindings_is_deterministic}` |
+| Treat strict `subst_premise` as object-equality rewriting | rejected with `KernelError::NotProposition` before theorem construction | `src/kernel/rules.rs::subst_premise_rejects_object_equality`; `tests/kernel_rewrite_soundness.rs::subst_premise_rejects_object_equality` |
+| Let strict `subst_premise` rewrite in the symmetric rhs-to-lhs direction automatically | rejected with `KernelError::AntecedentMismatch`; callers must supply an explicit symmetric equality theorem in a future extension | `src/kernel/rules.rs::subst_premise_rejects_symmetric_direction`; `tests/kernel_rewrite_soundness.rs::subst_premise_rejects_symmetric_direction` |
+| Interpret strict `subst_premise` index as part of the equality theorem instead of the goal subgoal chain | rejected/covered by selecting a nonmatching goal subgoal at index 0 and a matching one at index 1 | `src/kernel/rules.rs::subst_premise_selected_index_is_goal_subgoal`; `tests/kernel_rewrite_soundness.rs::subst_premise_selected_index_is_goal_subgoal` |
+| Rewrite a missing or mismatched strict `subst_premise` subgoal | missing index returns `SubgoalIndexOutOfRange`; mismatch returns `AntecedentMismatch` | `src/kernel/rules.rs::{subst_premise_rejects_out_of_range,subst_premise_rejects_mismatch}`; `tests/kernel_rewrite_soundness.rs::{subst_premise_rejects_out_of_range,subst_premise_rejects_mismatch}` |
+| Drop unrelated goal subgoals or hypotheses through strict `subst_premise` | non-selected subgoals are preserved and equality/goal hypotheses are unioned | `src/kernel/rules.rs::{subst_premise_preserves_other_subgoals,subst_premise_preserves_hypotheses}`; `tests/kernel_rewrite_soundness.rs::subst_premise_preserves_other_subgoals_and_hypotheses` |
+| Tamper a strict `subst_premise` result | invariant replay recomputes the premise replacement and rejects forged theorem fields | `src/kernel/rules.rs::{subst_premise_invariant_check_passes,subst_premise_tampered_result_rejected}` |
 | Count `accept_all` / proof-skipped theory processing as a closed proved theorem | rejected by `TheoryProcessor::process_source_verified`; indexed as admitted but not registered in final `Theory` | `src/theory/loader.rs::test_accept_all_is_admitted_not_closed_verified` |
 | Report `accept_all` theory files as session-verified because they produced index entries | rejected by `SessionBuilder`; build/classifier report zero closed proved theorems | `src/theory/session_builder.rs::test_accept_all_does_not_report_session_verified_theorems`; `src/theory/session_builder.rs::test_accept_all_classifier_is_not_full_success` |
 | Treat `HolTheoremDb` searchable facts as a trusted theorem table | DB exposes separate searchable and closed-proved counts | `src/hol/hol_loader.rs::test_hol_theorem_db_distinguishes_searchable_from_closed_proved`; `src/hol/hol_loader.rs::test_hol_theorem_db_counts_closed_proved_facts_separately` |
@@ -106,9 +112,10 @@ legacy parser/loader paths can be isolated and audited explicitly.
 
 ## Next Attack Tests To Add
 
-- `subst_premise`, `bicompose`, and `bicompose_eresolve` (all ⚠️ LEGACY CORE) should get explicit
+- `bicompose` and `bicompose_eresolve` (⚠️ LEGACY CORE) should get explicit
   Free/Const and Var/Free rejection tests now that strict `kernel_alpha_eq` is
-  enabled.
+  enabled. Strict `subst_premise` now has conservative exact-match coverage;
+  legacy-core `subst_premise` remains compatibility debt only.
 - `bicompose` and `bicompose_eresolve` (⚠️ LEGACY CORE) still need explicit oracle/tpairs/shyps
   propagation tests with non-empty burdens on both premises.
 - `certify_checked` and theorem trust taint are available, but most

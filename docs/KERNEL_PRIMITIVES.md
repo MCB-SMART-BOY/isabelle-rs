@@ -634,9 +634,8 @@ implementation. See that document for:
 - Strict matcher/unifier requirements and the firewall rule
   (`src/kernel/` MUST NOT depend on `crate::core::unify`).
 - Current implementation order/status: implication-chain utilities → strict
-  matcher → `resolve1_match` prototype are implemented; conservative
-  `subst_premise` design is next; full `bicompose` and `bicompose_eresolve`
-  remain future work.
+  matcher → `resolve1_match` prototype → conservative `subst_premise` are
+  implemented; full `bicompose` and `bicompose_eresolve` remain future work.
 - Open design questions (9 items).
 - Attack test plans.
 
@@ -647,8 +646,8 @@ implementation. See that document for:
 are implemented with invariant replay and attack tests. `resolve1_match` now
 uses `replace_subgoal_with_premises` directly, so subgoal replacement order is
 shared with the implication-chain foundation instead of duplicated locally.
-Full `bicompose`, `bicompose_eresolve`, lifting/freshening, flex-flex pairs,
-and higher-order unification are not implemented. The next main-line design
-step is conservative `subst_premise`: propositional equality only, lhs→rhs
-only, no symmetric rewrite, no object equality rewrite, no full unification,
-no lifting/freshening, and no flex-flex.
+Conservative `KernelRules::subst_premise` is also implemented: propositional
+equality only, lhs→rhs only, no symmetric rewrite, no object equality rewrite,
+no full unification, no lifting/freshening, and no flex-flex. Full
+`bicompose`, `bicompose_eresolve`, lifting/freshening, flex-flex pairs, and
+higher-order unification are not implemented.

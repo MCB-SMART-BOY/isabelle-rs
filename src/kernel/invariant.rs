@@ -71,6 +71,11 @@ pub fn replay_derivation(derivation: &Derivation) -> Result<KernelThm, KernelErr
             check_kernel_thm(minor)?;
             KernelRules::equal_elim(equality, minor)
         },
+        Derivation::SubstPremise { equality, goal_state, selected_subgoal_index } => {
+            check_kernel_thm(equality)?;
+            check_kernel_thm(goal_state)?;
+            KernelRules::subst_premise(equality, goal_state, *selected_subgoal_index)
+        },
         Derivation::Generalize { frees, start_index, premise } => {
             check_kernel_thm(premise)?;
             let expected_start = premise.max_var_index().map_or(0, |m| m + 1);

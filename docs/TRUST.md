@@ -82,12 +82,15 @@ Current strict nucleus constraints:
 - `TrustedTheory` accepts only `TrustedTheorem`;
 - `SearchFactDb` cannot promote facts to trusted theorems.
 
-Current strict nucleus implementation includes the base primitive rule set and a
-conservative `resolve1_match` prototype. `resolve1_match` uses one-way strict
-matching, deterministic substitution ordering, hypothesis substitution/union,
-and invariant replay. It is not full Isabelle-style `bicompose`: lifting,
-freshening, flex-flex pairs, higher-order unification, and elimination
-resolution remain out of scope.
+Current strict nucleus implementation includes the base primitive rule set,
+a conservative `resolve1_match` prototype, and conservative `subst_premise`.
+`resolve1_match` uses one-way strict matching, deterministic substitution
+ordering, hypothesis substitution/union, and invariant replay. `subst_premise`
+rewrites one selected goal premise using propositional equality only, fixed
+lhs -> rhs direction, exact strict alpha-equivalence, and invariant replay. It
+does not perform symmetric rewriting, object-equality rewriting, unification,
+lifting, freshening, or flex-flex handling. Full Isabelle-style `bicompose`,
+higher-order unification, and elimination resolution remain out of scope.
 
 ## Theorem Status Semantics
 
@@ -315,8 +318,9 @@ Next replay expansion batches:
 1. `beta_conversion`, `forall_intr`, `forall_elim`.
 2. `combination`, `abstraction`, `equal_intr`, `equal_elim`.
 3. `instantiate_checked`, `generalize`.
-4. `bicompose` (⚠️ LEGACY CORE), `bicompose_eresolve` (⚠️ LEGACY CORE), `subst_premise` (⚠️ LEGACY CORE).
-    See `docs/RESOLUTION_DESIGN.md` for the strict-kernel replacement design.
+4. `subst_premise` (strict conservative version implemented), then future
+   `bicompose` / `bicompose_eresolve` strict replacements. Legacy-core
+   resolution remains compatibility debt. See `docs/RESOLUTION_DESIGN.md`.
 
 ## Verification Commands
 

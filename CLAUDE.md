@@ -36,7 +36,7 @@ Read these first:
 | Track | Status |
 |---|---|
 | LCF-style `Thm` kernel | Research prototype with private theorem fields and `ThmKernel` construction boundary. |
-| Strict kernel nucleus (`src/kernel/`) | 15 base primitive rules (`assume`, `reflexive`, `symmetric`, `transitive`, `combination`, `abstraction`, `beta_conversion`, `implies_intr`, `implies_elim`, `forall_intr`, `forall_elim`, `equal_intr`, `equal_elim`, `generalize`, `instantiate`) plus conservative `resolve1_match` prototype. No dummy type, no compat certification, no fallback theorem construction. |
+| Strict kernel nucleus (`src/kernel/`) | 15 base primitive rules (`assume`, `reflexive`, `symmetric`, `transitive`, `combination`, `abstraction`, `beta_conversion`, `implies_intr`, `implies_elim`, `forall_intr`, `forall_elim`, `equal_intr`, `equal_elim`, `generalize`, `instantiate`) plus conservative `resolve1_match` and `subst_premise`. No dummy type, no compat certification, no fallback theorem construction. |
 | T2 primitive rule hardening | Main body improved; strict `kernel_alpha_eq` split out; `Typ::dummy()` and certification remain known trust debts. |
 | Checked instantiation | Production paths use `instantiate_checked`; legacy infallible API is not production. |
 | Oracle/admit tracking | Explicit `admitted:*` footprints and propagation. |
@@ -75,6 +75,11 @@ or `ClosedThm`.
 prototype: strict one-way matching only, no lifting/freshening, no full
 unification, no flex-flex. Returns `RequiresLifting` on Free-variable collision.
 It is NOT full `bicompose` — see `docs/RESOLUTION_DESIGN.md`.
+
+`KernelRules::subst_premise` is implemented only in its conservative strict
+form: propositional equality, lhs -> rhs, exact selected-subgoal
+alpha-equivalence, no symmetric rewrite, no object equality rewrite, no
+unification, no lifting/freshening, and no flex-flex.
 
 `ThmKernel::admit(ct, reason)` is the only acceptable route for accepted
 unproved propositions. Use specific reasons such as:
@@ -179,7 +184,7 @@ stack-sensitive test has been verified fixed.
 Strict TCB (src/kernel/):
   ProofContext::certify_term / certify_prop
     -> CTerm / CProp
-    -> KernelRules                # 15 primitives + resolve1_match
+    -> KernelRules                # 15 primitives + resolve1_match + subst_premise
     -> KernelThm / ClosedThm / OpenThm
     -> TrustedTheorem (invariant replay)
     -> TrustedTheory
@@ -188,7 +193,7 @@ Legacy quarantine (src/core/):
   .thy source
     -> parser / loader / type inference
     -> CTerm certification (CertStatus::Checked/Compat)
-    -> ThmKernel (LEGACY — bicompose/eresolve/subst_premise are core-only)
+    -> ThmKernel (LEGACY — bicompose/eresolve remain core-only compatibility debt)
     -> Thm with hyps/prop/tpairs/shyps/oracles/derivation
     -> proof-search indexes or final trusted Theory tables
 ```
@@ -212,5 +217,7 @@ final Theory theorem table
 - `Typ::dummy()` at parser/type/certification boundaries.
 - `Option<Thm>` erasing `KernelError` on some proof-search paths.
 - Partial T4 replay coverage.
-- Strict-kernel resolution limited to `resolve1_match` prototype (no full `bicompose`, `bicompose_eresolve`, `subst_premise`, lifting, or full unification).
+- Strict-kernel resolution limited to `resolve1_match` plus conservative
+  `subst_premise` (no full `bicompose`, `bicompose_eresolve`, lifting, or full
+  unification).
 - HOL/Isar tools far from Isabelle parity.

@@ -373,6 +373,70 @@ impl KernelRules {
         ))
     }
 
+    /// Conservative premise rewriting for goal states.
+    ///
+    /// ```text
+    /// input:  Γ |- A == B      where A, B : prop
+    ///         Δ |- G₁ ==> ... ==> A ==> ... ==> Gₘ ==> R
+    /// output: Γ ∪ Δ |- G₁ ==> ... ==> B ==> ... ==> Gₘ ==> R
+    /// ```
+    ///
+    /// First-version restrictions:
+    /// - propositional equality only;
+    /// - fixed lhs -> rhs direction;
+    /// - selected goal subgoal must be strict alpha-equivalent to lhs;
+    /// - no symmetric rewrite, object equality rewrite, unification, lifting,
+    ///   freshening, or flex-flex handling.
+    pub fn subst_premise(
+        equality: &KernelThm,
+        goal_state: &KernelThm,
+        selected_subgoal_index: usize,
+    ) -> Result<KernelThm, KernelError> {
+        let (object_ty, lhs, rhs) =
+            equality.prop().term().dest_eq().ok_or(KernelError::NotEquality)?;
+
+        if !object_ty.is_prop() {
+            return Err(KernelError::NotProposition(object_ty.clone()));
+        }
+        if !lhs.ty().is_prop() {
+            return Err(KernelError::NotProposition(lhs.ty()));
+        }
+        if !rhs.ty().is_prop() {
+            return Err(KernelError::NotProposition(rhs.ty()));
+        }
+
+        let (goal_prems, _) = goal_state.prop().term().dest_imp_chain();
+        let n_goal_prems = goal_prems.len();
+        let selected_subgoal =
+            goal_state.prop().term().select_subgoal(selected_subgoal_index).ok_or_else(|| {
+                KernelError::SubgoalIndexOutOfRange {
+                    index: selected_subgoal_index,
+                    nprems: n_goal_prems,
+                }
+            })?;
+
+        if !selected_subgoal.alpha_eq(lhs) {
+            return Err(KernelError::AntecedentMismatch);
+        }
+
+        let result_prop = prop_from_term(
+            goal_state
+                .prop()
+                .term()
+                .replace_subgoal_with_premises(selected_subgoal_index, &[rhs.clone()])?,
+        );
+
+        Ok(KernelThm::new(
+            union_hyps(equality.hyps(), goal_state.hyps()),
+            result_prop,
+            Derivation::SubstPremise {
+                equality: Box::new(equality.clone()),
+                goal_state: Box::new(goal_state.clone()),
+                selected_subgoal_index,
+            },
+        ))
+    }
+
     /// Schematic generalisation: turn free variables into schematic variables.
     ///
     /// ```text
@@ -845,7 +909,7 @@ mod tests {
         assert_eq!(entries[1].index(), 1);
     }
 
-    // ── resolve1_match tests ──
+    // ── resolution-family test helpers ──
 
     /// Closed theorem helper: use reflexive to make `|- A == A` (closed).
     /// NOT used as a resolution rule — only for creating ground truths.
@@ -874,6 +938,149 @@ mod tests {
         let cprop = certify_prop_term(ctx, &prop_term(ctx, name));
         KernelRules::assume(cprop).into_kernel()
     }
+
+    fn assumed_eq(ctx: &ProofContext, lhs: &str, rhs: &str) -> KernelThm {
+        let eq = Term::mk_eq(prop_term(ctx, lhs), prop_term(ctx, rhs)).unwrap();
+        KernelRules::assume(certify_prop_term(ctx, &eq)).into_kernel()
+    }
+
+    fn assumed_goal(ctx: &ProofContext, names: &[&str]) -> KernelThm {
+        KernelRules::assume(certify_prop_term(ctx, &imp_chain(ctx, names))).into_kernel()
+    }
+
+    // ── subst_premise tests ──
+
+    #[test]
+    fn subst_premise_basic() {
+        let ctx = ctx_with_props(&["A", "B", "R"]);
+        let eq = assumed_eq(&ctx, "A", "B");
+        let goal = assumed_goal(&ctx, &["A", "R"]);
+
+        let result = KernelRules::subst_premise(&eq, &goal, 0).unwrap();
+
+        let expected = imp_chain(&ctx, &["B", "R"]);
+        assert_eq!(result.prop(), &certify_prop_term(&ctx, &expected));
+    }
+
+    #[test]
+    fn subst_premise_rejects_object_equality() {
+        let mut sig = Signature::new();
+        sig.declare_const("x", ty("nat"));
+        sig.declare_const("y", ty("nat"));
+        sig.declare_const("A", Ty::prop());
+        sig.declare_const("R", Ty::prop());
+        let ctx = ProofContext::new(sig);
+
+        let x =
+            ctx.certify_term(super::super::RawTerm::const_("x", ty("nat"))).unwrap().term().clone();
+        let y =
+            ctx.certify_term(super::super::RawTerm::const_("y", ty("nat"))).unwrap().term().clone();
+        let object_eq = Term::mk_eq(x, y).unwrap();
+        let eq = KernelRules::assume(certify_prop_term(&ctx, &object_eq)).into_kernel();
+        let goal = assumed_goal(&ctx, &["A", "R"]);
+
+        let err = KernelRules::subst_premise(&eq, &goal, 0).unwrap_err();
+        assert!(matches!(err, KernelError::NotProposition(_)));
+    }
+
+    #[test]
+    fn subst_premise_rejects_out_of_range() {
+        let ctx = ctx_with_props(&["A", "B", "R"]);
+        let eq = assumed_eq(&ctx, "A", "B");
+        let goal = assumed_goal(&ctx, &["A", "R"]);
+
+        let err = KernelRules::subst_premise(&eq, &goal, 1).unwrap_err();
+        assert!(matches!(err, KernelError::SubgoalIndexOutOfRange { index: 1, nprems: 1 }));
+    }
+
+    #[test]
+    fn subst_premise_rejects_mismatch() {
+        let ctx = ctx_with_props(&["A", "B", "C", "R"]);
+        let eq = assumed_eq(&ctx, "A", "B");
+        let goal = assumed_goal(&ctx, &["C", "R"]);
+
+        let err = KernelRules::subst_premise(&eq, &goal, 0).unwrap_err();
+        assert!(matches!(err, KernelError::AntecedentMismatch));
+    }
+
+    #[test]
+    fn subst_premise_rejects_symmetric_direction() {
+        let ctx = ctx_with_props(&["A", "B", "R"]);
+        let eq = assumed_eq(&ctx, "A", "B");
+        let goal = assumed_goal(&ctx, &["B", "R"]);
+
+        let err = KernelRules::subst_premise(&eq, &goal, 0).unwrap_err();
+        assert!(matches!(err, KernelError::AntecedentMismatch));
+    }
+
+    #[test]
+    fn subst_premise_selected_index_is_goal_subgoal() {
+        let ctx = ctx_with_props(&["A", "C", "D", "R"]);
+        let eq = assumed_eq(&ctx, "C", "D");
+        let goal = assumed_goal(&ctx, &["A", "C", "R"]);
+
+        let wrong_index = KernelRules::subst_premise(&eq, &goal, 0).unwrap_err();
+        assert!(matches!(wrong_index, KernelError::AntecedentMismatch));
+
+        let result = KernelRules::subst_premise(&eq, &goal, 1).unwrap();
+        let expected = imp_chain(&ctx, &["A", "D", "R"]);
+        assert_eq!(result.prop(), &certify_prop_term(&ctx, &expected));
+    }
+
+    #[test]
+    fn subst_premise_preserves_other_subgoals() {
+        let ctx = ctx_with_props(&["H", "A", "B", "C", "R"]);
+        let eq = assumed_eq(&ctx, "A", "B");
+        let goal = assumed_goal(&ctx, &["H", "A", "C", "R"]);
+
+        let result = KernelRules::subst_premise(&eq, &goal, 1).unwrap();
+
+        let expected = imp_chain(&ctx, &["H", "B", "C", "R"]);
+        assert_eq!(result.prop(), &certify_prop_term(&ctx, &expected));
+    }
+
+    #[test]
+    fn subst_premise_preserves_hypotheses() {
+        let ctx = ctx_with_props(&["H", "A", "B", "R"]);
+        let eq = assumed_eq(&ctx, "A", "B");
+        let goal = assumed_goal(&ctx, &["H", "A", "R"]);
+
+        let result = KernelRules::subst_premise(&eq, &goal, 1).unwrap();
+
+        assert_eq!(result.hyps().len(), 2);
+        assert!(result.hyps().iter().any(|h| h.term().alpha_eq(eq.prop().term())));
+        assert!(result.hyps().iter().any(|h| h.term().alpha_eq(goal.prop().term())));
+    }
+
+    #[test]
+    fn subst_premise_invariant_check_passes() {
+        let ctx = ctx_with_props(&["H", "A", "B", "R"]);
+        let eq = assumed_eq(&ctx, "A", "B");
+        let goal = assumed_goal(&ctx, &["H", "A", "R"]);
+
+        let result = KernelRules::subst_premise(&eq, &goal, 1).unwrap();
+
+        super::super::invariant::check_kernel_thm(&result).unwrap();
+    }
+
+    #[test]
+    fn subst_premise_tampered_result_rejected() {
+        use super::super::thm::prop_from_term;
+
+        let ctx = ctx_with_props(&["A", "B", "R", "WRONG"]);
+        let eq = assumed_eq(&ctx, "A", "B");
+        let goal = assumed_goal(&ctx, &["A", "R"]);
+        let result = KernelRules::subst_premise(&eq, &goal, 0).unwrap();
+
+        let tampered_prop = prop_from_term(imp_chain(&ctx, &["B", "WRONG"]));
+        let tampered =
+            KernelThm::new(result.hyps().to_vec(), tampered_prop, result.derivation().clone());
+
+        let check = super::super::invariant::check_kernel_thm(&tampered);
+        assert!(check.is_err(), "tampered theorem should fail invariant check");
+    }
+
+    // ── resolve1_match tests ──
 
     #[test]
     fn resolve1_basic_no_vars() {

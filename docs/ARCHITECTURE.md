@@ -23,7 +23,8 @@ Legacy quarantine (src/core/):
   source / generated facts
     -> parser / loader / type inference
     -> certified terms (CTerm with CertStatus)
-    -> ThmKernel (LEGACY: bicompose/eresolve/subst_premise are core-only)
+    -> ThmKernel (LEGACY: bicompose/eresolve remain compatibility debt;
+                  subst_premise has a strict conservative replacement)
     -> Thm
     -> theorem acceptance filters
     -> proof-search indexes or final trusted theory tables

@@ -89,9 +89,11 @@ introduces separate `RawTerm -> CTerm/CProp -> KernelThm -> ClosedThm ->
 TrustedTheorem` stages, a `ProofObligation` type that is not a theorem, and
 separate `TrustedTheory` / `SearchFactDb` storage. It deliberately has no dummy
 type constructor and no compatibility certification API. The strict nucleus now
-implements the base primitive rule set plus a conservative `resolve1_match`
-prototype with strict matching, deterministic substitutions, invariant replay,
-and attack tests. See
+implements the base primitive rule set plus conservative `resolve1_match` and
+`subst_premise` rules with invariant replay and attack tests. `resolve1_match`
+uses strict matching and deterministic substitutions; `subst_premise` is
+propositional-equality only, fixed lhs -> rhs, exact selected-subgoal matching.
+See
 [ADR-0001-kernel-core-rewrite.md](ADR-0001-kernel-core-rewrite.md) and
 [KERNEL_PRIMITIVES.md](KERNEL_PRIMITIVES.md).
 
@@ -107,7 +109,7 @@ The following areas have a coherent implementation and regression coverage:
 | Strict alpha equality | Trusted kernel equality uses `kernel_alpha_eq`; legacy broad matching is isolated as `compat_alpha_eq`. |
 | Checked CTerm certification | `CTerm::certify_checked` exists, CTerms carry checked/compat status, and strict `assume`/`reflexive` reject compat terms. |
 | Proof-state strict entry points | `ProofState::assume`, `Goal::init`, and checked subgoal scaffolding construct Strict open theorem obligations from explicit proof-context certification. |
-| Strict kernel nucleus | `src/kernel` contains an isolated TCB nucleus with no dummy type, no compat certification, separate proof obligations, trusted/searchable fact separation, primitive rules, strict matching, and `resolve1_match` prototype. |
+| Strict kernel nucleus | `src/kernel` contains an isolated TCB nucleus with no dummy type, no compat certification, separate proof obligations, trusted/searchable fact separation, primitive rules, strict matching, `resolve1_match`, and conservative `subst_premise`. |
 | Strict theorem invariants | `check_kernel_invariants(Strict)` rejects compat/admitted provenance, dummy-tainted burdens, `maxidx` drift, oracle-tainted strict theorems, and supported replay burden mismatches. |
 | Oracle/admit tracking | `ThmKernel::admit(ct, reason)` marks unproved accepted propositions and propagates oracle footprints. |
 | Closed theorem acceptance | A trusted proved lemma requires strict construction, no oracles, no hypotheses, no unresolved `tpairs`, and no dummy types. |
@@ -212,7 +214,8 @@ Do not spend the next phase on more HOL/Isar surface features, LSP, WASM,
 Sledgehammer, SMT, or Code Generator work. The route is:
 
 1. Stabilize strict `src/kernel` nucleus, including firewall checks,
-   deterministic substitutions, and explicit `resolve1_match` limitations.
+   deterministic substitutions, explicit `resolve1_match` / `subst_premise`
+   limitations, and the next full `bicompose` design.
 2. Establish a structured compatibility matrix for legacy adapters before broad
    migration.
 3. Extend T4 proofterm replay rule coverage after strict kernel semantics are
