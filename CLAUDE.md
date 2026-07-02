@@ -20,8 +20,9 @@ Read these first:
 5. [docs/KERNEL_ATTACK_TESTS.md](docs/KERNEL_ATTACK_TESTS.md)
 6. [docs/KERNEL_PRIMITIVES.md](docs/KERNEL_PRIMITIVES.md) — Strict-kernel base primitive rule contracts.
 7. [docs/RESOLUTION_DESIGN.md](docs/RESOLUTION_DESIGN.md) — Resolution family design and `resolve1_match` status.
-8. [docs/ADR-0001-kernel-core-rewrite.md](docs/ADR-0001-kernel-core-rewrite.md) — Strangler-pattern kernel reset.
-9. [docs/ADR-0002-layered-platform-architecture.md](docs/ADR-0002-layered-platform-architecture.md) — Target layered platform.
+8. [docs/HPC_SYMBOLIC_COMPUTE_DESIGN.md](docs/HPC_SYMBOLIC_COMPUTE_DESIGN.md) — Design-only untrusted CPU/GPU symbolic compute layer.
+9. [docs/ADR-0001-kernel-core-rewrite.md](docs/ADR-0001-kernel-core-rewrite.md) — Strangler-pattern kernel reset.
+10. [docs/ADR-0002-layered-platform-architecture.md](docs/ADR-0002-layered-platform-architecture.md) — Target layered platform.
 
 ## Branch Strategy
 
@@ -42,6 +43,7 @@ Read these first:
 | Closed theorem acceptance | Verified lemma statistics require `is_strict_closed_proved()`. |
 | Searchable vs trusted facts | `HolTheoremDb` is a search index; final `Theory` table accepts strict closed proved theorems. |
 | T4 proofterm replay | Minimal burden-aware replay for `assume`, `reflexive`, `symmetric`, `transitive`, `implies_intr`, `implies_elim`. |
+| HPC symbolic compute | Parallel design track only: untrusted candidate generation, fingerprinting, and prefiltering. CPU baseline first; Burn/CubeCL only future optional backend; no kernel dependency. |
 | HOL/Isar/tools | Partial prototypes, not Isabelle parity. |
 
 ## Type Names
@@ -127,6 +129,11 @@ Priority order (aligned with ADR-0002 layered platform vision):
 9. Expand HOL/Isar/tool coverage only after trusted boundaries remain stable.
 10. Harden WASM plugin sandbox boundaries.
 11. AFP large-scale benchmark.
+
+Parallel non-blocking design track: HPC symbolic compute may define packed IR,
+a deterministic CPU baseline, and future optional Burn/CubeCL backends. It must
+not add GPU/backend dependencies to the kernel and must not delay the strict
+kernel / resolution / admitted-inventory main line.
 
 Do not start workspace splitting, session redesign, or Agent protocol work
 before the strict-kernel prototype has a stable compatibility matrix and clear

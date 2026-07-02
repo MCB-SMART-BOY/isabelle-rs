@@ -115,6 +115,11 @@ Current priority order (aligned with ADR-0002 layered platform vision):
 5. Expand HOL/Isar/tool coverage only after trusted boundaries remain stable.
 6. Build session incremental engine, `isabelle.toml`, and Agent Proof Protocol.
 
+Parallel non-blocking design track: HPC symbolic compute may define packed IR,
+a deterministic CPU baseline, and future optional Burn/CubeCL backends, but it
+must never become a trusted theorem constructor or block the strict-kernel /
+resolution / admitted-inventory main line.
+
 Detailed plan: [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Documentation
@@ -127,6 +132,7 @@ Detailed plan: [docs/ROADMAP.md](docs/ROADMAP.md).
 | [docs/KERNEL_RULES.md](docs/KERNEL_RULES.md) | Kernel rule audit ledger. |
 | [docs/KERNEL_PRIMITIVES.md](docs/KERNEL_PRIMITIVES.md) | Strict-kernel base primitive rule contracts. |
 | [docs/RESOLUTION_DESIGN.md](docs/RESOLUTION_DESIGN.md) | Resolution family design and `resolve1_match` status. |
+| [docs/HPC_SYMBOLIC_COMPUTE_DESIGN.md](docs/HPC_SYMBOLIC_COMPUTE_DESIGN.md) | Design-only untrusted CPU/GPU symbolic compute layer for candidate generation and prefiltering. |
 | [docs/KERNEL_ATTACK_TESTS.md](docs/KERNEL_ATTACK_TESTS.md) | Soundness regression matrix. |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Current architecture and trusted-boundary data flow. |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Concrete next phases and acceptance gates. |

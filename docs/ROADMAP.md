@@ -24,6 +24,7 @@ Current status:
 | Admit/oracle tracking | Explicit, classified, and propagated. |
 | Closed theorem acceptance | Main path, session reporting, and final trusted tables use `is_strict_closed_proved()`. |
 | T4 proofterm replay | Legacy proofterm replay remains minimal; strict `src/kernel` invariant replay covers its implemented derivations. |
+| HPC symbolic compute | Design-only parallel track for untrusted candidate generation, fingerprinting, and prefiltering; no Burn/CubeCL dependency and no kernel dependency. |
 | HOL/Isar feature parity | Not current priority. |
 
 Architecture vision: ADR-0002 establishes a layered platform architecture
@@ -48,6 +49,31 @@ Priority order:
    weakening trust boundaries.
 10. Harden WASM plugin sandbox boundaries.
 11. AFP large-scale benchmark.
+
+Near-term main line remains strict-kernel and proof-boundary work:
+
+```text
+subst_premise design
+resolve1 / bicompose / resolution-family design
+admitted reason inventory and reduction
+strict replay / invariant coverage
+legacy adapter compatibility matrix
+```
+
+Parallel non-blocking design track:
+
+- Design a backend-agnostic high-performance symbolic compute layer for
+  mechanical proof workloads: term/fact fingerprinting, fact prefiltering,
+  rewrite candidate filtering, finite-domain counterexample search, and batch
+  proof-obligation quick rejection.
+- Start with a deterministic CPU baseline. Burn/CubeCL is only a future
+  optional backend candidate after packed symbolic data structures and tests
+  exist.
+- Do not add Burn/CubeCL to `src/kernel`, do not introduce a Burn dependency
+  before the CPU baseline, and do not let GPU/multi-backend output become
+  `TrustedTheorem`.
+
+Design document: [HPC_SYMBOLIC_COMPUTE_DESIGN.md](HPC_SYMBOLIC_COMPUTE_DESIGN.md).
 
 ## Phase 0: Baseline and Documentation Sync
 
@@ -468,6 +494,66 @@ Done when:
 
 - Each version has a published compatibility report.
 - Admitted count never increases between versions.
+
+## Parallel Non-Blocking Track: HPC Symbolic Compute
+
+Status: design-only. This track does not reorder the strict-kernel,
+compatibility-matrix, admitted-inventory, or workspace-split phases.
+
+Goal:
+
+Introduce an untrusted, backend-agnostic compute layer for large mechanical
+symbolic workloads around proof search, without changing Isabelle-style user
+commands and without expanding the trusted kernel.
+
+Primary document:
+
+```text
+docs/HPC_SYMBOLIC_COMPUTE_DESIGN.md
+```
+
+First-stage tasks:
+
+```text
+PackedTermArena
+PackedFact
+PackedRewriteRule
+TermFingerprint
+FactCandidate
+RewriteCandidate
+SymbolicComputeBackend
+CpuSymbolicBackend
+```
+
+Candidate future backend:
+
+```text
+BurnSymbolicBackend / CubeCL backend behind an optional feature
+```
+
+Initial workloads:
+
+- term and fact fingerprinting;
+- fact prefiltering for proof search;
+- rewrite rule candidate filtering for simplifier paths;
+- finite-domain counterexample search;
+- batch proof-obligation quick rejection.
+
+Trust contract:
+
+- `compute` returns candidates, scores, fingerprints, and diagnostics only.
+- `compute` cannot construct or accept theorems.
+- exact proof-search transitions still run on CPU and call the kernel;
+- theorem acceptance remains strict CPU kernel replay/check;
+- `src/kernel` does not depend on `compute`, Burn, CubeCL, WGPU, CUDA, or any
+  backend-specific crate.
+
+Done when:
+
+- CPU packed-IR/fingerprint prototype exists outside `src/kernel`;
+- candidate prefilters are tested against exact CPU matching/search;
+- benchmark data shows a batch-size regime where acceleration is plausible;
+- no trusted theorem can be produced from compute output without kernel replay.
 
 ## Phase 10: Cargo Workspace Split
 

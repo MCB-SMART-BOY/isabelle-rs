@@ -114,6 +114,7 @@ The following areas have a coherent implementation and regression coverage:
 | Searchable vs trusted facts | `HolTheoremDb` is a proof-search fact index; final trusted theorem tables use strict closed proved filters. |
 | Attribute fallback honesty | Non-derivational theorem transformations are admitted as `admitted:attribute_transformation`. |
 | T4 minimal replay | `assume`, `reflexive`, `symmetric`, `transitive`, `implies_intr`, `implies_elim` replay with burden checks. |
+| HPC symbolic compute | Design-only parallel track for untrusted candidate generation, fingerprinting, and prefiltering; no Burn/CubeCL dependency and no kernel dependency. |
 | Attack tests | `tests/kernel_soundness.rs`, `src/core/thm.rs`, and `src/core/proofterm.rs` encode regression attacks. |
 
 Important distinction:
@@ -224,6 +225,12 @@ Sledgehammer, SMT, or Code Generator work. The route is:
 9. Expand HOL/Isar/tool coverage only after the trusted boundary remains stable.
 10. Harden WASM plugin sandbox boundaries.
 11. AFP large-scale benchmark.
+
+Parallel non-blocking design track: high-performance symbolic compute may
+define packed IR, a deterministic CPU baseline, and future optional Burn/CubeCL
+backends. It must not add GPU/backend dependencies to the kernel, produce
+trusted theorems, or delay the strict-kernel / resolution / admitted-inventory
+main line.
 
 The full layered platform architecture is formalized in
 [docs/ADR-0002-layered-platform-architecture.md](ADR-0002-layered-platform-architecture.md).

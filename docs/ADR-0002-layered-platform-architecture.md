@@ -62,6 +62,14 @@ depend on upper layers):
 │ simp / auto / metis / meson / smt / reconstruction   │
 └────────────────────────┬────────────────────────────┘
                          │
+        ┌────────────────┴────────────────┐
+        │                                 │
+┌───────▼────────┐               ┌────────▼────────┐
+│ isabelle-index │               │ isabelle-compute│
+│ facts / terms  │               │ untrusted HPC   │
+└───────┬────────┘               │ prefilters      │
+        │                        └─────────────────┘
+        │
 ┌────────────────────────▼────────────────────────────┐
 │              isabelle-hol / isabelle-logic           │
 │ Pure / HOL / datatype / quotient / transfer / BNF    │
@@ -124,6 +132,22 @@ Automation methods (simp, auto, blast, fast, best, metis, meson, arith) and
 external ATP/SMT bridges (Sledgehammer). These return proof scripts or
 kernel-checkable evidence, not raw theorems.
 
+### Layer 4a: `isabelle-index` / `isabelle-compute` — Untrusted Symbolic Compute
+
+Indexes and high-performance symbolic compute are optional acceleration layers
+for proof search. They may perform term/fact fingerprinting, fact prefiltering,
+rewrite-rule candidate filtering, finite-domain counterexample search, and
+batch proof-obligation quick rejection.
+
+They are not trusted theorem constructors. Their outputs are candidates,
+scores, fingerprints, diagnostics, or certificate drafts. Any result that
+affects theorem state must still be replayed through exact proof-search code and
+accepted by the CPU strict kernel.
+
+`isabelle-compute` starts with a deterministic CPU baseline. Burn/CubeCL may be
+evaluated later as an optional backend for packed symbolic compute, but no
+backend-specific dependency may enter `isabelle-kernel`.
+
 ### Layer 5: `isabelle-session` — Incremental Engine
 
 Content-addressed incremental checking with snapshot/rollback. Shared
@@ -182,6 +206,8 @@ scripts, not theorems.
 Kernel must be tiny.         — TCB minimal, auditable, independent.
 Compatibility measurable.    — Core / Tier2 / AFP smoke matrix with CI.
 Automation untrusted.        — Methods return proof scripts, not Thm.
+Compute untrusted.           — GPU/multi-backend compute returns candidates,
+                                not TrustedTheorem.
 Projects reproducible.       — Lockfile, toolchain pinning, content-addressed cache.
 Proof states structured.     — Goals, hyps, trust footprint as structured data.
 Agents first-class.          — APP as a peer protocol to LSP, not an afterthought.
@@ -198,6 +224,7 @@ established by ADR-0001:
 | **P0** | Strict-kernel compatibility matrix and adapter boundaries | P0 kernel |
 | **P1** | Extract `isabelle-kernel` as first independent crate | P0 kernel |
 | **P1** | Structured compatibility matrix (Core → Tier2 → AFP smoke) | P0 kernel |
+| **P1/P2 parallel** | HPC symbolic compute design and CPU baseline outside the kernel | P0 kernel + compatibility matrix |
 | **P2** | Session incremental engine (snapshot/rollback/cache) | P1 kernel crate |
 | **P2** | `isabelle.toml` project system | P1 kernel crate |
 | **P3** | Agent Proof Protocol (APP) | P2 session |
@@ -215,6 +242,9 @@ established by ADR-0001:
   target layer, not into the monolithic crate.
 - The first workspace split extracts `isabelle-kernel` only. Other crates
   follow only when their dependency boundaries are clear.
+- The high-performance symbolic compute layer is an untrusted acceleration
+  layer. It must not be implemented by adding GPU dependencies to the kernel or
+  by letting candidate generation bypass kernel replay/check.
 - "Compatibility" becomes a measurable CI metric, not an anecdotal claim.
 - Documentation and `.codex`/`.claude` references must track which layer a
   change belongs to.

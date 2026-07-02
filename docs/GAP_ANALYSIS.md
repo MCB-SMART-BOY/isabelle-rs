@@ -242,4 +242,7 @@ Drop-in replacement for Isabelle
    are stable.
 3. Reduce `Typ::dummy()` at theorem construction sites.
 4. Shrink admitted lemmas by reason while preserving oracle footprints.
-5. Only then increase HOL/Isar surface coverage.
+5. In parallel, design an untrusted high-performance symbolic compute layer
+   for fact/rewrite prefiltering and term fingerprinting; keep theorem
+   acceptance in the CPU strict kernel.
+6. Only then increase HOL/Isar surface coverage.

@@ -37,9 +37,13 @@ The project currently prioritizes:
 4. Strict-kernel invariant replay as an independent derivation check (separate from legacy T4 proofterm replay).
 5. Attack tests for trusted-boundary regressions.
 6. Automated firewall enforcement (`scripts/check-kernel-firewall.sh`, `scripts/check-strict-kernel.sh`).
+7. Design-only high-performance symbolic compute as an untrusted candidate
+   generation/prefilter layer, with CPU strict-kernel acceptance unchanged.
 
 It does not currently prioritize broad HOL command coverage, PIDE parity, LSP
 features, Sledgehammer, SMT, or Code Generator work.
+It also does not currently add Burn/CubeCL or GPU dependencies; those remain
+future optional backends after a deterministic CPU symbolic-compute baseline.
 
 ## Trusted Boundary
 
@@ -100,6 +104,7 @@ and goal initialization. It must not be used as a proof-failure fallback.
 | Isar layer | `src/isar/*` | Partial structured proof state machine and method dispatch. |
 | HOL layer | `src/hol/*`, `src/tools/*` | Partial HOL loading, theorem DB, simplifier/Metis/Meson/linarith stubs and tools. |
 | Theory/session | `src/theory/*` | Theory processing, closed theorem statistics, session summaries. |
+| Future symbolic compute | `docs/HPC_SYMBOLIC_COMPUTE_DESIGN.md` | Untrusted packed term/fact/rewrite prefilter design; no current source module and no theorem construction authority. |
 | UI/runtime | `src/lsp/*`, `src/server/*`, `src/wasm/*` | Skeleton infrastructure; not part of the current trust-critical path. |
 
 ## Theory Processing Flow

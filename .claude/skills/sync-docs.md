@@ -37,7 +37,9 @@ Sync documentation with current code state after changes. Covers both `docs/` an
 | `docs/KERNEL_RULES.md` | Legacy kernel rule change |
 | `docs/KERNEL_PRIMITIVES.md` | Strict kernel rule contract change |
 | `docs/KERNEL_ATTACK_TESTS.md` | New/fixed attack test, known gap change |
+| `docs/HPC_SYMBOLIC_COMPUTE_DESIGN.md` | HPC symbolic compute design, backend candidates, compute/kernel boundary |
 | `docs/ADR-0001-kernel-core-rewrite.md` | Strangler migration progress, TCB boundary change |
+| `docs/ADR-0002-layered-platform-architecture.md` | Target platform layer or dependency direction change |
 
 ### .claude/ (4 areas)
 
