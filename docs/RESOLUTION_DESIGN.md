@@ -171,33 +171,136 @@ with premise solving. It should be implemented after `bicompose` is stable.
 
 ---
 
-## 4. `subst_premise` Contract (Premise Rewriting)
+## 4. Conservative `subst_premise` Contract (Premise Rewriting)
+
+`subst_premise` is the next strict-resolution design target. This section
+describes the **first strict-kernel version only**. It is deliberately smaller
+than Isabelle's full premise-rewriting machinery.
 
 ```text
 input:
-  goal_state: Δ |- G₁ ==> ... ==> Gᵢ ==> ... ==> Gₘ ==> R
-  i:           index of the premise to rewrite
-  equality:    Γ |- Gᵢ == Q   (or equivalently Γ |- Q == Gᵢ)
+  eq_thm:      Γ |- A == B       where A, B : prop
+  goal_state:  Δ |- G₁ ==> ... ==> A ==> ... ==> Gₘ ==> R
+  i:           selected subgoal index, where Gᵢ is exactly A
 
 output:
-  Δ ∪ Γ |-
-    G₁ ==> ... ==> Gᵢ₋₁ ==> Q ==> Gᵢ₊₁ ==> ... ==> Gₘ ==> R
+  Γ ∪ Δ |-
+    G₁ ==> ... ==> B ==> ... ==> Gₘ ==> R
 ```
 
 `subst_premise` rewrites a single premise of the goal state using an equality
-theorem. It does NOT require unification — only equality elimination (which the
-strict kernel already has via `equal_elim` for propositional equality).
+theorem. It exercises premise indexing, propositional equality elimination, and
+hypothesis propagation without introducing unification, lifting, or freshening.
 
-### Open question: object vs propositional equality
+### First-Version Restrictions
 
-`equal_elim` in the strict kernel currently requires **propositional** equality
-(`A == B` where `A, B: prop`). If `subst_premise` needs to rewrite premises that
-are object-level terms (e.g., `x == y : nat`), we need either:
-- A separate primitive for object-level equality elimination.
-- A different implementation path that uses `combination` + `symmetric` + `transitive`.
+The first version must enforce:
 
-For the first version, `subst_premise` can operate at the propositional level
-only, which covers the common use case of rewriting goal premises.
+```text
+prop equality only
+lhs -> rhs only
+no symmetric rewrite
+no object equality rewrite
+no full unification
+no matching beyond exact strict alpha-equivalence
+no lifting / freshening
+no flex-flex pairs
+```
+
+Consequences:
+
+- The equality theorem must have proposition `A == B` where both sides have
+  type `prop`.
+- The selected subgoal must be strict alpha-equivalent to `A`.
+- If the selected subgoal equals `B` but not `A`, the rule rejects. Callers can
+  apply `symmetric` explicitly in a later version, but the first version does
+  not do this automatically.
+- Object equality such as `x == y` where `x, y : nat` is rejected with
+  `NotProposition` or an equivalent typed error.
+- The remaining goal subgoals and conclusion are preserved exactly.
+- Hypotheses are unioned modulo strict alpha-equivalence:
+
+```text
+hyps(result) = Γ ∪ Δ
+```
+
+No substitution is applied in the first version because there is no
+unification/matching step.
+
+### First-Version Error Behavior
+
+Expected failures:
+
+```text
+SubgoalIndexOutOfRange
+NotEquality
+NotProposition
+AntecedentMismatch / PremiseMismatch
+Invariant violation on replay/tampering
+```
+
+If the goal state has no subgoals, any index is out of range. If `i` points
+outside the implication-chain premise list, the rule must fail before theorem
+construction.
+
+### Relationship To `equal_elim`
+
+`equal_elim` already validates propositional equality:
+
+```text
+Γ |- A == B
+Δ |- A
+----------
+Γ ∪ Δ |- B
+```
+
+`subst_premise` is the goal-state version of this operation. It rewrites the
+selected subgoal in an implication chain rather than consuming a standalone
+minor theorem. A first implementation can conceptually decompose the goal into
+premises and rebuild it with `Term::replace_subgoal_with_premises`, but it must
+record its own derivation and support invariant replay.
+
+### Out Of Scope For First Version
+
+Future versions may add:
+
+```text
+symmetric rewrite mode
+object equality rewriting
+matching or unification against the selected subgoal
+lifting / freshening
+multi-premise rewrite tactics
+integration with simplifier rewrite indexing
+```
+
+Those extensions must be designed and tested separately. They must not be
+smuggled into the first version.
+
+### Planned Attack Tests
+
+The first strict implementation should add these planned tests before or with
+code. They are not implemented by this design-only document.
+
+| Test | What it checks |
+|---|---|
+| `subst_premise_basic` | `A == B` rewrites selected premise `A` to `B` in a goal chain. |
+| `subst_premise_rejects_object_equality` | `x == y` for non-`prop` object type is rejected. |
+| `subst_premise_rejects_out_of_range` | Selecting a missing subgoal fails before theorem construction. |
+| `subst_premise_rejects_mismatch` | Selected subgoal not strict-alpha-equal to lhs `A` is rejected. |
+| `subst_premise_rejects_symmetric_direction` | Selected subgoal equal to rhs `B`, not lhs `A`, is rejected. |
+| `subst_premise_selected_index_is_goal_subgoal` | Selected index refers to the goal implication-chain subgoal, not part of the equality theorem. |
+| `subst_premise_preserves_other_subgoals` | Premises before and after the selected subgoal remain unchanged. |
+| `subst_premise_preserves_hypotheses` | Equality and goal hypotheses are unioned and preserved. |
+| `subst_premise_invariant_check_passes` | Valid output replays through strict invariant checking. |
+| `subst_premise_tampered_result_rejected` | Replay rejects forged proposition, wrong replacement, or dropped hypotheses. |
+
+Additional negative tests after first implementation:
+
+- selected subgoal equals rhs `B`, not lhs `A`, and is rejected unless caller
+  explicitly supplies a symmetric equality theorem;
+- object-equality rewrite is rejected even when the object terms are identical
+  except for names;
+- empty goal state rejects every selected index.
 
 ---
 
@@ -527,9 +630,13 @@ enum KernelError {
 
 ### Q7: `subst_premise` vs `bicompose` Ordering
 
-**Recommendation**: `subst_premise` first, then a minimal `resolve1`, then
-`bicompose`, then `bicompose_eresolve`. `subst_premise` exercises premise
-indexing and substitution under hypotheses without requiring unification.
+**Recommendation**: implement conservative `subst_premise` next, then full
+`bicompose`, then `bicompose_eresolve`. The minimal `resolve1_match` prototype
+already exists, but it does not replace `subst_premise`.
+
+The first `subst_premise` version exercises premise indexing, propositional
+equality elimination, hypothesis union, and invariant replay without requiring
+unification.
 
 ---
 
@@ -543,6 +650,7 @@ indexing and substitution under hypotheses without requiring unification.
 | `union_hyps` + substitution | ✅ Implemented for `resolve1_match` | Applies substitution to rule and goal hyps before union |
 | Strict matcher (`match_terms` + `match_terms_certified`) | ✅ Implemented | Internal (`pub(in crate::kernel)`) only; no public Term→CTerm API |
 | `resolve1_match` | ✅ Prototype implemented | Conservative one-way backward resolution; shared subgoal-splicing helper; invariant replay covered |
+| conservative `subst_premise` | Design only | Next main-line design target; prop equality only, lhs→rhs only, no unification |
 | Full unification | Not started | Deferred |
 | Lifting / freshening | Not started | Deferred (caller responsibility for v1) |
 | `tpairs` / flex-flex | Not in strict kernel | Deferred |
@@ -557,10 +665,12 @@ indexing and substitution under hypotheses without requiring unification.
    Conservative: pattern Vars only, exact type match, consistent duplicates.
    Bindings are returned in deterministic `(name, index, type)` order so
    derivation replay is not HashMap-order dependent.
-3. **`subst_premise`** — exercises premise indexing + equality elimination.
-4. ✅ **`resolve1_match`** — minimal backward resolution using strict matching only.
+3. ✅ **`resolve1_match`** — minimal backward resolution using strict matching only.
    No lifting, no flex-flex, no elimination premise solving.
-5. **`bicompose`** — full backward resolution (builds on `resolve1`).
+4. **Conservative `subst_premise`** — prop equality only, lhs→rhs only,
+   exact selected-subgoal match, no unification, no symmetric rewrite.
+5. **`bicompose`** — full backward resolution (builds on the same implication-chain
+   and matching foundations, not by copying legacy core).
 6. **`bicompose_eresolve`** — elimination resolution with premise solving.
 
 Do NOT start workspace splitting, APP, `isabelle.toml`, or AFP benchmarks
@@ -584,5 +694,18 @@ Each resolution rule needs:
 - Tampered result: wrong subgoal count, wrong substitution → invariant failure.
 - Round-trip: `bicompose` then `implies_intr` list → recovers original rule.
 - Multiple independent resolutions produce consistent results.
+
+Planned `subst_premise` attack tests:
+
+- `subst_premise_basic`
+- `subst_premise_rejects_object_equality`
+- `subst_premise_rejects_out_of_range`
+- `subst_premise_rejects_mismatch`
+- `subst_premise_rejects_symmetric_direction`
+- `subst_premise_selected_index_is_goal_subgoal`
+- `subst_premise_preserves_other_subgoals`
+- `subst_premise_preserves_hypotheses`
+- `subst_premise_invariant_check_passes`
+- `subst_premise_tampered_result_rejected`
 
 ---

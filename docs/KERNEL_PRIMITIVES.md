@@ -633,8 +633,10 @@ implementation. See that document for:
 - Goal state as implication chain.
 - Strict matcher/unifier requirements and the firewall rule
   (`src/kernel/` MUST NOT depend on `crate::core::unify`).
-- Implementation order: implication-chain utilities → strict matcher →
-  `subst_premise` → `resolve1` → `bicompose` → `bicompose_eresolve`.
+- Current implementation order/status: implication-chain utilities → strict
+  matcher → `resolve1_match` prototype are implemented; conservative
+  `subst_premise` design is next; full `bicompose` and `bicompose_eresolve`
+  remain future work.
 - Open design questions (9 items).
 - Attack test plans.
 
@@ -646,4 +648,7 @@ are implemented with invariant replay and attack tests. `resolve1_match` now
 uses `replace_subgoal_with_premises` directly, so subgoal replacement order is
 shared with the implication-chain foundation instead of duplicated locally.
 Full `bicompose`, `bicompose_eresolve`, lifting/freshening, flex-flex pairs,
-and higher-order unification are not implemented.
+and higher-order unification are not implemented. The next main-line design
+step is conservative `subst_premise`: propositional equality only, lhs→rhs
+only, no symmetric rewrite, no object equality rewrite, no full unification,
+no lifting/freshening, and no flex-flex.
