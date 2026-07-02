@@ -1,5 +1,5 @@
 ---
-description: LCF 内核规则。KernelRules 15原语 + resolve1_match prototype, CTerm, invariant replay, pub(in crate::kernel) visibility firewall。
+description: LCF 内核规则。KernelRules 15原语 + resolve1_match prototype + conservative subst_premise, CTerm, invariant replay, pub(in crate::kernel) visibility firewall。
 globs: src/core/thm.rs, src/core/logic.rs, src/core/drule.rs, src/core/more_thm.rs, src/kernel/rules.rs, src/kernel/thm.rs, src/kernel/cterm.rs, src/kernel/unify.rs, src/kernel/term.rs, src/kernel/typ.rs, src/kernel/invariant.rs, src/kernel/derivation.rs, src/kernel/context.rs
 alwaysApply: false
 version: 4.0
@@ -22,23 +22,26 @@ Strict kernel primitives (15):
   beta_conversion, implies_intr, implies_elim, forall_intr, forall_elim,
   equal_intr, equal_elim, generalize, instantiate
 
-Strict kernel derived (1, prototype):
+Strict kernel derived/prototype (2):
   resolve1_match — conservative one-way matching, no lifting/freshening,
   no full unification, no flex-flex. Returns RequiresLifting on Free-variable
   collision. NOT full bicompose. See docs/RESOLUTION_DESIGN.md.
+  subst_premise — conservative premise rewrite, prop equality only, lhs -> rhs
+  only, exact selected-subgoal alpha-equivalence, no symmetric rewrite, no
+  object equality rewrite, no unification/lifting/freshening/flex-flex.
 
-Legacy core only (3): bicompose, bicompose_eresolve, subst_premise
+Legacy core compatibility debt (2): bicompose, bicompose_eresolve
 
 Utility (1): trivial
 ```
 
-**Note**: The three legacy rules (`bicompose`, `bicompose_eresolve`, `subst_premise`)
-are **legacy `src/core/` only**. They have NOT been migrated to the strict
-`src/kernel/`. The strict kernel's `resolve1_match` is a conservative prototype
-backed by strict matching and invariant replay; full `bicompose` /
-`bicompose_eresolve` remain design-phase work tracked in
-`docs/RESOLUTION_DESIGN.md`. Do not implement strict-kernel resolution by
-copying legacy `ThmKernel::bicompose`.
+**Note**: Strict `subst_premise` has been migrated only in a conservative form.
+It is not a simplifier, full rewrite engine, or full bicompose. The legacy
+`bicompose` / `bicompose_eresolve` rules remain `src/core/` compatibility debt.
+The strict kernel's `resolve1_match` is a conservative prototype backed by
+strict matching and invariant replay; full `bicompose` / `bicompose_eresolve`
+remain design-phase work tracked in `docs/RESOLUTION_DESIGN.md`. Do not
+implement strict-kernel resolution by copying legacy `ThmKernel::bicompose`.
 
 ## Thm 结构体完整字段 (Phase 39 + T3 信任足迹)
 
