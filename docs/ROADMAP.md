@@ -761,24 +761,17 @@ Only after the above tracks are stable:
 
 ## Standing Verification Policy
 
-For docs-only changes:
-
-```bash
-cargo fmt --check
-cargo check
-```
-
 For kernel, proof replay, or theorem acceptance changes:
 
 ```bash
-cargo fmt --check
-cargo test --test kernel_soundness
-cargo test --test kernel_rewrite_soundness
-cargo test core::proofterm::tests::
-cargo test core::thm::tests::
-cargo test --lib core::
-cargo check
+bash scripts/check-strict-kernel.sh
 ```
+
+This unified gate covers: `cargo +stable fmt --check`, `cargo +stable check`,
+`bash scripts/check-kernel-firewall.sh`, `cargo test --test kernel_rewrite_soundness`
+(124 attack tests), `cargo test --test kernel_soundness` (26 boundary tests),
+`cargo test --lib kernel::thm::` (11), `cargo test --lib kernel::unify::tests::` (15),
+`cargo test --lib kernel::rules::tests::` (30), `cargo test --lib core::` (199).
 
 For theory-wide claims:
 

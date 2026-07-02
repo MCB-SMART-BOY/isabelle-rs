@@ -43,12 +43,7 @@ eef6d80 docs: reposition project as trusted Rust LCF kernel prototype
 The baseline gate is:
 
 ```bash
-cargo fmt --check
-cargo check
-cargo test --test kernel_soundness
-cargo test core::proofterm::tests::
-cargo test core::thm::tests::
-cargo test --lib core::
+bash scripts/check-strict-kernel.sh
 ```
 
 The baseline originally carried two ignored `alpha_eq` tests:
@@ -107,7 +102,7 @@ The following areas have a coherent implementation and regression coverage:
 | Area | Current state |
 |---|---|
 | LCF-style theorem type | `Thm` fields are private; external construction routes through `ThmKernel`. |
-| Kernel primitive rules | Core subset implemented; several rounds of type/burden/oracle boundary hardening done. |
+| Kernel primitive rules | All 15 base primitives implemented (assume, reflexive, symmetric, transitive, combination, abstraction, beta_conversion, implies_intr, implies_elim, forall_intr, forall_elim, equal_intr, equal_elim, generalize, instantiate); several rounds of type/burden/oracle boundary hardening done. |
 | Checked instantiation | Production paths use `instantiate_checked`; legacy infallible instantiation is not a production API. |
 | Strict alpha equality | Trusted kernel equality uses `kernel_alpha_eq`; legacy broad matching is isolated as `compat_alpha_eq`. |
 | Checked CTerm certification | `CTerm::certify_checked` exists, CTerms carry checked/compat status, and strict `assume`/`reflexive` reject compat terms. |

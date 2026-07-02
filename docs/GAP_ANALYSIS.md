@@ -82,6 +82,13 @@ This distinction is central. In particular:
 is_fully_proved() != is_closed_proved() != is_strict_closed_proved()
 ```
 
+### Strict Kernel vs Legacy Core Firewall
+
+The strict `src/kernel/` nucleus is enforced by automated checks:
+- `scripts/check-kernel-firewall.sh` validates no legacy dependencies or forbidden patterns.
+- `pub(in crate::kernel)` visibility gating prevents upper-layer modules (`src/core/`, `src/isar/`, `src/tools/`) from bypassing certified-origin constructors.
+- `scripts/check-strict-kernel.sh` runs the full 7-step gate (fmt, check, firewall, 124 attack, 26 soundness, 56 kernel inline, 199 core).
+
 ### Attack-Test-Driven Kernel Work
 
 The regression suite now includes attacks for:

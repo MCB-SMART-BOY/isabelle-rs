@@ -11,23 +11,32 @@ Read [PROJECT_STATUS.md](PROJECT_STATUS.md) first for the canonical status.
 Isabelle-rs is organized around a small trusted theorem-construction boundary:
 
 ```text
-source / generated facts
-  -> parser / loader / type inference
-  -> certified terms (`CTerm`)
-  -> `ThmKernel`
-  -> `Thm`
-  -> theorem acceptance filters
-  -> proof-search indexes or final trusted theory tables
+Strict TCB (src/kernel/):
+  ProofContext::certify_term / certify_prop
+    -> CTerm / CProp
+    -> KernelRules (15 primitives + resolve1_match)
+    -> KernelThm / ClosedThm / OpenThm
+    -> TrustedTheorem (invariant replay)
+    -> TrustedTheory
+
+Legacy quarantine (src/core/):
+  source / generated facts
+    -> parser / loader / type inference
+    -> certified terms (CTerm with CertStatus)
+    -> ThmKernel (LEGACY: bicompose/eresolve/subst_premise are core-only)
+    -> Thm
+    -> theorem acceptance filters
+    -> proof-search indexes or final trusted theory tables
 ```
 
 The project currently prioritizes:
 
-1. Private theorem fields and kernel-only theorem construction.
+1. Private theorem fields and kernel-only theorem construction (`pub(in crate::kernel)` visibility).
 2. Explicit `admitted:*` / oracle footprints.
-3. Correct distinction between open, admitted, oracle-free, and closed proved
-   theorems.
-4. Minimal proofterm replay as an independent derivation check.
+3. Correct distinction between open, admitted, oracle-free, closed proved, and strict-closed proved theorems.
+4. Strict-kernel invariant replay as an independent derivation check (separate from legacy T4 proofterm replay).
 5. Attack tests for trusted-boundary regressions.
+6. Automated firewall enforcement (`scripts/check-kernel-firewall.sh`, `scripts/check-strict-kernel.sh`).
 
 It does not currently prioritize broad HOL command coverage, PIDE parity, LSP
 features, Sledgehammer, SMT, or Code Generator work.

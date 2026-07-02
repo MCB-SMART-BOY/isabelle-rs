@@ -18,8 +18,10 @@ Read these first:
 3. [docs/ROADMAP.md](docs/ROADMAP.md)
 4. [docs/KERNEL_RULES.md](docs/KERNEL_RULES.md)
 5. [docs/KERNEL_ATTACK_TESTS.md](docs/KERNEL_ATTACK_TESTS.md)
-6. [docs/ADR-0001-kernel-core-rewrite.md](docs/ADR-0001-kernel-core-rewrite.md) — Strangler-pattern kernel reset.
-7. [docs/ADR-0002-layered-platform-architecture.md](docs/ADR-0002-layered-platform-architecture.md) — Target layered platform.
+6. [docs/KERNEL_PRIMITIVES.md](docs/KERNEL_PRIMITIVES.md) — Strict-kernel base primitive rule contracts.
+7. [docs/RESOLUTION_DESIGN.md](docs/RESOLUTION_DESIGN.md) — Resolution family design and `resolve1_match` status.
+8. [docs/ADR-0001-kernel-core-rewrite.md](docs/ADR-0001-kernel-core-rewrite.md) — Strangler-pattern kernel reset.
+9. [docs/ADR-0002-layered-platform-architecture.md](docs/ADR-0002-layered-platform-architecture.md) — Target layered platform.
 
 ## Branch Strategy
 
@@ -33,7 +35,7 @@ Read these first:
 | Track | Status |
 |---|---|
 | LCF-style `Thm` kernel | Research prototype with private theorem fields and `ThmKernel` construction boundary. |
-| Strict kernel nucleus (`src/kernel/`) | Base primitive rules plus conservative `resolve1_match` prototype. No dummy type, no compat certification, no fallback theorem construction. |
+| Strict kernel nucleus (`src/kernel/`) | 15 base primitive rules (`assume`, `reflexive`, `symmetric`, `transitive`, `combination`, `abstraction`, `beta_conversion`, `implies_intr`, `implies_elim`, `forall_intr`, `forall_elim`, `equal_intr`, `equal_elim`, `generalize`, `instantiate`) plus conservative `resolve1_match` prototype. No dummy type, no compat certification, no fallback theorem construction. |
 | T2 primitive rule hardening | Main body improved; strict `kernel_alpha_eq` split out; `Typ::dummy()` and certification remain known trust debts. |
 | Checked instantiation | Production paths use `instantiate_checked`; legacy infallible API is not production. |
 | Oracle/admit tracking | Explicit `admitted:*` footprints and propagation. |
@@ -41,6 +43,17 @@ Read these first:
 | Searchable vs trusted facts | `HolTheoremDb` is a search index; final `Theory` table accepts strict closed proved theorems. |
 | T4 proofterm replay | Minimal burden-aware replay for `assume`, `reflexive`, `symmetric`, `transitive`, `implies_intr`, `implies_elim`. |
 | HOL/Isar/tools | Partial prototypes, not Isabelle parity. |
+
+## Type Names
+
+| Strict kernel (`src/kernel/`) | Legacy core (`src/core/`) |
+|---|---|
+| `KernelRules` — primitive rule factory (TCB) | `ThmKernel` — legacy rule factory (quarantine) |
+| `KernelThm` — internal theorem record | `Thm` — legacy theorem struct |
+| `ClosedThm` — zero-hyps proved theorem | (no strict equivalent in legacy) |
+| `OpenThm` — theorem with hypotheses | (no strict equivalent in legacy) |
+| `TrustedTheorem` — certified-for-acceptance | `Thm` with `is_strict_closed_proved()` |
+| `CTerm`, `CProp` — strict certified terms | `CTerm` with `CertStatus` — legacy certified terms |
 
 ## Trust Vocabulary
 
@@ -51,6 +64,15 @@ is_strict_closed_proved() == strict construction + is_closed_proved() + no dummy
 ```
 
 `ThmKernel::assume(A)` constructs `A |- A`, not `|- A`.
+
+`KernelRules::assume(prop)` returns `OpenThm` (has hypotheses). Most other
+`KernelRules` methods operate on `KernelThm` and return `Result<KernelThm, ...>`
+or `ClosedThm`.
+
+`KernelRules::resolve1_match` is a conservative strict-kernel resolution
+prototype: strict one-way matching only, no lifting/freshening, no full
+unification, no flex-flex. Returns `RequiresLifting` on Free-variable collision.
+It is NOT full `bicompose` — see `docs/RESOLUTION_DESIGN.md`.
 
 `ThmKernel::admit(ct, reason)` is the only acceptable route for accepted
 unproved propositions. Use specific reasons such as:
@@ -68,8 +90,10 @@ admitted:simp_fallback
 
 ## Iron Laws
 
-1. `Thm` construction authority stays inside `src/core/thm.rs`; external code
-   uses `ThmKernel`.
+1. `Thm` / `KernelThm` construction authority stays inside `src/core/thm.rs` /
+   `src/kernel/thm.rs` respectively; external code uses `ThmKernel` (legacy) or
+   `KernelRules` (strict). Strict `KernelThm`/`ClosedThm`/`OpenThm` constructors
+   are gated by `pub(in crate::kernel)` visibility.
 2. Do not use `assume` as fallback for failed proofs, stubs, unsupported
    methods, or attribute transformations.
 3. Count a lemma as verified only if it is `is_strict_closed_proved()`.
@@ -80,7 +104,7 @@ admitted:simp_fallback
    explicitly marked parser/loader compatibility.
 8. New trusted kernel work belongs in `src/kernel`; legacy `src/core` changes
    are bug fixes or adapter bridges only.
-9. Run `scripts/check-kernel-firewall.sh` for strict-kernel boundary changes.
+9. Run `bash scripts/check-strict-kernel.sh` for strict-kernel boundary changes.
 10. Proof replay success does not replace closed theorem acceptance.
 11. `ProofBody::check(expected_prop)` is proposition-only compatibility code;
    trusted replay gates are `Thm::check_proof()` and `Thm::validate_proof()`.
@@ -145,12 +169,21 @@ stack-sensitive test has been verified fixed.
 ## Architecture Summary
 
 ```text
-.thy source
-  -> parser / loader / type inference
-  -> CTerm certification
-  -> ThmKernel
-  -> Thm with hyps/prop/tpairs/shyps/oracles/derivation
-  -> proof-search indexes or final trusted Theory tables
+Strict TCB (src/kernel/):
+  ProofContext::certify_term / certify_prop
+    -> CTerm / CProp
+    -> KernelRules                # 15 primitives + resolve1_match
+    -> KernelThm / ClosedThm / OpenThm
+    -> TrustedTheorem (invariant replay)
+    -> TrustedTheory
+
+Legacy quarantine (src/core/):
+  .thy source
+    -> parser / loader / type inference
+    -> CTerm certification (CertStatus::Checked/Compat)
+    -> ThmKernel (LEGACY — bicompose/eresolve/subst_premise are core-only)
+    -> Thm with hyps/prop/tpairs/shyps/oracles/derivation
+    -> proof-search indexes or final trusted Theory tables
 ```
 
 Important split:
@@ -172,4 +205,5 @@ final Theory theorem table
 - `Typ::dummy()` at parser/type/certification boundaries.
 - `Option<Thm>` erasing `KernelError` on some proof-search paths.
 - Partial T4 replay coverage.
+- Strict-kernel resolution limited to `resolve1_match` prototype (no full `bicompose`, `bicompose_eresolve`, `subst_premise`, lifting, or full unification).
 - HOL/Isar tools far from Isabelle parity.

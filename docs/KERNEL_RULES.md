@@ -102,6 +102,7 @@ the rule-level ledger, not a claim of full Isabelle `thm.ML` equivalence.
 | `bicompose` | `ThmKernel::bicompose` (⚠️ LEGACY CORE) | resolution/composition over a selected premise | selected premise exists; match/unify succeeds; known strict-alpha-match types compatible | union all premise burdens | alpha type-mismatch attack test |
 | `subst_premise` | `ThmKernel::subst_premise` (⚠️ LEGACY CORE) | replace selected premise using `t == u` | selected premise strict-kernel alpha-equal to lhs; known lhs/premise types compatible | union all premise burdens | type-mismatch attack test |
 | `bicompose_eresolve` | `ThmKernel::bicompose_eresolve` (⚠️ LEGACY CORE) | resolution with major-premise elimination | major premise matches available hyp/premise and conclusion matches subgoal; known types compatible | union all premise burdens | unifier type-mismatch attack test |
+| `resolve1_match` | `KernelRules::resolve1_match` (strict `src/kernel/`) | backward resolution: rule conclusion matches selected goal subgoal → replace subgoal with rule premises under substitution | strict one-way matching only; no lifting/freshening; no full unification; no flex-flex; `RequiresLifting` on Free-variable collision | union and substitute hypotheses; invariant replay | 20 inline tests in `src/kernel/rules.rs`; see `docs/RESOLUTION_DESIGN.md` |
 
 ## Known Kernel Boundary Gaps
 

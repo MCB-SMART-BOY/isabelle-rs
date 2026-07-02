@@ -25,37 +25,33 @@ These commits separate:
 
 ## Verified Gate
 
-The current trusted-kernel gate is:
+The current strict-kernel gate is:
 
 ```bash
-cargo fmt --check
-cargo check
-cargo test --test kernel_soundness
-cargo test core::proofterm::tests::
-cargo test core::thm::tests::
-cargo test --lib core::
+bash scripts/check-strict-kernel.sh
 ```
 
-Baseline result before the Strict Kernel Phase:
+This unified gate runs 7 steps: `cargo +stable fmt --check`, `cargo +stable check`,
+`bash scripts/check-kernel-firewall.sh`, and test suites covering kernel rewrite
+soundness, kernel soundness, inline kernel unit tests, and legacy core compatibility.
+
+Current baseline result (post Strict Kernel Phase):
 
 ```text
-cargo fmt --check                      passed
-cargo check                            passed
-cargo test --test kernel_soundness      13 passed
-cargo test core::proofterm::tests::     13 passed
-cargo test core::thm::tests::           31 passed, 2 ignored
-cargo test --lib core::                 186 passed, 2 ignored
+cargo +stable fmt --check                        passed
+cargo +stable check                              passed
+bash scripts/check-kernel-firewall.sh            FIREWALL CLEAN
+cargo test --test kernel_rewrite_soundness       124 passed
+cargo test --test kernel_soundness                26 passed
+cargo test --lib kernel::thm::                    11 passed
+cargo test --lib kernel::unify::tests::           15 passed
+cargo test --lib kernel::rules::tests::           30 passed
+cargo test --lib core::                          199 passed
 ```
 
-The two ignored tests are intentional regression markers for known T2 debts:
-
-```text
-Free / Const suffix matching
-Var / Free index confusion
-```
-
-They belong to the parser/type/certification boundary and must not be hidden by
-claiming T2 is complete.
+Previous ignored tests (Free/Const suffix, Var/Free index) are now
+passing tests — the Strict Kernel Phase resolved them at the equality
+boundary.
 
 Strict Kernel Phase update: trusted kernel equality now uses
 `Hyps::kernel_alpha_eq`, so the Free/Const and Var/Free tests are ordinary

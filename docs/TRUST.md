@@ -11,7 +11,9 @@ explicit oracle/admit footprint. Open theorems, admitted theorems, searchable
 facts, and closed proved lemmas must remain distinguishable.
 
 This document should be read together with
-[PROJECT_STATUS.md](PROJECT_STATUS.md), [KERNEL_RULES.md](KERNEL_RULES.md), and
+[PROJECT_STATUS.md](PROJECT_STATUS.md), [KERNEL_RULES.md](KERNEL_RULES.md),
+[KERNEL_PRIMITIVES.md](KERNEL_PRIMITIVES.md),
+[RESOLUTION_DESIGN.md](RESOLUTION_DESIGN.md), and
 [KERNEL_ATTACK_TESTS.md](KERNEL_ATTACK_TESTS.md).
 
 ## Current Position

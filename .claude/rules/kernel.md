@@ -1,30 +1,41 @@
 ---
-description: LCF 内核规则。ThmKernel 15操作, CTerm, tpairs, shyps, 类型感知等值构造。
-globs: src/core/thm.rs, src/core/logic.rs, src/core/drule.rs, src/core/more_thm.rs
+description: LCF 内核规则。KernelRules 15原语 + resolve1_match prototype, CTerm, invariant replay, pub(in crate::kernel) visibility firewall。
+globs: src/core/thm.rs, src/core/logic.rs, src/core/drule.rs, src/core/more_thm.rs, src/kernel/rules.rs, src/kernel/thm.rs, src/kernel/cterm.rs, src/kernel/unify.rs, src/kernel/term.rs, src/kernel/typ.rs, src/kernel/invariant.rs, src/kernel/derivation.rs, src/kernel/context.rs
 alwaysApply: false
-version: 3.1
-updated: 2026-06-30
+version: 4.0
+updated: 2026-07-02
 ---
 
 # 内核规则
 
 ## 触发条件
 
-修改 `thm.rs`, `logic.rs`, `drule.rs`, `more_thm.rs` 时应用。
+修改 `src/core/thm.rs`, `src/core/logic.rs`, `src/core/drule.rs`, `src/core/more_thm.rs`,
+以及 `src/kernel/rules.rs`, `src/kernel/thm.rs`, `src/kernel/cterm.rs`,
+`src/kernel/unify.rs`, `src/kernel/invariant.rs` 时应用。
 
-## 15 操作 + tpairs/shyps
+## 操作总览
 
 ```
-原语 (12): assume, reflexive, symmetric, transitive, combination, abstraction,
-           beta_conversion, implies_intr, implies_elim, forall_intr, forall_elim, instantiate
-内核派生 (3): bicompose, bicompose_eresolve, subst_premise  ← ⚠️ LEGACY CORE ONLY
-推导 (1): trivial
+Strict kernel primitives (15):
+  assume, reflexive, symmetric, transitive, combination, abstraction,
+  beta_conversion, implies_intr, implies_elim, forall_intr, forall_elim,
+  equal_intr, equal_elim, generalize, instantiate
+
+Strict kernel derived (1, prototype):
+  resolve1_match — conservative one-way matching, no lifting/freshening,
+  no full unification, no flex-flex. Returns RequiresLifting on Free-variable
+  collision. NOT full bicompose. See docs/RESOLUTION_DESIGN.md.
+
+Legacy core only (3): bicompose, bicompose_eresolve, subst_premise
+
+Utility (1): trivial
 ```
 
-**Note**: The three derived rules (`bicompose`, `bicompose_eresolve`, `subst_premise`)
+**Note**: The three legacy rules (`bicompose`, `bicompose_eresolve`, `subst_premise`)
 are **legacy `src/core/` only**. They have NOT been migrated to the strict
-`src/kernel/`. The strict kernel currently has a conservative `resolve1_match`
-prototype backed by strict matching and invariant replay; full `bicompose` /
+`src/kernel/`. The strict kernel's `resolve1_match` is a conservative prototype
+backed by strict matching and invariant replay; full `bicompose` /
 `bicompose_eresolve` remain design-phase work tracked in
 `docs/RESOLUTION_DESIGN.md`. Do not implement strict-kernel resolution by
 copying legacy `ThmKernel::bicompose`.

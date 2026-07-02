@@ -106,13 +106,14 @@ Relative completion estimates:
 
 ## Roadmap
 
-Current priority order:
+Current priority order (aligned with ADR-0002 layered platform vision):
 
-1. Tighten kernel equality/certification boundaries and reduce `Typ::dummy()`.
-2. Extend T4 proofterm replay to more primitive kernel rules.
-3. Shrink admitted lemmas by cause, preserving explicit oracle footprints.
-4. Expand HOL/Isar coverage after trusted boundaries remain stable.
-5. Treat LSP/WASM/agent integration as later layers over a trustworthy kernel.
+1. Stabilize strict `src/kernel` nucleus (15 primitives + `resolve1_match` prototype) with firewall checks and compatibility matrix.
+2. Extend strict-kernel invariant replay coverage after rule contracts and adapter boundaries are stable.
+3. Reduce admitted lemmas by classified reason.
+4. Split into Cargo workspace (`isabelle-kernel` crate first).
+5. Expand HOL/Isar/tool coverage only after trusted boundaries remain stable.
+6. Build session incremental engine, `isabelle.toml`, and Agent Proof Protocol.
 
 Detailed plan: [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -121,9 +122,11 @@ Detailed plan: [docs/ROADMAP.md](docs/ROADMAP.md).
 | Document | Purpose |
 |---|---|
 | [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md) | Canonical current positioning and status. |
-| [docs/BASELINE.md](docs/BASELINE.md) | Trusted-kernel checkpoint, gate, strict-kernel update, and next entry point. |
+| [docs/BASELINE.md](docs/BASELINE.md) | Trusted-kernel checkpoint, gate, and next entry point. |
 | [docs/TRUST.md](docs/TRUST.md) | Trust model, theorem acceptance, oracle/admit semantics. |
 | [docs/KERNEL_RULES.md](docs/KERNEL_RULES.md) | Kernel rule audit ledger. |
+| [docs/KERNEL_PRIMITIVES.md](docs/KERNEL_PRIMITIVES.md) | Strict-kernel base primitive rule contracts. |
+| [docs/RESOLUTION_DESIGN.md](docs/RESOLUTION_DESIGN.md) | Resolution family design and `resolve1_match` status. |
 | [docs/KERNEL_ATTACK_TESTS.md](docs/KERNEL_ATTACK_TESTS.md) | Soundness regression matrix. |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Current architecture and trusted-boundary data flow. |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Concrete next phases and acceptance gates. |

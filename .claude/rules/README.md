@@ -2,7 +2,7 @@
 description: Isabelle-rs 项目总索引 — 状态、铁律、规则索引。每次对话必加载。
 globs: "**/*.rs"
 alwaysApply: true
-version: 2.0
+version: 2.3
 ---
 # Isabelle-rs 项目规则
 
@@ -15,15 +15,15 @@ version: 2.0
 |------|-----|
 | 新 TCB | `src/kernel/` strict nucleus; no dummy, no compat, no fallback theorem construction |
 | legacy 边界 | `src/core` / Isar / HOL / tools 进入 quarantine, 只通过 adapter 迁移 |
-| strict kernel rules | assume/reflexive/symmetric/transitive/beta/forall/combination/abstraction/equal/generalize/instantiate + `resolve1_match` prototype |
+| strict kernel rules | all 15 primitives (assume, reflexive, symmetric, transitive, combination, abstraction, beta_conversion, implies_intr, implies_elim, forall_intr, forall_elim, equal_intr, equal_elim, generalize, instantiate) + `resolve1_match` prototype |
 | 信任模型 | `TrustedTheory` 只接收 `TrustedTheorem`; `SearchFactDb` 不能提升为 trusted |
 | 证明状态 | `ProofObligation` 与 theorem 分离; `assume(A)` 是 open theorem `A |- A` |
-| 测试 gate | `scripts/check-kernel-firewall.sh`; `cargo test --test kernel_rewrite_soundness` |
+| 测试 gate | `bash scripts/check-strict-kernel.sh` (fmt + check + firewall + 124 attack + 26 soundness + 56 kernel inline + 199 core) |
 | 战略 | 先完成 strict kernel 与 replay，再做 workspace/session/agent；不追 HOL/AFP 覆盖率 |
 
 ## 铁律 (15)
 
-1. **`Thm` 只能在 `src/core/thm.rs` 内构造** — 外部用 `ThmKernel`
+1. **`Thm`/`KernelThm` 只能在 `src/kernel/thm.rs` / `src/core/thm.rs` 内构造** — 外部用 `KernelRules` (strict) 或 `ThmKernel` (legacy)
 2. **禁止 `Typ::dummy()` 进入内核推理规则**
 3. **证明方法第一步必须调 `apply_safe_rules`**
 4. **规则查找用 net** — `db.intro_net().lookup()` 非 `db.intros`
