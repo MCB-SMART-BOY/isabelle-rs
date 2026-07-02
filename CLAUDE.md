@@ -113,21 +113,24 @@ adapter boundaries.
 For docs-only changes:
 
 ```bash
-cargo fmt --check
-cargo check
+cargo +stable fmt --check
+cargo +stable check
 ```
 
 For kernel, proof replay, theorem acceptance, or proof-search changes:
 
 ```bash
-cargo fmt --check
-cargo test --test kernel_soundness
-cargo test --test kernel_rewrite_soundness
-cargo test core::proofterm::tests::
-cargo test core::thm::tests::
-cargo test --lib core::
-cargo check
+bash scripts/check-strict-kernel.sh
 ```
+
+This formalized gate runs:
+1. `cargo +stable fmt --check`
+2. `cargo +stable check`
+3. `scripts/check-kernel-firewall.sh` (no legacy deps, no forbidden patterns)
+4. `cargo +stable test --test kernel_rewrite_soundness` (124 attack tests)
+5. `cargo +stable test --test kernel_soundness` (26 boundary tests)
+6. Kernel inline unit tests: `kernel::thm::` (11), `kernel::unify::tests::` (15), `kernel::rules::tests::` (30)
+7. `cargo +stable test --lib core::` (199 compatibility tests)
 
 For broad theory claims:
 
