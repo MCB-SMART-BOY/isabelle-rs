@@ -2225,6 +2225,49 @@ fn subst_premise_preserves_other_subgoals_and_hypotheses() {
     check_kernel_thm(&result).unwrap();
 }
 
+// ---------------------------------------------------------------------------
+// conservative bicompose wrapper
+// ---------------------------------------------------------------------------
+
+#[test]
+fn bicompose_wrapper_basic_no_vars() {
+    let ctx = ctx_with_props(&["A", "B"]);
+    let rule = KernelRules::assume(ctx.certify_prop(prop("A")).unwrap()).into_kernel();
+    let goal =
+        KernelRules::assume(ctx.certify_prop(raw_imp_chain(&["A", "B"])).unwrap()).into_kernel();
+
+    let result = KernelRules::bicompose(&rule, &goal, 0).unwrap();
+
+    assert_eq!(result.prop(), &ctx.certify_prop(prop("B")).unwrap());
+    assert!(matches!(result.derivation(), Derivation::Resolve1Match { .. }));
+    check_kernel_thm(&result).unwrap();
+}
+
+#[test]
+fn bicompose_wrapper_rejects_var_namespace_collision() {
+    let ctx = ctx_with_props(&["R"]);
+    let p_var = RawTerm::var("P", 0, Ty::prop());
+    let rule = KernelRules::assume(ctx.certify_prop(p_var.clone()).unwrap()).into_kernel();
+    let goal = KernelRules::assume(ctx.certify_prop(RawTerm::imp(p_var, prop("R"))).unwrap())
+        .into_kernel();
+
+    let err = KernelRules::bicompose(&rule, &goal, 0).unwrap_err();
+
+    assert!(matches!(err, KernelError::RequiresLifting { .. }), "got {err:?}");
+}
+
+#[test]
+fn bicompose_wrapper_rejects_match_failure() {
+    let ctx = ctx_with_props(&["A", "B", "R"]);
+    let rule = KernelRules::assume(ctx.certify_prop(prop("A")).unwrap()).into_kernel();
+    let goal =
+        KernelRules::assume(ctx.certify_prop(raw_imp_chain(&["B", "R"])).unwrap()).into_kernel();
+
+    let err = KernelRules::bicompose(&rule, &goal, 0).unwrap_err();
+
+    assert!(matches!(err, KernelError::Invariant(_)), "expected match failure, got {err:?}");
+}
+
 // ============================================================
 // generalize — Free → Var (schematic generalisation)
 // ============================================================

@@ -36,7 +36,7 @@ Read these first:
 | Track | Status |
 |---|---|
 | LCF-style `Thm` kernel | Research prototype with private theorem fields and `ThmKernel` construction boundary. |
-| Strict kernel nucleus (`src/kernel/`) | 15 base primitive rules (`assume`, `reflexive`, `symmetric`, `transitive`, `combination`, `abstraction`, `beta_conversion`, `implies_intr`, `implies_elim`, `forall_intr`, `forall_elim`, `equal_intr`, `equal_elim`, `generalize`, `instantiate`) plus conservative `resolve1_match` and `subst_premise`. No dummy type, no compat certification, no fallback theorem construction. |
+| Strict kernel nucleus (`src/kernel/`) | 15 base primitive rules (`assume`, `reflexive`, `symmetric`, `transitive`, `combination`, `abstraction`, `beta_conversion`, `implies_intr`, `implies_elim`, `forall_intr`, `forall_elim`, `equal_intr`, `equal_elim`, `generalize`, `instantiate`) plus conservative `resolve1_match`, `subst_premise`, and `bicompose` wrapper. No dummy type, no compat certification, no fallback theorem construction. |
 | T2 primitive rule hardening | Main body improved; strict `kernel_alpha_eq` split out; `Typ::dummy()` and certification remain known trust debts. |
 | Checked instantiation | Production paths use `instantiate_checked`; legacy infallible API is not production. |
 | Oracle/admit tracking | Explicit `admitted:*` footprints and propagation. |
@@ -73,13 +73,19 @@ or `ClosedThm`.
 
 `KernelRules::resolve1_match` is a conservative strict-kernel resolution
 prototype: strict one-way matching only, no lifting/freshening, no full
-unification, no flex-flex. Returns `RequiresLifting` on Free-variable collision.
-It is NOT full `bicompose` — see `docs/RESOLUTION_DESIGN.md`.
+unification, no flex-flex. Returns `RequiresLifting` on Free-variable or
+schematic Var namespace collision.
 
 `KernelRules::subst_premise` is implemented only in its conservative strict
 form: propositional equality, lhs -> rhs, exact selected-subgoal
 alpha-equivalence, no symmetric rewrite, no object equality rewrite, no
 unification, no lifting/freshening, and no flex-flex.
+
+`KernelRules::bicompose` is implemented only as conservative v1: a thin
+public/named wrapper around `resolve1_match` that records
+`Derivation::Resolve1Match`. It is NOT full Isabelle `bicompose` and does not
+add lifting/freshening, e-resolution, premise solving, or a separate
+`Derivation::Bicompose`.
 
 `ThmKernel::admit(ct, reason)` is the only acceptable route for accepted
 unproved propositions. Use specific reasons such as:
@@ -163,9 +169,9 @@ This formalized gate runs:
 1. `cargo +stable fmt --check`
 2. `cargo +stable check`
 3. `scripts/check-kernel-firewall.sh` (no legacy deps, no forbidden patterns)
-4. `cargo +stable test --test kernel_rewrite_soundness` (124 attack tests)
+4. `cargo +stable test --test kernel_rewrite_soundness` (134 attack tests)
 5. `cargo +stable test --test kernel_soundness` (26 boundary tests)
-6. Kernel inline unit tests: `kernel::thm::` (11), `kernel::unify::tests::` (15), `kernel::rules::tests::` (30)
+6. Kernel inline unit tests: `kernel::thm::` (11), `kernel::unify::tests::` (15), `kernel::rules::tests::` (52)
 7. `cargo +stable test --lib core::` (199 compatibility tests)
 
 For broad theory claims:
@@ -184,7 +190,7 @@ stack-sensitive test has been verified fixed.
 Strict TCB (src/kernel/):
   ProofContext::certify_term / certify_prop
     -> CTerm / CProp
-    -> KernelRules                # 15 primitives + resolve1_match + subst_premise
+    -> KernelRules                # 15 primitives + resolve1_match + subst_premise + bicompose wrapper
     -> KernelThm / ClosedThm / OpenThm
     -> TrustedTheorem (invariant replay)
     -> TrustedTheory
@@ -217,7 +223,7 @@ final Theory theorem table
 - `Typ::dummy()` at parser/type/certification boundaries.
 - `Option<Thm>` erasing `KernelError` on some proof-search paths.
 - Partial T4 replay coverage.
-- Strict-kernel resolution limited to `resolve1_match` plus conservative
-  `subst_premise` (no full `bicompose`, `bicompose_eresolve`, lifting, or full
-  unification).
+- Strict-kernel resolution limited to `resolve1_match`, conservative
+  `subst_premise`, and conservative `bicompose` wrapper (no full `bicompose`,
+  `bicompose_eresolve`, lifting, or full unification).
 - HOL/Isar tools far from Isabelle parity.

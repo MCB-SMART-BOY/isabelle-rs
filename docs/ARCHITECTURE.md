@@ -14,7 +14,7 @@ Isabelle-rs is organized around a small trusted theorem-construction boundary:
 Strict TCB (src/kernel/):
   ProofContext::certify_term / certify_prop
     -> CTerm / CProp
-    -> KernelRules (15 primitives + resolve1_match)
+    -> KernelRules (15 primitives + resolve1_match + subst_premise + bicompose wrapper)
     -> KernelThm / ClosedThm / OpenThm
     -> TrustedTheorem (invariant replay)
     -> TrustedTheory
@@ -23,8 +23,8 @@ Legacy quarantine (src/core/):
   source / generated facts
     -> parser / loader / type inference
     -> certified terms (CTerm with CertStatus)
-    -> ThmKernel (LEGACY: bicompose/eresolve remain compatibility debt;
-                  subst_premise has a strict conservative replacement)
+    -> ThmKernel (LEGACY: full bicompose/eresolve remain compatibility debt;
+                  subst_premise and conservative bicompose have strict replacements)
     -> Thm
     -> theorem acceptance filters
     -> proof-search indexes or final trusted theory tables

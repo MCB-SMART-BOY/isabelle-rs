@@ -83,14 +83,18 @@ Current strict nucleus constraints:
 - `SearchFactDb` cannot promote facts to trusted theorems.
 
 Current strict nucleus implementation includes the base primitive rule set,
-a conservative `resolve1_match` prototype, and conservative `subst_premise`.
-`resolve1_match` uses one-way strict matching, deterministic substitution
-ordering, hypothesis substitution/union, and invariant replay. `subst_premise`
-rewrites one selected goal premise using propositional equality only, fixed
-lhs -> rhs direction, exact strict alpha-equivalence, and invariant replay. It
-does not perform symmetric rewriting, object-equality rewriting, unification,
-lifting, freshening, or flex-flex handling. Full Isabelle-style `bicompose`,
-higher-order unification, and elimination resolution remain out of scope.
+a conservative `resolve1_match` prototype, conservative `subst_premise`, and a
+conservative `bicompose` wrapper. `resolve1_match` / `bicompose` use one-way
+strict matching, deterministic substitution ordering, hypothesis
+substitution/union, invariant replay, and `RequiresLifting` rejection for Free
+or schematic Var namespace collisions. `bicompose` v1 records the existing
+`Derivation::Resolve1Match`; it does not add `Derivation::Bicompose`.
+`subst_premise` rewrites one selected goal premise using propositional equality
+only, fixed lhs -> rhs direction, exact strict alpha-equivalence, and invariant
+replay. These conservative rules do not perform symmetric rewriting,
+object-equality rewriting, full unification, lifting, freshening, or flex-flex
+handling. Full Isabelle-style `bicompose`, higher-order unification, and
+elimination resolution remain out of scope.
 
 ## Theorem Status Semantics
 
@@ -318,9 +322,10 @@ Next replay expansion batches:
 1. `beta_conversion`, `forall_intr`, `forall_elim`.
 2. `combination`, `abstraction`, `equal_intr`, `equal_elim`.
 3. `instantiate_checked`, `generalize`.
-4. `subst_premise` (strict conservative version implemented), then future
-   `bicompose` / `bicompose_eresolve` strict replacements. Legacy-core
-   resolution remains compatibility debt. See `docs/RESOLUTION_DESIGN.md`.
+4. Conservative `subst_premise` and `bicompose` wrapper are implemented; future
+   work is full `bicompose` semantics and `bicompose_eresolve` strict
+   replacements. Legacy-core resolution remains compatibility debt. See
+   `docs/RESOLUTION_DESIGN.md`.
 
 ## Verification Commands
 

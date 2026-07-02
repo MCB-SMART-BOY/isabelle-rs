@@ -15,10 +15,10 @@ version: 2.3
 |------|-----|
 | 新 TCB | `src/kernel/` strict nucleus; no dummy, no compat, no fallback theorem construction |
 | legacy 边界 | `src/core` / Isar / HOL / tools 进入 quarantine, 只通过 adapter 迁移 |
-| strict kernel rules | all 15 primitives (assume, reflexive, symmetric, transitive, combination, abstraction, beta_conversion, implies_intr, implies_elim, forall_intr, forall_elim, equal_intr, equal_elim, generalize, instantiate) + `resolve1_match` prototype |
+| strict kernel rules | all 15 primitives (assume, reflexive, symmetric, transitive, combination, abstraction, beta_conversion, implies_intr, implies_elim, forall_intr, forall_elim, equal_intr, equal_elim, generalize, instantiate) + `resolve1_match` prototype + conservative `subst_premise` + conservative `bicompose` wrapper |
 | 信任模型 | `TrustedTheory` 只接收 `TrustedTheorem`; `SearchFactDb` 不能提升为 trusted |
 | 证明状态 | `ProofObligation` 与 theorem 分离; `assume(A)` 是 open theorem `A |- A` |
-| 测试 gate | `bash scripts/check-strict-kernel.sh` (fmt + check + firewall + 124 attack + 26 soundness + 56 kernel inline + 199 core) |
+| 测试 gate | `bash scripts/check-strict-kernel.sh` (fmt + check + firewall + 134 attack + 26 soundness + 11/15/52 kernel inline + 199 core) |
 | 战略 | 先完成 strict kernel 与 replay，再做 workspace/session/agent；不追 HOL/AFP 覆盖率 |
 
 ## 铁律 (15)

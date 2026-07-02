@@ -87,7 +87,7 @@ is_fully_proved() != is_closed_proved() != is_strict_closed_proved()
 The strict `src/kernel/` nucleus is enforced by automated checks:
 - `scripts/check-kernel-firewall.sh` validates no legacy dependencies or forbidden patterns.
 - `pub(in crate::kernel)` visibility gating prevents upper-layer modules (`src/core/`, `src/isar/`, `src/tools/`) from bypassing certified-origin constructors.
-- `scripts/check-strict-kernel.sh` runs the full 7-step gate (fmt, check, firewall, 124 attack, 26 soundness, 56 kernel inline, 199 core).
+- `scripts/check-strict-kernel.sh` runs the full 7-step gate (fmt, check, firewall, 134 attack, 26 soundness, 11/15/52 kernel inline, 199 core).
 
 ### Attack-Test-Driven Kernel Work
 
@@ -160,16 +160,17 @@ equal_intr
 equal_elim
 instantiate_checked
 generalize
-bicompose ⚠️ LEGACY CORE
+bicompose ✅ strict conservative wrapper implemented; full legacy semantics remain compatibility debt
 bicompose_eresolve ⚠️ LEGACY CORE
 subst_premise ✅ strict conservative version implemented
 ```
 
-The harder remaining rules are `instantiate_checked`, `bicompose*`
-(⚠️ LEGACY CORE), and `abstraction`, because they interact with unification,
-variable discipline, typing, and theorem burdens. Strict `subst_premise` now
-has only the conservative propositional-equality version; legacy-core
-`subst_premise` remains compatibility debt.
+The harder remaining rules are `instantiate_checked`, full `bicompose*`
+semantics (⚠️ LEGACY CORE), and `abstraction`, because they interact with
+unification, variable discipline, typing, and theorem burdens. Strict
+`subst_premise` now has only the conservative propositional-equality version;
+strict `bicompose` has only the conservative `resolve1_match` wrapper version;
+legacy-core full resolution remains compatibility debt.
 
 ### Isar
 

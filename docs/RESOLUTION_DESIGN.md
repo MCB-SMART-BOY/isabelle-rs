@@ -2,14 +2,16 @@
 
 This is the **design and implementation-status document** for the strict-kernel
 (`src/kernel/`) resolution family: `resolve1_match`, conservative
-`subst_premise`, future `bicompose`, and future `bicompose_eresolve`.
+`subst_premise`, conservative `bicompose`, and future `bicompose_eresolve`.
 
-**STATUS**: Conservative prototype. `KernelRules::resolve1_match` and
-`KernelRules::subst_premise` are implemented with invariant replay and attack
-tests. `resolve1_match` uses strict one-way matching and deterministic
-substitutions. `subst_premise` is prop-equality only and fixed lhs -> rhs. Full
-`bicompose`, `bicompose_eresolve`, lifting, freshening, flex-flex pairs, and
-higher-order unification remain design-phase.
+**STATUS**: Conservative prototype. `KernelRules::resolve1_match`,
+`KernelRules::subst_premise`, and `KernelRules::bicompose` are implemented with
+invariant replay and attack tests. `bicompose` v1 is a thin wrapper around
+`resolve1_match` and records the existing `Derivation::Resolve1Match`.
+`resolve1_match`/`bicompose` use strict one-way matching and deterministic
+substitutions; `subst_premise` is prop-equality only and fixed lhs -> rhs. Full
+Isabelle-style `bicompose`, `bicompose_eresolve`, lifting, freshening,
+flex-flex pairs, and higher-order unification remain design-phase.
 
 ## Relationship to `KERNEL_PRIMITIVES.md`
 
@@ -145,15 +147,13 @@ to a subgoal in the implication chain, never the conclusion.
 
 ---
 
-## 2A. Conservative `bicompose` First Version (Design Only)
+## 2A. Conservative `bicompose` First Version (Implemented Wrapper)
 
-This section is design-only. Do **not** implement strict `bicompose` until this
-contract and its attack-test matrix have been reviewed.
-
-The first strict `bicompose` should be a named, conservative backward-resolution
-rule that reuses the already-tested `resolve1_match` semantics. It should not
-copy legacy `ThmKernel::bicompose`, and it should not introduce full
-unification, lifting/freshening, e-resolution, or premise solving.
+The first strict `bicompose` is implemented as a named, conservative
+backward-resolution wrapper that reuses the already-tested `resolve1_match`
+semantics. It does not copy legacy `ThmKernel::bicompose`, and it does not
+introduce full unification, lifting/freshening, e-resolution, or premise
+solving.
 
 ### Relationship To `resolve1_match`
 
@@ -166,10 +166,8 @@ substitution applies to rule premises, remaining goal, and hypotheses
 invariant replay recomputes the match and result proposition
 ```
 
-Conservative `bicompose` v1 should either:
-
-- be a thin public/named wrapper around `resolve1_match`; or
-- share the same internal helper used by `resolve1_match`.
+Conservative `bicompose` v1 is a thin public/named wrapper around
+`resolve1_match`.
 
 It must not duplicate subgoal-splicing logic. `Term::replace_subgoal_with_premises`
 remains the single ordering primitive for replacing a selected subgoal.
@@ -215,6 +213,7 @@ The first version should support only the subset already validated by
 strict one-way matching only
 rule-side Vars may be instantiated
 goal-side Vars are treated as concrete targets
+overlapping rule/goal schematic Var (name, index) pairs are rejected
 no full unification
 no e-resolution / premise solving
 no lifting / freshening
@@ -229,17 +228,13 @@ It is a stable strict-kernel name for the current backward-resolution core.
 
 The first version must not silently merge rule and goal namespaces.
 
-Current `resolve1_match` rejects same-named Free collisions with
-`RequiresLifting`. Before conservative `bicompose` is implemented, the design
-must choose one of these two gates for schematic Vars:
+Current `resolve1_match` / `bicompose` reject same-named Free collisions and
+overlapping rule/goal schematic variable `(name, index)` pairs with
+`RequiresLifting`.
 
-- Reject overlapping rule/goal schematic variable `(name, index)` pairs with
-  `RequiresLifting`.
-- Prove and document that the one-way matcher treats goal-side Vars as concrete
-  strongly enough that no namespace merge occurs.
-
-The safer first implementation choice is rejection. It may reject valid cases,
-but it keeps the trusted rule from depending on unstated freshening semantics.
+The first implementation chooses rejection rather than proving that goal-side
+Vars-as-concrete is sufficient. This may reject valid cases, but it keeps the
+trusted rule from depending on unstated freshening semantics.
 
 ### Unsupported Cases
 
@@ -248,7 +243,7 @@ The first strict `bicompose` must reject or defer:
 ```text
 goal has no selectable subgoal
 rule/goal Free collision requiring lifting
-rule/goal Var namespace collision unless explicitly proven safe
+rule/goal Var namespace collision
 match failure between rule conclusion and selected subgoal
 full unification requirement
 flex-flex pairs / tpairs
@@ -259,7 +254,7 @@ legacy compatibility alpha-equivalence
 
 ### Derivation Replay Strategy
 
-If implemented as a distinct rule, add:
+Conservative `bicompose` v1 does **not** add:
 
 ```rust
 Derivation::Bicompose {
@@ -270,7 +265,8 @@ Derivation::Bicompose {
 }
 ```
 
-Replay must:
+It intentionally records `Derivation::Resolve1Match` until the rule grows beyond
+the existing core. Replay therefore remains the existing `Resolve1Match` replay:
 
 1. recursively check `rule` and `goal_state`;
 2. reselect the goal subgoal by `selected_subgoal_index`;
@@ -279,29 +275,22 @@ Replay must:
 5. rebuild the result via `replace_subgoal_with_premises`;
 6. compare replayed theorem fields with stored theorem fields.
 
-If implemented as a wrapper around `resolve1_match` without a new derivation
-variant, document that it intentionally records `Derivation::Resolve1Match`
-until the rule grows beyond the existing core.
+### Implemented Conservative `bicompose` Attack Tests
 
-### Planned Conservative `bicompose` Attack Tests
-
-Add these tests before or with implementation:
+Implemented wrapper-level tests:
 
 - `bicompose_basic_no_vars`
 - `bicompose_basic_with_rule_var_match`
 - `bicompose_rejects_match_failure`
 - `bicompose_rejects_out_of_range`
-- `bicompose_rejects_empty_goal_subgoals`
 - `bicompose_selected_index_is_goal_subgoal`
 - `bicompose_replaces_selected_subgoal`
-- `bicompose_preserves_other_subgoals`
 - `bicompose_applies_substitution_to_rule_premises`
-- `bicompose_applies_substitution_to_goal_remaining_subgoals`
+- `bicompose_rejects_goal_remaining_subgoal_substitution_without_lifting`
 - `bicompose_applies_substitution_to_hypotheses`
 - `bicompose_rejects_free_collision_without_lifting`
-- `bicompose_rejects_or_documents_var_namespace_collision`
+- `bicompose_rejects_var_namespace_collision_without_lifting`
 - `bicompose_invariant_check_passes`
-- `bicompose_tampered_result_rejected`
 
 ---
 
@@ -637,9 +626,9 @@ fn lift_rule(rule: &KernelThm, goal: &KernelThm) -> KernelThm;
 **First version**: Do NOT implement lifting/freshening. However, the kernel
 MUST NOT silently proceed when a collision would cause incorrect results.
 
-Instead, `resolve1_match` (and later `bicompose`) must **detect** when the rule
-and goal variable spaces collide in a way that requires lifting, and return an
-explicit error rather than proceeding:
+Instead, `resolve1_match` and conservative `bicompose` must **detect** when the
+rule and goal variable spaces collide in a way that requires lifting, and return
+an explicit error rather than proceeding:
 
 ```rust
 #[error("variable collision between rule and goal requires lifting: \
@@ -661,13 +650,16 @@ that may be incorrectly identified without lifting/freshening. Specifically:
 
 #### Conservative detection heuristic (first version)
 
-Current `resolve1_match` scans the rule and goal for overlapping Free names:
+Current `resolve1_match` / `bicompose` scan the rule and goal for overlapping
+Free names and schematic Var `(name, index)` pairs:
 
 ```rust
 fn detect_collision(rule: &KernelThm, goal: &KernelThm) -> Result<(), KernelError> {
     let rule_frees: HashSet<Name> = rule.prop().free_names();
     let goal_frees: HashSet<Name> = goal.prop().free_names();
-    if !rule_frees.is_disjoint(&goal_frees) {
+    let rule_vars: HashSet<(Name, usize)> = rule.prop().var_keys();
+    let goal_vars: HashSet<(Name, usize)> = goal.prop().var_keys();
+    if !rule_frees.is_disjoint(&goal_frees) || !rule_vars.is_disjoint(&goal_vars) {
         return Err(KernelError::RequiresLifting { ... });
     }
     Ok(())
@@ -678,20 +670,21 @@ This is deliberately conservative: it may reject valid cases, but it will
 never silently produce a wrong theorem. As lifting is implemented, the
 rejection set shrinks.
 
-For conservative `bicompose`, Var namespace policy is an explicit
-pre-implementation gate. Either reject overlapping rule/goal schematic variable
-`(name, index)` pairs, or document why the one-way matcher treats goal-side Vars
-as concrete strongly enough that no namespace merge occurs.
+For conservative `bicompose`, Var namespace policy is fixed for v1: reject
+overlapping rule/goal schematic variable `(name, index)` pairs.
 
 #### Test requirement
 
 ```text
 resolve1_rejects_variable_collision_without_lifting
+resolve1_rejects_goal_var_namespace_collision_without_lifting
+bicompose_rejects_free_collision_without_lifting
+bicompose_rejects_var_namespace_collision_without_lifting
 ```
 
-This test constructs a rule and goal with overlapping free variable names
-and asserts that `resolve1_match` returns `Err(RequiresLifting)` rather
-than silently producing an incorrect theorem.
+These tests construct rule/goal pairs with overlapping Free names or schematic
+Var keys and assert that the rule returns `Err(RequiresLifting)` rather than
+silently producing an incorrect theorem.
 
 This is a conservative boundary — lifting can be added later without changing
 the bicompose contract.
@@ -798,11 +791,11 @@ cleanup, not a blocker for the conservative design.
 
 ### Q7: `subst_premise` vs `bicompose` Ordering
 
-**Recommendation**: design conservative `bicompose` first, review the variable
-namespace policy, then implement only the reviewed subset. Full
-`bicompose_eresolve` comes after conservative `bicompose` is stable. The minimal
-`resolve1_match` prototype and conservative `subst_premise` now exist, but they
-do not replace full bicomposition.
+**Recommendation**: conservative `bicompose` v1 now exists only as the reviewed
+wrapper subset. Stabilize that wrapper and its variable namespace rejection
+before designing full bicomposition or `bicompose_eresolve`. The minimal
+`resolve1_match` prototype, conservative `subst_premise`, and conservative
+`bicompose` wrapper do not replace full Isabelle-style bicomposition.
 
 The first `subst_premise` version exercises premise indexing, propositional
 equality elimination, hypothesis union, and invariant replay without requiring
@@ -817,11 +810,11 @@ unification.
 | `dest_imp_chain` / `mk_imp_chain` / `nprems` / `select_subgoal` / `replace_subgoal_with_premises` | ✅ Implemented | Foundation for all resolution rules; `resolve1_match` uses the shared replacement helper |
 | `instantiate` with Var→CTerm | ✅ Done | Substitution under certified boundary |
 | `generalize` (Free→Var) | ✅ Done | For schematic rules |
-| `union_hyps` + substitution | ✅ Implemented for `resolve1_match` | Applies substitution to rule and goal hyps before union |
+| `union_hyps` + substitution | ✅ Implemented for `resolve1_match` / `bicompose` | Applies substitution to rule and goal hyps before union |
 | Strict matcher (`match_terms` + `match_terms_certified`) | ✅ Implemented | Internal (`pub(in crate::kernel)`) only; no public Term→CTerm API |
-| `resolve1_match` | ✅ Prototype implemented | Conservative one-way backward resolution; shared subgoal-splicing helper; invariant replay covered |
+| `resolve1_match` | ✅ Prototype implemented | Conservative one-way backward resolution; shared subgoal-splicing helper; invariant replay covered; rejects Free and schematic Var namespace collisions |
 | conservative `subst_premise` | ✅ Implemented | Prop equality only, lhs→rhs only, exact selected-subgoal match, no unification; invariant replay and attack tests covered |
-| conservative `bicompose` | Design only | Should reuse/wrap `resolve1_match`; variable namespace policy must be reviewed before implementation |
+| conservative `bicompose` | ✅ Implemented wrapper | Thin wrapper over `resolve1_match`; records `Derivation::Resolve1Match`; no separate replay path or `Derivation::Bicompose` in v1 |
 | Full unification | Not started | Deferred |
 | Lifting / freshening | Not started | Deferred (caller responsibility for v1) |
 | `tpairs` / flex-flex | Not in strict kernel | Deferred |
@@ -840,11 +833,11 @@ unification.
    No lifting, no flex-flex, no elimination premise solving.
 4. ✅ **Conservative `subst_premise`** — prop equality only, lhs→rhs only,
    exact selected-subgoal match, no unification, no symmetric rewrite.
-5. **Conservative `bicompose` design** — explicit major/minor roles, selected
+5. ✅ **Conservative `bicompose` design** — explicit major/minor roles, selected
    goal subgoal semantics, no full unification, no lifting/freshening, reviewed
    variable namespace policy.
-6. **Conservative `bicompose` implementation** — only after design review; must
-   reuse/wrap the same core semantics as `resolve1_match`.
+6. ✅ **Conservative `bicompose` implementation** — thin wrapper over
+   `resolve1_match`; rejects Free and schematic Var namespace collisions.
 7. **`bicompose_eresolve`** — elimination resolution with premise solving.
 
 Do NOT start workspace splitting, APP, `isabelle.toml`, or AFP benchmarks
@@ -882,22 +875,19 @@ Implemented `subst_premise` attack tests:
 - `subst_premise_invariant_check_passes`
 - `subst_premise_tampered_result_rejected`
 
-Planned conservative `bicompose` attack tests:
+Implemented conservative `bicompose` wrapper attack tests:
 
 - `bicompose_basic_no_vars`
 - `bicompose_basic_with_rule_var_match`
 - `bicompose_rejects_match_failure`
 - `bicompose_rejects_out_of_range`
-- `bicompose_rejects_empty_goal_subgoals`
 - `bicompose_selected_index_is_goal_subgoal`
 - `bicompose_replaces_selected_subgoal`
-- `bicompose_preserves_other_subgoals`
 - `bicompose_applies_substitution_to_rule_premises`
-- `bicompose_applies_substitution_to_goal_remaining_subgoals`
+- `bicompose_rejects_goal_remaining_subgoal_substitution_without_lifting`
 - `bicompose_applies_substitution_to_hypotheses`
 - `bicompose_rejects_free_collision_without_lifting`
-- `bicompose_rejects_or_documents_var_namespace_collision`
+- `bicompose_rejects_var_namespace_collision_without_lifting`
 - `bicompose_invariant_check_passes`
-- `bicompose_tampered_result_rejected`
 
 ---

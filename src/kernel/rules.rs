@@ -618,14 +618,16 @@ impl KernelRules {
     ///
     /// - One-way matching only (pattern-side Vars in rule conclusion `C`).
     /// - No lifting/freshening — returns `RequiresLifting` if rule and goal
-    ///   have overlapping free variable names.
+    ///   have overlapping free variable names or schematic Var `(name, index)`
+    ///   pairs.
     /// - No full unification. No flex-flex pairs.
     /// - Substitution is applied simultaneously to all components.
     ///
     /// # Errors
     ///
     /// - `SubgoalIndexOutOfRange` if `selected_subgoal_index >= nprems(goal)`.
-    /// - `RequiresLifting` if rule and goal have overlapping free variable names.
+    /// - `RequiresLifting` if rule and goal have overlapping free variable names
+    ///   or schematic Var `(name, index)` pairs.
     /// - Match errors propagated from `match_terms_certified`.
     /// - Type errors propagated from term construction.
     pub fn resolve1_match(
@@ -696,8 +698,22 @@ impl KernelRules {
         ))
     }
 
+    /// Conservative `bicompose` v1.
+    ///
+    /// This is intentionally a thin public/named wrapper around
+    /// `resolve1_match`. It records the existing `Resolve1Match` derivation and
+    /// reuses the same matching, collision detection, subgoal splicing, and
+    /// invariant replay path. It is not full Isabelle `bicompose`.
+    pub fn bicompose(
+        rule: &KernelThm,
+        goal_state: &KernelThm,
+        selected_subgoal_index: usize,
+    ) -> Result<KernelThm, KernelError> {
+        Self::resolve1_match(rule, goal_state, selected_subgoal_index)
+    }
+
     /// Conservative collision detection: return `RequiresLifting` if rule
-    /// and goal share any free variable name.
+    /// and goal share any free variable name or schematic Var `(name, index)`.
     ///
     /// This is intentionally conservative — it may reject valid cases, but
     /// it will never silently produce an incorrect theorem. As lifting is
@@ -717,6 +733,27 @@ impl KernelRules {
 
         for name in &rule_frees {
             if goal_frees.contains(name) {
+                return Err(KernelError::RequiresLifting {
+                    rule_var: name.clone(),
+                    goal_var: name.clone(),
+                });
+            }
+        }
+
+        let mut rule_vars = HashSet::new();
+        for hyp in rule.hyps() {
+            collect_var_keys(hyp.term(), &mut rule_vars);
+        }
+        collect_var_keys(rule.prop().term(), &mut rule_vars);
+
+        let mut goal_vars = HashSet::new();
+        for hyp in goal.hyps() {
+            collect_var_keys(hyp.term(), &mut goal_vars);
+        }
+        collect_var_keys(goal.prop().term(), &mut goal_vars);
+
+        for (name, index) in &rule_vars {
+            if goal_vars.contains(&(name.clone(), *index)) {
                 return Err(KernelError::RequiresLifting {
                     rule_var: name.clone(),
                     goal_var: name.clone(),
@@ -749,6 +786,32 @@ fn collect_free_names(term: &Term, names: &mut HashSet<Name>) {
                 stack.push(premise);
             },
             Term::Const { .. } | Term::Var { .. } | Term::Bound { .. } => {},
+        }
+    }
+}
+
+/// Collect schematic variable `(name, index)` pairs from a `Term`.
+fn collect_var_keys(term: &Term, vars: &mut HashSet<(Name, usize)>) {
+    let mut stack = vec![term];
+    while let Some(t) = stack.pop() {
+        match t {
+            Term::Var { name, index, .. } => {
+                vars.insert((name.clone(), *index));
+            },
+            Term::Abs { body, .. } | Term::Forall { body, .. } => stack.push(body),
+            Term::App { func, arg, .. } => {
+                stack.push(arg);
+                stack.push(func);
+            },
+            Term::Eq { lhs, rhs, .. } => {
+                stack.push(rhs);
+                stack.push(lhs);
+            },
+            Term::Imp { premise, conclusion } => {
+                stack.push(conclusion);
+                stack.push(premise);
+            },
+            Term::Const { .. } | Term::Free { .. } | Term::Bound { .. } => {},
         }
     }
 }
@@ -1191,13 +1254,13 @@ mod tests {
     }
 
     #[test]
-    fn resolve1_applies_substitution_to_goal_remaining_subgoals() {
+    fn resolve1_rejects_goal_var_namespace_collision_without_lifting() {
         // Rule: [?P] |- ?P
         // Goal: [?P ==> A ==> R] |- ?P ==> A ==> R
         //
-        // Current resolve1_match applies the derived substitution to the whole
-        // goal state. Thus matching rule conclusion ?P against selected subgoal
-        // A also rewrites the remaining schematic ?P subgoal to A.
+        // Matching rule conclusion ?P against selected subgoal A would also
+        // rewrite the remaining goal-side ?P subgoal to A. Conservative v1
+        // rejects this namespace merge until lifting/freshening exists.
         let ctx = ctx_with_props(&["A", "R"]);
         let p_var = Term::Var { name: Name::from("P"), index: 0, ty: Ty::prop() };
         let rule = KernelRules::assume(certify_prop_term(&ctx, &p_var)).into_kernel();
@@ -1206,9 +1269,8 @@ mod tests {
             Term::mk_imp_chain(&[p_var, prop_term(&ctx, "A")], &prop_term(&ctx, "R")).unwrap();
         let goal = KernelRules::assume(certify_prop_term(&ctx, &goal_term)).into_kernel();
 
-        let result = KernelRules::resolve1_match(&rule, &goal, 1).unwrap();
-        let expected = imp_chain(&ctx, &["A", "R"]);
-        assert_eq!(result.prop(), &certify_prop_term(&ctx, &expected));
+        let err = KernelRules::resolve1_match(&rule, &goal, 1).unwrap_err();
+        assert!(matches!(err, KernelError::RequiresLifting { .. }), "got {err:?}");
     }
 
     #[test]
@@ -1514,6 +1576,183 @@ mod tests {
             .unwrap();
 
         assert_eq!(result.prop(), &certify_prop_term(&ctx, &expected));
+        super::super::invariant::check_kernel_thm(&result).unwrap();
+    }
+
+    // ── conservative bicompose wrapper tests ──
+
+    #[test]
+    fn bicompose_basic_no_vars() {
+        let ctx = ctx_with_props(&["A", "B"]);
+        let rule = assume_thm(&ctx, "A");
+        let goal = KernelRules::assume(certify_prop_term(&ctx, &imp_chain(&ctx, &["A", "B"])))
+            .into_kernel();
+
+        let result = KernelRules::bicompose(&rule, &goal, 0).unwrap();
+
+        assert_eq!(result.prop(), &certify_prop_term(&ctx, &prop_term(&ctx, "B")));
+        assert!(matches!(result.derivation(), Derivation::Resolve1Match { .. }));
+    }
+
+    #[test]
+    fn bicompose_basic_with_rule_var_match() {
+        let ctx = ctx_with_props(&["A", "B"]);
+        let p_var = Term::Var { name: Name::from("P"), index: 0, ty: Ty::prop() };
+        let rule = KernelRules::assume(certify_prop_term(&ctx, &p_var)).into_kernel();
+        let goal = KernelRules::assume(certify_prop_term(&ctx, &imp_chain(&ctx, &["A", "B"])))
+            .into_kernel();
+
+        let result = KernelRules::bicompose(&rule, &goal, 0).unwrap();
+
+        assert_eq!(result.prop(), &certify_prop_term(&ctx, &prop_term(&ctx, "B")));
+        assert!(matches!(result.derivation(), Derivation::Resolve1Match { .. }));
+    }
+
+    #[test]
+    fn bicompose_rejects_match_failure() {
+        let ctx = ctx_with_props(&["A", "B", "R"]);
+        let rule = assume_thm(&ctx, "A");
+        let goal = KernelRules::assume(certify_prop_term(&ctx, &imp_chain(&ctx, &["B", "R"])))
+            .into_kernel();
+
+        let err = KernelRules::bicompose(&rule, &goal, 0).unwrap_err();
+
+        assert!(matches!(err, KernelError::Invariant(_)), "expected match failure, got {err:?}");
+    }
+
+    #[test]
+    fn bicompose_rejects_out_of_range() {
+        let ctx = ctx_with_props(&["A", "B"]);
+        let rule = assume_thm(&ctx, "B");
+        let goal = KernelRules::assume(certify_prop_term(&ctx, &imp_chain(&ctx, &["A", "B"])))
+            .into_kernel();
+
+        let err = KernelRules::bicompose(&rule, &goal, 1).unwrap_err();
+
+        assert!(matches!(err, KernelError::SubgoalIndexOutOfRange { index: 1, nprems: 1 }));
+    }
+
+    #[test]
+    fn bicompose_selected_index_is_goal_subgoal() {
+        let ctx = ctx_with_props(&["A", "B", "C", "R"]);
+        let rule = KernelRules::assume(certify_prop_term(&ctx, &imp_chain(&ctx, &["A", "C"])))
+            .into_kernel();
+        let goal = KernelRules::assume(certify_prop_term(&ctx, &imp_chain(&ctx, &["B", "C", "R"])))
+            .into_kernel();
+
+        let wrong_index = KernelRules::bicompose(&rule, &goal, 0).unwrap_err();
+        assert!(matches!(wrong_index, KernelError::Invariant(_)));
+
+        let result = KernelRules::bicompose(&rule, &goal, 1).unwrap();
+        assert_eq!(result.prop(), &certify_prop_term(&ctx, &imp_chain(&ctx, &["B", "A", "R"])));
+    }
+
+    #[test]
+    fn bicompose_replaces_selected_subgoal() {
+        let ctx = ctx_with_props(&["A", "B", "C", "R"]);
+        let rule = KernelRules::assume(certify_prop_term(&ctx, &imp_chain(&ctx, &["B", "C"])))
+            .into_kernel();
+        let goal = KernelRules::assume(certify_prop_term(&ctx, &imp_chain(&ctx, &["A", "C", "R"])))
+            .into_kernel();
+
+        let result = KernelRules::bicompose(&rule, &goal, 1).unwrap();
+
+        assert_eq!(result.prop(), &certify_prop_term(&ctx, &imp_chain(&ctx, &["A", "B", "R"])));
+    }
+
+    #[test]
+    fn bicompose_applies_substitution_to_rule_premises() {
+        let ctx = ctx_with_props(&["H", "A", "B", "R"]);
+        let p_var = Term::Var { name: Name::from("P"), index: 0, ty: Ty::prop() };
+        let q_var = Term::Var { name: Name::from("Q"), index: 1, ty: Ty::prop() };
+        let rule_concl = Term::mk_eq(p_var.clone(), q_var).unwrap();
+        let rule_term = Term::mk_imp_chain(&[p_var], &rule_concl).unwrap();
+        let rule = KernelRules::assume(certify_prop_term(&ctx, &rule_term)).into_kernel();
+        let goal_eq = Term::mk_eq(prop_term(&ctx, "A"), prop_term(&ctx, "B")).unwrap();
+        let goal_term =
+            Term::mk_imp_chain(&[prop_term(&ctx, "H"), goal_eq], &prop_term(&ctx, "R")).unwrap();
+        let goal = KernelRules::assume(certify_prop_term(&ctx, &goal_term)).into_kernel();
+
+        let result = KernelRules::bicompose(&rule, &goal, 1).unwrap();
+
+        assert_eq!(result.prop(), &certify_prop_term(&ctx, &imp_chain(&ctx, &["H", "A", "R"])));
+    }
+
+    #[test]
+    fn bicompose_rejects_goal_remaining_subgoal_substitution_without_lifting() {
+        let ctx = ctx_with_props(&["A", "R"]);
+        let p_var = Term::Var { name: Name::from("P"), index: 0, ty: Ty::prop() };
+        let rule = KernelRules::assume(certify_prop_term(&ctx, &p_var)).into_kernel();
+        let goal_term =
+            Term::mk_imp_chain(&[p_var, prop_term(&ctx, "A")], &prop_term(&ctx, "R")).unwrap();
+        let goal = KernelRules::assume(certify_prop_term(&ctx, &goal_term)).into_kernel();
+
+        let err = KernelRules::bicompose(&rule, &goal, 1).unwrap_err();
+
+        assert!(matches!(err, KernelError::RequiresLifting { .. }), "got {err:?}");
+    }
+
+    #[test]
+    fn bicompose_applies_substitution_to_hypotheses() {
+        let ctx = ctx_with_props(&["A", "R"]);
+        let p_var = Term::Var { name: Name::from("P"), index: 0, ty: Ty::prop() };
+        let rule = KernelRules::assume(certify_prop_term(&ctx, &p_var)).into_kernel();
+        let goal = KernelRules::assume(certify_prop_term(&ctx, &imp_chain(&ctx, &["A", "R"])))
+            .into_kernel();
+
+        let result = KernelRules::bicompose(&rule, &goal, 0).unwrap();
+        let substituted_hyp = certify_prop_term(&ctx, &prop_term(&ctx, "A"));
+
+        assert!(result.hyps().iter().any(|hyp| hyp == &substituted_hyp));
+        assert!(result.hyps().iter().all(
+            |hyp| !matches!(hyp.term(), Term::Var { name, index: 0, .. } if name.as_str() == "P")
+        ));
+    }
+
+    #[test]
+    fn bicompose_rejects_free_collision_without_lifting() {
+        let mut sig = Signature::new();
+        sig.declare_const("R", Ty::prop());
+        let mut ctx = ProofContext::new(sig);
+        ctx.declare_free("x", ty("nat"));
+
+        let x_cterm = ctx.certify_term(super::super::RawTerm::free("x", ty("nat"))).unwrap();
+        let x_term = x_cterm.term().clone();
+        let rule = KernelRules::reflexive(x_cterm).into_kernel();
+        let goal_imp = Term::Imp {
+            premise: Box::new(Term::mk_eq(x_term.clone(), x_term).unwrap()),
+            conclusion: Box::new(prop_term(&ctx, "R")),
+        };
+        let goal = KernelRules::assume(certify_prop_term(&ctx, &goal_imp)).into_kernel();
+
+        let err = KernelRules::bicompose(&rule, &goal, 0).unwrap_err();
+
+        assert!(matches!(err, KernelError::RequiresLifting { .. }), "got {err:?}");
+    }
+
+    #[test]
+    fn bicompose_rejects_var_namespace_collision_without_lifting() {
+        let ctx = ctx_with_props(&["R"]);
+        let p_var = Term::Var { name: Name::from("P"), index: 0, ty: Ty::prop() };
+        let rule = KernelRules::assume(certify_prop_term(&ctx, &p_var)).into_kernel();
+        let goal_term = Term::mk_imp_chain(&[p_var], &prop_term(&ctx, "R")).unwrap();
+        let goal = KernelRules::assume(certify_prop_term(&ctx, &goal_term)).into_kernel();
+
+        let err = KernelRules::bicompose(&rule, &goal, 0).unwrap_err();
+
+        assert!(matches!(err, KernelError::RequiresLifting { .. }), "got {err:?}");
+    }
+
+    #[test]
+    fn bicompose_invariant_check_passes() {
+        let ctx = ctx_with_props(&["A", "B", "C", "R"]);
+        let rule = KernelRules::assume(certify_prop_term(&ctx, &imp_chain(&ctx, &["B", "C"])))
+            .into_kernel();
+        let goal = KernelRules::assume(certify_prop_term(&ctx, &imp_chain(&ctx, &["A", "C", "R"])))
+            .into_kernel();
+
+        let result = KernelRules::bicompose(&rule, &goal, 1).unwrap();
+
         super::super::invariant::check_kernel_thm(&result).unwrap();
     }
 }

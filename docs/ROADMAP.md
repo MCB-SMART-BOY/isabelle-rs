@@ -18,7 +18,7 @@ Current status:
 
 | Track | Status |
 |---|---|
-| Strict kernel nucleus (`src/kernel/`) | Base primitive set implemented plus conservative `resolve1_match` prototype; ADR-0001 strangler pattern active. |
+| Strict kernel nucleus (`src/kernel/`) | Base primitive set implemented plus conservative `resolve1_match`, `subst_premise`, and `bicompose` wrapper; ADR-0001 strangler pattern active. |
 | Legacy T2 primitive rule hardening | Strict kernel alpha-equivalence split out; `Typ::dummy()` and certification remain known debts in legacy core. |
 | Checked instantiation | Production paths closed over `instantiate_checked`. |
 | Admit/oracle tracking | Explicit, classified, and propagated. |
@@ -35,7 +35,8 @@ infrastructure.
 Priority order:
 
 1. Stabilize strict `src/kernel` nucleus: keep the firewall clean, normalize
-   resolution substitutions, and make `resolve1_match` limits explicit.
+   resolution substitutions, and make `resolve1_match` / conservative
+   `bicompose` limits explicit.
 2. Establish a structured compatibility matrix for legacy adapters
    (Core → Isar proof state → HOL bootstrap → Tier2 smoke).
 3. Extend strict-kernel replay/invariant coverage only after rule contracts and
@@ -53,8 +54,8 @@ Priority order:
 Near-term main line remains strict-kernel and proof-boundary work:
 
 ```text
-stabilize conservative subst_premise implementation
-bicompose / resolution-family design
+stabilize conservative subst_premise and bicompose wrapper implementations
+full bicompose / bicompose_eresolve resolution-family design
 admitted reason inventory and reduction
 strict replay / invariant coverage
 legacy adapter compatibility matrix
@@ -311,7 +312,7 @@ Done when:
 Target rules:
 
 ```text
-bicompose (⚠️ LEGACY CORE — strict-kernel design in docs/RESOLUTION_DESIGN.md)
+bicompose (strict conservative wrapper implemented; full legacy semantics remain compatibility debt)
 bicompose_eresolve (⚠️ LEGACY CORE)
 subst_premise (strict conservative version implemented; legacy-core version remains compatibility debt)
 ```
@@ -856,9 +857,9 @@ bash scripts/check-strict-kernel.sh
 
 This unified gate covers: `cargo +stable fmt --check`, `cargo +stable check`,
 `bash scripts/check-kernel-firewall.sh`, `cargo test --test kernel_rewrite_soundness`
-(124 attack tests), `cargo test --test kernel_soundness` (26 boundary tests),
+(134 attack tests), `cargo test --test kernel_soundness` (26 boundary tests),
 `cargo test --lib kernel::thm::` (11), `cargo test --lib kernel::unify::tests::` (15),
-`cargo test --lib kernel::rules::tests::` (30), `cargo test --lib core::` (199).
+`cargo test --lib kernel::rules::tests::` (52), `cargo test --lib core::` (199).
 
 For theory-wide claims:
 
