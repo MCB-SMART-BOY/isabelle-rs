@@ -1744,6 +1744,44 @@ mod tests {
     }
 
     #[test]
+    fn bicompose_allows_same_var_name_different_index_without_lifting() {
+        let ctx = ctx_with_props(&["A", "R"]);
+        let rule_var = Term::Var { name: Name::from("P"), index: 0, ty: Ty::prop() };
+        let goal_var = Term::Var { name: Name::from("P"), index: 1, ty: Ty::prop() };
+        let rule = KernelRules::assume(certify_prop_term(&ctx, &rule_var)).into_kernel();
+        let goal_term =
+            Term::mk_imp_chain(&[goal_var.clone(), prop_term(&ctx, "A")], &prop_term(&ctx, "R"))
+                .unwrap();
+        let goal = KernelRules::assume(certify_prop_term(&ctx, &goal_term)).into_kernel();
+
+        let result = KernelRules::bicompose(&rule, &goal, 1).unwrap();
+
+        let expected = Term::mk_imp_chain(&[goal_var], &prop_term(&ctx, "R")).unwrap();
+        assert_eq!(result.prop(), &certify_prop_term(&ctx, &expected));
+        assert!(matches!(result.derivation(), Derivation::Resolve1Match { .. }));
+        super::super::invariant::check_kernel_thm(&result).unwrap();
+    }
+
+    #[test]
+    fn bicompose_allows_non_overlapping_goal_side_var() {
+        let ctx = ctx_with_props(&["A", "R"]);
+        let rule_var = Term::Var { name: Name::from("P"), index: 0, ty: Ty::prop() };
+        let goal_var = Term::Var { name: Name::from("Q"), index: 1, ty: Ty::prop() };
+        let rule = KernelRules::assume(certify_prop_term(&ctx, &rule_var)).into_kernel();
+        let goal_term =
+            Term::mk_imp_chain(&[goal_var.clone(), prop_term(&ctx, "A")], &prop_term(&ctx, "R"))
+                .unwrap();
+        let goal = KernelRules::assume(certify_prop_term(&ctx, &goal_term)).into_kernel();
+
+        let result = KernelRules::bicompose(&rule, &goal, 1).unwrap();
+
+        let expected = Term::mk_imp_chain(&[goal_var], &prop_term(&ctx, "R")).unwrap();
+        assert_eq!(result.prop(), &certify_prop_term(&ctx, &expected));
+        assert!(matches!(result.derivation(), Derivation::Resolve1Match { .. }));
+        super::super::invariant::check_kernel_thm(&result).unwrap();
+    }
+
+    #[test]
     fn bicompose_invariant_check_passes() {
         let ctx = ctx_with_props(&["A", "B", "C", "R"]);
         let rule = KernelRules::assume(certify_prop_term(&ctx, &imp_chain(&ctx, &["B", "C"])))

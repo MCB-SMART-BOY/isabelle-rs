@@ -45,7 +45,7 @@ cargo test --test kernel_rewrite_soundness       134 passed
 cargo test --test kernel_soundness                26 passed
 cargo test --lib kernel::thm::                    11 passed
 cargo test --lib kernel::unify::tests::           15 passed
-cargo test --lib kernel::rules::tests::           52 passed
+cargo test --lib kernel::rules::tests::           54 passed
 cargo test --lib core::                          199 passed
 ```
 

@@ -36,7 +36,7 @@ This unified gate runs:
 3. `bash scripts/check-kernel-firewall.sh` (no legacy deps or forbidden patterns in `src/kernel/`)
 4. `cargo +stable test --test kernel_rewrite_soundness` (134 attack tests)
 5. `cargo +stable test --test kernel_soundness` (26 boundary tests)
-6. `cargo +stable test --lib kernel::thm::` (11), `kernel::unify::tests::` (15), `kernel::rules::tests::` (52)
+6. `cargo +stable test --lib kernel::thm::` (11), `kernel::unify::tests::` (15), `kernel::rules::tests::` (54)
 7. `cargo +stable test --lib core::` (199 compatibility tests)
 
 Theory verification:

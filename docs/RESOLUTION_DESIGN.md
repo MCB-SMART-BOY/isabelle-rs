@@ -290,6 +290,8 @@ Implemented wrapper-level tests:
 - `bicompose_applies_substitution_to_hypotheses`
 - `bicompose_rejects_free_collision_without_lifting`
 - `bicompose_rejects_var_namespace_collision_without_lifting`
+- `bicompose_allows_same_var_name_different_index_without_lifting`
+- `bicompose_allows_non_overlapping_goal_side_var`
 - `bicompose_invariant_check_passes`
 
 ---
@@ -888,6 +890,8 @@ Implemented conservative `bicompose` wrapper attack tests:
 - `bicompose_applies_substitution_to_hypotheses`
 - `bicompose_rejects_free_collision_without_lifting`
 - `bicompose_rejects_var_namespace_collision_without_lifting`
+- `bicompose_allows_same_var_name_different_index_without_lifting`
+- `bicompose_allows_non_overlapping_goal_side_var`
 - `bicompose_invariant_check_passes`
 
 ---

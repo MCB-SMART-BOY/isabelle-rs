@@ -171,7 +171,7 @@ This formalized gate runs:
 3. `scripts/check-kernel-firewall.sh` (no legacy deps, no forbidden patterns)
 4. `cargo +stable test --test kernel_rewrite_soundness` (134 attack tests)
 5. `cargo +stable test --test kernel_soundness` (26 boundary tests)
-6. Kernel inline unit tests: `kernel::thm::` (11), `kernel::unify::tests::` (15), `kernel::rules::tests::` (52)
+6. Kernel inline unit tests: `kernel::thm::` (11), `kernel::unify::tests::` (15), `kernel::rules::tests::` (54)
 7. `cargo +stable test --lib core::` (199 compatibility tests)
 
 For broad theory claims:

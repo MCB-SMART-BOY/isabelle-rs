@@ -859,7 +859,7 @@ This unified gate covers: `cargo +stable fmt --check`, `cargo +stable check`,
 `bash scripts/check-kernel-firewall.sh`, `cargo test --test kernel_rewrite_soundness`
 (134 attack tests), `cargo test --test kernel_soundness` (26 boundary tests),
 `cargo test --lib kernel::thm::` (11), `cargo test --lib kernel::unify::tests::` (15),
-`cargo test --lib kernel::rules::tests::` (52), `cargo test --lib core::` (199).
+`cargo test --lib kernel::rules::tests::` (54), `cargo test --lib core::` (199).
 
 For theory-wide claims:
 
