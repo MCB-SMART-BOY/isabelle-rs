@@ -9,8 +9,9 @@ and minimal proofterm replay.
 ```
 
 The next phases should not chase broad Isabelle/HOL coverage first. The route is
-to harden the proof boundary, extend independent replay, then return to
-parser/type certification and admitted-lemma reduction.
+to converge the legacy core and strict kernel around a single theorem acceptance
+path, then use that path to move from `0/125` to `1/125` strict closed proved
+theorem before expanding surface features.
 
 ## Strategy
 
@@ -24,6 +25,8 @@ Current status:
 | Admit/oracle tracking | Explicit, classified, and propagated. |
 | Closed theorem acceptance | Main path, session reporting, and final trusted tables use `is_strict_closed_proved()`. |
 | T4 proofterm replay | Legacy proofterm replay remains minimal; strict `src/kernel` invariant replay covers its implemented derivations. |
+| Proof outcome unification | Design target is a single `ProofOutcome` classification so oracle-free, compat, open, admitted, failed, and strict closed results cannot be conflated. |
+| Core-to-kernel migration | `src/core` currently remains a legacy proof engine; target architecture reduces it to compatibility, automation, diagnostics, and migration adapters. |
 | HPC symbolic compute | Design-only parallel track for untrusted candidate generation, fingerprinting, and prefiltering; no Burn/CubeCL dependency and no kernel dependency. |
 | HOL/Isar feature parity | Not current priority. |
 
@@ -34,32 +37,42 @@ infrastructure.
 
 Priority order:
 
-1. Stabilize strict `src/kernel` nucleus: keep the firewall clean, normalize
-   resolution substitutions, and make `resolve1_match` / conservative
-   `bicompose` limits explicit.
-2. Establish a structured compatibility matrix for legacy adapters
-   (Core → Isar proof state → HOL bootstrap → Tier2 smoke).
-3. Extend strict-kernel replay/invariant coverage only after rule contracts and
+1. Unify theorem verification outcomes around `ProofOutcome` and a single
+   strict theorem acceptance path.
+2. Build the core-to-kernel strangler migration inventory and matrix.
+3. Migrate one vertical slice to strict kernel acceptance, moving the core
+   verification batch from `0/125` to `1/125` `StrictClosed`.
+4. Continue strict `src/kernel` nucleus stabilization, including firewall
+   checks, deterministic substitutions, and explicit conservative resolution
+   limits.
+5. Reduce admitted and compat paths by classified cause, not by hiding fallback
+   paths.
+6. Extend strict-kernel replay/invariant coverage only after rule contracts and
    compatibility boundaries are stable.
-4. Reduce admitted lemmas by classified reason.
-5. Split into Cargo workspace (`isabelle-kernel` crate first).
-6. Design session incremental engine (snapshot/rollback/content-addressed cache).
-7. Build `isabelle.toml` project system (Lake-style).
-8. Design Agent Proof Protocol (APP).
-9. Expand HOL/Isar/tool coverage only where it reduces admitted counts without
-   weakening trust boundaries.
-10. Harden WASM plugin sandbox boundaries.
-11. AFP large-scale benchmark.
+7. Split into Cargo workspace (`isabelle-kernel` crate first).
+8. Design session incremental engine (snapshot/rollback/content-addressed cache).
+9. Build `isabelle.toml` project system (Lake-style).
+10. Design Agent Proof Protocol (APP).
+11. Expand HOL/Isar/tool coverage only where it reduces admitted counts without
+    weakening trust boundaries.
+12. Harden WASM plugin sandbox boundaries.
+13. AFP large-scale benchmark.
 
-Near-term main line remains strict-kernel and proof-boundary work:
+Near-term main line is core-to-kernel strangler migration:
 
 ```text
-stabilize conservative subst_premise and bicompose wrapper implementations
-full bicompose / bicompose_eresolve resolution-family design
-admitted reason inventory and reduction
-strict replay / invariant coverage
-legacy adapter compatibility matrix
+ProofOutcome design and reporting
+core/kernel overlap inventory
+migration matrix
+first strict closed theorem vertical slice
+admitted/compat reason reduction by cause
 ```
+
+Design documents:
+
+- [PROOF_OUTCOME_DESIGN.md](PROOF_OUTCOME_DESIGN.md)
+- [CORE_KERNEL_OVERLAP_INVENTORY.md](CORE_KERNEL_OVERLAP_INVENTORY.md)
+- [MIGRATION_MATRIX.md](MIGRATION_MATRIX.md)
 
 Parallel non-blocking design track:
 

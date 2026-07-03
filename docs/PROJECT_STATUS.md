@@ -114,6 +114,8 @@ The following areas have a coherent implementation and regression coverage:
 | Proof-state strict entry points | `ProofState::assume`, `Goal::init`, and checked subgoal scaffolding construct Strict open theorem obligations from explicit proof-context certification. |
 | Strict kernel nucleus | `src/kernel` contains an isolated TCB nucleus with no dummy type, no compat certification, separate proof obligations, trusted/searchable fact separation, primitive rules, strict matching, `resolve1_match`, conservative `subst_premise`, and conservative `bicompose` wrapper. |
 | Strict theorem invariants | `check_kernel_invariants(Strict)` rejects compat/admitted provenance, dummy-tainted burdens, `maxidx` drift, oracle-tainted strict theorems, and supported replay burden mismatches. |
+| Proof outcome migration design | The next acceptance model is documented as `ProofOutcome`: strict closed, compat closed oracle-free, open oracle-free, admitted, and failed results are separate states. |
+| Core/kernel migration framing | `src/core` is still a legacy proof engine today; the target is to shrink it into compatibility, automation, diagnostics, and migration adapters while `src/kernel` becomes the only TCB. |
 | Oracle/admit tracking | `ThmKernel::admit(ct, reason)` marks unproved accepted propositions and propagates oracle footprints. |
 | Closed theorem acceptance | A trusted proved lemma requires strict construction, no oracles, no hypotheses, no unresolved `tpairs`, and no dummy types. |
 | Isar goal export boundary | `verify_lemma` no longer returns oracle-free open proof-method results as accepted lemmas. Results are exported by legal `implies_intr` discharge of known context assumptions, or admitted with `admitted:goal_export_*` / `admitted:proof_engine_failed`. |
@@ -181,6 +183,16 @@ Follow-up diagnostics after hardening `RewriteRule::from_thm` showed the
 `exec_proof` fallback chain, so the next fix is the method fallback boundary,
 not conditional rewrite implementation.
 
+The next milestone is not broad HOL/Isar coverage. It is a first vertical
+strict-kernel acceptance slice:
+
+```text
+test_verify_all_core_files: 0/125 StrictClosed -> 1/125 StrictClosed
+```
+
+This must happen through strict theorem construction and acceptance, not by
+reclassifying admitted, compat, or open oracle-free results.
+
 ## Relative Completion Estimates
 
 These are semantic/engineering estimates, not line-count percentages.
@@ -243,22 +255,26 @@ primitive rule coverage are still open.
 Do not spend the next phase on more HOL/Isar surface features, LSP, WASM,
 Sledgehammer, SMT, or Code Generator work. The route is:
 
-1. Stabilize strict `src/kernel` nucleus, including firewall checks,
-   deterministic substitutions, explicit `resolve1_match` / `subst_premise` /
-   conservative `bicompose` limitations, and the next full `bicompose` /
-   `bicompose_eresolve` designs.
-2. Establish a structured compatibility matrix for legacy adapters before broad
-   migration.
-3. Extend T4 proofterm replay rule coverage after strict kernel semantics are
+1. Design and implement `ProofOutcome` as the single verification outcome model.
+2. Create one final theorem acceptance path: only `StrictClosed` results enter
+   trusted theorem tables.
+3. Use the core/kernel overlap inventory and migration matrix to guide every
+   proof-boundary change.
+4. Migrate one small theorem path to strict-kernel acceptance and move the core
+   batch from `0/125` to `1/125` `StrictClosed`.
+5. Continue core hardening only as migration support: diagnostics, boundary
+   checks, and adapters, not new trusted proof power in `src/core`.
+6. Split and reduce admitted/compat paths by cause, especially method fallback
+   and proof export reasons.
+7. Extend T4 proofterm replay rule coverage after strict kernel semantics are
    stable.
-4. Reduce admitted lemmas by cause, not by hiding fallback paths.
-5. Split into Cargo workspace (`isabelle-kernel` crate first).
-6. Design session incremental engine (snapshot/rollback/content-addressed cache).
-7. Build `isabelle.toml` project system (Lake-style).
-8. Design Agent Proof Protocol (APP).
-9. Expand HOL/Isar/tool coverage only after the trusted boundary remains stable.
-10. Harden WASM plugin sandbox boundaries.
-11. AFP large-scale benchmark.
+8. Split into Cargo workspace (`isabelle-kernel` crate first).
+9. Design session incremental engine (snapshot/rollback/content-addressed cache).
+10. Build `isabelle.toml` project system (Lake-style).
+11. Design Agent Proof Protocol (APP).
+12. Expand HOL/Isar/tool coverage only after the trusted boundary remains stable.
+13. Harden WASM plugin sandbox boundaries.
+14. AFP large-scale benchmark.
 
 Parallel non-blocking design track: high-performance symbolic compute may
 define packed IR, a deterministic CPU baseline, and future optional Burn/CubeCL
