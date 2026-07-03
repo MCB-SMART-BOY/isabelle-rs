@@ -428,6 +428,34 @@ fn init_verify_goal(goal_ct: &CTerm) -> Result<Thm, Thm> {
     })
 }
 
+fn proof_allows_strict_imp_identity(proof: &str) -> bool {
+    matches!(proof.trim(), "by assumption" | "." | "by .")
+}
+
+fn try_strict_pure_imp_identity(
+    goal: &Term,
+    type_env: &crate::core::types::TypeEnv,
+) -> Option<Thm> {
+    let (premise, conclusion) = Pure::dest_implies(goal)?;
+    if !Hyps::kernel_alpha_eq(premise, conclusion) {
+        return None;
+    }
+
+    let cert_ctx = crate::isar::proof_context::ProofCertContext::from_type_env(type_env.clone());
+    let premise_ct = cert_ctx.certify_prop(premise.clone()).ok()?;
+    let original_ct = cert_ctx.certify_prop(goal.clone()).ok()?;
+    let assumed = ThmKernel::assume(premise_ct.clone()).ok()?;
+    let identity = ThmKernel::implies_intr(&premise_ct, &assumed).ok()?;
+
+    if identity.is_strict_closed_proved()
+        && Hyps::kernel_alpha_eq(identity.prop().term(), original_ct.term())
+    {
+        Some(identity)
+    } else {
+        None
+    }
+}
+
 // =========================================================================
 // Method
 // =========================================================================
@@ -3969,6 +3997,13 @@ pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
     }
 
     let proof = lem.proof_script.as_ref()?;
+    if proof_allows_strict_imp_identity(proof)
+        && let Some(strict_identity) =
+            try_strict_pure_imp_identity(lem.theorem.prop().term(), &db.type_env)
+    {
+        return Some(strict_identity);
+    }
+
     let goal_ct = CTerm::certify(lem.theorem.prop().term().clone());
     let (prems, concl) = Pure::strip_imp_prems(goal_ct.term());
     let premise_cterms: Vec<CTerm> = prems.iter().map(|p| CTerm::certify((*p).clone())).collect();
@@ -4733,6 +4768,73 @@ mod tests {
         env.declare_const(name, prop_t.clone());
         CTerm::certify_checked(Term::const_(name, prop_t), &env)
             .expect("test proposition should certify")
+    }
+
+    fn pure_identity_term() -> Term {
+        let a = Term::const_("A", Typ::base("prop"));
+        Pure::mk_implies(a.clone(), a)
+    }
+
+    fn pure_identity_lemma() -> crate::hol::hol_loader::ParsedLemma {
+        crate::hol::hol_loader::ParsedLemma {
+            name: "strict_imp_identity".to_string(),
+            attributes: vec![],
+            theorem: std::sync::Arc::new(ThmKernel::assume_compat(CTerm::certify(
+                pure_identity_term(),
+            ))),
+            proof_script: Some("by assumption".to_string()),
+            alias_for: None,
+            source_loc: None,
+        }
+    }
+
+    fn with_pure_identity_db<R>(f: impl FnOnce() -> R) -> R {
+        let mut db = HolTheoremDb::new();
+        db.type_env.declare_const("A", Typ::base("prop"));
+        HolTheoremDb::with_override(&db, f)
+    }
+
+    #[test]
+    fn strict_vertical_slice_pure_imp_identity() {
+        let mut env = crate::core::types::TypeEnv::new();
+        env.declare_const("A", Typ::base("prop"));
+        let goal = pure_identity_term();
+
+        let thm = try_strict_pure_imp_identity(&goal, &env)
+            .expect("A ==> A should replay through checked strict implication rules");
+
+        assert!(thm.is_strict_closed_proved());
+        assert!(Hyps::kernel_alpha_eq(thm.prop().term(), &goal));
+        assert!(thm.hyps().is_empty());
+        assert!(thm.oracles().is_empty());
+        assert!(thm.tpairs().is_empty());
+    }
+
+    #[test]
+    fn proof_outcome_counts_pure_imp_identity_as_strict_closed() {
+        let lem = pure_identity_lemma();
+        reset_verify_stats();
+
+        let (verified, attempted) =
+            with_pure_identity_db(|| verify_lemmas_batch(std::slice::from_ref(&lem)));
+        let stats = verify_outcome_stats();
+
+        assert_eq!((verified, attempted), (1, 1));
+        assert_eq!(stats.strict_closed, 1);
+        assert_eq!(stats.total(), 1);
+    }
+
+    #[test]
+    fn proof_outcome_does_not_count_compat_identity_as_strict_closed() {
+        LAST_OUTCOME.with(|c| c.set(VerifyOutcome::Proved));
+        let a = prop_ct("A");
+        let assumed = ThmKernel::assume_compat(a.clone());
+        let compat_identity = ThmKernel::implies_intr(&a, &assumed).unwrap();
+
+        let outcome = classify_verify_result("compat_imp_identity", Some(&compat_identity));
+
+        assert!(matches!(outcome, ProofOutcome::CompatClosedOracleFree { .. }));
+        assert!(!outcome.is_strict_closed());
     }
 
     #[test]

@@ -27,6 +27,7 @@ Current status:
 | T4 proofterm replay | Legacy proofterm replay remains minimal; strict `src/kernel` invariant replay covers its implemented derivations. |
 | Proof outcome unification | Design target is a single `ProofOutcome` classification so oracle-free, compat, open, admitted, failed, and strict closed results cannot be conflated. |
 | Core-to-kernel migration | `src/core` currently remains a legacy proof engine; target architecture reduces it to compatibility, automation, diagnostics, and migration adapters. |
+| First strict slice | Targeted Pure `A ==> A` smoke slice exists; an existing core-file theorem has not yet been routed to `StrictClosed`. |
 | HPC symbolic compute | Design-only parallel track for untrusted candidate generation, fingerprinting, and prefiltering; no Burn/CubeCL dependency and no kernel dependency. |
 | HOL/Isar feature parity | Not current priority. |
 
@@ -40,8 +41,8 @@ Priority order:
 1. Unify theorem verification outcomes around `ProofOutcome` and a single
    strict theorem acceptance path.
 2. Build the core-to-kernel strangler migration inventory and matrix.
-3. Migrate one vertical slice to strict kernel acceptance, moving the core
-   verification batch from `0/125` to `1/125` `StrictClosed`.
+3. Migrate one existing core-file vertical slice to strict kernel acceptance,
+   moving the core verification batch from `0/125` to `1/125` `StrictClosed`.
 4. Continue strict `src/kernel` nucleus stabilization, including firewall
    checks, deterministic substitutions, and explicit conservative resolution
    limits.
@@ -65,6 +66,7 @@ ProofOutcome design and reporting
 core/kernel overlap inventory
 migration matrix
 first strict closed theorem vertical slice
+first existing core-file strict closed theorem
 admitted/compat reason reduction by cause
 ```
 

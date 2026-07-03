@@ -37,19 +37,25 @@ The immediate milestone is not broad coverage. It is:
 test_verify_all_core_files: 0/125 StrictClosed -> 1/125 StrictClosed
 ```
 
+A targeted smoke slice now proves Pure implication identity `A ==> A` through
+the strict kernel nucleus and verifies that the current summary classifier
+counts the checked identity adapter as `StrictClosed`. This does not yet change
+the core-file batch because none of the current sampled lemmas route through
+that shape.
+
 Candidate slices:
 
 | Candidate | Why it is useful | Required pieces | First-slice suitability |
 |---|---|---|---|
 | Pure reflexivity `t == t` | Smallest strict kernel theorem construction path. | Checked term certification, `KernelRules::reflexive`, closed acceptance. | Good kernel/acceptance smoke test, but may not map directly to a current core lemma. |
-| Pure implication identity `A ==> A` | Exercises assumption introduction and legal discharge. | Checked `CProp`, `KernelRules::assume`, `KernelRules::implies_intr`, `ClosedThm` acceptance. | Best first integration slice. |
+| Pure implication identity `A ==> A` | Exercises assumption introduction and legal discharge. | Checked `CProp`, `KernelRules::assume`, `KernelRules::implies_intr`, `ClosedThm` acceptance. | Targeted smoke slice implemented; next step is an existing core-file lemma. |
 | Simple equality reflexivity exposed through HOL | Brings the path closer to user-visible HOL facts. | HOL equality adapter, type certification, strict reflexivity. | Good second slice after Pure path works. |
 | `HOL::TrueI` | User-visible base fact. | HOL `True` encoding, method/export routing, possibly simplifier/proofterm support. | Too entangled for the first slice. |
 
 Recommended order:
 
 ```text
-1. strict Pure implication identity as a direct parser/certifier/export smoke test
+1. strict Pure implication identity as a direct parser/certifier/export smoke test (done)
 2. smallest parsed core-file theorem that can reuse that strict path
 3. HOL equality/True-facing slices after object-logic adapters are clearer
 ```
@@ -60,5 +66,6 @@ Recommended order:
    proof behavior.
 2. Use it in core verification reports.
 3. Add a strict adapter for the chosen implication-identity slice.
-4. Increase the strict closed count only through `StrictClosed`.
-5. Resume admitted-reason reduction based on the new outcome report.
+4. Route one existing core-file theorem through that adapter.
+5. Increase the strict closed count only through `StrictClosed`.
+6. Resume admitted-reason reduction based on the new outcome report.

@@ -31,6 +31,20 @@ fn ctx_with_nat_consts(names: &[&str]) -> ProofContext {
 }
 
 #[test]
+fn strict_kernel_pure_imp_identity_closes() {
+    let ctx = ctx_with_props(&["A"]);
+    let a = ctx.certify_prop(prop("A")).unwrap();
+    let assumed = KernelRules::assume(a.clone()).into_kernel();
+    let identity = KernelRules::implies_intr(&a, &assumed).unwrap();
+
+    assert!(identity.hyps().is_empty());
+    let trusted = identity.try_close().unwrap().trust().unwrap();
+    let expected =
+        ctx.certify_prop(RawTerm::imp(prop("A"), prop("A"))).expect("A ==> A should certify");
+    assert_eq!(trusted.prop(), &expected);
+}
+
+#[test]
 fn undeclared_const_is_rejected() {
     let ctx = ProofContext::new(Signature::new());
     let err = ctx.certify_prop(prop("A")).unwrap_err();

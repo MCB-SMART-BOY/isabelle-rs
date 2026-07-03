@@ -115,6 +115,7 @@ The following areas have a coherent implementation and regression coverage:
 | Strict kernel nucleus | `src/kernel` contains an isolated TCB nucleus with no dummy type, no compat certification, separate proof obligations, trusted/searchable fact separation, primitive rules, strict matching, `resolve1_match`, conservative `subst_premise`, and conservative `bicompose` wrapper. |
 | Strict theorem invariants | `check_kernel_invariants(Strict)` rejects compat/admitted provenance, dummy-tainted burdens, `maxidx` drift, oracle-tainted strict theorems, and supported replay burden mismatches. |
 | Proof outcome summary classifier | `src/isar/method.rs` classifies existing `verify_lemma` results as strict closed, compat closed oracle-free, open oracle-free, admitted, or failed without changing theorem construction. |
+| Targeted strict vertical slice | A Pure implication identity smoke slice proves `A ==> A` through the strict kernel nucleus (`KernelRules::assume` + `implies_intr`) and verifies that the current ProofOutcome summary path counts the checked identity adapter as `StrictClosed` while rejecting the compat version. |
 | Core/kernel migration framing | `src/core` is still a legacy proof engine today; the target is to shrink it into compatibility, automation, diagnostics, and migration adapters while `src/kernel` becomes the only TCB. |
 | Oracle/admit tracking | `ThmKernel::admit(ct, reason)` marks unproved accepted propositions and propagates oracle footprints. |
 | Closed theorem acceptance | A trusted proved lemma requires strict construction, no oracles, no hypotheses, no unresolved `tpairs`, and no dummy types. |
@@ -172,6 +173,12 @@ ProofOutcome summary:
   Admitted(proof_engine_failed): 50
 ```
 
+The targeted `A ==> A` strict slice is intentionally not counted in this core
+batch unless an existing sampled core-file lemma routes through that shape. The
+next coverage milestone is therefore narrower and more honest than "make the
+smoke test pass": route one existing parsed theorem through strict acceptance
+without compat/admit/open fallback.
+
 The former `OPEN_HAS_HYPS` runtime classification has been closed as a trust
 boundary issue: proof-method results with ambient hypotheses are no longer
 returned as oracle-free accepted lemmas. If they cannot be legally exported,
@@ -184,8 +191,8 @@ Follow-up diagnostics after hardening `RewriteRule::from_thm` showed the
 `exec_proof` fallback chain, so the next fix is the method fallback boundary,
 not conditional rewrite implementation.
 
-The next milestone is not broad HOL/Isar coverage. It is a first vertical
-strict-kernel acceptance slice:
+The next milestone is not broad HOL/Isar coverage. It is the first existing
+core-file vertical strict-kernel acceptance slice:
 
 ```text
 test_verify_all_core_files: 0/125 StrictClosed -> 1/125 StrictClosed
