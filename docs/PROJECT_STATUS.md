@@ -179,6 +179,13 @@ next coverage milestone is therefore narrower and more honest than "make the
 smoke test pass": route one existing parsed theorem through strict acceptance
 without compat/admit/open fallback.
 
+A scan of the sampled 125 core-file lemmas found no parsed proposition of the
+form `A ==> A` / `P ==> P`, so the implication-identity adapter cannot move the
+batch count by itself. The current best first existing-theorem candidate is
+`HOL::TrueI`, whose source proof is `unfolding True_def by (rule refl)`. That
+slice needs a narrow strict definition-unfold/reflexivity adapter, not a broader
+`simp` or proof-engine fallback.
+
 The former `OPEN_HAS_HYPS` runtime classification has been closed as a trust
 boundary issue: proof-method results with ambient hypotheses are no longer
 returned as oracle-free accepted lemmas. If they cannot be legally exported,

@@ -43,6 +43,11 @@ counts the checked identity adapter as `StrictClosed`. This does not yet change
 the core-file batch because none of the current sampled lemmas route through
 that shape.
 
+A diagnostic scan of the current 125 sampled core-file lemmas found zero parsed
+propositions of the form `A ==> A` / `P ==> P`. The next `1/125` milestone must
+therefore use a different existing theorem instead of extending the synthetic
+identity smoke test.
+
 Candidate slices:
 
 | Candidate | Why it is useful | Required pieces | First-slice suitability |
@@ -50,14 +55,14 @@ Candidate slices:
 | Pure reflexivity `t == t` | Smallest strict kernel theorem construction path. | Checked term certification, `KernelRules::reflexive`, closed acceptance. | Good kernel/acceptance smoke test, but may not map directly to a current core lemma. |
 | Pure implication identity `A ==> A` | Exercises assumption introduction and legal discharge. | Checked `CProp`, `KernelRules::assume`, `KernelRules::implies_intr`, `ClosedThm` acceptance. | Targeted smoke slice implemented; next step is an existing core-file lemma. |
 | Simple equality reflexivity exposed through HOL | Brings the path closer to user-visible HOL facts. | HOL equality adapter, type certification, strict reflexivity. | Good second slice after Pure path works. |
-| `HOL::TrueI` | User-visible base fact. | HOL `True` encoding, method/export routing, possibly simplifier/proofterm support. | Too entangled for the first slice. |
+| `HOL::TrueI` | First sampled HOL lemma with a small proof: `unfolding True_def by (rule refl)`. | Strict definition-unfold adapter for `True_def`, checked HOL/Pure equality bridge, strict reflexivity. | Best current candidate for the first existing core-file `StrictClosed`, but must not go through simp/auto or compat `refl`. |
 
 Recommended order:
 
 ```text
 1. strict Pure implication identity as a direct parser/certifier/export smoke test (done)
-2. smallest parsed core-file theorem that can reuse that strict path
-3. HOL equality/True-facing slices after object-logic adapters are clearer
+2. strict `HOL::TrueI` slice via explicit `True_def` unfolding and strict reflexivity
+3. simple equality reflexivity exposed through HOL after the equality adapter is clearer
 ```
 
 ## Next Engineering Gates
@@ -66,6 +71,6 @@ Recommended order:
    proof behavior.
 2. Use it in core verification reports.
 3. Add a strict adapter for the chosen implication-identity slice.
-4. Route one existing core-file theorem through that adapter.
+4. Route one existing core-file theorem through a strict adapter.
 5. Increase the strict closed count only through `StrictClosed`.
 6. Resume admitted-reason reduction based on the new outcome report.
