@@ -198,7 +198,7 @@ env" behavior characterized.
 | `tools::metis::try_all_resolutions` | checked | Clause resolution skips a unifier whose theorem instantiation is ill-typed. |
 | `tools::metis::try_factor` | checked | Factoring skips ill-typed theorem instantiation. |
 | `tools::metis::try_all_paramodulations` | checked | Paramodulation skips ill-typed equality/target instantiation. |
-| `core::simplifier` / `tools::simp` | not theorem instantiation | These paths use `env.norm_term` to instantiate RHS/conditions, but do not call `ThmKernel::instantiate`; they remain part of the broader `CTerm` hard-certification work. |
+| `core::simplifier` / `tools::simp` | guarded rewrite-rule admission | `RewriteRule::from_thm` only admits closed, oracle-free, tpair-free, non-admitted, premise-free equality theorems. The rewrite application still uses `env.norm_term` for RHS instantiation and remains part of broader `CTerm` hard-certification work. |
 | `core::tactic` | checked via kernel rules | Resolve/eresolve/simp tactics route through `bicompose` or `subst_premise` (⚠️ LEGACY CORE). |
 | `core::bires` / `core::more_thm` | no direct instantiation | No migration needed in this pass. |
 | `isar::method` debug matcher use | no theorem construction | Direct `Envir` use inspected is matcher diagnostics, not theorem instantiation. |

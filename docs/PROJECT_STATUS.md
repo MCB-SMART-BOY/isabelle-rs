@@ -117,6 +117,7 @@ The following areas have a coherent implementation and regression coverage:
 | Oracle/admit tracking | `ThmKernel::admit(ct, reason)` marks unproved accepted propositions and propagates oracle footprints. |
 | Closed theorem acceptance | A trusted proved lemma requires strict construction, no oracles, no hypotheses, no unresolved `tpairs`, and no dummy types. |
 | Isar goal export boundary | `verify_lemma` no longer returns oracle-free open proof-method results as accepted lemmas. Results are exported by legal `implies_intr` discharge of known context assumptions, or admitted with `admitted:goal_export_*` / `admitted:proof_engine_failed`. |
+| Simplifier rewrite-rule admission | `RewriteRule::from_thm` rejects open, admitted, unresolved, or conditional rewrite theorems instead of treating them as unconditional simp rules. Unproved HOL built-in rewrite templates are disabled until backed by closed theorem sources. |
 | Searchable vs trusted facts | `HolTheoremDb` is a proof-search fact index; final trusted theorem tables use strict closed proved filters. |
 | Attribute fallback honesty | Non-derivational theorem transformations are admitted as `admitted:attribute_transformation`. |
 | T4 minimal replay | `assume`, `reflexive`, `symmetric`, `transitive`, `implies_intr`, `implies_elim` replay with burden checks. |
@@ -173,6 +174,12 @@ boundary issue: proof-method results with ambient hypotheses are no longer
 returned as oracle-free accepted lemmas. If they cannot be legally exported,
 they are admitted with a specific `goal_export_*` reason. This improves
 reporting honesty, not proof coverage.
+
+Follow-up diagnostics after hardening `RewriteRule::from_thm` showed the
+`goal_export_unknown_simp_context` subtype did not decline. Representative
+`by simp` samples still reach unknown hyps through the surrounding
+`exec_proof` fallback chain, so the next fix is the method fallback boundary,
+not conditional rewrite implementation.
 
 ## Relative Completion Estimates
 

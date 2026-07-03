@@ -829,10 +829,11 @@ mod tests {
     }
 
     #[test]
-    fn test_builtin_rules_created() {
+    fn test_builtin_rules_require_closed_theorem_sources() {
         let rules = HolSimplifier::builtin_rules();
-        // Should have many rules (boolean connectives, quantifiers, conditionals)
-        assert!(rules.len() >= 10, "Expected at least 10 builtin rules, got {}", rules.len());
+        // Built-in HOL rewrite templates used to be admitted through
+        // `assume_compat`. They now require real closed theorem sources.
+        assert!(rules.is_empty(), "unproved built-in rewrite templates must not be rules");
     }
 
     #[test]
@@ -860,9 +861,7 @@ mod tests {
         let term = Term::app(Term::app(conj_c, true_c), p.clone());
 
         let result = hs.hol_rewrite(&term);
-        assert!(result.is_some(), "Should rewrite True ∧ P");
-        let (rewritten, _thm) = result.unwrap();
-        assert_eq!(rewritten, p, "True ∧ P should rewrite to P");
+        assert!(result.is_none(), "True ∧ P needs a closed rewrite theorem source");
     }
 
     #[test]
@@ -874,9 +873,7 @@ mod tests {
         let term = Term::app(Term::app(conj_c, false_c.clone()), p);
 
         let result = hs.hol_rewrite(&term);
-        assert!(result.is_some(), "Should rewrite False ∧ P");
-        let (rewritten, _thm) = result.unwrap();
-        assert_eq!(rewritten, false_c, "False ∧ P should rewrite to False");
+        assert!(result.is_none(), "False ∧ P needs a closed rewrite theorem source");
     }
 
     #[test]
@@ -888,9 +885,7 @@ mod tests {
         let term = Term::app(Term::app(disj_c, true_c.clone()), p);
 
         let result = hs.hol_rewrite(&term);
-        assert!(result.is_some(), "Should rewrite True ∨ P");
-        let (rewritten, _thm) = result.unwrap();
-        assert_eq!(rewritten, true_c, "True ∨ P should rewrite to True");
+        assert!(result.is_none(), "True ∨ P needs a closed rewrite theorem source");
     }
 
     #[test]
@@ -902,9 +897,7 @@ mod tests {
         let term = Term::app(Term::app(disj_c, false_c), p.clone());
 
         let result = hs.hol_rewrite(&term);
-        assert!(result.is_some(), "Should rewrite False ∨ P");
-        let (rewritten, _thm) = result.unwrap();
-        assert_eq!(rewritten, p, "False ∨ P should rewrite to P");
+        assert!(result.is_none(), "False ∨ P needs a closed rewrite theorem source");
     }
 
     #[test]
@@ -916,9 +909,7 @@ mod tests {
         let term = Term::app(not_c, true_c);
 
         let result = hs.hol_rewrite(&term);
-        assert!(result.is_some(), "Should rewrite ¬True");
-        let (rewritten, _thm) = result.unwrap();
-        assert_eq!(rewritten, false_c, "¬True should rewrite to False");
+        assert!(result.is_none(), "¬True needs a closed rewrite theorem source");
     }
 
     #[test]
@@ -930,9 +921,7 @@ mod tests {
         let term = Term::app(not_c, false_c);
 
         let result = hs.hol_rewrite(&term);
-        assert!(result.is_some(), "Should rewrite ¬False");
-        let (rewritten, _thm) = result.unwrap();
-        assert_eq!(rewritten, true_c, "¬False should rewrite to True");
+        assert!(result.is_none(), "¬False needs a closed rewrite theorem source");
     }
 
     #[test]
@@ -944,9 +933,7 @@ mod tests {
         let term = Term::app(Term::app(imp_c, true_c), p.clone());
 
         let result = hs.hol_rewrite(&term);
-        assert!(result.is_some(), "Should rewrite True → P");
-        let (rewritten, _thm) = result.unwrap();
-        assert_eq!(rewritten, p, "True → P should rewrite to P");
+        assert!(result.is_none(), "True → P needs a closed rewrite theorem source");
     }
 
     #[test]
@@ -959,9 +946,7 @@ mod tests {
         let term = Term::app(Term::app(imp_c, false_c), p);
 
         let result = hs.hol_rewrite(&term);
-        assert!(result.is_some(), "Should rewrite False → P");
-        let (rewritten, _thm) = result.unwrap();
-        assert_eq!(rewritten, true_c, "False → P should rewrite to True");
+        assert!(result.is_none(), "False → P needs a closed rewrite theorem source");
     }
 
     #[test]
@@ -977,9 +962,7 @@ mod tests {
         let term = Term::app(Term::app(conj_c.clone(), inner), false_c.clone());
 
         let result = hs.hol_rewrite_deep(&term);
-        assert!(result.is_some(), "Should deep-rewrite nested conjunction");
-        let (rewritten, _thm) = result.unwrap();
-        assert_eq!(rewritten, false_c, "Nested rewrite should result in False");
+        assert!(result.is_none(), "nested HOL rewrite needs closed theorem sources");
     }
 
     #[test]
@@ -1053,9 +1036,7 @@ mod tests {
         let term = Term::apps(if_c, [true_c, a.clone(), b.clone()]);
 
         let result = hs.hol_rewrite(&term);
-        assert!(result.is_some(), "Should rewrite if True then A else B");
-        let (rewritten, _thm) = result.unwrap();
-        assert_eq!(rewritten, a, "if True then A else B should rewrite to A");
+        assert!(result.is_none(), "if True rewrite needs a closed theorem source");
     }
 
     #[test]
@@ -1068,9 +1049,7 @@ mod tests {
         let term = Term::apps(if_c, [false_c, a.clone(), b.clone()]);
 
         let result = hs.hol_rewrite(&term);
-        assert!(result.is_some(), "Should rewrite if False then A else B");
-        let (rewritten, _thm) = result.unwrap();
-        assert_eq!(rewritten, b, "if False then A else B should rewrite to B");
+        assert!(result.is_none(), "if False rewrite needs a closed theorem source");
     }
 
     #[test]
@@ -1082,9 +1061,7 @@ mod tests {
         let term = Term::app(all_c, Term::abs("x", Typ::dummy(), body));
 
         let result = hs.hol_rewrite(&term);
-        assert!(result.is_some(), "Should rewrite ∀x. True");
-        let (rewritten, _thm) = result.unwrap();
-        assert_eq!(rewritten, true_c, "∀x. True should rewrite to True");
+        assert!(result.is_none(), "∀x. True rewrite needs a closed theorem source");
     }
 
     #[test]
@@ -1096,9 +1073,7 @@ mod tests {
         let term = Term::app(ex_c, Term::abs("x", Typ::dummy(), body));
 
         let result = hs.hol_rewrite(&term);
-        assert!(result.is_some(), "Should rewrite ∃x. False");
-        let (rewritten, _thm) = result.unwrap();
-        assert_eq!(rewritten, false_c, "∃x. False should rewrite to False");
+        assert!(result.is_none(), "∃x. False rewrite needs a closed theorem source");
     }
 
     #[test]

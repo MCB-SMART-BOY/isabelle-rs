@@ -104,6 +104,15 @@ The next useful work is to split and reduce the `goal_export_*` and
 `proof_engine_failed` reasons, not to count closed-shaped compatibility results
 as trusted proofs.
 
+`RewriteRule::from_thm` now rejects theorem hyps, oracle/admitted footprints,
+unresolved `tpairs`, and Pure-premise conditional rewrites. This prevents open
+or admitted theorems from entering the simplifier as unconditional rewrite
+rules. Unproved HOL built-in rewrite templates are also skipped until backed by
+closed theorem sources. A follow-up subtype diagnostic still left
+`goal_export_unknown_simp_context` unchanged, which points to `exec_proof`'s
+simp-to-auto/blast fallback path rather than rewrite-rule admission as the next
+target.
+
 ### Strict Kernel vs Legacy Core Firewall
 
 The strict `src/kernel/` nucleus is enforced by automated checks:

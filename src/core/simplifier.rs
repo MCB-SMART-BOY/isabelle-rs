@@ -18,7 +18,7 @@ use super::{
     logic::Pure,
     term::Term,
     term_subst,
-    thm::{CTerm, Thm, ThmKernel},
+    thm::{CTerm, Thm, ThmKernel, ThmTrust},
     types::Typ,
     unify::{self, UnifyConfig},
 };
@@ -99,7 +99,10 @@ pub fn fun_conv(conv: Conv) -> Conv {
 // Rewrite rule
 // =========================================================================
 
-/// A rewrite rule: `condition ⊢ pattern ≡ replacement`.
+/// A rewrite rule: closed unconditional `pattern ≡ replacement`.
+///
+/// Conditional rewriting is future work. The current simplifier must not treat
+/// theorem hypotheses or Pure premises as silently solved rewrite conditions.
 #[derive(Clone, Debug)]
 pub struct RewriteRule {
     /// The left-hand side pattern.
@@ -113,22 +116,31 @@ pub struct RewriteRule {
 }
 
 impl RewriteRule {
-    /// Create a rewrite rule from a theorem (may have premises as conditions).
-    /// For `P1 ==> P2 ==> l ≡ r`, the rule has conditions `[P1, P2]`.
+    /// Create a rewrite rule from a closed unconditional theorem.
+    ///
+    /// V1 deliberately rejects theorem hypotheses, oracle/admitted footprints,
+    /// unresolved tpairs, and Pure premises (`P ==> l ≡ r`). Without a
+    /// conditional-rewrite proof path, accepting those theorems would let simp
+    /// import unknown hypotheses into proof results.
     pub fn from_thm(thm: Arc<Thm>) -> Option<Self> {
+        if !Self::is_closed_unconditional_source(&thm) {
+            return None;
+        }
         let prop_term = thm.prop().term();
         let (prems, concl) = Pure::strip_imp_prems(prop_term);
+        if !prems.is_empty() {
+            return None;
+        }
         let (l, r) = Pure::dest_equals(concl)?;
-        let condition = if prems.is_empty() {
-            None
-        } else {
-            let mut cond = prems[0].clone();
-            for p in &prems[1..] {
-                cond = Pure::mk_implies((*p).clone(), cond);
-            }
-            Some(cond)
-        };
-        Some(RewriteRule { lhs: l.clone(), rhs: r.clone(), condition, thm })
+        Some(RewriteRule { lhs: l.clone(), rhs: r.clone(), condition: None, thm })
+    }
+
+    fn is_closed_unconditional_source(thm: &Thm) -> bool {
+        thm.hyps().is_empty()
+            && thm.oracles().is_empty()
+            && thm.tpairs().is_empty()
+            && thm.nprems() == 0
+            && thm.trust_status() != ThmTrust::Admitted
     }
 }
 
@@ -487,8 +499,10 @@ mod conditional_tests {
     };
 
     #[test]
-    fn test_conditional_rule_creation() {
-        // Create theorem: A ==> x = y
+    fn rewrite_rule_rejects_conditional_rule_in_v1() {
+        // Create theorem: A ==> x = y. Conditional rewriting is not supported
+        // yet because the current simplifier cannot turn A into a checked
+        // residual subgoal.
         let nat = Typ::base("nat");
         let a = Term::const_("A", Typ::base("prop"));
         let x = Term::free("x", nat.clone());
@@ -497,52 +511,91 @@ mod conditional_tests {
         let prop = Pure::mk_implies(a.clone(), eq);
         let thm = ThmKernel::assume_compat(CTerm::certify(prop));
         let rule = RewriteRule::from_thm(Arc::new(thm));
-        assert!(rule.is_some());
-        let rule = rule.unwrap();
-        assert!(rule.condition.is_some());
-        assert_eq!(rule.lhs, x);
-        assert_eq!(rule.rhs, y);
+        assert!(rule.is_none());
     }
 
     #[test]
     fn test_unconditional_rule_creation() {
-        // Create theorem: x = y (no premises)
+        // Create closed theorem: x = x (no theorem hyps, no prop premises).
         let nat = Typ::base("nat");
         let x = Term::free("x", nat.clone());
-        let y = Term::free("y", nat.clone());
-        let eq = Pure::mk_equals(nat.clone(), x.clone(), y.clone());
-        let thm = ThmKernel::assume_compat(CTerm::certify(eq));
+        let thm = ThmKernel::reflexive_compat(CTerm::certify(x.clone()));
         let rule = RewriteRule::from_thm(Arc::new(thm));
         assert!(rule.is_some());
         let rule = rule.unwrap();
         assert!(rule.condition.is_none());
+        assert_eq!(rule.lhs, x);
+        assert_eq!(rule.rhs, rule.lhs);
     }
 
     #[test]
-    fn test_conditional_rewrite_applies() {
-        // Rule: x = 0 ==> f(x) = 0
-        // Match: f(0) — should apply (condition x=0 instantiates to 0=0 which is True)
-        let prop_typ = Typ::base("prop");
+    fn rewrite_rule_rejects_theorem_with_hyps() {
         let nat = Typ::base("nat");
         let x = Term::free("x", nat.clone());
-        let zero = Term::const_("Zero", nat.clone());
-        let fx = Term::app(Term::const_("f", Typ::arrow(nat.clone(), nat.clone())), x.clone());
-        let f0 = Term::app(Term::const_("f", Typ::arrow(nat.clone(), nat.clone())), zero.clone());
-        let eq_cond = Pure::mk_equals(nat.clone(), x.clone(), zero.clone());
-        let eq_concl = Pure::mk_equals(nat.clone(), fx, f0.clone());
-        let prop = Pure::mk_implies(eq_cond, eq_concl);
-        let thm = ThmKernel::assume_compat(CTerm::certify(prop));
+        let y = Term::free("y", nat.clone());
+        let eq = Pure::mk_equals(nat.clone(), x, y);
+        let thm = ThmKernel::assume_compat(CTerm::certify(eq));
 
-        let rule = RewriteRule::from_thm(Arc::new(thm)).unwrap();
-        let simp = Simplifier::new(vec![rule]);
+        let rule = RewriteRule::from_thm(Arc::new(thm));
 
-        // Target: f(0) — matches the RHS of the conclusion, condition x=0 becomes 0=0
-        let target = f0;
-        let result = simp.rewrite(&target);
-        // The rule's condition x=0 instantiates to 0=0, which simplifies to True
-        // This should apply
-        if let Some((rewritten, _)) = result {
-            eprintln!("Rewrote {:?} to {:?}", target, rewritten);
-        }
+        assert!(rule.is_none());
+    }
+
+    #[test]
+    fn rewrite_rule_rejects_oracle_or_admitted_theorem() {
+        let nat = Typ::base("nat");
+        let x = Term::free("x", nat.clone());
+        let y = Term::free("y", nat.clone());
+        let eq = Pure::mk_equals(nat.clone(), x, y);
+        let thm = ThmKernel::admit(CTerm::certify(eq), "admitted:proof_engine_failed");
+
+        let rule = RewriteRule::from_thm(Arc::new(thm));
+
+        assert!(rule.is_none());
+    }
+
+    #[test]
+    fn rewrite_rule_rejects_unresolved_tpairs() {
+        let nat = Typ::base("nat");
+        let x = Term::free("x", nat.clone());
+        let thm = ThmKernel::reflexive_compat(CTerm::certify(x))
+            .with_test_tpair(Term::var("u", 0, nat.clone()), Term::var("v", 0, nat));
+
+        let rule = RewriteRule::from_thm(Arc::new(thm));
+
+        assert!(rule.is_none());
+    }
+
+    #[test]
+    fn simp_does_not_import_rule_hyps_into_result() {
+        let nat = Typ::base("nat");
+        let x = Term::free("x", nat.clone());
+        let y = Term::free("y", nat.clone());
+        let open_eq =
+            ThmKernel::assume_compat(CTerm::certify(Pure::mk_equals(nat.clone(), x.clone(), y)));
+        let rules: Vec<RewriteRule> =
+            [Arc::new(open_eq)].into_iter().filter_map(RewriteRule::from_thm).collect();
+        let simp = Simplifier::new(rules);
+
+        let result = simp.rewrite_deep(&x);
+
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn simp_skips_conditional_rule_in_v1() {
+        let nat = Typ::base("nat");
+        let a = Term::const_("A", Typ::base("prop"));
+        let x = Term::free("x", nat.clone());
+        let y = Term::free("y", nat.clone());
+        let prop = Pure::mk_implies(a, Pure::mk_equals(nat.clone(), x.clone(), y));
+        let conditional = ThmKernel::assume_compat(CTerm::certify(prop));
+        let rules: Vec<RewriteRule> =
+            [Arc::new(conditional)].into_iter().filter_map(RewriteRule::from_thm).collect();
+        let simp = Simplifier::new(rules);
+
+        let result = simp.rewrite_deep(&x);
+
+        assert!(result.is_none());
     }
 }
