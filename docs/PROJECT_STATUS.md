@@ -186,6 +186,29 @@ batch count by itself. The current best first existing-theorem candidate is
 slice needs a narrow strict definition-unfold/reflexivity adapter, not a broader
 `simp` or proof-engine fallback.
 
+Targeted `HOL::TrueI` diagnostic found that the slice is not safe to implement
+yet:
+
+```text
+Parsed TrueI prop: True
+Parsed TrueI proof: unfolding True_def by (rule refl)
+Current outcome: Admitted(goal_export_unknown_hyps)
+True_def parsed theorem / DB fact: missing
+refl DB fact: compat/open, not strict closed
+Pure.refl DB fact: compat closed-shaped, not strict closed
+```
+
+Therefore the first existing-core-file `StrictClosed` milestone is currently
+blocked on two narrower prerequisites:
+
+```text
+1. make True_def available as a checked definition source;
+2. add a strict HOL object-equality/reflexivity bridge sufficient for TrueI.
+```
+
+Do not implement a `TrueI` special case by returning `True` directly or by using
+the current compat `refl` fact.
+
 The former `OPEN_HAS_HYPS` runtime classification has been closed as a trust
 boundary issue: proof-method results with ambient hypotheses are no longer
 returned as oracle-free accepted lemmas. If they cannot be legally exported,
