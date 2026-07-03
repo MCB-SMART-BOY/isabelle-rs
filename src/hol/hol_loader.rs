@@ -113,12 +113,24 @@ fn find_blocks(source: &str, keyword: &str) -> Vec<String> {
     results
 }
 
+/// Extract the type portion from `name :: "type"  mixfix` or
+/// `name :: type`. Mixfix syntax is not part of the logical type.
+fn clean_type_spec(s: &str) -> String {
+    let s = s.trim();
+    if let Some(rest) = s.strip_prefix('"')
+        && let Some(end) = rest.find('"')
+    {
+        return rest[..end].trim().to_string();
+    }
+    s.split("  ").next().unwrap_or(s).trim().trim_matches('"').to_string()
+}
+
 /// Parse `name :: "type"` or `name :: type`.
 fn parse_const_decl(decl: &str) -> Option<(&str, &str)> {
     let parts: Vec<&str> = decl.splitn(2, "::").collect();
     if parts.len() == 2 {
         let name = parts[0].trim();
-        let typ_str = parts[1].trim().trim_matches('"');
+        let typ_str = parts[1].trim();
         Some((name, typ_str))
     } else {
         None
@@ -147,24 +159,72 @@ fn parse_hol_type(s: &str) -> Option<Typ> {
 }
 
 fn parse_hol_type_with_env(s: &str, _env: &TypeEnv) -> Option<Typ> {
+    let normalized = clean_type_spec(s)
+        .replace("\\<Rightarrow>", "=>")
+        .replace('⇒', "=>")
+        .replace("\\<rightarrow>", "=>");
+    parse_hol_type_expr(normalized.trim())
+}
+
+fn parse_hol_type_expr(s: &str) -> Option<Typ> {
     let s = s.trim();
-    // Try function type: T1 => T2
-    if let Some(pos) = s.find("=>") {
-        let left = &s[..pos].trim();
-        let right = &s[pos + 2..].trim();
-        let t1 = parse_hol_type_atom(left)?;
-        let t2 = parse_hol_type(right)?;
-        return Some(Typ::arrow(t1, t2));
+    if let Some(pos) = find_top_level_arrow(s) {
+        let left = s[..pos].trim();
+        let right = s[pos + 2..].trim();
+        let result = parse_hol_type_expr(right)?;
+        if left.starts_with('[') && left.ends_with(']') {
+            let inner = &left[1..left.len() - 1];
+            let args = split_top_level_commas(inner)
+                .into_iter()
+                .map(|part| parse_hol_type_expr(part.trim()))
+                .collect::<Option<Vec<_>>>()?;
+            return Some(Typ::arrows(args, result));
+        }
+        return Some(Typ::arrow(parse_hol_type_expr(left)?, result));
     }
     parse_hol_type_atom(s)
 }
 
+fn find_top_level_arrow(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let mut depth = 0usize;
+    let mut i = 0usize;
+    while i + 1 < bytes.len() {
+        match bytes[i] as char {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth = depth.saturating_sub(1),
+            '=' if depth == 0 && bytes[i + 1] as char == '>' => return Some(i),
+            _ => {},
+        }
+        i += 1;
+    }
+    None
+}
+
+fn split_top_level_commas(s: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    for (idx, ch) in s.char_indices() {
+        match ch {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push(&s[start..idx]);
+                start = idx + ch.len_utf8();
+            },
+            _ => {},
+        }
+    }
+    parts.push(&s[start..]);
+    parts
+}
+
 fn parse_hol_type_atom(s: &str) -> Option<Typ> {
-    let s = s.trim();
+    let s = s.trim().trim_matches('"');
     // Bracket list: [bool, bool]
     if s.starts_with('[') && s.ends_with(']') {
         let inner = &s[1..s.len() - 1];
-        // For simplicity, treat [A, B] => C as A => B => C
         return Some(Typ::base(inner.trim()));
     }
     // Parenthesised
@@ -241,6 +301,27 @@ pub struct DefLocation {
     pub file: String,
     pub line: usize,
     pub name: String,
+}
+
+/// Checked source for a definition command.
+///
+/// This is not a theorem and must not be counted as proof progress. It records
+/// checked left/right sides for future strict adapters while keeping theorem
+/// acceptance separate.
+#[derive(Debug, Clone)]
+pub struct CheckedDefinitionSource {
+    /// Conventional theorem-style name, e.g. `True_def`.
+    pub name: String,
+    /// Fully qualified defined constant, e.g. `HOL.True`.
+    pub const_name: String,
+    /// Declared type of the defined constant.
+    pub const_type: Typ,
+    /// Checked left-hand side of the definition.
+    pub lhs: CTerm,
+    /// Checked right-hand side of the definition.
+    pub rhs: CTerm,
+    /// Raw quoted definition body from the theory source.
+    pub raw_body: String,
 }
 
 /// Parse all `datatype` declarations from .thy source.
@@ -2260,6 +2341,9 @@ static HOL_THEOREMS: LazyLock<HolTheoremDb> = LazyLock::new(|| {
                 type_env.types.extend(fe.types);
             }
             db.type_env = type_env;
+            for src in &[hol_thy, ord_thy, nat_thy, set_thy, list_thy] {
+                db.extend_checked_definitions_from_source(src);
+            }
             HolTheoremDb::add_builtins(&mut db);
             db
         },
@@ -2298,6 +2382,10 @@ pub struct HolTheoremDb {
     pub by_name: std::collections::HashMap<String, Arc<crate::core::thm::Thm>>,
     /// Type environment (maps constant/type names to their Typ)
     pub type_env: crate::core::types::TypeEnv,
+    /// Checked definition sources keyed by conventional names such as
+    /// `True_def`. These are not theorem facts and are not trusted proof
+    /// results.
+    pub checked_definitions: std::collections::HashMap<String, CheckedDefinitionSource>,
     /// Definition index: maps lemma/theorem names to their source locations.
     /// Used by LSP go-to-definition.
     pub def_index: std::collections::HashMap<String, DefLocation>,
@@ -2323,6 +2411,7 @@ impl HolTheoremDb {
             all: Vec::new(),
             by_name: std::collections::HashMap::new(),
             type_env: crate::core::types::TypeEnv::new(),
+            checked_definitions: std::collections::HashMap::new(),
             def_index: std::collections::HashMap::new(),
             intro_net: std::sync::OnceLock::new(),
             elim_net: std::sync::OnceLock::new(),
@@ -2345,6 +2434,80 @@ impl HolTheoremDb {
     /// `core::theory::Theory`, not this proof-search database.
     pub fn closed_proved_count(&self) -> usize {
         self.all.iter().filter(|thm| thm.is_strict_closed_proved()).count()
+    }
+
+    /// Look up a checked definition source by conventional name, e.g.
+    /// `True_def`. The returned value is definition input, not a theorem.
+    pub fn checked_definition_source(&self, name: &str) -> Option<&CheckedDefinitionSource> {
+        self.checked_definitions.get(name)
+    }
+
+    /// Add checked definition sources from `source`.
+    ///
+    /// Phase 1 is deliberately narrow: only `True_def` is admitted into this
+    /// table, and only if both sides certify against the explicit type
+    /// environment.
+    pub fn extend_checked_definitions_from_source(&mut self, source: &str) {
+        let defs = Self::build_checked_definition_sources(source, &self.type_env);
+        self.checked_definitions.extend(defs);
+    }
+
+    /// Build checked definition sources from source text.
+    ///
+    /// This is not a general unfolding engine. It only recognizes the HOL
+    /// `True` definition as the prerequisite for the future `HOL::TrueI`
+    /// vertical slice.
+    pub fn build_checked_definition_sources(
+        source: &str,
+        type_env: &TypeEnv,
+    ) -> std::collections::HashMap<String, CheckedDefinitionSource> {
+        let mut defs = std::collections::HashMap::new();
+        for block in &find_blocks(source, "definition") {
+            let decl = block.trim();
+            if let Some((name, typ_str, raw_body)) = parse_definition(decl)
+                && let Some(def) = Self::checked_true_def_source(name, typ_str, raw_body, type_env)
+            {
+                defs.insert(def.name.clone(), def);
+            }
+        }
+        defs
+    }
+
+    fn checked_true_def_source(
+        name: &str,
+        typ_str: &str,
+        raw_body: &str,
+        type_env: &TypeEnv,
+    ) -> Option<CheckedDefinitionSource> {
+        if name.trim() != "True" {
+            return None;
+        }
+        let const_type = parse_hol_type_with_env(typ_str, type_env)?;
+        if const_type != Typ::base("bool") {
+            return None;
+        }
+
+        let normalized = convert_syntax(raw_body).split_whitespace().collect::<String>();
+        let expected = "True==((%x::bool.x)=(%x.x))";
+        if normalized != expected {
+            return None;
+        }
+
+        let lhs = CTerm::certify_checked(hologic::true_const(), type_env).ok()?;
+        let bool_t = Typ::base("bool");
+        let bool_fun_t = Typ::arrow(bool_t.clone(), bool_t.clone());
+        let bool_id = Term::abs("x", bool_t, Term::bound(0));
+        let rhs = hologic::mk_eq_typed(bool_fun_t, bool_id.clone(), bool_id);
+        let rhs = CTerm::certify_checked(rhs, type_env).ok()?;
+
+        Some(CheckedDefinitionSource {
+            name: "True_def".into(),
+            const_name: "HOL.True".into(),
+            const_type,
+            lhs,
+            rhs,
+            raw_body: raw_body.to_string(),
+        })
     }
 
     /// Check if a lemma has a "safe" intro attribute: `[intro!]`
@@ -2642,6 +2805,7 @@ impl HolTheoremDb {
             all,
             by_name,
             type_env: TypeEnv::new(),
+            checked_definitions: std::collections::HashMap::new(),
             def_index,
             intro_net: std::sync::OnceLock::new(),
             elim_net: std::sync::OnceLock::new(),
@@ -3533,6 +3697,55 @@ mod tests {
         let (name, typ_str, _defn) = parse_definition(src).unwrap();
         assert_eq!(name, "True");
         assert_eq!(typ_str, "bool");
+    }
+
+    #[test]
+    fn test_parse_hol_type_bracket_unicode_arrow() {
+        let ty = parse_hol_type("['a, 'a] \\<Rightarrow> bool").unwrap();
+        let a = Typ::free("'a", Sort::singleton("type"));
+        assert_eq!(ty, Typ::arrows(vec![a.clone(), a], Typ::base("bool")));
+    }
+
+    #[test]
+    fn true_def_checked_source_exists() {
+        let hol = include_str!("../../theories/HOL/HOL.thy");
+        let env = HolTheoremDb::build_type_env(hol);
+        let defs = HolTheoremDb::build_checked_definition_sources(hol, &env);
+        let true_def = defs.get("True_def").expect("True_def checked source");
+
+        assert_eq!(true_def.const_name, "HOL.True");
+        assert_eq!(true_def.const_type, Typ::base("bool"));
+        assert!(true_def.lhs.is_checked());
+        assert!(true_def.rhs.is_checked());
+        assert_eq!(true_def.lhs.term_type(), &Typ::base("bool"));
+        assert_eq!(true_def.rhs.term_type(), &Typ::base("bool"));
+    }
+
+    #[test]
+    fn true_def_checked_source_rejects_dummy_or_compat() {
+        let hol = include_str!("../../theories/HOL/HOL.thy");
+        let mut env = TypeEnv::new();
+        env.declare_const("HOL.True", Typ::dummy());
+        env.declare_const("HOL.eq", Typ::dummy());
+
+        let defs = HolTheoremDb::build_checked_definition_sources(hol, &env);
+        assert!(
+            !defs.contains_key("True_def"),
+            "dummy declarations must not become checked definition sources"
+        );
+    }
+
+    #[test]
+    fn true_def_source_is_not_counted_as_theorem() {
+        let hol = include_str!("../../theories/HOL/HOL.thy");
+        let mut db = HolTheoremDb::new();
+        db.type_env = HolTheoremDb::build_type_env(hol);
+        db.extend_checked_definitions_from_source(hol);
+
+        assert!(db.checked_definition_source("True_def").is_some());
+        assert!(!db.by_name.contains_key("True_def"));
+        assert_eq!(db.searchable_fact_count(), 0);
+        assert_eq!(db.closed_proved_count(), 0);
     }
 }
 

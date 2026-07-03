@@ -203,6 +203,9 @@ impl TheoryGraph {
                         let file_env = HolTheoremDb::build_type_env(&source);
                         type_env.consts.extend(file_env.consts);
                         type_env.types.extend(file_env.types);
+                        let file_defs =
+                            HolTheoremDb::build_checked_definition_sources(&source, &type_env);
+                        db.checked_definitions.extend(file_defs);
 
                         // Type-annotate lemmas with accumulated TypeEnv
                         // Replaces Typ::dummy() with known types from previously loaded theories

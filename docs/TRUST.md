@@ -230,6 +230,11 @@ HolTheoremDb / theorem_index
   = proof-search fact indexes
   = may contain open/admitted facts
 
+HolTheoremDb.checked_definitions
+  = checked definition sources
+  = not theorem facts
+  = not proof progress
+
 final Theory theorem table
   = trusted exported theorem table
   = accepts only is_strict_closed_proved()
@@ -264,6 +269,8 @@ Implemented hardening includes:
   theorems cannot be counted as trusted even if they are oracle-free and closed;
 - final trusted tables, `SessionBuilder`, and `HolTheoremDb::closed_proved_count`
   now use `is_strict_closed_proved()`;
+- `HolTheoremDb::checked_definitions` keeps checked definition sources, starting
+  with `True_def`, separate from searchable facts and trusted theorem tables;
 - `Thm::check_kernel_invariants(KernelCheckMode::{Compat, Strict})` separates
   legacy structural checks from strict trusted-kernel invariant checks;
 - `tpairs`, `shyps`, and `oracles` propagation audits;

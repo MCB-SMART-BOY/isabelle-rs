@@ -55,7 +55,7 @@ Candidate slices:
 | Pure reflexivity `t == t` | Smallest strict kernel theorem construction path. | Checked term certification, `KernelRules::reflexive`, closed acceptance. | Good kernel/acceptance smoke test, but may not map directly to a current core lemma. |
 | Pure implication identity `A ==> A` | Exercises assumption introduction and legal discharge. | Checked `CProp`, `KernelRules::assume`, `KernelRules::implies_intr`, `ClosedThm` acceptance. | Targeted smoke slice implemented; next step is an existing core-file lemma. |
 | Simple equality reflexivity exposed through HOL | Brings the path closer to user-visible HOL facts. | HOL equality adapter, type certification, strict reflexivity. | Good second slice after Pure path works. |
-| `HOL::TrueI` | First sampled HOL lemma with a small proof: `unfolding True_def by (rule refl)`. | Strict definition-unfold adapter for `True_def`, checked HOL/Pure equality bridge, strict reflexivity. | Best current candidate for the first existing core-file `StrictClosed`, but must not go through simp/auto or compat `refl`. |
+| `HOL::TrueI` | First sampled HOL lemma with a small proof: `unfolding True_def by (rule refl)`. | Checked `True_def` definition source, strict HOL object-equality/reflexivity bridge, narrow `TrueI` adapter. | Best current candidate for the first existing core-file `StrictClosed`, but must not go through simp/auto or compat `refl`. |
 
 ### `HOL::TrueI` Strict Slice Contract
 
@@ -75,6 +75,7 @@ Current targeted diagnostic:
 | Current `verify_lemma` result | admitted theorem with `admitted:goal_export_unknown_hyps` |
 | Current `ProofOutcome` | `Admitted(GoalExportUnknownHyps)` |
 | `True_def` in parsed lemmas / DB facts | missing |
+| `True_def` checked definition source | available after the checked-source prerequisite; not a theorem and not counted as proof progress |
 | `refl` DB fact | compat/open `((HOL.eq ?t.0) ?t.0)`, not strict closed |
 | `Pure.refl` DB fact | compat closed-shaped `((Pure.eq ?t.0) ?t.0)`, not strict closed |
 
@@ -103,17 +104,48 @@ The adapter must reject and fall back to the existing admitted path if:
 - any ambient hypothesis, unresolved `tpair`, oracle/admit footprint, or dummy
   type would remain.
 
-Current conclusion: do not implement `try_strict_hol_trueI` yet. The immediate
-precondition is a narrow checked-definition source for `True_def` plus a strict
-HOL-object-equality/reflexivity bridge. Implementing a special case that simply
-returns `True` as strict would erase the object-logic proof obligation and is
-not allowed.
+Current conclusion: do not implement `try_strict_hol_trueI` yet. The checked
+definition source for `True_def` is now available as non-theorem input, but the
+strict HOL object-equality/reflexivity bridge is still missing. Implementing a
+special case that simply returns `True` as strict would erase the object-logic
+proof obligation and is not allowed.
+
+### HOL Object-Equality / Reflexivity Bridge Contract
+
+This bridge remains design-only. It must not reuse compat `refl` or Pure
+reflexivity as if they directly proved HOL object equality.
+
+The intended narrow bridge is:
+
+```text
+try_strict_hol_refl(t)
+  input:
+    checked HOL term t : α
+  required declarations:
+    HOL.eq : α => α => bool
+  output:
+    strict theorem for HOL.eq t t, with no hyps, tpairs, oracle/admit footprint,
+    or dummy types
+```
+
+Before implementation, the bridge must document its logical basis as a HOL
+object-logic primitive/bridge. It is not a rewrite, simp, unfolding, or general
+object-logic prover.
+
+It must reject:
+
+- undeclared or dummy-typed `HOL.eq`;
+- unchecked, compat, or dummy-tainted input terms;
+- non-reflexive `HOL.eq lhs rhs` shapes;
+- any attempt to derive HOL object equality by treating `Pure.eq` as
+  interchangeable with `HOL.eq`;
+- any compat/admitted/open `refl` fact.
 
 Recommended order:
 
 ```text
 1. strict Pure implication identity as a direct parser/certifier/export smoke test (done)
-2. make `True_def` available as a checked definition source
+2. make `True_def` available as a checked definition source (done; non-theorem input only)
 3. add the strict HOL object-equality/reflexivity bridge needed by `TrueI`
 4. implement strict `HOL::TrueI` only as a narrow adapter over those checked pieces
 5. simple equality reflexivity exposed through HOL after the equality adapter is clearer
@@ -125,7 +157,7 @@ Recommended order:
    proof behavior.
 2. Use it in core verification reports.
 3. Add a strict adapter for the chosen implication-identity slice.
-4. Add a checked-definition source for `True_def`.
+4. Add a checked-definition source for `True_def`. (done; not counted as theorem progress)
 5. Add a strict object-equality/reflexivity bridge sufficient for `HOL::TrueI`.
 6. Route one existing core-file theorem through a strict adapter.
 7. Increase the strict closed count only through `StrictClosed`.

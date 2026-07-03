@@ -117,6 +117,7 @@ The following areas have a coherent implementation and regression coverage:
 | Proof outcome summary classifier | `src/isar/method.rs` classifies existing `verify_lemma` results as strict closed, compat closed oracle-free, open oracle-free, admitted, or failed without changing theorem construction. |
 | Targeted strict vertical slice | A Pure implication identity smoke slice proves `A ==> A` through the strict kernel nucleus (`KernelRules::assume` + `implies_intr`) and verifies that the current ProofOutcome summary path counts the checked identity adapter as `StrictClosed` while rejecting the compat version. |
 | Core/kernel migration framing | `src/core` is still a legacy proof engine today; the target is to shrink it into compatibility, automation, diagnostics, and migration adapters while `src/kernel` becomes the only TCB. |
+| Checked definition sources | `HolTheoremDb` has a separate `checked_definitions` table for non-theorem definition inputs. The first entry is `True_def`, checked against the explicit `TypeEnv`; it is not inserted into searchable facts and is not counted as `StrictClosed`. |
 | Oracle/admit tracking | `ThmKernel::admit(ct, reason)` marks unproved accepted propositions and propagates oracle footprints. |
 | Closed theorem acceptance | A trusted proved lemma requires strict construction, no oracles, no hypotheses, no unresolved `tpairs`, and no dummy types. |
 | Isar goal export boundary | `verify_lemma` no longer returns oracle-free open proof-method results as accepted lemmas. Results are exported by legal `implies_intr` discharge of known context assumptions, or admitted with `admitted:goal_export_*` / `admitted:proof_engine_failed`. |
@@ -194,16 +195,17 @@ Parsed TrueI prop: True
 Parsed TrueI proof: unfolding True_def by (rule refl)
 Current outcome: Admitted(goal_export_unknown_hyps)
 True_def parsed theorem / DB fact: missing
+True_def checked definition source: available as non-theorem input
 refl DB fact: compat/open, not strict closed
 Pure.refl DB fact: compat closed-shaped, not strict closed
 ```
 
 Therefore the first existing-core-file `StrictClosed` milestone is currently
-blocked on two narrower prerequisites:
+blocked on the remaining object-equality/reflexivity bridge prerequisite:
 
 ```text
-1. make True_def available as a checked definition source;
-2. add a strict HOL object-equality/reflexivity bridge sufficient for TrueI.
+1. make True_def available as a checked definition source; done, non-theorem input only
+2. add a strict HOL object-equality/reflexivity bridge sufficient for TrueI; pending
 ```
 
 Do not implement a `TrueI` special case by returning `True` directly or by using
