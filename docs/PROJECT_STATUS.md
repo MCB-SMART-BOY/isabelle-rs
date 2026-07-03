@@ -114,7 +114,7 @@ The following areas have a coherent implementation and regression coverage:
 | Proof-state strict entry points | `ProofState::assume`, `Goal::init`, and checked subgoal scaffolding construct Strict open theorem obligations from explicit proof-context certification. |
 | Strict kernel nucleus | `src/kernel` contains an isolated TCB nucleus with no dummy type, no compat certification, separate proof obligations, trusted/searchable fact separation, primitive rules, strict matching, `resolve1_match`, conservative `subst_premise`, and conservative `bicompose` wrapper. |
 | Strict theorem invariants | `check_kernel_invariants(Strict)` rejects compat/admitted provenance, dummy-tainted burdens, `maxidx` drift, oracle-tainted strict theorems, and supported replay burden mismatches. |
-| Proof outcome migration design | The next acceptance model is documented as `ProofOutcome`: strict closed, compat closed oracle-free, open oracle-free, admitted, and failed results are separate states. |
+| Proof outcome summary classifier | `src/isar/method.rs` classifies existing `verify_lemma` results as strict closed, compat closed oracle-free, open oracle-free, admitted, or failed without changing theorem construction. |
 | Core/kernel migration framing | `src/core` is still a legacy proof engine today; the target is to shrink it into compatibility, automation, diagnostics, and migration adapters while `src/kernel` becomes the only TCB. |
 | Oracle/admit tracking | `ThmKernel::admit(ct, reason)` marks unproved accepted propositions and propagates oracle footprints. |
 | Closed theorem acceptance | A trusted proved lemma requires strict construction, no oracles, no hypotheses, no unresolved `tpairs`, and no dummy types. |
@@ -161,14 +161,15 @@ The project is not close to full Isabelle/HOL:
 Current core verification status remains conservative:
 
 ```text
-test_verify_all_core_files: 0/125 strict closed proved
-dynamic sample after explicit goal export:
-  CLOSED_ORACLE_FREE_NON_STRICT: 1
-  admitted:goal_export_unknown_hyps: 66
-  admitted:proof_engine_failed: 50
-  admitted:goal_export_open_subgoals: 3
-  admitted:parser_gap: 3
-  admitted:datatype_stub: 2
+test_verify_all_core_files: 0/125 StrictClosed
+ProofOutcome summary:
+  StrictClosed: 0
+  CompatClosedOracleFree: 1
+  Admitted(goal_export_unknown_hyps): 66
+  Admitted(goal_export_open_subgoals): 3
+  Admitted(parser_gap): 3
+  Admitted(datatype_stub): 2
+  Admitted(proof_engine_failed): 50
 ```
 
 The former `OPEN_HAS_HYPS` runtime classification has been closed as a trust

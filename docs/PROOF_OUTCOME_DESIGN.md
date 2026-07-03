@@ -2,9 +2,23 @@
 
 ## Status
 
-Design-only. This document defines the target result model for verification
-reporting and theorem acceptance. It does not introduce source changes by
-itself.
+Phase 1 summary classifier implemented in `src/isar/method.rs`.
+
+Current implementation:
+
+- defines `ProofOutcome`, `TheoremSummary`, `OpenReason`, `AdmitReason`, and
+  `ProofFailure`;
+- classifies existing `verify_lemma` results without changing theorem
+  construction;
+- keeps `StrictClosed` separate from compat, open, admitted, and failed
+  outcomes;
+- makes `test_verify_all_core_files` print ProofOutcome summary counts.
+
+Not yet implemented:
+
+- final theorem-table acceptance has not been rewritten around `ProofOutcome`;
+- no strict vertical slice has been migrated yet;
+- `StrictClosed` remains `0/125` in the core verification batch.
 
 ## Problem
 
@@ -51,29 +65,28 @@ replace scattered predicates and string reasons with one explicit outcome model.
 
 ## Proposed Outcome Model
 
-The exact Rust names may change, but verification should converge on this
-shape:
+The implemented Phase 1 shape is intentionally summary-first. It stores a
+`TheoremSummary` rather than moving theorem ownership through every caller:
 
 ```rust
 pub enum ProofOutcome {
     StrictClosed {
-        theorem: StrictTheoremRef,
         summary: TheoremSummary,
     },
     CompatClosedOracleFree {
-        summary: LegacyThmSummary,
+        summary: TheoremSummary,
     },
     OpenOracleFree {
         reason: OpenReason,
-        summary: LegacyThmSummary,
+        summary: TheoremSummary,
     },
     Admitted {
         reason: AdmitReason,
-        prop: TermSummary,
+        summary: TheoremSummary,
     },
     Failed {
         reason: ProofFailure,
-        prop: TermSummary,
+        name: String,
     },
 }
 ```
@@ -189,7 +202,7 @@ counts with runtime theorem outcomes.
 | Phase | Gate |
 |---|---|
 | Phase 0: design | This document exists and status docs point to it. |
-| Phase 1: summary classifier | Existing `verify_lemma` results can be summarized without changing theorem construction. |
+| Phase 1: summary classifier | Implemented. Existing `verify_lemma` results are summarized without changing theorem construction. |
 | Phase 2: report integration | Core verification reports count `ProofOutcome` buckets instead of ad-hoc strings. |
 | Phase 3: acceptance integration | Final theorem tables accept only `StrictClosed`. |
 | Phase 4: first strict slice | At least one core verification theorem is classified as `StrictClosed`. |

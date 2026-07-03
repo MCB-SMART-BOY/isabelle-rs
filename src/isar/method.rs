@@ -6,7 +6,11 @@
 //! `blast`, `induct`, `cases`, etc.
 
 // used in tests
-use std::{cell::Cell, sync::Arc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::BTreeMap,
+    sync::Arc,
+};
 
 use crate::core::term::Term; // used in tests
 use crate::core::types::Typ; // used in tests
@@ -42,6 +46,8 @@ thread_local! {
     /// Running tally of verify outcomes since the last `reset_verify_stats()`.
     /// `(proved, axiom_accepted)`. Accumulated across all files in a Tier2 run.
     static VERIFY_STATS: Cell<(usize, usize)> = const { Cell::new((0, 0)) };
+    /// Structured outcome tally for verification diagnostics.
+    static VERIFY_OUTCOME_STATS: RefCell<ProofOutcomeStats> = RefCell::new(ProofOutcomeStats::default());
 }
 
 /// How a `verify_lemma` call arrived at its `Some(Thm)` result.
@@ -59,6 +65,218 @@ pub enum VerifyOutcome {
     /// trust-mode shortcut, an anonymous-datatype passthrough, or the final
     /// `generalize_thm` fallback.
     AxiomAccepted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum TrustSummary {
+    Strict,
+    Compat,
+    Admitted,
+}
+
+impl From<ThmTrust> for TrustSummary {
+    fn from(value: ThmTrust) -> Self {
+        match value {
+            ThmTrust::Strict => TrustSummary::Strict,
+            ThmTrust::Compat => TrustSummary::Compat,
+            ThmTrust::Admitted => TrustSummary::Admitted,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TheoremSummary {
+    pub name: String,
+    pub prop: String,
+    pub hyps_count: usize,
+    pub nprems: usize,
+    pub tpairs_count: usize,
+    pub has_oracle: bool,
+    pub has_admitted: bool,
+    pub trust: TrustSummary,
+}
+
+impl TheoremSummary {
+    fn from_thm(name: &str, thm: &Thm) -> Self {
+        Self {
+            name: name.to_string(),
+            prop: format!("{:?}", thm.prop().term()),
+            hyps_count: thm.hyps().len(),
+            nprems: thm.nprems(),
+            tpairs_count: thm.tpairs().len(),
+            has_oracle: !thm.oracles().is_empty(),
+            has_admitted: thm.trust_status() == ThmTrust::Admitted
+                || thm.oracles().iter().any(|o| o.as_ref().starts_with("admitted:")),
+            trust: thm.trust_status().into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum OpenReason {
+    UnknownHyps,
+    UnresolvedTpairs,
+    Other,
+}
+
+impl OpenReason {
+    fn label(self) -> &'static str {
+        match self {
+            OpenReason::UnknownHyps => "unknown_hyps",
+            OpenReason::UnresolvedTpairs => "unresolved_tpairs",
+            OpenReason::Other => "other",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AdmitReason {
+    GoalExportUnknownHyps,
+    GoalExportOpenSubgoals,
+    GoalExportPropMismatch,
+    GoalExportUnresolvedTpairs,
+    GoalExportDischargeFailed,
+    GoalInitializationFailed,
+    ParserGap,
+    DatatypeStub,
+    AttributeTransformation,
+    UnsupportedMethod,
+    ProofEngineFailed,
+    AxiomAcceptedWithoutOracle,
+    OracleOrAdmittedResult,
+    Other,
+}
+
+impl AdmitReason {
+    fn from_oracle(reason: &str) -> Self {
+        match reason {
+            "admitted:goal_export_unknown_hyps" => AdmitReason::GoalExportUnknownHyps,
+            "admitted:goal_export_open_subgoals" => AdmitReason::GoalExportOpenSubgoals,
+            "admitted:goal_export_prop_mismatch" => AdmitReason::GoalExportPropMismatch,
+            "admitted:goal_export_unresolved_tpairs" => AdmitReason::GoalExportUnresolvedTpairs,
+            "admitted:goal_export_discharge_failed" => AdmitReason::GoalExportDischargeFailed,
+            "admitted:goal_initialization_failed" => AdmitReason::GoalInitializationFailed,
+            "admitted:parser_gap" => AdmitReason::ParserGap,
+            "admitted:datatype_stub" => AdmitReason::DatatypeStub,
+            "admitted:attribute_transformation" => AdmitReason::AttributeTransformation,
+            "admitted:unsupported_method" => AdmitReason::UnsupportedMethod,
+            "admitted:proof_engine_failed" => AdmitReason::ProofEngineFailed,
+            _ => AdmitReason::Other,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            AdmitReason::GoalExportUnknownHyps => "goal_export_unknown_hyps",
+            AdmitReason::GoalExportOpenSubgoals => "goal_export_open_subgoals",
+            AdmitReason::GoalExportPropMismatch => "goal_export_prop_mismatch",
+            AdmitReason::GoalExportUnresolvedTpairs => "goal_export_unresolved_tpairs",
+            AdmitReason::GoalExportDischargeFailed => "goal_export_discharge_failed",
+            AdmitReason::GoalInitializationFailed => "goal_initialization_failed",
+            AdmitReason::ParserGap => "parser_gap",
+            AdmitReason::DatatypeStub => "datatype_stub",
+            AdmitReason::AttributeTransformation => "attribute_transformation",
+            AdmitReason::UnsupportedMethod => "unsupported_method",
+            AdmitReason::ProofEngineFailed => "proof_engine_failed",
+            AdmitReason::AxiomAcceptedWithoutOracle => "axiom_accepted_without_oracle",
+            AdmitReason::OracleOrAdmittedResult => "oracle_or_admitted_result",
+            AdmitReason::Other => "other",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ProofFailure {
+    MethodNone,
+}
+
+impl ProofFailure {
+    fn label(self) -> &'static str {
+        match self {
+            ProofFailure::MethodNone => "method_none",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProofOutcome {
+    StrictClosed { summary: TheoremSummary },
+    CompatClosedOracleFree { summary: TheoremSummary },
+    OpenOracleFree { reason: OpenReason, summary: TheoremSummary },
+    Admitted { reason: AdmitReason, summary: TheoremSummary },
+    Failed { reason: ProofFailure, name: String },
+}
+
+impl ProofOutcome {
+    pub fn is_strict_closed(&self) -> bool {
+        matches!(self, ProofOutcome::StrictClosed { .. })
+    }
+
+    pub fn label(&self) -> String {
+        match self {
+            ProofOutcome::StrictClosed { .. } => "StrictClosed".to_string(),
+            ProofOutcome::CompatClosedOracleFree { .. } => "CompatClosedOracleFree".to_string(),
+            ProofOutcome::OpenOracleFree { reason, .. } => {
+                format!("OpenOracleFree({})", reason.label())
+            },
+            ProofOutcome::Admitted { reason, .. } => {
+                format!("Admitted({})", reason.label())
+            },
+            ProofOutcome::Failed { reason, .. } => format!("Failed({})", reason.label()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProofOutcomeStats {
+    pub strict_closed: usize,
+    pub compat_closed_oracle_free: usize,
+    pub open_oracle_free: BTreeMap<OpenReason, usize>,
+    pub admitted: BTreeMap<AdmitReason, usize>,
+    pub failed: BTreeMap<ProofFailure, usize>,
+}
+
+impl ProofOutcomeStats {
+    fn record(&mut self, outcome: &ProofOutcome) {
+        match outcome {
+            ProofOutcome::StrictClosed { .. } => self.strict_closed += 1,
+            ProofOutcome::CompatClosedOracleFree { .. } => self.compat_closed_oracle_free += 1,
+            ProofOutcome::OpenOracleFree { reason, .. } => {
+                *self.open_oracle_free.entry(*reason).or_insert(0) += 1;
+            },
+            ProofOutcome::Admitted { reason, .. } => {
+                *self.admitted.entry(*reason).or_insert(0) += 1;
+            },
+            ProofOutcome::Failed { reason, .. } => {
+                *self.failed.entry(*reason).or_insert(0) += 1;
+            },
+        }
+    }
+
+    pub fn total(&self) -> usize {
+        self.strict_closed
+            + self.compat_closed_oracle_free
+            + self.open_oracle_free.values().copied().sum::<usize>()
+            + self.admitted.values().copied().sum::<usize>()
+            + self.failed.values().copied().sum::<usize>()
+    }
+
+    pub fn report_lines(&self) -> Vec<String> {
+        let mut lines = vec![
+            format!("StrictClosed: {}", self.strict_closed),
+            format!("CompatClosedOracleFree: {}", self.compat_closed_oracle_free),
+        ];
+        for (reason, count) in &self.open_oracle_free {
+            lines.push(format!("OpenOracleFree({}): {}", reason.label(), count));
+        }
+        for (reason, count) in &self.admitted {
+            lines.push(format!("Admitted({}): {}", reason.label(), count));
+        }
+        for (reason, count) in &self.failed {
+            lines.push(format!("Failed({}): {}", reason.label(), count));
+        }
+        lines
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,6 +305,7 @@ impl GoalExportError {
 /// Reset the global proved-vs-accepted tally. Call before a verification run.
 pub fn reset_verify_stats() {
     VERIFY_STATS.with(|c| c.set((0, 0)));
+    VERIFY_OUTCOME_STATS.with(|c| *c.borrow_mut() = ProofOutcomeStats::default());
 }
 
 /// Read the global proved-vs-accepted tally as `(proved, axiom_accepted)`.
@@ -94,8 +313,63 @@ pub fn verify_stats() -> (usize, usize) {
     VERIFY_STATS.with(|c| c.get())
 }
 
+pub fn verify_outcome_stats() -> ProofOutcomeStats {
+    VERIFY_OUTCOME_STATS.with(|c| c.borrow().clone())
+}
+
+fn record_verify_outcome(outcome: &ProofOutcome) {
+    VERIFY_OUTCOME_STATS.with(|c| c.borrow_mut().record(outcome));
+}
+
+fn admitted_reason_from_thm(thm: &Thm) -> AdmitReason {
+    thm.oracles()
+        .iter()
+        .find_map(|oracle| {
+            let reason = oracle.as_ref();
+            reason.starts_with("admitted:").then(|| AdmitReason::from_oracle(reason))
+        })
+        .unwrap_or(AdmitReason::OracleOrAdmittedResult)
+}
+
+fn open_reason_from_thm(thm: &Thm) -> OpenReason {
+    if !thm.tpairs().is_empty() {
+        OpenReason::UnresolvedTpairs
+    } else if !thm.hyps().is_empty() {
+        OpenReason::UnknownHyps
+    } else {
+        OpenReason::Other
+    }
+}
+
+fn classify_thm_with_exit(name: &str, thm: &Thm, exit: VerifyOutcome) -> ProofOutcome {
+    let summary = TheoremSummary::from_thm(name, thm);
+    if thm.is_strict_closed_proved() && exit != VerifyOutcome::AxiomAccepted {
+        return ProofOutcome::StrictClosed { summary };
+    }
+    if thm.trust_status() == ThmTrust::Admitted || !thm.oracles().is_empty() {
+        return ProofOutcome::Admitted { reason: admitted_reason_from_thm(thm), summary };
+    }
+    if exit == VerifyOutcome::AxiomAccepted {
+        return ProofOutcome::Admitted { reason: AdmitReason::AxiomAcceptedWithoutOracle, summary };
+    }
+    if thm.is_closed_proved() {
+        return ProofOutcome::CompatClosedOracleFree { summary };
+    }
+    ProofOutcome::OpenOracleFree { reason: open_reason_from_thm(thm), summary }
+}
+
+pub fn classify_verify_result(name: &str, result: Option<&Thm>) -> ProofOutcome {
+    match result {
+        Some(thm) => {
+            let exit = LAST_OUTCOME.with(|c| c.get());
+            classify_thm_with_exit(name, thm, exit)
+        },
+        None => ProofOutcome::Failed { reason: ProofFailure::MethodNone, name: name.to_string() },
+    }
+}
+
 fn is_strict_closed_proved_outcome(thm: &Thm) -> bool {
-    thm.is_strict_closed_proved() && LAST_OUTCOME.with(|c| c.get()) != VerifyOutcome::AxiomAccepted
+    classify_verify_result("", Some(thm)).is_strict_closed()
 }
 
 fn export_proved_goal(
@@ -3606,7 +3880,9 @@ pub fn verify_file_diagnostic(source: &str) -> Vec<(String, String, bool)> {
                 continue;
             }
             let script = lem.proof_script.clone().unwrap_or_default();
-            let proved = verify_lemma(lem).is_some_and(|thm| is_strict_closed_proved_outcome(&thm));
+            let result = verify_lemma(lem);
+            let outcome = classify_verify_result(&lem.name, result.as_ref());
+            let proved = outcome.is_strict_closed();
             out.push((lem.name.clone(), script, proved));
         }
         LOCAL_THEOREM_INDEX.with(|idx| idx.borrow_mut().clear());
@@ -3637,20 +3913,17 @@ pub fn verify_lemmas_batch(lemmas: &[ParsedLemma]) -> (usize, usize) {
         }
         if lem.proof_script.is_some() {
             attempted += 1;
-            if let Some(thm) = verify_lemma(lem) {
-                // Honest proved-vs-accepted split. Primary signal: the Thm's
-                // closed-proved predicate (oracle-free, no hyps, no unresolved
-                // tpairs). Secondary: the exit-site tag, which additionally
-                // catches proof-engine shortcuts that accepted the statement.
-                let proved = is_strict_closed_proved_outcome(&thm);
-                if proved {
-                    verified += 1;
-                }
-                VERIFY_STATS.with(|c| {
-                    let (p, a) = c.get();
-                    if proved { c.set((p + 1, a)) } else { c.set((p, a + 1)) }
-                });
+            let result = verify_lemma(lem);
+            let outcome = classify_verify_result(&lem.name, result.as_ref());
+            let proved = outcome.is_strict_closed();
+            if proved {
+                verified += 1;
             }
+            record_verify_outcome(&outcome);
+            VERIFY_STATS.with(|c| {
+                let (p, a) = c.get();
+                if proved { c.set((p + 1, a)) } else { c.set((p, a + 1)) }
+            });
         }
     }
     LOCAL_THEOREM_INDEX.with(|idx| idx.borrow_mut().clear());
@@ -4454,6 +4727,78 @@ mod tests {
         assert!(!super::is_strict_closed_proved_outcome(&thm));
     }
 
+    fn checked_prop_ct(name: &str) -> CTerm {
+        let mut env = crate::core::types::TypeEnv::new();
+        let prop_t = Typ::base("prop");
+        env.declare_const(name, prop_t.clone());
+        CTerm::certify_checked(Term::const_(name, prop_t), &env)
+            .expect("test proposition should certify")
+    }
+
+    #[test]
+    fn proof_outcome_classifies_strict_closed() {
+        LAST_OUTCOME.with(|c| c.set(VerifyOutcome::Proved));
+        let thm = ThmKernel::reflexive(checked_prop_ct("A")).unwrap();
+
+        let outcome = classify_verify_result("strict_refl", Some(&thm));
+
+        assert!(matches!(outcome, ProofOutcome::StrictClosed { .. }));
+        assert!(outcome.is_strict_closed());
+    }
+
+    #[test]
+    fn proof_outcome_does_not_count_axiom_accepted_strict_result() {
+        LAST_OUTCOME.with(|c| c.set(VerifyOutcome::AxiomAccepted));
+        let thm = ThmKernel::reflexive(checked_prop_ct("A")).unwrap();
+
+        let outcome = classify_verify_result("accepted_strict", Some(&thm));
+
+        assert!(matches!(
+            outcome,
+            ProofOutcome::Admitted { reason: AdmitReason::AxiomAcceptedWithoutOracle, .. }
+        ));
+        assert!(!outcome.is_strict_closed());
+    }
+
+    #[test]
+    fn proof_outcome_classifies_compat_closed_oracle_free() {
+        LAST_OUTCOME.with(|c| c.set(VerifyOutcome::Proved));
+        let thm = ThmKernel::reflexive_compat(CTerm::certify(Term::const_("a", Typ::base("nat"))));
+
+        let outcome = classify_verify_result("compat_refl", Some(&thm));
+
+        assert!(matches!(outcome, ProofOutcome::CompatClosedOracleFree { .. }));
+        assert!(!outcome.is_strict_closed());
+    }
+
+    #[test]
+    fn proof_outcome_classifies_open_oracle_free() {
+        LAST_OUTCOME.with(|c| c.set(VerifyOutcome::Proved));
+        let thm = ThmKernel::assume_compat(prop_ct("A"));
+
+        let outcome = classify_verify_result("open_assume", Some(&thm));
+
+        assert!(matches!(
+            outcome,
+            ProofOutcome::OpenOracleFree { reason: OpenReason::UnknownHyps, .. }
+        ));
+        assert!(!outcome.is_strict_closed());
+    }
+
+    #[test]
+    fn proof_outcome_classifies_admitted_reason() {
+        LAST_OUTCOME.with(|c| c.set(VerifyOutcome::AxiomAccepted));
+        let thm = ThmKernel::admit(prop_ct("A"), "admitted:proof_engine_failed");
+
+        let outcome = classify_verify_result("admitted", Some(&thm));
+
+        assert!(matches!(
+            outcome,
+            ProofOutcome::Admitted { reason: AdmitReason::ProofEngineFailed, .. }
+        ));
+        assert!(!outcome.is_strict_closed());
+    }
+
     #[test]
     fn test_apply_attributes_rule_format_is_admitted() {
         let a = Term::const_("A", Typ::base("prop"));
@@ -4498,6 +4843,9 @@ mod tests {
         assert_eq!(attempted, 1);
         assert_eq!(verified, 0, "open oracle-free theorem must not count as proved");
         assert_eq!(verify_stats(), (0, 1));
+        let outcome_stats = verify_outcome_stats();
+        assert_eq!(outcome_stats.strict_closed, 0);
+        assert_eq!(outcome_stats.total(), 1);
     }
 
     #[test]
@@ -4923,9 +5271,12 @@ mod benchmark_tests {
             let mut verified = 0usize;
             let start = std::time::Instant::now();
             for lem in with_proofs.iter().take(sample) {
-                if verify_lemma(lem).is_some_and(|thm| is_strict_closed_proved_outcome(&thm)) {
+                let result = verify_lemma(lem);
+                let outcome = classify_verify_result(&lem.name, result.as_ref());
+                if outcome.is_strict_closed() {
                     verified += 1;
                 }
+                record_verify_outcome(&outcome);
             }
             let elapsed = start.elapsed().as_secs_f64();
             eprintln!(
@@ -4957,18 +5308,14 @@ mod benchmark_tests {
             let t0 = Instant::now();
             let result = verify_lemma(lem);
             let dt = t0.elapsed().as_secs_f64();
-            let proved = result.as_ref().is_some_and(|thm| is_strict_closed_proved_outcome(thm));
+            let outcome = classify_verify_result(&lem.name, result.as_ref());
+            let proved = outcome.is_strict_closed();
             if proved {
                 verified += 1;
             }
+            record_verify_outcome(&outcome);
             if dt > 1.0 {
-                let status = if proved {
-                    "CLOSED PROVED"
-                } else if result.is_some() {
-                    "ACCEPTED/OPEN"
-                } else {
-                    "FAIL"
-                };
+                let status = if proved { "CLOSED PROVED".to_string() } else { outcome.label() };
                 eprintln!("    SLOW [{}/{}] {}: {:.2}s {}", i + 1, sample, lem.name, dt, status);
             }
         }
@@ -5001,6 +5348,7 @@ mod benchmark_tests {
     #[test]
     fn test_verify_all_core_files() {
         eprintln!("=== Full Core Benchmark ===");
+        reset_verify_stats();
         let files = vec![
             ("HOL", include_str!("../../theories/HOL/HOL.thy")),
             ("Orderings", include_str!("../../theories/HOL/Orderings.thy")),
@@ -5037,5 +5385,9 @@ mod benchmark_tests {
                 0.0
             }
         );
+        eprintln!("=== ProofOutcome ===");
+        for line in verify_outcome_stats().report_lines() {
+            eprintln!("  {line}");
+        }
     }
 }
