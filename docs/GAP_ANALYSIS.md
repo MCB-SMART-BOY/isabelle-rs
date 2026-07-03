@@ -82,6 +82,28 @@ This distinction is central. In particular:
 is_fully_proved() != is_closed_proved() != is_strict_closed_proved()
 ```
 
+Recent verification diagnostics made this distinction stricter. Proof-method
+results with ambient hypotheses are no longer returned as oracle-free accepted
+lemmas: they must be exported by legal `implies_intr` discharge of known
+context assumptions, or admitted with `admitted:goal_export_*` /
+`admitted:proof_engine_failed`. This removes the misleading `OPEN_HAS_HYPS`
+runtime bucket, but it does not improve proof coverage:
+
+```text
+test_verify_all_core_files: 0/125 strict closed proved
+dynamic sample after explicit goal export:
+  CLOSED_ORACLE_FREE_NON_STRICT: 1
+  admitted:goal_export_unknown_hyps: 66
+  admitted:proof_engine_failed: 50
+  admitted:goal_export_open_subgoals: 3
+  admitted:parser_gap: 3
+  admitted:datatype_stub: 2
+```
+
+The next useful work is to split and reduce the `goal_export_*` and
+`proof_engine_failed` reasons, not to count closed-shaped compatibility results
+as trusted proofs.
+
 ### Strict Kernel vs Legacy Core Firewall
 
 The strict `src/kernel/` nucleus is enforced by automated checks:

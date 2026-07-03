@@ -711,6 +711,11 @@ impl Thm {
     pub fn tpairs(&self) -> &[(Term, Term)] {
         &self.tpairs
     }
+    #[cfg(test)]
+    pub(crate) fn with_test_tpair(mut self, left: Term, right: Term) -> Self {
+        self.tpairs.push((left, right));
+        self
+    }
     /// Sort hypotheses (type-class constraints).
     pub fn shyps(&self) -> &[Sort] {
         &self.shyps

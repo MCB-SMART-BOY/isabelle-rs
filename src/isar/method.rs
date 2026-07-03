@@ -12,10 +12,11 @@ use crate::core::term::Term; // used in tests
 use crate::core::types::Typ; // used in tests
 use crate::{
     core::{
+        error::KernelError,
         logic::Pure,
         simplifier::{RewriteRule, Simplifier},
         tactic,
-        thm::{CTerm, Thm, ThmKernel},
+        thm::{CTerm, Hyps, Thm, ThmKernel, ThmTrust},
     },
     hol::hol_loader::{HolTheoremDb, ParsedLemma},
     isar::args::Args,
@@ -60,6 +61,29 @@ pub enum VerifyOutcome {
     AxiomAccepted,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GoalExportError {
+    OpenSubgoals,
+    OracleOrAdmitted,
+    UnresolvedTpairs,
+    UnknownHypotheses,
+    PropositionMismatch,
+    DischargeFailed,
+}
+
+impl GoalExportError {
+    fn admitted_reason(self) -> &'static str {
+        match self {
+            GoalExportError::OpenSubgoals => "admitted:goal_export_open_subgoals",
+            GoalExportError::UnresolvedTpairs => "admitted:goal_export_unresolved_tpairs",
+            GoalExportError::UnknownHypotheses => "admitted:goal_export_unknown_hyps",
+            GoalExportError::PropositionMismatch => "admitted:goal_export_prop_mismatch",
+            GoalExportError::DischargeFailed => "admitted:goal_export_discharge_failed",
+            GoalExportError::OracleOrAdmitted => "admitted:proof_engine_failed",
+        }
+    }
+}
+
 /// Reset the global proved-vs-accepted tally. Call before a verification run.
 pub fn reset_verify_stats() {
     VERIFY_STATS.with(|c| c.set((0, 0)));
@@ -72,6 +96,62 @@ pub fn verify_stats() -> (usize, usize) {
 
 fn is_strict_closed_proved_outcome(thm: &Thm) -> bool {
     thm.is_strict_closed_proved() && LAST_OUTCOME.with(|c| c.get()) != VerifyOutcome::AxiomAccepted
+}
+
+fn export_proved_goal(
+    original_goal: &CTerm,
+    result: &Thm,
+    context_assumptions: &[CTerm],
+) -> Result<Thm, GoalExportError> {
+    if !result.oracles().is_empty() || result.trust_status() == ThmTrust::Admitted {
+        return Err(GoalExportError::OracleOrAdmitted);
+    }
+    if !result.tpairs().is_empty() {
+        return Err(GoalExportError::UnresolvedTpairs);
+    }
+    if result.hyps().is_empty() && Hyps::kernel_alpha_eq(result.prop().term(), original_goal.term())
+    {
+        return Ok(result.clone());
+    }
+    if result.nprems() != 0 {
+        return Err(GoalExportError::OpenSubgoals);
+    }
+
+    let mut exported = result.clone();
+    for assumption in context_assumptions.iter().rev() {
+        match ThmKernel::implies_intr(assumption, &exported) {
+            Ok(next) => exported = next,
+            Err(KernelError::HypothesisNotFound) => {},
+            Err(_) => return Err(GoalExportError::DischargeFailed),
+        }
+    }
+
+    if !exported.hyps().is_empty() {
+        return Err(GoalExportError::UnknownHypotheses);
+    }
+    if !Hyps::kernel_alpha_eq(exported.prop().term(), original_goal.term()) {
+        return Err(GoalExportError::PropositionMismatch);
+    }
+
+    Ok(exported)
+}
+
+fn export_or_admit_goal(original_goal: &CTerm, result: Thm, context_assumptions: &[CTerm]) -> Thm {
+    match export_proved_goal(original_goal, &result, context_assumptions) {
+        Ok(exported) => exported,
+        Err(GoalExportError::OracleOrAdmitted) => result,
+        Err(err) => {
+            LAST_OUTCOME.with(|c| c.set(VerifyOutcome::AxiomAccepted));
+            ThmKernel::admit(original_goal.clone(), err.admitted_reason())
+        },
+    }
+}
+
+fn init_verify_goal(goal_ct: &CTerm) -> Result<Thm, Thm> {
+    ThmKernel::trivial(goal_ct.clone()).map_err(|_| {
+        LAST_OUTCOME.with(|c| c.set(VerifyOutcome::AxiomAccepted));
+        ThmKernel::admit(goal_ct.clone(), "admitted:goal_initialization_failed")
+    })
 }
 
 // =========================================================================
@@ -1871,7 +1951,13 @@ fn exec_single_method_inner(state: &Thm, method_str: &str, premises: &[Arc<Thm>]
         return Method::Simp(get_cached_simplifier()).execute(state, premises);
     }
     if inner == "assumption" || inner == "." {
-        return Method::Assumption.execute(state, premises);
+        let results = Method::Assumption.execute(state, premises);
+        if results.is_empty()
+            && let Some(solved) = solve_by_assumption(state, premises)
+        {
+            return vec![solved];
+        }
+        return results;
     }
     if inner == "this" {
         return Method::Skip.execute(state, premises);
@@ -3610,12 +3696,15 @@ pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
     }
 
     let proof = lem.proof_script.as_ref()?;
-    let (prems, concl) = Pure::strip_imp_prems(lem.theorem.prop().term());
-    let premises: Vec<Arc<Thm>> = prems
-        .iter()
-        .map(|p| Arc::new(ThmKernel::assume_compat(CTerm::certify((*p).clone()))))
-        .collect();
-    let goal = ThmKernel::assume_compat(CTerm::certify(lem.theorem.prop().term().clone()));
+    let goal_ct = CTerm::certify(lem.theorem.prop().term().clone());
+    let (prems, concl) = Pure::strip_imp_prems(goal_ct.term());
+    let premise_cterms: Vec<CTerm> = prems.iter().map(|p| CTerm::certify((*p).clone())).collect();
+    let premises: Vec<Arc<Thm>> =
+        premise_cterms.iter().map(|p| Arc::new(ThmKernel::assume_compat(p.clone()))).collect();
+    let goal = match init_verify_goal(&goal_ct) {
+        Ok(goal) => goal,
+        Err(admitted) => return Some(admitted),
+    };
 
     // Fast path: single-method proofs that are trivially dispatchable
     if (proof == "by simp"
@@ -3626,7 +3715,7 @@ pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
         || proof == "by force")
         && let Some(results) = exec_proof(&goal, proof, &premises)
     {
-        return Some(results);
+        return Some(export_or_admit_goal(&goal_ct, results, &premise_cterms));
     }
 
     // Special handling for anonymous/auto-named datatype lemmas
@@ -3657,7 +3746,7 @@ pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
         if let Some(result) =
             crate::isar::proof_state::interpret_proof_script(&mut state, proof, &premises)
         {
-            return Some(result);
+            return Some(export_or_admit_goal(&goal_ct, result, &premise_cterms));
         }
     }
 
@@ -3676,7 +3765,7 @@ pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
                     if thm.nprems() != 0 {
                         LAST_OUTCOME.with(|c| c.set(VerifyOutcome::AxiomAccepted));
                     }
-                    return Some(thm);
+                    return Some(export_or_admit_goal(&goal_ct, thm, &premise_cterms));
                 }
             }
         }
@@ -3701,7 +3790,7 @@ pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
             }
             // Apply the remaining method
             if let Some(results) = exec_proof(&current, method, &premises) {
-                return Some(results);
+                return Some(export_or_admit_goal(&goal_ct, results, &premise_cterms));
             }
         }
     }
@@ -3733,7 +3822,7 @@ pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
                 if current.nprems() != 0 {
                     LAST_OUTCOME.with(|c| c.set(VerifyOutcome::AxiomAccepted));
                 }
-                return Some(current);
+                return Some(export_or_admit_goal(&goal_ct, current, &premise_cterms));
             }
         }
     }
@@ -3754,12 +3843,12 @@ pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
                     if thm.nprems() != 0 {
                         LAST_OUTCOME.with(|c| c.set(VerifyOutcome::AxiomAccepted));
                     }
-                    return Some(thm);
+                    return Some(export_or_admit_goal(&goal_ct, thm, &premise_cterms));
                 }
             }
             // Fall back to auto
             if let Some(results) = exec_proof(&goal, "auto", &premises) {
-                return Some(results);
+                return Some(export_or_admit_goal(&goal_ct, results, &premise_cterms));
             }
         }
     }
@@ -3776,7 +3865,7 @@ pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
                     final_thm = thm;
                 }
             }
-            return Some(final_thm);
+            return Some(export_or_admit_goal(&goal_ct, final_thm, &premise_cterms));
         }
         // Direct resolution for "using assms by (rule X)"
         if proof.contains("using assms") {
@@ -3816,7 +3905,11 @@ pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
                                     final_thm = thm;
                                 }
                             }
-                            return Some(final_thm);
+                            return Some(export_or_admit_goal(
+                                &goal_ct,
+                                final_thm,
+                                &premise_cterms,
+                            ));
                         }
                     }
                 }
@@ -3829,7 +3922,7 @@ pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
         exec_proof(&goal, proof, &premises)
     }));
     match proof_result {
-        Ok(Some(result)) => return Some(result),
+        Ok(Some(result)) => return Some(export_or_admit_goal(&goal_ct, result, &premise_cterms)),
         Ok(None) => {},
         Err(_panic) => {
             // Proof engine panicked on this lemma's proof script.
@@ -3959,6 +4052,226 @@ mod tests {
     fn trivial_goal(name: &str) -> Thm {
         let ct = CTerm::certify(Term::const_(name, Typ::base("prop")));
         ThmKernel::trivial(ct).unwrap()
+    }
+
+    fn prop_ct(name: &str) -> CTerm {
+        CTerm::certify(Term::const_(name, Typ::base("prop")))
+    }
+
+    fn verify_named_from(source: &str, name: &str) -> Thm {
+        let empty_db = HolTheoremDb::new();
+        let lemmas =
+            HolTheoremDb::with_override(&empty_db, || crate::hol::hol_loader::parse_lemmas(source));
+        let mut db = HolTheoremDb::from_lemmas(&lemmas);
+        HolTheoremDb::add_builtins(&mut db);
+        HolTheoremDb::with_override(&db, || {
+            let lem = lemmas.iter().find(|l| l.name == name).expect("lemma should parse");
+            verify_lemma(lem).expect("lemma should return a theorem")
+        })
+    }
+
+    #[test]
+    fn proof_closure_discharge_single_goal_hyp() {
+        let a = prop_ct("A");
+        let original = CTerm::certify(Pure::mk_implies(a.term().clone(), a.term().clone()));
+        let result = ThmKernel::assume_compat(a.clone());
+
+        let exported = export_proved_goal(&original, &result, std::slice::from_ref(&a)).unwrap();
+
+        assert!(exported.hyps().is_empty());
+        assert!(exported.oracles().is_empty());
+        assert!(exported.tpairs().is_empty());
+        assert!(Hyps::kernel_alpha_eq(exported.prop().term(), original.term()));
+        assert_eq!(exported.trust_status(), ThmTrust::Compat);
+    }
+
+    #[test]
+    fn proof_closure_discharge_two_premises() {
+        let a = prop_ct("A");
+        let b = prop_ct("B");
+        let a_imp_b = CTerm::certify(Pure::mk_implies(a.term().clone(), b.term().clone()));
+        let result = ThmKernel::implies_elim(
+            &ThmKernel::assume_compat(a_imp_b.clone()),
+            &ThmKernel::assume_compat(a.clone()),
+        )
+        .unwrap();
+        let original = CTerm::certify(Pure::mk_implies(
+            a.term().clone(),
+            Pure::mk_implies(a_imp_b.term().clone(), b.term().clone()),
+        ));
+
+        let exported =
+            export_proved_goal(&original, &result, &[a.clone(), a_imp_b.clone()]).unwrap();
+
+        assert!(exported.hyps().is_empty());
+        assert!(exported.oracles().is_empty());
+        assert!(Hyps::kernel_alpha_eq(exported.prop().term(), original.term()));
+    }
+
+    #[test]
+    fn proof_closure_does_not_drop_unknown_hyp() {
+        let x = prop_ct("X");
+        let c = prop_ct("C");
+        let x_imp_c = CTerm::certify(Pure::mk_implies(x.term().clone(), c.term().clone()));
+        let result = ThmKernel::implies_elim(
+            &ThmKernel::assume_compat(x_imp_c),
+            &ThmKernel::assume_compat(x.clone()),
+        )
+        .unwrap();
+        let original = CTerm::certify(Pure::mk_implies(x.term().clone(), c.term().clone()));
+
+        let err = export_proved_goal(&original, &result, std::slice::from_ref(&x)).unwrap_err();
+
+        assert_eq!(err, GoalExportError::UnknownHypotheses);
+    }
+
+    #[test]
+    fn proof_closure_rejects_oracle_or_admitted() {
+        let a = prop_ct("A");
+        let admitted = ThmKernel::admit(a.clone(), "admitted:proof_engine_failed");
+
+        let err = export_proved_goal(&a, &admitted, &[]).unwrap_err();
+
+        assert_eq!(err, GoalExportError::OracleOrAdmitted);
+    }
+
+    #[test]
+    fn proof_closure_rejects_prop_mismatch() {
+        let a = prop_ct("A");
+        let b = prop_ct("B");
+        let wrong_original = CTerm::certify(Pure::mk_implies(a.term().clone(), b.term().clone()));
+        let result = ThmKernel::assume_compat(a.clone());
+
+        let err =
+            export_proved_goal(&wrong_original, &result, std::slice::from_ref(&a)).unwrap_err();
+
+        assert_eq!(err, GoalExportError::PropositionMismatch);
+        assert_eq!(err.admitted_reason(), "admitted:goal_export_prop_mismatch");
+    }
+
+    #[test]
+    fn proof_closure_rejects_open_subgoals() {
+        let a = prop_ct("A");
+        let b = prop_ct("B");
+        let open_goal = ThmKernel::trivial(CTerm::certify(Pure::mk_implies(
+            a.term().clone(),
+            a.term().clone(),
+        )))
+        .unwrap();
+
+        let err = export_proved_goal(&b, &open_goal, &[]).unwrap_err();
+
+        assert_eq!(err, GoalExportError::OpenSubgoals);
+        assert_eq!(err.admitted_reason(), "admitted:goal_export_open_subgoals");
+    }
+
+    #[test]
+    fn proof_closure_rejects_unresolved_tpairs() {
+        let a = prop_ct("A");
+        let result = ThmKernel::trivial(a.clone()).unwrap().with_test_tpair(
+            Term::var("x", 0, Typ::base("nat")),
+            Term::var("y", 0, Typ::base("nat")),
+        );
+
+        let err = export_proved_goal(&a, &result, &[]).unwrap_err();
+
+        assert_eq!(err, GoalExportError::UnresolvedTpairs);
+        assert_eq!(err.admitted_reason(), "admitted:goal_export_unresolved_tpairs");
+    }
+
+    #[test]
+    fn proof_closure_alpha_equivalent_hyp_can_discharge() {
+        let hyp_in_result = CTerm::certify(Term::abs("x", Typ::base("nat"), Term::bound(0)));
+        let alpha_equiv_assumption =
+            CTerm::certify(Term::abs("y", Typ::base("nat"), Term::bound(0)));
+        let original = CTerm::certify(Pure::mk_implies(
+            alpha_equiv_assumption.term().clone(),
+            hyp_in_result.term().clone(),
+        ));
+        let result = ThmKernel::assume_compat(hyp_in_result);
+
+        let exported =
+            export_proved_goal(&original, &result, std::slice::from_ref(&alpha_equiv_assumption))
+                .unwrap();
+
+        assert!(exported.hyps().is_empty());
+        assert!(Hyps::kernel_alpha_eq(exported.prop().term(), original.term()));
+    }
+
+    #[test]
+    fn goal_initialization_does_not_return_self_hyp() {
+        let a = prop_ct("A");
+
+        let goal = init_verify_goal(&a).expect("trivial goal initialization should succeed");
+
+        assert!(goal.hyps().is_empty(), "goal initialization must not create A |- A self-hyp");
+        assert_eq!(goal.nprems(), 1);
+    }
+
+    #[test]
+    fn proof_closure_preserves_prop_as_original_goal() {
+        let a = prop_ct("A");
+        let b = prop_ct("B");
+        let a_imp_b = CTerm::certify(Pure::mk_implies(a.term().clone(), b.term().clone()));
+        let result = ThmKernel::implies_elim(
+            &ThmKernel::assume_compat(a_imp_b.clone()),
+            &ThmKernel::assume_compat(a.clone()),
+        )
+        .unwrap();
+        let original = CTerm::certify(Pure::mk_implies(
+            a.term().clone(),
+            Pure::mk_implies(a_imp_b.term().clone(), b.term().clone()),
+        ));
+
+        let exported = export_proved_goal(&original, &result, &[a, a_imp_b]).unwrap();
+
+        assert_eq!(exported.prop().term(), original.term());
+    }
+
+    #[test]
+    fn verify_hol_trans_no_open_hyps() {
+        let thm = verify_named_from(include_str!("../../theories/HOL/HOL.thy"), "trans");
+
+        assert!(
+            thm.hyps().is_empty(),
+            "trans should not retain proof-state hyps: prop={:?}, hyps={:?}, trust={:?}",
+            thm.prop().term(),
+            thm.hyps().iter().map(|h| format!("{:?}", h.term())).collect::<Vec<_>>(),
+            thm.trust_status()
+        );
+    }
+
+    #[test]
+    fn verify_nat_suc_not_zero_no_self_hyp() {
+        let thm = verify_named_from(include_str!("../../theories/HOL/Nat.thy"), "Suc_not_Zero");
+
+        assert!(
+            thm.hyps().is_empty(),
+            "Suc_not_Zero should not retain its goal as a hyp: prop={:?}, hyps={:?}, trust={:?}",
+            thm.prop().term(),
+            thm.hyps().iter().map(|h| format!("{:?}", h.term())).collect::<Vec<_>>(),
+            thm.trust_status()
+        );
+    }
+
+    #[test]
+    fn verify_no_open_oracle_free_results_in_core_batch() {
+        let samples = [
+            (include_str!("../../theories/HOL/HOL.thy"), "trans"),
+            (include_str!("../../theories/HOL/Set.thy"), "CollectI"),
+            (include_str!("../../theories/HOL/Nat.thy"), "Suc_not_Zero"),
+            (include_str!("../../theories/HOL/List.thy"), "length_0_conv"),
+        ];
+
+        for (source, name) in samples {
+            let thm = verify_named_from(source, name);
+            assert!(
+                !thm.oracles().is_empty() || thm.hyps().is_empty(),
+                "{name} returned oracle-free open theorem: prop={:?}, hyps={:?}",
+                thm.prop().term(),
+                thm.hyps().iter().map(|h| format!("{:?}", h.term())).collect::<Vec<_>>()
+            );
+        }
     }
 
     #[test]
@@ -4395,7 +4708,16 @@ mod tests {
         assert!(lem.proof_script.is_some(), "should capture proof script");
         let result = verify_lemma(lem);
         assert!(result.is_some(), "verify_lemma should succeed for A ==> A by assumption");
-        assert_eq!(result.unwrap().nprems(), 0);
+        let result = result.unwrap();
+        assert!(
+            result.hyps().is_empty(),
+            "roundtrip result should close ambient hyps: prop={:?}, hyps={:?}, oracles={:?}, trust={:?}",
+            result.prop().term(),
+            result.hyps().iter().map(|h| format!("{:?}", h.term())).collect::<Vec<_>>(),
+            result.oracles(),
+            result.trust_status()
+        );
+        assert!(result.oracles().is_empty());
     }
 
     #[test]

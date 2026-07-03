@@ -116,6 +116,7 @@ The following areas have a coherent implementation and regression coverage:
 | Strict theorem invariants | `check_kernel_invariants(Strict)` rejects compat/admitted provenance, dummy-tainted burdens, `maxidx` drift, oracle-tainted strict theorems, and supported replay burden mismatches. |
 | Oracle/admit tracking | `ThmKernel::admit(ct, reason)` marks unproved accepted propositions and propagates oracle footprints. |
 | Closed theorem acceptance | A trusted proved lemma requires strict construction, no oracles, no hypotheses, no unresolved `tpairs`, and no dummy types. |
+| Isar goal export boundary | `verify_lemma` no longer returns oracle-free open proof-method results as accepted lemmas. Results are exported by legal `implies_intr` discharge of known context assumptions, or admitted with `admitted:goal_export_*` / `admitted:proof_engine_failed`. |
 | Searchable vs trusted facts | `HolTheoremDb` is a proof-search fact index; final trusted theorem tables use strict closed proved filters. |
 | Attribute fallback honesty | Non-derivational theorem transformations are admitted as `admitted:attribute_transformation`. |
 | T4 minimal replay | `assume`, `reflexive`, `symmetric`, `transitive`, `implies_intr`, `implies_elim` replay with burden checks. |
@@ -153,6 +154,25 @@ The project is not close to full Isabelle/HOL:
 | HOL library coverage | Small subset; many accepted facts remain admitted or generated stubs. |
 | Session/PIDE/LSP | Useful skeletons, not Isabelle session/PIDE infrastructure. |
 | AFP / ecosystem | Out of scope for the current research slice. |
+
+Current core verification status remains conservative:
+
+```text
+test_verify_all_core_files: 0/125 strict closed proved
+dynamic sample after explicit goal export:
+  CLOSED_ORACLE_FREE_NON_STRICT: 1
+  admitted:goal_export_unknown_hyps: 66
+  admitted:proof_engine_failed: 50
+  admitted:goal_export_open_subgoals: 3
+  admitted:parser_gap: 3
+  admitted:datatype_stub: 2
+```
+
+The former `OPEN_HAS_HYPS` runtime classification has been closed as a trust
+boundary issue: proof-method results with ambient hypotheses are no longer
+returned as oracle-free accepted lemmas. If they cannot be legally exported,
+they are admitted with a specific `goal_export_*` reason. This improves
+reporting honesty, not proof coverage.
 
 ## Relative Completion Estimates
 
