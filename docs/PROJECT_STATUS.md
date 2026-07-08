@@ -184,11 +184,11 @@ A scan of the sampled 125 core-file lemmas found no parsed proposition of the
 form `A ==> A` / `P ==> P`, so the implication-identity adapter cannot move the
 batch count by itself. The current best first existing-theorem candidate is
 `HOL::TrueI`, whose source proof is `unfolding True_def by (rule refl)`. That
-slice needs a narrow strict definition-unfold/reflexivity adapter, not a broader
-`simp` or proof-engine fallback.
+slice now has the strict HOL object-reflexivity bridge, but still needs a
+checked-definition transport/fold-back step and a narrow `TrueI` adapter, not a
+broader `simp` or proof-engine fallback.
 
-Targeted `HOL::TrueI` diagnostic found that the slice is not safe to implement
-yet:
+Targeted `HOL::TrueI` diagnostics and bridge work currently show:
 
 ```text
 Parsed TrueI prop: True
@@ -196,21 +196,21 @@ Parsed TrueI proof: unfolding True_def by (rule refl)
 Current outcome: Admitted(goal_export_unknown_hyps)
 True_def parsed theorem / DB fact: missing (expected; definition source is not a theorem)
 True_def checked definition source: done, non-theorem input only
-HOL object-equality/reflexivity bridge: design-only contract exists, implementation pending
-try_strict_hol_refl: not implemented
+HOL object-equality/reflexivity bridge: implemented as narrow primitive bridge
+try_strict_hol_refl: implemented
 try_strict_hol_trueI: not implemented
+checked-definition transport/fold-back to True: not implemented
 refl DB fact: compat/open, not strict closed
 Pure.refl DB fact: compat closed-shaped, not strict closed
 Core batch StrictClosed: 0/125
 ```
 
 Therefore the first existing-core-file `StrictClosed` milestone is currently
-blocked on the bridge implementation and later checked-definition transport
-back to `True`:
+blocked on checked-definition transport back to `True`:
 
 ```text
 1. True_def checked definition source: done, non-theorem input only
-2. HOL object-equality/reflexivity bridge: design-only contract exists, implementation pending
+2. HOL object-equality/reflexivity bridge: implemented as narrow primitive bridge
 3. checked-definition transport/fold-back to True: not implemented
 ```
 

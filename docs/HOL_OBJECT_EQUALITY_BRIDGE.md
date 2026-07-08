@@ -2,24 +2,27 @@
 
 ## Status
 
-Design-only. No implementation is present yet.
+Narrow bridge implemented. `HOL::TrueI` is still not implemented.
 
 Current implementation status:
 
 ```text
 HOL.eq term/type diagnostic: done
-try_strict_hol_refl: not implemented
+try_strict_hol_refl: implemented
 try_strict_hol_trueI: not implemented
+checked-definition transport/fold-back to True: not implemented
 core batch StrictClosed: 0/125
 ```
 
-The current diagnostic tests in `src/hol/hol_loader.rs` establish:
+The current tests in `src/hol/hol_loader.rs` establish:
 
 - `HOL.eq` is declared in the checked `TypeEnv` as `'a => 'a => bool`.
 - A checked application `HOL.eq HOL.True HOL.True` has result type `bool`.
 - The checked `True_def` RHS is reflexive `HOL.eq` over `bool => bool`.
 - `Pure.eq` remains distinguishable from `HOL.eq` and must not be accepted as
   an object-equality bridge input.
+- `try_strict_hol_refl` accepts only checked input terms and checked `HOL.eq`
+  declarations, and rejects missing/dummy `HOL.eq` and compatibility inputs.
 
 This document specifies the next prerequisite for the first existing core-file
 `StrictClosed` slice:
@@ -32,8 +35,10 @@ HOL::TrueI:
 
 `True_def` is already available as a checked definition source in
 `HolTheoremDb::checked_definitions`, but it is not a theorem and does not count
-as proof progress. `HOL::TrueI` remains unsafe to accept until a strict bridge
-can prove the unfolded reflexive HOL object equality.
+as proof progress. `try_strict_hol_refl` can now prove the unfolded reflexive
+HOL object equality. `HOL::TrueI` remains unsafe to accept until a legal
+checked-definition transport/fold-back step can move from the unfolded equality
+back to `True`.
 
 ## Problem
 
@@ -73,7 +78,7 @@ not strict closed theorem sources. They must not be reused to produce
 
 ## Term Shape
 
-The bridge only concerns terms with this object-logic shape:
+The implemented bridge only concerns terms with this object-logic shape:
 
 ```text
 HOL.eq t t
@@ -93,7 +98,7 @@ meta-equality.
 
 ## Trust Decision
 
-Short term, the bridge should be treated as a narrow HOL object-logic primitive
+The bridge is treated as a narrow HOL object-logic primitive
 bridge:
 
 ```text
@@ -115,7 +120,7 @@ Until a fuller HOL axiom package and replay path exists, the bridge must be:
 
 ## Acceptance Conditions
 
-`try_strict_hol_refl(t)` may succeed only if all conditions hold:
+`try_strict_hol_refl(t)` succeeds only if all conditions hold:
 
 - `HOL.eq` is declared in the checked type environment.
 - `HOL.eq` has type compatible with `α => α => bool`.

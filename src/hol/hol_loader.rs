@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use crate::{
     core::{
+        error::KernelError,
         logic::Pure,
         term::Term,
         theory::Theory,
@@ -2361,6 +2362,15 @@ pub fn load_all_theories() -> Result<HolTheoremDb, String> {
     Ok(db)
 }
 
+/// Try the narrow strict HOL object-reflexivity bridge.
+///
+/// This constructs only `|- HOL.eq t t` for a checked HOL term `t`. It is not
+/// a general HOL proof engine, unfolding engine, simplifier, or `TrueI`
+/// adapter.
+pub fn try_strict_hol_refl(term: CTerm, type_env: &TypeEnv) -> Result<Thm, KernelError> {
+    ThmKernel::hol_object_refl(term, type_env)
+}
+
 /// HOL proof-search fact database.
 ///
 /// This is not the final trusted theorem table. It intentionally stores parsed,
@@ -3812,6 +3822,78 @@ mod tests {
         assert!(
             hologic::dest_hol_equals(checked.term()).is_none(),
             "HOL bridge must not treat Pure.eq as HOL.eq"
+        );
+    }
+
+    #[test]
+    fn hol_refl_bridge_accepts_checked_term() {
+        let hol = include_str!("../../theories/HOL/HOL.thy");
+        let env = HolTheoremDb::build_type_env(hol);
+        let true_ct =
+            CTerm::certify_checked(hologic::true_const(), &env).expect("checked HOL.True");
+        let thm = try_strict_hol_refl(true_ct, &env).expect("strict HOL object refl");
+        let (lhs, rhs) = hologic::dest_hol_equals(thm.prop().term()).expect("HOL.eq result");
+
+        assert!(thm.is_strict_closed_proved());
+        assert_eq!(thm.prop().term_type(), &Typ::base("bool"));
+        assert_eq!(lhs, rhs);
+        assert!(thm.hyps().is_empty());
+        assert!(thm.tpairs().is_empty());
+        assert!(thm.oracles().is_empty());
+        assert!(thm.check_proof().is_ok());
+    }
+
+    #[test]
+    fn hol_refl_bridge_rejects_missing_hol_eq() {
+        let mut env = TypeEnv::new();
+        env.declare_const("HOL.True", Typ::base("bool"));
+        let true_ct =
+            CTerm::certify_checked(hologic::true_const(), &env).expect("checked HOL.True");
+
+        let err = try_strict_hol_refl(true_ct, &env).expect_err("missing HOL.eq must reject");
+        assert!(matches!(err, KernelError::UndeclaredConstant(name) if name == "HOL.eq"));
+    }
+
+    #[test]
+    fn hol_refl_bridge_rejects_dummy_typed_hol_eq() {
+        let mut env = TypeEnv::new();
+        env.declare_const("HOL.True", Typ::base("bool"));
+        env.declare_const("HOL.eq", Typ::dummy());
+        let true_ct =
+            CTerm::certify_checked(hologic::true_const(), &env).expect("checked HOL.True");
+
+        let err = try_strict_hol_refl(true_ct, &env).expect_err("dummy HOL.eq must reject");
+        assert!(matches!(err, KernelError::DummyType { op } if op == "ThmKernel::hol_object_refl"));
+    }
+
+    #[test]
+    fn hol_refl_bridge_rejects_compat_term() {
+        let hol = include_str!("../../theories/HOL/HOL.thy");
+        let env = HolTheoremDb::build_type_env(hol);
+        let compat_true = CTerm::certify(hologic::true_const());
+
+        let err = try_strict_hol_refl(compat_true, &env).expect_err("compat term must reject");
+        assert!(
+            matches!(err, KernelError::CompatCTerm { op } if op == "ThmKernel::hol_object_refl")
+        );
+    }
+
+    #[test]
+    fn hol_refl_bridge_rejects_pure_eq_substitution() {
+        let hol = include_str!("../../theories/HOL/HOL.thy");
+        let env = HolTheoremDb::build_type_env(hol);
+        let true_ct =
+            CTerm::certify_checked(hologic::true_const(), &env).expect("checked HOL.True");
+        let pure_refl = ThmKernel::reflexive(true_ct.clone()).expect("strict Pure reflexive");
+        let hol_refl = try_strict_hol_refl(true_ct, &env).expect("strict HOL object refl");
+
+        assert!(Pure::dest_equals(pure_refl.prop().term()).is_some());
+        assert!(hologic::dest_hol_equals(pure_refl.prop().term()).is_none());
+        assert!(hologic::dest_hol_equals(hol_refl.prop().term()).is_some());
+        assert_ne!(
+            pure_refl.prop().term(),
+            hol_refl.prop().term(),
+            "Pure reflexivity must remain distinct from HOL object reflexivity"
         );
     }
 

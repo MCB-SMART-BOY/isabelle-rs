@@ -76,8 +76,10 @@ Current targeted diagnostic:
 | Current `ProofOutcome` | `Admitted(GoalExportUnknownHyps)` |
 | `True_def` in parsed lemmas / DB facts | missing, as expected; the checked source is separate from theorem facts |
 | `True_def` checked definition source | done; non-theorem input only and not counted as proof progress |
-| HOL object-equality/reflexivity bridge | design-only contract exists; implementation pending |
-| `try_strict_hol_refl` / `try_strict_hol_trueI` | not implemented |
+| HOL object-equality/reflexivity bridge | implemented as narrow primitive bridge |
+| `try_strict_hol_refl` | implemented |
+| checked-definition transport/fold-back to `True` | not implemented |
+| `try_strict_hol_trueI` | not implemented |
 | `refl` DB fact | compat/open `((HOL.eq ?t.0) ?t.0)`, not strict closed |
 | `Pure.refl` DB fact | compat closed-shaped `((Pure.eq ?t.0) ?t.0)`, not strict closed |
 

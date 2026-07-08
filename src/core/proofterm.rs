@@ -263,16 +263,55 @@ fn alpha_eq_with_known_types(a: &Term, b: &Term) -> bool {
     Hyps::kernel_alpha_eq(a, b) && known_term_types_compatible(a, b)
 }
 
+fn dest_pure_equals_with_type(term: &Term) -> Option<(&Term, &Term, Typ)> {
+    match term {
+        Term::App { func, arg } => match func.as_ref() {
+            Term::App { func: inner, arg: lhs } => match inner.as_ref() {
+                Term::Const { name, typ } if name.as_ref() == "Pure.eq" => {
+                    Some((lhs.as_ref(), arg.as_ref(), Pure::extract_eq_type(typ)))
+                },
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn dest_hol_object_equals(term: &Term) -> Option<(&Term, &Term)> {
+    match term {
+        Term::App { func, arg: rhs } => match func.as_ref() {
+            Term::App { func: inner, arg: lhs } => match inner.as_ref() {
+                Term::Const { name, .. } if name.as_ref() == "HOL.eq" => {
+                    Some((lhs.as_ref(), rhs.as_ref()))
+                },
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// Replay a proof term and reconstruct the theorem shape it proves.
 pub fn replay_proof(proof: &ProofTerm) -> Result<ReplayResult, String> {
     match proof {
         ProofTerm::PHyp { prop } => Ok(ReplayResult::hyp(prop.clone())),
 
         ProofTerm::PAxm { name, prop } if name == "reflexive" => {
-            let (lhs, rhs, _) = Pure::dest_equals_with_type(prop)
+            let (lhs, rhs, _) = dest_pure_equals_with_type(prop)
                 .ok_or_else(|| "reflexive: proposition is not equality".to_string())?;
             if lhs != rhs {
                 return Err(format!("reflexive: lhs/rhs mismatch: {:?} vs {:?}", lhs, rhs));
+            }
+            Ok(ReplayResult::closed(prop.clone()))
+        },
+
+        ProofTerm::PAxm { name, prop } if name == "hol_object_refl" => {
+            let (lhs, rhs) = dest_hol_object_equals(prop)
+                .ok_or_else(|| "hol_object_refl: proposition is not HOL.eq".to_string())?;
+            if lhs != rhs {
+                return Err(format!("hol_object_refl: lhs/rhs mismatch: {:?} vs {:?}", lhs, rhs));
             }
             Ok(ReplayResult::closed(prop.clone()))
         },
@@ -606,6 +645,17 @@ mod tests {
         Pure::mk_equals(Typ::base("nat"), t.clone(), t)
     }
 
+    fn hol_refl_prop(name: &str) -> Term {
+        let t = nat(name);
+        Term::apps(
+            Term::const_(
+                "HOL.eq",
+                Typ::arrows(vec![Typ::base("nat"), Typ::base("nat")], Typ::base("bool")),
+            ),
+            vec![t.clone(), t],
+        )
+    }
+
     fn checked_eq_cterm(typ: Typ, lhs: Term, rhs: Term) -> CTerm {
         checked_cterm(Pure::mk_equals(typ, lhs, rhs))
     }
@@ -622,6 +672,23 @@ mod tests {
         let p = ProofTerm::PAxm { name: "reflexive".into(), prop: refl_prop("a") };
         assert!(check_proof(&p, &refl_prop("a")).is_ok());
         assert!(check_proof(&p, &prop("B")).is_err());
+    }
+
+    #[test]
+    fn pure_reflexive_replay_rejects_hol_object_equality() {
+        let hol_refl = hol_refl_prop("a");
+        let p = ProofTerm::PAxm { name: "reflexive".into(), prop: hol_refl.clone() };
+
+        let err = check_proof(&p, &hol_refl).expect_err("Pure reflexive must not replay HOL.eq");
+        assert!(err.contains("not equality"), "unexpected replay error: {err}");
+    }
+
+    #[test]
+    fn hol_object_refl_replay_succeeds() {
+        let hol_refl = hol_refl_prop("a");
+        let p = ProofTerm::PAxm { name: "hol_object_refl".into(), prop: hol_refl.clone() };
+
+        assert!(check_proof(&p, &hol_refl).is_ok());
     }
 
     #[test]

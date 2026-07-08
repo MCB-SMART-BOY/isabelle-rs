@@ -832,7 +832,9 @@ impl Thm {
     fn derivation_replay_supported(deriv: &Derivation) -> bool {
         match deriv {
             Derivation::Oracle { .. } => false,
-            Derivation::Axiom { name, .. } => matches!(*name, "assume" | "reflexive"),
+            Derivation::Axiom { name, .. } => {
+                matches!(*name, "assume" | "reflexive" | "hol_object_refl")
+            },
             Derivation::Rule { name, premises, .. } => {
                 matches!(*name, "symmetric" | "transitive" | "implies_intr" | "implies_elim")
                     && premises
@@ -1252,6 +1254,54 @@ impl ThmKernel {
     /// Transitional strict alias retained while callers migrate.
     pub fn reflexive_checked(ct: CTerm) -> Result<Thm, KernelError> {
         Self::reflexive(ct)
+    }
+
+    // =================================================================
+    // HOL object-logic primitive bridge: reflexive object equality
+    // =================================================================
+
+    /// **HOL object reflexivity bridge**: `|- HOL.eq t t`.
+    ///
+    /// This is a deliberately narrow HOL object-logic primitive bridge. It is
+    /// not derived from Pure `reflexive`, and it must not be used as a general
+    /// unfolding or simplification engine. The input term must be checked, and
+    /// `HOL.eq` must be declared in the explicit `TypeEnv` with a type scheme
+    /// compatible with `α => α => bool`.
+    pub fn hol_object_refl(ct: CTerm, type_env: &TypeEnv) -> Result<Thm, KernelError> {
+        ct.require_checked("ThmKernel::hol_object_refl")?;
+        ct.require_no_dummy_types("ThmKernel::hol_object_refl")?;
+
+        let object_type = ct.term_type().clone();
+        let expected_eq_type =
+            Typ::arrows(vec![object_type.clone(), object_type], Typ::base("bool"));
+        let declared_eq_type = type_env
+            .const_type("HOL.eq")
+            .ok_or_else(|| KernelError::UndeclaredConstant("HOL.eq".into()))?;
+        if declared_eq_type.contains_dummy() {
+            return Err(KernelError::DummyType { op: "ThmKernel::hol_object_refl" });
+        }
+
+        let t = ct.term().clone();
+        let prop = Term::apps(Term::const_("HOL.eq", expected_eq_type), vec![t.clone(), t]);
+        let prop = CTerm::certify_checked(prop, type_env)?;
+        if prop.term_type() != &Typ::base("bool") {
+            return Err(KernelError::TypeMismatch {
+                expected: Typ::base("bool"),
+                actual: prop.term_type().clone(),
+            });
+        }
+
+        Ok(Thm {
+            hyps: Hyps::empty(),
+            prop: prop.clone(),
+            maxidx: prop.maxidx(),
+            tpairs: vec![],
+            shyps: vec![],
+            oracles: vec![],
+            trust: ThmTrust::Strict,
+            derivation: Derivation::Axiom { name: "hol_object_refl", prop },
+            serial: new_serial(),
+        })
     }
 
     // =================================================================
