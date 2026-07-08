@@ -3722,6 +3722,100 @@ mod tests {
     }
 
     #[test]
+    fn hol_eq_type_env_declares_object_equality_shape() {
+        let hol = include_str!("../../theories/HOL/HOL.thy");
+        let env = HolTheoremDb::build_type_env(hol);
+        let hol_eq = env.const_type("HOL.eq").expect("HOL.eq declaration");
+        let alpha = Typ::free("'a", Sort::singleton("type"));
+
+        assert_eq!(hol_eq, &Typ::arrows(vec![alpha.clone(), alpha], Typ::base("bool")));
+        assert!(
+            !hol_eq.contains_dummy(),
+            "checked HOL.eq declaration must not contain dummy types"
+        );
+    }
+
+    #[test]
+    fn hol_eq_checked_application_has_bool_type_and_hol_shape() {
+        let hol = include_str!("../../theories/HOL/HOL.thy");
+        let env = HolTheoremDb::build_type_env(hol);
+        let lhs = hologic::true_const();
+        let rhs = hologic::true_const();
+        let eq = hologic::mk_eq_typed(Typ::base("bool"), lhs.clone(), rhs.clone());
+        let checked = CTerm::certify_checked(eq.clone(), &env).expect("checked HOL.eq True True");
+
+        assert!(checked.is_checked());
+        assert!(!checked.contains_dummy_type());
+        assert_eq!(checked.term_type(), &Typ::base("bool"));
+        assert_eq!(hologic::dest_hol_equals(checked.term()), Some((&lhs, &rhs)));
+
+        let Term::App { func, .. } = checked.term() else {
+            panic!("HOL.eq application must be an App");
+        };
+        let Term::App { func: head, .. } = func.as_ref() else {
+            panic!("HOL.eq application must be binary");
+        };
+        let Term::Const { name, typ } = head.as_ref() else {
+            panic!("HOL.eq application head must be a Const");
+        };
+        assert_eq!(name.as_ref(), "HOL.eq");
+        assert_eq!(
+            typ,
+            &Typ::arrows(vec![Typ::base("bool"), Typ::base("bool")], Typ::base("bool"))
+        );
+    }
+
+    #[test]
+    fn true_def_rhs_is_checked_reflexive_hol_eq_over_bool_function() {
+        let hol = include_str!("../../theories/HOL/HOL.thy");
+        let env = HolTheoremDb::build_type_env(hol);
+        let defs = HolTheoremDb::build_checked_definition_sources(hol, &env);
+        let true_def = defs.get("True_def").expect("True_def checked source");
+        let (lhs, rhs) =
+            hologic::dest_hol_equals(true_def.rhs.term()).expect("True_def RHS HOL.eq");
+        let bool_t = Typ::base("bool");
+        let bool_fun_t = Typ::arrow(bool_t.clone(), bool_t.clone());
+
+        assert_eq!(lhs, rhs, "True_def RHS must be reflexive before any TrueI adapter");
+        assert_eq!(true_def.rhs.term_type(), &bool_t);
+
+        let Term::Abs { typ, body, .. } = lhs else {
+            panic!("True_def RHS side must be the bool identity abstraction");
+        };
+        assert_eq!(typ, &bool_t);
+        assert_eq!(body.as_ref(), &Term::bound(0));
+
+        let Term::App { func, .. } = true_def.rhs.term() else {
+            panic!("True_def RHS must be a HOL.eq application");
+        };
+        let Term::App { func: head, .. } = func.as_ref() else {
+            panic!("True_def RHS must be a binary HOL.eq application");
+        };
+        let Term::Const { name, typ } = head.as_ref() else {
+            panic!("True_def RHS equality head must be a Const");
+        };
+        assert_eq!(name.as_ref(), "HOL.eq");
+        assert_eq!(typ, &Typ::arrows(vec![bool_fun_t.clone(), bool_fun_t], bool_t));
+    }
+
+    #[test]
+    fn pure_eq_is_not_accepted_as_hol_eq_shape() {
+        let hol = include_str!("../../theories/HOL/HOL.thy");
+        let env = HolTheoremDb::build_type_env(hol);
+        let lhs = hologic::true_const();
+        let rhs = hologic::true_const();
+        let pure_eq = Pure::mk_equals(Typ::base("bool"), lhs, rhs);
+        let checked = CTerm::certify_checked(pure_eq, &env).expect("checked Pure.eq True True");
+
+        assert!(checked.is_checked());
+        assert_eq!(checked.term_type(), &Typ::base("prop"));
+        assert!(
+            hologic::dest_hol_equals(checked.term()).is_none(),
+            "HOL bridge must not treat Pure.eq as HOL.eq"
+        );
+    }
+
+    #[test]
     fn true_def_checked_source_rejects_dummy_or_compat() {
         let hol = include_str!("../../theories/HOL/HOL.thy");
         let mut env = TypeEnv::new();

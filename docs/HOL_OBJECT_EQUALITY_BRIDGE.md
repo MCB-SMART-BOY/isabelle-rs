@@ -7,10 +7,19 @@ Design-only. No implementation is present yet.
 Current implementation status:
 
 ```text
+HOL.eq term/type diagnostic: done
 try_strict_hol_refl: not implemented
 try_strict_hol_trueI: not implemented
 core batch StrictClosed: 0/125
 ```
+
+The current diagnostic tests in `src/hol/hol_loader.rs` establish:
+
+- `HOL.eq` is declared in the checked `TypeEnv` as `'a => 'a => bool`.
+- A checked application `HOL.eq HOL.True HOL.True` has result type `bool`.
+- The checked `True_def` RHS is reflexive `HOL.eq` over `bool => bool`.
+- `Pure.eq` remains distinguishable from `HOL.eq` and must not be accepted as
+  an object-equality bridge input.
 
 This document specifies the next prerequisite for the first existing core-file
 `StrictClosed` slice:
