@@ -271,6 +271,9 @@ Implemented hardening includes:
   now use `is_strict_closed_proved()`;
 - `HolTheoremDb::checked_definitions` keeps checked definition sources, starting
   with `True_def`, separate from searchable facts and trusted theorem tables;
+- a future HOL object-equality/reflexivity bridge must be documented as a narrow
+  HOL object-logic primitive bridge and must not treat Pure equality or compat
+  `refl` as proof of HOL object equality;
 - `Thm::check_kernel_invariants(KernelCheckMode::{Compat, Strict})` separates
   legacy structural checks from strict trusted-kernel invariant checks;
 - `tpairs`, `shyps`, and `oracles` propagation audits;

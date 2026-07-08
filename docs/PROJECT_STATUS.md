@@ -205,8 +205,12 @@ blocked on the remaining object-equality/reflexivity bridge prerequisite:
 
 ```text
 1. make True_def available as a checked definition source; done, non-theorem input only
-2. add a strict HOL object-equality/reflexivity bridge sufficient for TrueI; pending
+2. add a strict HOL object-equality/reflexivity bridge sufficient for TrueI; design-only contract exists, implementation pending
 ```
+
+The bridge design is tracked in
+[HOL_OBJECT_EQUALITY_BRIDGE.md](HOL_OBJECT_EQUALITY_BRIDGE.md). It is explicitly
+not a general unfolding engine, simplifier, or broad HOL proof engine.
 
 Do not implement a `TrueI` special case by returning `True` directly or by using
 the current compat `refl` fact.

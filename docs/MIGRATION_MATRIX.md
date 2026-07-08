@@ -112,8 +112,10 @@ proof obligation and is not allowed.
 
 ### HOL Object-Equality / Reflexivity Bridge Contract
 
-This bridge remains design-only. It must not reuse compat `refl` or Pure
-reflexivity as if they directly proved HOL object equality.
+This bridge remains design-only. See
+[HOL_OBJECT_EQUALITY_BRIDGE.md](HOL_OBJECT_EQUALITY_BRIDGE.md) for the detailed
+contract. It must not reuse compat `refl` or Pure reflexivity as if they
+directly proved HOL object equality.
 
 The intended narrow bridge is:
 
