@@ -199,24 +199,28 @@ True_def checked definition source: done, non-theorem input only
 HOL object-equality/reflexivity bridge: implemented as narrow primitive bridge
 try_strict_hol_refl: implemented
 try_strict_hol_trueI: not implemented
-checked-definition transport/fold-back to True: not implemented
+checked-definition transport/fold-back to True: implemented for checked True_def
 refl DB fact: compat/open, not strict closed
 Pure.refl DB fact: compat closed-shaped, not strict closed
 Core batch StrictClosed: 0/125
 ```
 
 Therefore the first existing-core-file `StrictClosed` milestone is currently
-blocked on checked-definition transport back to `True`:
+blocked on the narrow `HOL::TrueI` adapter, not on the prerequisite bridge
+pieces:
 
 ```text
 1. True_def checked definition source: done, non-theorem input only
 2. HOL object-equality/reflexivity bridge: implemented as narrow primitive bridge
-3. checked-definition transport/fold-back to True: not implemented
+3. checked-definition transport/fold-back to True: implemented for checked True_def
+4. try_strict_hol_trueI adapter: not implemented
 ```
 
-The bridge design is tracked in
-[HOL_OBJECT_EQUALITY_BRIDGE.md](HOL_OBJECT_EQUALITY_BRIDGE.md). It is explicitly
-not a general unfolding engine, simplifier, or broad HOL proof engine.
+The bridge designs are tracked in
+[HOL_OBJECT_EQUALITY_BRIDGE.md](HOL_OBJECT_EQUALITY_BRIDGE.md) and
+[CHECKED_DEFINITION_TRANSPORT.md](CHECKED_DEFINITION_TRANSPORT.md). They are
+explicitly not a general unfolding engine, simplifier, or broad HOL proof
+engine.
 
 Do not implement a `TrueI` special case by returning `True` directly or by using
 the current compat `refl` fact.

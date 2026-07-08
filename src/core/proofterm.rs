@@ -293,6 +293,22 @@ fn dest_hol_object_equals(term: &Term) -> Option<(&Term, &Term)> {
     }
 }
 
+fn is_hol_true_term(term: &Term) -> bool {
+    matches!(term, Term::Const { name, typ } if name.as_ref() == "HOL.True" && typ == &Typ::base("bool"))
+}
+
+fn bool_identity_term() -> Term {
+    Term::abs("x", Typ::base("bool"), Term::bound(0))
+}
+
+fn is_true_def_rhs_term(term: &Term) -> bool {
+    let Some((lhs, rhs)) = dest_hol_object_equals(term) else {
+        return false;
+    };
+    let bool_id = bool_identity_term();
+    lhs == &bool_id && rhs == &bool_id
+}
+
 /// Replay a proof term and reconstruct the theorem shape it proves.
 pub fn replay_proof(proof: &ProofTerm) -> Result<ReplayResult, String> {
     match proof {
@@ -458,6 +474,27 @@ fn replay_rule(name: &str, prop: &Term, premises: &[ProofTerm]) -> Result<Replay
             debug_assert_eq!(&consequent, prop);
             result.prop = consequent;
             Ok(result)
+        },
+
+        "true_def_transport" => {
+            let [premise] = premises else {
+                return Err(format!(
+                    "true_def_transport: expected 1 premise, got {}",
+                    premises.len()
+                ));
+            };
+            let mut premise = replay_proof(premise)?;
+            if !is_true_def_rhs_term(&premise.prop) {
+                return Err(format!(
+                    "true_def_transport: premise is not the True_def RHS: {:?}",
+                    premise.prop
+                ));
+            }
+            if !is_hol_true_term(prop) {
+                return Err(format!("true_def_transport: result is not HOL.True: {:?}", prop));
+            }
+            premise.prop = prop.clone();
+            Ok(premise)
         },
 
         _ => Err(format!("unsupported proof replay rule: {name}")),
@@ -656,6 +693,16 @@ mod tests {
         )
     }
 
+    fn true_def_rhs_prop() -> Term {
+        let bool_t = Typ::base("bool");
+        let bool_fun_t = Typ::arrow(bool_t.clone(), bool_t.clone());
+        let bool_id = Term::abs("x", bool_t.clone(), Term::bound(0));
+        Term::apps(
+            Term::const_("HOL.eq", Typ::arrows(vec![bool_fun_t.clone(), bool_fun_t], bool_t)),
+            vec![bool_id.clone(), bool_id],
+        )
+    }
+
     fn checked_eq_cterm(typ: Typ, lhs: Term, rhs: Term) -> CTerm {
         checked_cterm(Pure::mk_equals(typ, lhs, rhs))
     }
@@ -689,6 +736,33 @@ mod tests {
         let p = ProofTerm::PAxm { name: "hol_object_refl".into(), prop: hol_refl.clone() };
 
         assert!(check_proof(&p, &hol_refl).is_ok());
+    }
+
+    #[test]
+    fn true_def_transport_replay_succeeds() {
+        let rhs = true_def_rhs_prop();
+        let true_prop = Term::const_("HOL.True", Typ::base("bool"));
+        let p = ProofTerm::PRule {
+            name: "true_def_transport".into(),
+            prop: true_prop.clone(),
+            premises: vec![ProofTerm::PAxm { name: "hol_object_refl".into(), prop: rhs }],
+        };
+
+        assert!(check_proof(&p, &true_prop).is_ok());
+    }
+
+    #[test]
+    fn true_def_transport_replay_rejects_wrong_rhs() {
+        let wrong_rhs = hol_refl_prop("a");
+        let true_prop = Term::const_("HOL.True", Typ::base("bool"));
+        let p = ProofTerm::PRule {
+            name: "true_def_transport".into(),
+            prop: true_prop.clone(),
+            premises: vec![ProofTerm::PAxm { name: "hol_object_refl".into(), prop: wrong_rhs }],
+        };
+
+        let err = check_proof(&p, &true_prop).expect_err("wrong RHS must reject");
+        assert!(err.contains("True_def RHS"), "unexpected replay error: {err}");
     }
 
     #[test]

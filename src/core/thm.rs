@@ -836,10 +836,16 @@ impl Thm {
                 matches!(*name, "assume" | "reflexive" | "hol_object_refl")
             },
             Derivation::Rule { name, premises, .. } => {
-                matches!(*name, "symmetric" | "transitive" | "implies_intr" | "implies_elim")
-                    && premises
-                        .iter()
-                        .all(|premise| Self::derivation_replay_supported(&premise.derivation))
+                matches!(
+                    *name,
+                    "symmetric"
+                        | "transitive"
+                        | "implies_intr"
+                        | "implies_elim"
+                        | "true_def_transport"
+                ) && premises
+                    .iter()
+                    .all(|premise| Self::derivation_replay_supported(&premise.derivation))
             },
         }
     }
@@ -1131,6 +1137,37 @@ impl ThmKernel {
         Hyps::kernel_alpha_eq(a, b) && Self::known_term_types_compatible(a, b)
     }
 
+    fn is_hol_true_term(term: &Term) -> bool {
+        matches!(term, Term::Const { name, typ } if name.as_ref() == "HOL.True" && typ == &Typ::base("bool"))
+    }
+
+    fn dest_hol_object_equals(term: &Term) -> Option<(&Term, &Term)> {
+        match term {
+            Term::App { func, arg: rhs } => match func.as_ref() {
+                Term::App { func: inner, arg: lhs } => match inner.as_ref() {
+                    Term::Const { name, .. } if name.as_ref() == "HOL.eq" => {
+                        Some((lhs.as_ref(), rhs.as_ref()))
+                    },
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn bool_identity_term() -> Term {
+        Term::abs("x", Typ::base("bool"), Term::bound(0))
+    }
+
+    fn is_true_def_rhs_term(term: &Term) -> bool {
+        let Some((lhs, rhs)) = Self::dest_hol_object_equals(term) else {
+            return false;
+        };
+        let bool_id = Self::bool_identity_term();
+        lhs == &bool_id && rhs == &bool_id
+    }
+
     /// **Admit** `ct` as an oracle-backed theorem: `⊢ ct`, tagged with the
     /// oracle `name`.
     ///
@@ -1300,6 +1337,75 @@ impl ThmKernel {
             oracles: vec![],
             trust: ThmTrust::Strict,
             derivation: Derivation::Axiom { name: "hol_object_refl", prop },
+            serial: new_serial(),
+        })
+    }
+
+    // =================================================================
+    // HOL checked-definition transport: True_def fold-back
+    // =================================================================
+
+    /// **Checked True_def transport**: from a strict proof of the checked
+    /// `True_def` RHS to a strict proof of `HOL.True`.
+    ///
+    /// This is deliberately narrower than a definition rewriting engine. It
+    /// only accepts the checked source shape for `True_def`:
+    ///
+    /// ```text
+    /// HOL.True == HOL.eq (λx::bool. x) (λx::bool. x)
+    /// ```
+    ///
+    /// The `rhs_thm` premise must be strict, closed, oracle-free, and prove the
+    /// supplied checked RHS exactly.
+    pub fn true_def_transport(lhs: CTerm, rhs: CTerm, rhs_thm: &Thm) -> Result<Thm, KernelError> {
+        const OP: &str = "ThmKernel::true_def_transport";
+
+        lhs.require_checked(OP)?;
+        rhs.require_checked(OP)?;
+        lhs.require_no_dummy_types(OP)?;
+        rhs.require_no_dummy_types(OP)?;
+
+        if lhs.term_type() != &Typ::base("bool") || !Self::is_hol_true_term(lhs.term()) {
+            return Err(KernelError::KernelInvariant {
+                op: OP,
+                message: "lhs is not the checked HOL.True constant".into(),
+            });
+        }
+
+        if rhs.term_type() != &Typ::base("bool") || !Self::is_true_def_rhs_term(rhs.term()) {
+            return Err(KernelError::KernelInvariant {
+                op: OP,
+                message: "rhs is not the checked True_def reflexive HOL.eq body".into(),
+            });
+        }
+
+        if !rhs_thm.is_strict_closed_proved() {
+            return Err(KernelError::KernelInvariant {
+                op: OP,
+                message: "rhs theorem is not strict closed proved".into(),
+            });
+        }
+
+        if rhs_thm.prop() != &rhs {
+            return Err(KernelError::KernelInvariant {
+                op: OP,
+                message: "rhs theorem proposition does not match checked True_def RHS".into(),
+            });
+        }
+
+        Ok(Thm {
+            hyps: Hyps::empty(),
+            prop: lhs.clone(),
+            maxidx: lhs.maxidx(),
+            tpairs: vec![],
+            shyps: rhs_thm.shyps.clone(),
+            oracles: vec![],
+            trust: ThmTrust::Strict,
+            derivation: Derivation::Rule {
+                name: "true_def_transport",
+                prop: lhs,
+                premises: vec![ThmDeriv::from_thm(rhs_thm)],
+            },
             serial: new_serial(),
         })
     }

@@ -2371,6 +2371,50 @@ pub fn try_strict_hol_refl(term: CTerm, type_env: &TypeEnv) -> Result<Thm, Kerne
     ThmKernel::hol_object_refl(term, type_env)
 }
 
+/// Try the narrow checked-definition transport for `True_def`.
+///
+/// This folds a strict proof of the checked `True_def` RHS back to the checked
+/// `HOL.True` LHS. It is not a general unfolding/folding engine and it does not
+/// make checked definitions into theorem facts.
+pub fn try_strict_true_def_transport(
+    true_def: &CheckedDefinitionSource,
+    rhs_thm: &Thm,
+) -> Result<Thm, KernelError> {
+    const OP: &str = "try_strict_true_def_transport";
+
+    if true_def.name != "True_def" {
+        return Err(KernelError::KernelInvariant {
+            op: OP,
+            message: format!("expected True_def source, found {}", true_def.name),
+        });
+    }
+    if true_def.const_name != "HOL.True" {
+        return Err(KernelError::KernelInvariant {
+            op: OP,
+            message: format!("expected HOL.True definition, found {}", true_def.const_name),
+        });
+    }
+    if true_def.const_type != Typ::base("bool") || true_def.const_type.contains_dummy() {
+        return Err(KernelError::DummyType { op: OP });
+    }
+
+    ThmKernel::true_def_transport(true_def.lhs.clone(), true_def.rhs.clone(), rhs_thm)
+}
+
+/// Look up `True_def` in the checked-definition source table and transport a
+/// strict proof of its RHS back to `HOL.True`.
+pub fn try_strict_true_def_transport_from_db(
+    db: &HolTheoremDb,
+    rhs_thm: &Thm,
+) -> Result<Thm, KernelError> {
+    let true_def =
+        db.checked_definition_source("True_def").ok_or_else(|| KernelError::KernelInvariant {
+            op: "try_strict_true_def_transport_from_db",
+            message: "missing checked True_def source".into(),
+        })?;
+    try_strict_true_def_transport(true_def, rhs_thm)
+}
+
 /// HOL proof-search fact database.
 ///
 /// This is not the final trusted theorem table. It intentionally stores parsed,
@@ -3670,6 +3714,22 @@ pub fn load_theory_files(files: &[String]) -> Vec<ParsedLemma> {
 mod tests {
     use super::*;
 
+    fn hol_env_and_true_def() -> (TypeEnv, CheckedDefinitionSource) {
+        let hol = include_str!("../../theories/HOL/HOL.thy");
+        let env = HolTheoremDb::build_type_env(hol);
+        let defs = HolTheoremDb::build_checked_definition_sources(hol, &env);
+        let true_def = defs.get("True_def").expect("True_def checked source").clone();
+        (env, true_def)
+    }
+
+    fn strict_true_def_rhs_thm(env: &TypeEnv, true_def: &CheckedDefinitionSource) -> Thm {
+        let (lhs, rhs) =
+            hologic::dest_hol_equals(true_def.rhs.term()).expect("True_def RHS HOL.eq");
+        assert_eq!(lhs, rhs, "True_def RHS must be reflexive");
+        let checked_side = CTerm::certify_checked(lhs.clone(), env).expect("checked RHS side");
+        try_strict_hol_refl(checked_side, env).expect("strict True_def RHS theorem")
+    }
+
     #[test]
     fn test_parse_const_decl() {
         let (name, _typ) = parse_const_decl("implies :: \"[bool, bool] => bool\"").unwrap();
@@ -3922,6 +3982,130 @@ mod tests {
         assert!(!db.by_name.contains_key("True_def"));
         assert_eq!(db.searchable_fact_count(), 0);
         assert_eq!(db.closed_proved_count(), 0);
+    }
+
+    #[test]
+    fn true_def_transport_accepts_checked_true_def_rhs() {
+        let (env, true_def) = hol_env_and_true_def();
+        let rhs_thm = strict_true_def_rhs_thm(&env, &true_def);
+
+        let thm = try_strict_true_def_transport(&true_def, &rhs_thm).expect("True_def transport");
+
+        assert!(thm.is_strict_closed_proved());
+        assert_eq!(thm.prop(), &true_def.lhs);
+        assert_eq!(thm.prop().term(), &hologic::true_const());
+        assert!(thm.hyps().is_empty());
+        assert!(thm.tpairs().is_empty());
+        assert!(thm.oracles().is_empty());
+        assert!(thm.check_proof().is_ok());
+    }
+
+    #[test]
+    fn true_def_transport_rejects_missing_true_def() {
+        let hol = include_str!("../../theories/HOL/HOL.thy");
+        let env = HolTheoremDb::build_type_env(hol);
+        let true_ct =
+            CTerm::certify_checked(hologic::true_const(), &env).expect("checked HOL.True");
+        let rhs_thm = try_strict_hol_refl(true_ct, &env).expect("strict HOL object refl");
+        let mut db = HolTheoremDb::new();
+        db.type_env = env;
+
+        let err = try_strict_true_def_transport_from_db(&db, &rhs_thm)
+            .expect_err("missing True_def must reject");
+        assert!(
+            matches!(err, KernelError::KernelInvariant { op, .. } if op == "try_strict_true_def_transport_from_db")
+        );
+    }
+
+    #[test]
+    fn true_def_transport_rejects_non_true_def() {
+        let (env, true_def) = hol_env_and_true_def();
+        let rhs_thm = strict_true_def_rhs_thm(&env, &true_def);
+        let mut other_def = true_def.clone();
+        other_def.name = "Other_def".into();
+
+        let err = try_strict_true_def_transport(&other_def, &rhs_thm)
+            .expect_err("non-True_def source must reject");
+        assert!(
+            matches!(err, KernelError::KernelInvariant { op, .. } if op == "try_strict_true_def_transport")
+        );
+    }
+
+    #[test]
+    fn true_def_transport_rejects_rhs_mismatch() {
+        let (env, true_def) = hol_env_and_true_def();
+        let true_ct =
+            CTerm::certify_checked(hologic::true_const(), &env).expect("checked HOL.True");
+        let wrong_rhs_thm = try_strict_hol_refl(true_ct, &env).expect("strict wrong RHS theorem");
+
+        let err = try_strict_true_def_transport(&true_def, &wrong_rhs_thm)
+            .expect_err("mismatched RHS theorem must reject");
+        assert!(
+            matches!(err, KernelError::KernelInvariant { op, .. } if op == "ThmKernel::true_def_transport")
+        );
+    }
+
+    #[test]
+    fn true_def_transport_rejects_compat_rhs_theorem() {
+        let (_env, true_def) = hol_env_and_true_def();
+        let compat_rhs = ThmKernel::assume_compat(true_def.rhs.clone());
+
+        let err = try_strict_true_def_transport(&true_def, &compat_rhs)
+            .expect_err("compat RHS theorem must reject");
+        assert!(
+            matches!(err, KernelError::KernelInvariant { op, .. } if op == "ThmKernel::true_def_transport")
+        );
+    }
+
+    #[test]
+    fn true_def_transport_rejects_admitted_rhs_theorem() {
+        let (_env, true_def) = hol_env_and_true_def();
+        let admitted_rhs = ThmKernel::admit(true_def.rhs.clone(), "admitted:test_true_def_rhs");
+
+        let err = try_strict_true_def_transport(&true_def, &admitted_rhs)
+            .expect_err("admitted RHS theorem must reject");
+        assert!(
+            matches!(err, KernelError::KernelInvariant { op, .. } if op == "ThmKernel::true_def_transport")
+        );
+    }
+
+    #[test]
+    fn true_def_transport_rejects_open_rhs_theorem() {
+        let (_env, true_def) = hol_env_and_true_def();
+        let open_rhs = ThmKernel::assume(true_def.rhs.clone()).expect("strict open RHS theorem");
+
+        let err = try_strict_true_def_transport(&true_def, &open_rhs)
+            .expect_err("open RHS theorem must reject");
+        assert!(
+            matches!(err, KernelError::KernelInvariant { op, .. } if op == "ThmKernel::true_def_transport")
+        );
+    }
+
+    #[test]
+    fn true_def_transport_rejects_dummy_tainted_definition() {
+        let (env, true_def) = hol_env_and_true_def();
+        let rhs_thm = strict_true_def_rhs_thm(&env, &true_def);
+        let mut dummy_def = true_def.clone();
+        dummy_def.const_type = Typ::dummy();
+
+        let err = try_strict_true_def_transport(&dummy_def, &rhs_thm)
+            .expect_err("dummy-tainted definition source must reject");
+        assert!(
+            matches!(err, KernelError::DummyType { op } if op == "try_strict_true_def_transport")
+        );
+    }
+
+    #[test]
+    fn true_def_transport_produces_strict_closed_true() {
+        let (env, true_def) = hol_env_and_true_def();
+        let rhs_thm = strict_true_def_rhs_thm(&env, &true_def);
+        let thm = try_strict_true_def_transport(&true_def, &rhs_thm).expect("True_def transport");
+
+        assert!(thm.is_strict_kernel_theorem());
+        assert!(thm.is_strict_closed_proved());
+        assert_eq!(thm.prop().term(), &hologic::true_const());
+        assert_eq!(thm.prop().term_type(), &Typ::base("bool"));
+        assert_eq!(thm.nprems(), 0);
     }
 }
 

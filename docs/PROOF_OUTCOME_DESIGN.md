@@ -220,7 +220,7 @@ counts with runtime theorem outcomes.
 | Pure reflexivity `t == t` | `KernelRules::reflexive`, checked term certification, `ClosedThm::trust` | Smallest strict kernel smoke test. | May not correspond to a current core-file lemma. |
 | Implication identity `A ==> A` | `KernelRules::assume`, `KernelRules::implies_intr`, checked proposition certification | Exercises hypothesis discharge and closed theorem acceptance. | Targeted smoke slice implemented; still needs routing from an existing core-file lemma. |
 | Simple equality theorem | Reflexivity plus equality encoding adapter | Closer to HOL-facing facts. | HOL equality/object equality boundaries may add noise. |
-| `HOL::TrueI` | Checked `True_def`, strict HOL object-equality/reflexivity bridge, narrow adapter | Best current existing core-file candidate. | `True_def` source exists as non-theorem input; strict HOL object-equality/reflexivity bridge is implemented; checked-definition transport/fold-back to `True` is still pending. |
+| `HOL::TrueI` | Checked `True_def`, strict HOL object-equality/reflexivity bridge, checked-definition transport, narrow adapter | Best current existing core-file candidate. | `True_def` source, strict HOL object-equality/reflexivity, and checked-definition transport are implemented; the narrow `TrueI` adapter is still pending. |
 
 Completed smoke slice:
 

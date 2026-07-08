@@ -78,7 +78,7 @@ Current targeted diagnostic:
 | `True_def` checked definition source | done; non-theorem input only and not counted as proof progress |
 | HOL object-equality/reflexivity bridge | implemented as narrow primitive bridge |
 | `try_strict_hol_refl` | implemented |
-| checked-definition transport/fold-back to `True` | not implemented |
+| checked-definition transport/fold-back to `True` | implemented for checked `True_def` |
 | `try_strict_hol_trueI` | not implemented |
 | `refl` DB fact | compat/open `((HOL.eq ?t.0) ?t.0)`, not strict closed |
 | `Pure.refl` DB fact | compat closed-shaped `((Pure.eq ?t.0) ?t.0)`, not strict closed |
@@ -108,18 +108,18 @@ The adapter must reject and fall back to the existing admitted path if:
 - any ambient hypothesis, unresolved `tpair`, oracle/admit footprint, or dummy
   type would remain.
 
-Current conclusion: do not implement `try_strict_hol_trueI` yet. The checked
-definition source for `True_def` is available as non-theorem input, and the
-HOL object-equality/reflexivity bridge has a design-only contract, but the
-bridge implementation and the checked-definition transport back to `True` are
-still missing. Implementing a special case that simply returns `True` as strict
-would erase the object-logic proof obligation and is not allowed.
+Current conclusion: the prerequisites `True_def` checked source, strict
+HOL object-equality/reflexivity, and checked-definition transport back to
+`True` are now present. Do not implement `try_strict_hol_trueI` as a direct
+`return StrictClosed(True)` special case; the next step must be a narrow adapter
+that checks theorem name, proposition, proof shape, checked `True_def`, strict
+RHS proof, and final strict closed result.
 
 ### HOL Object-Equality / Reflexivity Bridge Contract
 
-This bridge remains design-only. See
+This bridge is implemented. See
 [HOL_OBJECT_EQUALITY_BRIDGE.md](HOL_OBJECT_EQUALITY_BRIDGE.md) for the detailed
-contract. It must not reuse compat `refl` or Pure reflexivity as if they
+contract. It does not reuse compat `refl` or Pure reflexivity as if they
 directly proved HOL object equality.
 
 The intended narrow bridge is:
@@ -135,9 +135,8 @@ try_strict_hol_refl(t)
     or dummy types
 ```
 
-Before implementation, the bridge must document its logical basis as a HOL
-object-logic primitive/bridge. It is not a rewrite, simp, unfolding, or general
-object-logic prover.
+The bridge is documented as a HOL object-logic primitive/bridge. It is not a
+rewrite, simp, unfolding, or general object-logic prover.
 
 It must reject:
 
@@ -153,9 +152,10 @@ Recommended order:
 ```text
 1. strict Pure implication identity as a direct parser/certifier/export smoke test (done)
 2. make `True_def` available as a checked definition source (done; non-theorem input only)
-3. implement the strict HOL object-equality/reflexivity bridge needed by `TrueI`
-4. implement strict `HOL::TrueI` only as a narrow adapter over those checked pieces
-5. simple equality reflexivity exposed through HOL after the equality adapter is clearer
+3. implement the strict HOL object-equality/reflexivity bridge needed by `TrueI` (done)
+4. implement checked-definition transport/fold-back for checked `True_def` (done)
+5. implement strict `HOL::TrueI` only as a narrow adapter over those checked pieces
+6. simple equality reflexivity exposed through HOL after the equality adapter is clearer
 ```
 
 ## Next Engineering Gates
@@ -167,7 +167,8 @@ Recommended order:
 4. Add a checked-definition source for `True_def`. (done; not counted as theorem progress)
 5. Implement a strict object-equality/reflexivity bridge sufficient for
    `HOL::TrueI` after the term/type diagnostic confirms the checked `HOL.eq`
-   shape.
-6. Route one existing core-file theorem through a strict adapter.
-7. Increase the strict closed count only through `StrictClosed`.
-8. Resume admitted-reason reduction based on the new outcome report.
+   shape. (done)
+6. Implement checked-definition transport/fold-back for checked `True_def`. (done)
+7. Route one existing core-file theorem through a strict `HOL::TrueI` adapter.
+8. Increase the strict closed count only through `StrictClosed`.
+9. Resume admitted-reason reduction based on the new outcome report.

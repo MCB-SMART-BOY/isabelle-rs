@@ -275,6 +275,11 @@ Implemented hardening includes:
   object-logic primitive bridge for `HOL.eq t t`; it requires checked input and
   checked `HOL.eq`, records a separate `hol_object_refl` derivation, and must
   not treat Pure equality or compat `refl` as proof of HOL object equality;
+- `ThmKernel::true_def_transport` / `try_strict_true_def_transport` is a narrow
+  checked-definition transport bridge for `True_def` only; it requires a
+  checked `True_def` source and a strict closed proof of the exact checked RHS,
+  records a separate `true_def_transport` derivation, and must not become
+  general unfolding or definition rewriting;
 - `Thm::check_kernel_invariants(KernelCheckMode::{Compat, Strict})` separates
   legacy structural checks from strict trusted-kernel invariant checks;
 - `tpairs`, `shyps`, and `oracles` propagation audits;

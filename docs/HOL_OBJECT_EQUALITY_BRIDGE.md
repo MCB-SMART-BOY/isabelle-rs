@@ -9,8 +9,8 @@ Current implementation status:
 ```text
 HOL.eq term/type diagnostic: done
 try_strict_hol_refl: implemented
+checked-definition transport/fold-back to True: implemented for checked True_def
 try_strict_hol_trueI: not implemented
-checked-definition transport/fold-back to True: not implemented
 core batch StrictClosed: 0/125
 ```
 
@@ -35,10 +35,11 @@ HOL::TrueI:
 
 `True_def` is already available as a checked definition source in
 `HolTheoremDb::checked_definitions`, but it is not a theorem and does not count
-as proof progress. `try_strict_hol_refl` can now prove the unfolded reflexive
-HOL object equality. `HOL::TrueI` remains unsafe to accept until a legal
-checked-definition transport/fold-back step can move from the unfolded equality
-back to `True`.
+as proof progress. `try_strict_hol_refl` can prove the unfolded reflexive HOL
+object equality, and `true_def_transport` can fold that exact checked RHS back
+to `HOL.True`. `HOL::TrueI` remains unsafe to accept until a narrow adapter
+checks the theorem name, parsed proposition, proof shape, checked definition,
+RHS proof, and final `StrictClosed` result.
 
 ## Problem
 
@@ -74,7 +75,8 @@ not strict closed theorem sources. They must not be reused to produce
 - Do not implement a broad HOL proof engine.
 - Do not treat `Pure.eq` and `HOL.eq` as interchangeable.
 - Do not use compat, open, admitted, or searchable-only `refl` facts.
-- Do not implement `try_strict_hol_trueI` before this bridge exists.
+- Do not implement `try_strict_hol_trueI` by bypassing checked `True_def`
+  transport, proof-shape checks, or final strict-closed validation.
 
 ## Term Shape
 
@@ -156,14 +158,13 @@ After the bridge exists, `HOL::TrueI` may be attempted only by the narrow path:
 4. look up checked non-theorem source `True_def`;
 5. unfold to the expected reflexive HOL object equality;
 6. call `try_strict_hol_refl` on the checked RHS term;
-7. transport back to `True` only through a documented checked-definition step;
+7. transport back to `True` through the documented checked `True_def` step;
 8. accept only if the final theorem is `StrictClosed`.
 ```
 
-The last transport step is a separate proof obligation and is not solved by this
-bridge alone. If the project lacks a legal definitional-equality rule from
-checked definitions back to the defined constant, `HOL::TrueI` must remain
-admitted even after `try_strict_hol_refl` exists.
+The transport step is documented separately in
+[CHECKED_DEFINITION_TRANSPORT.md](CHECKED_DEFINITION_TRANSPORT.md). It is
+deliberately restricted to checked `True_def`, not arbitrary definitions.
 
 ## First Tests
 
@@ -186,6 +187,9 @@ strict_hol_trueI_rejects_compat_refl
 strict_hol_trueI_rejects_non_reflexive_unfolded_rhs
 proof_outcome_counts_hol_trueI_as_strict_closed
 ```
+
+The checked-definition transport attack tests live next to the HOL loader and
+proofterm replay tests and include `true_def_transport_*` coverage.
 
 ## Implementation Boundary
 
