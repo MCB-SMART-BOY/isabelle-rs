@@ -25,9 +25,9 @@ Current status:
 | Admit/oracle tracking | Explicit, classified, and propagated. |
 | Closed theorem acceptance | Main path, session reporting, and final trusted tables use `is_strict_closed_proved()`. |
 | T4 proofterm replay | Legacy proofterm replay remains minimal; strict `src/kernel` invariant replay covers its implemented derivations. |
-| Proof outcome unification | Design target is a single `ProofOutcome` classification so oracle-free, compat, open, admitted, failed, and strict closed results cannot be conflated. |
+| Proof outcome unification | Phase 1 summary classifier is implemented; reports distinguish strict closed, compat closed oracle-free, open oracle-free, admitted, and failed outcomes without changing theorem construction. |
 | Core-to-kernel migration | `src/core` currently remains a legacy proof engine; target architecture reduces it to compatibility, automation, diagnostics, and migration adapters. |
-| First strict slice | Targeted Pure `A ==> A` smoke slice exists; an existing core-file theorem has not yet been routed to `StrictClosed`. |
+| First strict slice | Targeted Pure `A ==> A` smoke slice exists; `True_def` is available as a checked non-theorem definition source; an existing core-file theorem has not yet been routed to `StrictClosed`. |
 | HPC symbolic compute | Design-only parallel track for untrusted candidate generation, fingerprinting, and prefiltering; no Burn/CubeCL dependency and no kernel dependency. |
 | HOL/Isar feature parity | Not current priority. |
 

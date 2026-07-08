@@ -220,14 +220,17 @@ counts with runtime theorem outcomes.
 | Pure reflexivity `t == t` | `KernelRules::reflexive`, checked term certification, `ClosedThm::trust` | Smallest strict kernel smoke test. | May not correspond to a current core-file lemma. |
 | Implication identity `A ==> A` | `KernelRules::assume`, `KernelRules::implies_intr`, checked proposition certification | Exercises hypothesis discharge and closed theorem acceptance. | Targeted smoke slice implemented; still needs routing from an existing core-file lemma. |
 | Simple equality theorem | Reflexivity plus equality encoding adapter | Closer to HOL-facing facts. | HOL equality/object equality boundaries may add noise. |
-| `HOL::TrueI` | HOL `True` encoding plus replay/export | User-visible benchmark candidate. | Currently too entangled with HOL definitions and method fallback for the first slice. |
+| `HOL::TrueI` | Checked `True_def`, strict HOL object-equality/reflexivity bridge, narrow adapter | Best current existing core-file candidate. | `True_def` source exists as non-theorem input; strict HOL object-equality/reflexivity bridge is still pending. |
 
-Recommended first slice:
+Completed smoke slice:
 
 ```text
 strict Pure implication identity
 ```
 
 It is the smallest path that tests parser/certifier/export/acceptance rather
-than only kernel unit tests. After that path exists, choose the smallest parsed
-core-file theorem that can reuse the same strict rules.
+than only kernel unit tests. It does not change the core-file batch because the
+sampled 125 lemmas contain no `A ==> A` / `P ==> P` candidate. The next
+existing-theorem milestone is `HOL::TrueI`, but only after the HOL
+object-equality/reflexivity bridge is specified and implemented without using
+compat `refl` or treating Pure equality as HOL object equality.
