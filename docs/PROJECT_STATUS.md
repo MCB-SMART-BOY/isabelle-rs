@@ -194,18 +194,24 @@ yet:
 Parsed TrueI prop: True
 Parsed TrueI proof: unfolding True_def by (rule refl)
 Current outcome: Admitted(goal_export_unknown_hyps)
-True_def parsed theorem / DB fact: missing
-True_def checked definition source: available as non-theorem input
+True_def parsed theorem / DB fact: missing (expected; definition source is not a theorem)
+True_def checked definition source: done, non-theorem input only
+HOL object-equality/reflexivity bridge: design-only contract exists, implementation pending
+try_strict_hol_refl: not implemented
+try_strict_hol_trueI: not implemented
 refl DB fact: compat/open, not strict closed
 Pure.refl DB fact: compat closed-shaped, not strict closed
+Core batch StrictClosed: 0/125
 ```
 
 Therefore the first existing-core-file `StrictClosed` milestone is currently
-blocked on the remaining object-equality/reflexivity bridge prerequisite:
+blocked on the bridge implementation and later checked-definition transport
+back to `True`:
 
 ```text
-1. make True_def available as a checked definition source; done, non-theorem input only
-2. add a strict HOL object-equality/reflexivity bridge sufficient for TrueI; design-only contract exists, implementation pending
+1. True_def checked definition source: done, non-theorem input only
+2. HOL object-equality/reflexivity bridge: design-only contract exists, implementation pending
+3. checked-definition transport/fold-back to True: not implemented
 ```
 
 The bridge design is tracked in

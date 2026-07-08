@@ -74,8 +74,10 @@ Current targeted diagnostic:
 | Parsed theorem | `TrueI`, prop `True`, proof `unfolding True_def by (rule refl)` |
 | Current `verify_lemma` result | admitted theorem with `admitted:goal_export_unknown_hyps` |
 | Current `ProofOutcome` | `Admitted(GoalExportUnknownHyps)` |
-| `True_def` in parsed lemmas / DB facts | missing |
-| `True_def` checked definition source | available after the checked-source prerequisite; not a theorem and not counted as proof progress |
+| `True_def` in parsed lemmas / DB facts | missing, as expected; the checked source is separate from theorem facts |
+| `True_def` checked definition source | done; non-theorem input only and not counted as proof progress |
+| HOL object-equality/reflexivity bridge | design-only contract exists; implementation pending |
+| `try_strict_hol_refl` / `try_strict_hol_trueI` | not implemented |
 | `refl` DB fact | compat/open `((HOL.eq ?t.0) ?t.0)`, not strict closed |
 | `Pure.refl` DB fact | compat closed-shaped `((Pure.eq ?t.0) ?t.0)`, not strict closed |
 
@@ -105,10 +107,11 @@ The adapter must reject and fall back to the existing admitted path if:
   type would remain.
 
 Current conclusion: do not implement `try_strict_hol_trueI` yet. The checked
-definition source for `True_def` is now available as non-theorem input, but the
-strict HOL object-equality/reflexivity bridge is still missing. Implementing a
-special case that simply returns `True` as strict would erase the object-logic
-proof obligation and is not allowed.
+definition source for `True_def` is available as non-theorem input, and the
+HOL object-equality/reflexivity bridge has a design-only contract, but the
+bridge implementation and the checked-definition transport back to `True` are
+still missing. Implementing a special case that simply returns `True` as strict
+would erase the object-logic proof obligation and is not allowed.
 
 ### HOL Object-Equality / Reflexivity Bridge Contract
 
@@ -148,7 +151,7 @@ Recommended order:
 ```text
 1. strict Pure implication identity as a direct parser/certifier/export smoke test (done)
 2. make `True_def` available as a checked definition source (done; non-theorem input only)
-3. add the strict HOL object-equality/reflexivity bridge needed by `TrueI`
+3. implement the strict HOL object-equality/reflexivity bridge needed by `TrueI`
 4. implement strict `HOL::TrueI` only as a narrow adapter over those checked pieces
 5. simple equality reflexivity exposed through HOL after the equality adapter is clearer
 ```
@@ -160,7 +163,9 @@ Recommended order:
 2. Use it in core verification reports.
 3. Add a strict adapter for the chosen implication-identity slice.
 4. Add a checked-definition source for `True_def`. (done; not counted as theorem progress)
-5. Add a strict object-equality/reflexivity bridge sufficient for `HOL::TrueI`.
+5. Implement a strict object-equality/reflexivity bridge sufficient for
+   `HOL::TrueI` after the term/type diagnostic confirms the checked `HOL.eq`
+   shape.
 6. Route one existing core-file theorem through a strict adapter.
 7. Increase the strict closed count only through `StrictClosed`.
 8. Resume admitted-reason reduction based on the new outcome report.

@@ -4,6 +4,14 @@
 
 Design-only. No implementation is present yet.
 
+Current implementation status:
+
+```text
+try_strict_hol_refl: not implemented
+try_strict_hol_trueI: not implemented
+core batch StrictClosed: 0/125
+```
+
 This document specifies the next prerequisite for the first existing core-file
 `StrictClosed` slice:
 
@@ -138,9 +146,10 @@ After the bridge exists, `HOL::TrueI` may be attempted only by the narrow path:
 8. accept only if the final theorem is `StrictClosed`.
 ```
 
-The last transport step is a separate proof obligation. If the project lacks a
-legal definitional-equality rule from checked definitions back to the defined
-constant, `HOL::TrueI` must remain admitted.
+The last transport step is a separate proof obligation and is not solved by this
+bridge alone. If the project lacks a legal definitional-equality rule from
+checked definitions back to the defined constant, `HOL::TrueI` must remain
+admitted even after `try_strict_hol_refl` exists.
 
 ## First Tests
 

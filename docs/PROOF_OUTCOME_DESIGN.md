@@ -232,5 +232,6 @@ It is the smallest path that tests parser/certifier/export/acceptance rather
 than only kernel unit tests. It does not change the core-file batch because the
 sampled 125 lemmas contain no `A ==> A` / `P ==> P` candidate. The next
 existing-theorem milestone is `HOL::TrueI`, but only after the HOL
-object-equality/reflexivity bridge is specified and implemented without using
-compat `refl` or treating Pure equality as HOL object equality.
+object-equality/reflexivity bridge is implemented and checked-definition
+transport back to `True` is available, without using compat `refl` or treating
+Pure equality as HOL object equality.
