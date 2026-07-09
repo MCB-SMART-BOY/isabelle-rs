@@ -280,6 +280,12 @@ Implemented hardening includes:
   checked `True_def` source and a strict closed proof of the exact checked RHS,
   records a separate `true_def_transport` derivation, and must not become
   general unfolding or definition rewriting;
+- `try_strict_hol_true_i` is the first existing core-file strict adapter. It
+  accepts only `TrueI` / `HOL::TrueI` with proof
+  `unfolding True_def by (rule refl)`, checked `True_def`, strict HOL object
+  reflexivity for the checked RHS, and checked `True_def` transport to
+  `HOL.True`. It must not become a direct `return True`, compat `refl`, or
+  general unfolding path;
 - `Thm::check_kernel_invariants(KernelCheckMode::{Compat, Strict})` separates
   legacy structural checks from strict trusted-kernel invariant checks;
 - `tpairs`, `shyps`, and `oracles` propagation audits;

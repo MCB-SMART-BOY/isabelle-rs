@@ -11,8 +11,8 @@ Current chain:
 True_def checked definition source: done, non-theorem input only
 HOL object-equality/reflexivity bridge: done
 checked-definition transport/fold-back for True_def: done in this phase
-try_strict_hol_trueI: not implemented
-core batch StrictClosed: still 0/125 until TrueI is routed
+try_strict_hol_true_i: implemented as a narrow TrueI-only adapter
+core batch StrictClosed: 1/125
 ```
 
 ## Purpose
@@ -108,7 +108,7 @@ arbitrary definition names.
 
 ## Relationship To HOL::TrueI
 
-This transport still does not implement `HOL::TrueI`.
+This transport is now consumed by the narrow `HOL::TrueI` adapter.
 
 `HOL::TrueI` may be routed to strict acceptance only after the verifier checks
 all of the following:
@@ -123,8 +123,8 @@ true_def_transport folds RHS back to HOL.True
 final theorem is StrictClosed
 ```
 
-Until that narrow adapter is implemented, the core batch may remain at
-`StrictClosed: 0/125`.
+The core batch now reports `StrictClosed: 1/125`, with `HOL::TrueI` as the
+first existing theorem routed through strict acceptance.
 
 ## Attack Tests
 

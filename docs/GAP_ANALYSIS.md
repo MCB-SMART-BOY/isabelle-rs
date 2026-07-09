@@ -90,10 +90,11 @@ context assumptions, or admitted with `admitted:goal_export_*` /
 runtime bucket, but it does not improve proof coverage:
 
 ```text
-test_verify_all_core_files: 0/125 strict closed proved
+test_verify_all_core_files: 1/125 strict closed proved
 dynamic sample after explicit goal export:
+  StrictClosed: 1
   CLOSED_ORACLE_FREE_NON_STRICT: 1
-  admitted:goal_export_unknown_hyps: 66
+  admitted:goal_export_unknown_hyps: 65
   admitted:proof_engine_failed: 50
   admitted:goal_export_open_subgoals: 3
   admitted:parser_gap: 3

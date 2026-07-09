@@ -34,19 +34,19 @@ overlap inventory into actionable migration slices.
 The immediate milestone is not broad coverage. It is:
 
 ```text
-test_verify_all_core_files: 0/125 StrictClosed -> 1/125 StrictClosed
+test_verify_all_core_files: 1/125 StrictClosed
 ```
 
 A targeted smoke slice now proves Pure implication identity `A ==> A` through
 the strict kernel nucleus and verifies that the current summary classifier
-counts the checked identity adapter as `StrictClosed`. This does not yet change
-the core-file batch because none of the current sampled lemmas route through
-that shape.
+counts the checked identity adapter as `StrictClosed`. The first existing
+core-file slice is now `HOL::TrueI`, which changes the sampled core-file batch
+to `StrictClosed: 1/125`.
 
 A diagnostic scan of the current 125 sampled core-file lemmas found zero parsed
-propositions of the form `A ==> A` / `P ==> P`. The next `1/125` milestone must
-therefore use a different existing theorem instead of extending the synthetic
-identity smoke test.
+propositions of the form `A ==> A` / `P ==> P`, so the synthetic identity slice
+could not move the batch. `HOL::TrueI` is the first real sampled theorem routed
+through strict acceptance.
 
 Candidate slices:
 
@@ -55,7 +55,7 @@ Candidate slices:
 | Pure reflexivity `t == t` | Smallest strict kernel theorem construction path. | Checked term certification, `KernelRules::reflexive`, closed acceptance. | Good kernel/acceptance smoke test, but may not map directly to a current core lemma. |
 | Pure implication identity `A ==> A` | Exercises assumption introduction and legal discharge. | Checked `CProp`, `KernelRules::assume`, `KernelRules::implies_intr`, `ClosedThm` acceptance. | Targeted smoke slice implemented; next step is an existing core-file lemma. |
 | Simple equality reflexivity exposed through HOL | Brings the path closer to user-visible HOL facts. | HOL equality adapter, type certification, strict reflexivity. | Good second slice after Pure path works. |
-| `HOL::TrueI` | First sampled HOL lemma with a small proof: `unfolding True_def by (rule refl)`. | Checked `True_def` definition source, strict HOL object-equality/reflexivity bridge, narrow `TrueI` adapter. | Best current candidate for the first existing core-file `StrictClosed`, but must not go through simp/auto or compat `refl`. |
+| `HOL::TrueI` | First sampled HOL lemma with a small proof: `unfolding True_def by (rule refl)`. | Checked `True_def` definition source, strict HOL object-equality/reflexivity bridge, checked `True_def` transport, narrow `TrueI` adapter. | Implemented as the first existing core-file `StrictClosed`; not a general simp/unfolding path. |
 
 ### `HOL::TrueI` Strict Slice Contract
 
@@ -72,14 +72,14 @@ Current targeted diagnostic:
 |---|---|
 | Source theory | `theories/HOL/HOL.thy` |
 | Parsed theorem | `TrueI`, prop `True`, proof `unfolding True_def by (rule refl)` |
-| Current `verify_lemma` result | admitted theorem with `admitted:goal_export_unknown_hyps` |
-| Current `ProofOutcome` | `Admitted(GoalExportUnknownHyps)` |
+| Current `verify_lemma` result | strict closed theorem for `HOL.True` |
+| Current `ProofOutcome` | `StrictClosed` |
 | `True_def` in parsed lemmas / DB facts | missing, as expected; the checked source is separate from theorem facts |
 | `True_def` checked definition source | done; non-theorem input only and not counted as proof progress |
 | HOL object-equality/reflexivity bridge | implemented as narrow primitive bridge |
 | `try_strict_hol_refl` | implemented |
 | checked-definition transport/fold-back to `True` | implemented for checked `True_def` |
-| `try_strict_hol_trueI` | not implemented |
+| `try_strict_hol_true_i` | implemented as a narrow TrueI-only adapter |
 | `refl` DB fact | compat/open `((HOL.eq ?t.0) ?t.0)`, not strict closed |
 | `Pure.refl` DB fact | compat closed-shaped `((Pure.eq ?t.0) ?t.0)`, not strict closed |
 
@@ -108,12 +108,11 @@ The adapter must reject and fall back to the existing admitted path if:
 - any ambient hypothesis, unresolved `tpair`, oracle/admit footprint, or dummy
   type would remain.
 
-Current conclusion: the prerequisites `True_def` checked source, strict
-HOL object-equality/reflexivity, and checked-definition transport back to
-`True` are now present. Do not implement `try_strict_hol_trueI` as a direct
-`return StrictClosed(True)` special case; the next step must be a narrow adapter
-that checks theorem name, proposition, proof shape, checked `True_def`, strict
-RHS proof, and final strict closed result.
+Current conclusion: the narrow `HOL::TrueI` adapter is implemented and is the
+first existing core-file strict slice. It checks theorem name, proposition,
+proof shape, checked `True_def`, strict RHS proof, and final strict closed
+result. Do not generalize it into direct `return StrictClosed(True)`, simp, or
+definition rewriting.
 
 ### HOL Object-Equality / Reflexivity Bridge Contract
 
@@ -154,7 +153,7 @@ Recommended order:
 2. make `True_def` available as a checked definition source (done; non-theorem input only)
 3. implement the strict HOL object-equality/reflexivity bridge needed by `TrueI` (done)
 4. implement checked-definition transport/fold-back for checked `True_def` (done)
-5. implement strict `HOL::TrueI` only as a narrow adapter over those checked pieces
+5. implement strict `HOL::TrueI` only as a narrow adapter over those checked pieces (done)
 6. simple equality reflexivity exposed through HOL after the equality adapter is clearer
 ```
 
@@ -169,6 +168,6 @@ Recommended order:
    `HOL::TrueI` after the term/type diagnostic confirms the checked `HOL.eq`
    shape. (done)
 6. Implement checked-definition transport/fold-back for checked `True_def`. (done)
-7. Route one existing core-file theorem through a strict `HOL::TrueI` adapter.
+7. Route one existing core-file theorem through a strict `HOL::TrueI` adapter. (done)
 8. Increase the strict closed count only through `StrictClosed`.
 9. Resume admitted-reason reduction based on the new outcome report.

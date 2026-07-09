@@ -22,7 +22,9 @@ use crate::{
         tactic,
         thm::{CTerm, Hyps, Thm, ThmKernel, ThmTrust},
     },
-    hol::hol_loader::{HolTheoremDb, ParsedLemma},
+    hol::hol_loader::{
+        HolTheoremDb, ParsedLemma, normalize_checked_hol_true_prop, try_strict_hol_true_i,
+    },
     isar::args::Args,
     tools::simp::HolSimplifier,
 };
@@ -3825,6 +3827,7 @@ pub fn verify_file(source: &str) -> (usize, usize) {
     let lemmas =
         HolTheoremDb::with_override(&empty_db, || crate::hol::hol_loader::parse_lemmas(source));
     let mut local_db = HolTheoremDb::from_lemmas(&lemmas);
+    let _ = enrich_local_db_with_checked_sources(&mut local_db, source);
     HolTheoremDb::add_builtins(&mut local_db);
     // Inject core simpset + attrs_index from parent theories
     // (HOL, Orderings, Set, Nat, Fun, Lattices, Groups, Rings — OnceLock cached)
@@ -3870,6 +3873,7 @@ pub fn verify_file_diagnostic(source: &str) -> Vec<(String, String, bool)> {
     let lemmas =
         HolTheoremDb::with_override(&empty_db, || crate::hol::hol_loader::parse_lemmas(source));
     let mut local_db = HolTheoremDb::from_lemmas(&lemmas);
+    let _ = enrich_local_db_with_checked_sources(&mut local_db, source);
     HolTheoremDb::add_builtins(&mut local_db);
     let core = load_core_simpset();
     for thm in &core.simps {
@@ -3958,6 +3962,37 @@ pub fn verify_lemmas_batch(lemmas: &[ParsedLemma]) -> (usize, usize) {
     (verified, attempted)
 }
 
+fn enrich_local_db_with_checked_sources(
+    db: &mut HolTheoremDb,
+    source: &str,
+) -> Result<(), KernelError> {
+    let source_env = HolTheoremDb::build_type_env(source);
+    db.merge_checked_source_type_env(source_env)?;
+    db.extend_checked_definitions_from_source(source);
+    Ok(())
+}
+
+fn normalize_true_i_prop_for_verify(
+    parsed_prop: &CTerm,
+    db: &HolTheoremDb,
+) -> Result<CTerm, KernelError> {
+    let mut term = parsed_prop.term().clone();
+    term.type_annotate(&db.type_env);
+    match &term {
+        crate::core::term::Term::Const { name, typ }
+        | crate::core::term::Term::Free { name, typ }
+            if matches!(name.as_ref(), "HOL.True" | "True")
+                && (typ == &crate::core::types::Typ::base("bool") || typ.is_dummy()) =>
+        {
+            CTerm::certify_checked(crate::hol::hologic::true_const(), &db.type_env)
+        },
+        _ => {
+            let annotated = CTerm::certify(term);
+            normalize_checked_hol_true_prop(&annotated, &db.type_env)
+        },
+    }
+}
+
 pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
     AUTO_DEPTH.with(|c| c.set(0));
     // Optimistically assume a real proof; non-proving exit sites downgrade this.
@@ -3997,6 +4032,12 @@ pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
     }
 
     let proof = lem.proof_script.as_ref()?;
+    if matches!(lem.name.as_str(), "TrueI" | "HOL::TrueI")
+        && let Ok(checked_true_prop) = normalize_true_i_prop_for_verify(lem.theorem.prop(), db)
+        && let Ok(strict_true_i) = try_strict_hol_true_i(&lem.name, &checked_true_prop, proof, db)
+    {
+        return Some(strict_true_i);
+    }
     if proof_allows_strict_imp_identity(proof)
         && let Some(strict_identity) =
             try_strict_pure_imp_identity(lem.theorem.prop().term(), &db.type_env)
@@ -4371,6 +4412,7 @@ mod tests {
         let lemmas =
             HolTheoremDb::with_override(&empty_db, || crate::hol::hol_loader::parse_lemmas(source));
         let mut db = HolTheoremDb::from_lemmas(&lemmas);
+        let _ = enrich_local_db_with_checked_sources(&mut db, source);
         HolTheoremDb::add_builtins(&mut db);
         HolTheoremDb::with_override(&db, || {
             let lem = lemmas.iter().find(|l| l.name == name).expect("lemma should parse");
@@ -4794,6 +4836,26 @@ mod tests {
         HolTheoremDb::with_override(&db, f)
     }
 
+    fn parsed_hol_true_i() -> crate::hol::hol_loader::ParsedLemma {
+        let hol = include_str!("../../theories/HOL/HOL.thy");
+        let empty_db = HolTheoremDb::new();
+        let lemmas =
+            HolTheoremDb::with_override(&empty_db, || crate::hol::hol_loader::parse_lemmas(hol));
+        lemmas.into_iter().find(|lem| lem.name == "TrueI").expect("HOL TrueI parses")
+    }
+
+    fn with_hol_true_i_db<R>(f: impl FnOnce() -> R) -> R {
+        let hol = include_str!("../../theories/HOL/HOL.thy");
+        let empty_db = HolTheoremDb::new();
+        let lemmas =
+            HolTheoremDb::with_override(&empty_db, || crate::hol::hol_loader::parse_lemmas(hol));
+        let mut db = HolTheoremDb::from_lemmas(&lemmas);
+        enrich_local_db_with_checked_sources(&mut db, hol)
+            .expect("HOL TrueI checked source env must merge");
+        HolTheoremDb::add_builtins(&mut db);
+        HolTheoremDb::with_override(&db, f)
+    }
+
     #[test]
     fn strict_vertical_slice_pure_imp_identity() {
         let mut env = crate::core::types::TypeEnv::new();
@@ -4835,6 +4897,34 @@ mod tests {
 
         assert!(matches!(outcome, ProofOutcome::CompatClosedOracleFree { .. }));
         assert!(!outcome.is_strict_closed());
+    }
+
+    #[test]
+    fn proof_outcome_counts_hol_true_i_as_strict_closed() {
+        let lem = parsed_hol_true_i();
+        assert_eq!(lem.proof_script.as_deref(), Some("unfolding True_def by (rule refl)"));
+        reset_verify_stats();
+
+        let (verified, attempted) = with_hol_true_i_db(|| {
+            let db = HolTheoremDb::get();
+            let checked_prop = normalize_true_i_prop_for_verify(lem.theorem.prop(), db)
+                .expect("checked TrueI prop");
+            let strict_true_i = try_strict_hol_true_i(
+                &lem.name,
+                &checked_prop,
+                lem.proof_script.as_deref().expect("proof"),
+                db,
+            )
+            .expect("direct strict TrueI adapter path");
+            assert!(strict_true_i.is_strict_closed_proved());
+
+            verify_lemmas_batch(std::slice::from_ref(&lem))
+        });
+        let stats = verify_outcome_stats();
+
+        assert_eq!((verified, attempted), (1, 1));
+        assert_eq!(stats.strict_closed, 1);
+        assert_eq!(stats.total(), 1);
     }
 
     #[test]
@@ -5214,6 +5304,7 @@ mod tests {
             let lemmas = crate::hol::hol_loader::parse_lemmas(&source);
             // Use local DB to avoid triggering global HOL_THEOREMS init
             let mut local_db = HolTheoremDb::from_lemmas(&lemmas);
+            let _ = enrich_local_db_with_checked_sources(&mut local_db, &source);
             HolTheoremDb::add_builtins(&mut local_db);
             let (v, a) =
                 HolTheoremDb::with_override(&local_db, || super::verify_lemmas_batch(&lemmas));
@@ -5358,6 +5449,7 @@ mod benchmark_tests {
             HolTheoremDb::with_override(&empty_db, || crate::hol::hol_loader::parse_lemmas(source));
         let total_lemmas = lemmas.len();
         let mut local_db = HolTheoremDb::from_lemmas(&lemmas);
+        let _ = enrich_local_db_with_checked_sources(&mut local_db, source);
         HolTheoremDb::add_builtins(&mut local_db);
         let auto_max = if total_lemmas > 500 {
             50
@@ -5448,7 +5540,7 @@ mod benchmark_tests {
     }
 
     #[test]
-    fn test_verify_all_core_files() {
+    fn test_verify_all_core_files_reports_at_least_one_strict_closed() {
         eprintln!("=== Full Core Benchmark ===");
         reset_verify_stats();
         let files = vec![
@@ -5488,8 +5580,15 @@ mod benchmark_tests {
             }
         );
         eprintln!("=== ProofOutcome ===");
-        for line in verify_outcome_stats().report_lines() {
+        let outcome_stats = verify_outcome_stats();
+        for line in outcome_stats.report_lines() {
             eprintln!("  {line}");
         }
+
+        assert!(
+            total_verified >= 1,
+            "core batch should contain at least the narrow strict HOL::TrueI slice"
+        );
+        assert!(outcome_stats.strict_closed >= 1);
     }
 }

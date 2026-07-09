@@ -2415,6 +2415,137 @@ pub fn try_strict_true_def_transport_from_db(
     try_strict_true_def_transport(true_def, rhs_thm)
 }
 
+fn proof_is_strict_true_i_shape(proof_text: &str) -> bool {
+    let normalized = proof_text.split_whitespace().collect::<Vec<_>>().join(" ");
+    normalized == "unfolding True_def by (rule refl)"
+}
+
+fn theorem_name_is_true_i(theorem_name: &str) -> bool {
+    matches!(theorem_name, "TrueI" | "HOL::TrueI")
+}
+
+/// Normalize the parsed `TrueI` proposition into a checked `HOL.True` CTerm.
+///
+/// This is the parser/loader boundary for the existing theorem whose source
+/// writes `True` while the checked HOL constant is `HOL.True`. It deliberately
+/// rejects Free aliases and dummy-typed input; the strict `TrueI` adapter itself
+/// still requires a checked, dummy-free `HOL.True` CTerm.
+pub fn normalize_checked_hol_true_prop(
+    parsed_prop: &CTerm,
+    type_env: &TypeEnv,
+) -> Result<CTerm, KernelError> {
+    const OP: &str = "normalize_checked_hol_true_prop";
+    parsed_prop.require_no_dummy_types(OP)?;
+
+    match parsed_prop.term() {
+        Term::Const { name, typ } if matches!(name.as_ref(), "HOL.True" | "True") => {
+            if typ != &Typ::base("bool") {
+                return Err(KernelError::TypeMismatch {
+                    expected: Typ::base("bool"),
+                    actual: typ.clone(),
+                });
+            }
+            CTerm::certify_checked(hologic::true_const(), type_env)
+        },
+        _ => Err(KernelError::KernelInvariant {
+            op: OP,
+            message: "parsed proposition is not a constant True alias".into(),
+        }),
+    }
+}
+
+/// Try the narrow strict adapter for the existing HOL theorem `TrueI`.
+///
+/// This recognizes only the parsed theorem
+///
+/// ```text
+/// lemma TrueI: True
+///   unfolding True_def by (rule refl)
+/// ```
+///
+/// and composes the already audited strict pieces:
+///
+/// 1. checked `True_def` source;
+/// 2. strict HOL object reflexivity for the checked RHS;
+/// 3. checked `True_def` transport/fold-back to `HOL.True`.
+///
+/// It is not a general unfolding engine, simplifier, or HOL proof engine.
+pub fn try_strict_hol_true_i(
+    theorem_name: &str,
+    parsed_prop: &CTerm,
+    proof_text: &str,
+    db: &HolTheoremDb,
+) -> Result<Thm, KernelError> {
+    const OP: &str = "try_strict_hol_true_i";
+
+    if !theorem_name_is_true_i(theorem_name) {
+        return Err(KernelError::KernelInvariant {
+            op: OP,
+            message: format!("expected TrueI theorem name, found {theorem_name}"),
+        });
+    }
+    if !proof_is_strict_true_i_shape(proof_text) {
+        return Err(KernelError::KernelInvariant {
+            op: OP,
+            message: "proof is not exactly `unfolding True_def by (rule refl)`".into(),
+        });
+    }
+
+    let checked_true = CTerm::certify_checked(hologic::true_const(), &db.type_env)?;
+    parsed_prop.require_no_dummy_types(OP)?;
+    parsed_prop.require_checked(OP)?;
+    if parsed_prop.term() != checked_true.term()
+        || parsed_prop.term_type() != checked_true.term_type()
+    {
+        return Err(KernelError::KernelInvariant {
+            op: OP,
+            message: "parsed proposition is not checked HOL.True".into(),
+        });
+    }
+
+    let true_def = db.checked_definition_source("True_def").ok_or_else(|| {
+        KernelError::KernelInvariant { op: OP, message: "missing checked True_def source".into() }
+    })?;
+    if true_def.lhs != checked_true {
+        return Err(KernelError::KernelInvariant {
+            op: OP,
+            message: "checked True_def lhs is not HOL.True".into(),
+        });
+    }
+
+    let (lhs, rhs) = hologic::dest_hol_equals(true_def.rhs.term()).ok_or_else(|| {
+        KernelError::KernelInvariant {
+            op: OP,
+            message: "checked True_def rhs is not a HOL.eq proposition".into(),
+        }
+    })?;
+    if lhs != rhs {
+        return Err(KernelError::KernelInvariant {
+            op: OP,
+            message: "checked True_def rhs is not reflexive".into(),
+        });
+    }
+
+    let checked_side = CTerm::certify_checked(lhs.clone(), &db.type_env)?;
+    let rhs_thm = try_strict_hol_refl(checked_side, &db.type_env)?;
+    if rhs_thm.prop() != &true_def.rhs {
+        return Err(KernelError::KernelInvariant {
+            op: OP,
+            message: "strict HOL refl result does not match checked True_def rhs".into(),
+        });
+    }
+
+    let result = try_strict_true_def_transport(true_def, &rhs_thm)?;
+    if !result.is_strict_closed_proved() || result.prop() != &checked_true {
+        return Err(KernelError::KernelInvariant {
+            op: OP,
+            message: "TrueI adapter did not produce strict closed HOL.True".into(),
+        });
+    }
+
+    Ok(result)
+}
+
 /// HOL proof-search fact database.
 ///
 /// This is not the final trusted theorem table. It intentionally stores parsed,
@@ -2504,6 +2635,49 @@ impl HolTheoremDb {
     pub fn extend_checked_definitions_from_source(&mut self, source: &str) {
         let defs = Self::build_checked_definition_sources(source, &self.type_env);
         self.checked_definitions.extend(defs);
+    }
+
+    /// Merge source declarations used for checked definition sources.
+    ///
+    /// Equal declarations are accepted, but conflicting declarations are
+    /// rejected instead of silently overwriting the verification environment.
+    pub fn merge_checked_source_type_env(
+        &mut self,
+        source_env: crate::core::types::TypeEnv,
+    ) -> Result<(), KernelError> {
+        const OP: &str = "HolTheoremDb::merge_checked_source_type_env";
+
+        for (name, typ) in source_env.consts {
+            if let Some(existing) = self.type_env.consts.get(&name) {
+                if existing != &typ {
+                    return Err(KernelError::KernelInvariant {
+                        op: OP,
+                        message: format!(
+                            "conflicting constant declaration for {name}: existing {existing:?}, source {typ:?}"
+                        ),
+                    });
+                }
+            } else {
+                self.type_env.consts.insert(name, typ);
+            }
+        }
+
+        for (name, arity) in source_env.types {
+            if let Some(existing) = self.type_env.types.get(&name) {
+                if *existing != arity {
+                    return Err(KernelError::KernelInvariant {
+                        op: OP,
+                        message: format!(
+                            "conflicting type declaration for {name}: existing arity {existing}, source arity {arity}"
+                        ),
+                    });
+                }
+            } else {
+                self.type_env.types.insert(name, arity);
+            }
+        }
+
+        Ok(())
     }
 
     /// Build checked definition sources from source text.
@@ -3730,6 +3904,18 @@ mod tests {
         try_strict_hol_refl(checked_side, env).expect("strict True_def RHS theorem")
     }
 
+    fn hol_db_with_true_def() -> HolTheoremDb {
+        let hol = include_str!("../../theories/HOL/HOL.thy");
+        let mut db = HolTheoremDb::new();
+        db.type_env = HolTheoremDb::build_type_env(hol);
+        db.extend_checked_definitions_from_source(hol);
+        db
+    }
+
+    fn checked_true_prop(db: &HolTheoremDb) -> CTerm {
+        CTerm::certify_checked(hologic::true_const(), &db.type_env).expect("checked HOL.True")
+    }
+
     #[test]
     fn test_parse_const_decl() {
         let (name, _typ) = parse_const_decl("implies :: \"[bool, bool] => bool\"").unwrap();
@@ -4106,6 +4292,202 @@ mod tests {
         assert_eq!(thm.prop().term(), &hologic::true_const());
         assert_eq!(thm.prop().term_type(), &Typ::base("bool"));
         assert_eq!(thm.nprems(), 0);
+    }
+
+    #[test]
+    fn strict_hol_true_i_accepts_checked_true_def_refl_path() {
+        let db = hol_db_with_true_def();
+        let parsed_prop = checked_true_prop(&db);
+
+        let thm =
+            try_strict_hol_true_i("TrueI", &parsed_prop, "unfolding True_def by (rule refl)", &db)
+                .expect("strict HOL TrueI adapter");
+
+        assert!(thm.is_strict_closed_proved());
+        assert_eq!(thm.prop().term(), &hologic::true_const());
+        assert!(thm.hyps().is_empty());
+        assert!(thm.tpairs().is_empty());
+        assert!(thm.oracles().is_empty());
+        assert!(thm.check_proof().is_ok());
+    }
+
+    #[test]
+    fn strict_hol_true_i_rejects_missing_true_def() {
+        let hol = include_str!("../../theories/HOL/HOL.thy");
+        let mut db = HolTheoremDb::new();
+        db.type_env = HolTheoremDb::build_type_env(hol);
+        let parsed_prop = checked_true_prop(&db);
+
+        let err =
+            try_strict_hol_true_i("TrueI", &parsed_prop, "unfolding True_def by (rule refl)", &db)
+                .expect_err("missing checked True_def must reject");
+
+        assert!(
+            matches!(err, KernelError::KernelInvariant { op, .. } if op == "try_strict_hol_true_i")
+        );
+    }
+
+    #[test]
+    fn strict_hol_true_i_rejects_wrong_theorem_name() {
+        let db = hol_db_with_true_def();
+        let parsed_prop = checked_true_prop(&db);
+
+        let err = try_strict_hol_true_i(
+            "NotTrueI",
+            &parsed_prop,
+            "unfolding True_def by (rule refl)",
+            &db,
+        )
+        .expect_err("wrong theorem name must reject");
+
+        assert!(
+            matches!(err, KernelError::KernelInvariant { op, .. } if op == "try_strict_hol_true_i")
+        );
+    }
+
+    #[test]
+    fn strict_hol_true_i_rejects_wrong_prop() {
+        let db = hol_db_with_true_def();
+        let parsed_prop = CTerm::certify_checked(hologic::false_const(), &db.type_env)
+            .expect("checked HOL.False");
+
+        let err =
+            try_strict_hol_true_i("TrueI", &parsed_prop, "unfolding True_def by (rule refl)", &db)
+                .expect_err("wrong proposition must reject");
+
+        assert!(
+            matches!(err, KernelError::KernelInvariant { op, .. } if op == "try_strict_hol_true_i")
+        );
+    }
+
+    #[test]
+    fn strict_hol_true_i_rejects_wrong_proof_shape() {
+        let db = hol_db_with_true_def();
+        let parsed_prop = checked_true_prop(&db);
+
+        let err = try_strict_hol_true_i("TrueI", &parsed_prop, "by (rule refl)", &db)
+            .expect_err("wrong proof shape must reject");
+
+        assert!(
+            matches!(err, KernelError::KernelInvariant { op, .. } if op == "try_strict_hol_true_i")
+        );
+    }
+
+    #[test]
+    fn strict_hol_true_i_rejects_rhs_mismatch() {
+        let mut db = hol_db_with_true_def();
+        let mut true_def = db.checked_definition_source("True_def").expect("True_def").clone();
+        let bool_t = Typ::base("bool");
+        let wrong_rhs =
+            hologic::mk_eq_typed(bool_t.clone(), hologic::true_const(), hologic::true_const());
+        true_def.rhs = CTerm::certify_checked(wrong_rhs, &db.type_env).expect("checked wrong RHS");
+        db.checked_definitions.insert("True_def".into(), true_def);
+        let parsed_prop = checked_true_prop(&db);
+
+        let err =
+            try_strict_hol_true_i("TrueI", &parsed_prop, "unfolding True_def by (rule refl)", &db)
+                .expect_err("mismatched True_def RHS must reject");
+
+        assert!(matches!(err, KernelError::KernelInvariant { .. }));
+    }
+
+    #[test]
+    fn strict_hol_true_i_rejects_compat_refl_path() {
+        let mut db = hol_db_with_true_def();
+        let compat_refl = ThmKernel::reflexive_compat(CTerm::certify(hologic::true_const()));
+        db.by_name.insert("refl".into(), Arc::new(compat_refl));
+        db.type_env.declare_const("HOL.eq", Typ::dummy());
+        let parsed_prop = checked_true_prop(&db);
+
+        let err =
+            try_strict_hol_true_i("TrueI", &parsed_prop, "unfolding True_def by (rule refl)", &db)
+                .expect_err("compat refl fact must not substitute for strict HOL.eq bridge");
+
+        assert!(matches!(err, KernelError::DummyType { op } if op == "ThmKernel::hol_object_refl"));
+    }
+
+    #[test]
+    fn strict_hol_true_i_rejects_free_true_alias() {
+        let mut db = hol_db_with_true_def();
+        db.type_env.declare_free("True", Typ::base("bool"));
+        let parsed_prop =
+            CTerm::certify_checked(Term::free("True", Typ::base("bool")), &db.type_env)
+                .expect("checked Free True");
+
+        let err =
+            try_strict_hol_true_i("TrueI", &parsed_prop, "unfolding True_def by (rule refl)", &db)
+                .expect_err("checked Free True must not be accepted as HOL.True");
+
+        assert!(
+            matches!(err, KernelError::KernelInvariant { op, .. } if op == "try_strict_hol_true_i")
+        );
+    }
+
+    #[test]
+    fn strict_hol_true_i_rejects_dummy_typed_true() {
+        let db = hol_db_with_true_def();
+        let parsed_prop =
+            CTerm::certify_typed(Term::const_("HOL.True", Typ::dummy()), Typ::dummy());
+
+        let err =
+            try_strict_hol_true_i("TrueI", &parsed_prop, "unfolding True_def by (rule refl)", &db)
+                .expect_err("dummy typed True must reject");
+
+        assert!(matches!(err, KernelError::DummyType { op } if op == "try_strict_hol_true_i"));
+    }
+
+    #[test]
+    fn strict_hol_true_i_rejects_compat_parsed_prop() {
+        let db = hol_db_with_true_def();
+        let parsed_prop = CTerm::certify(hologic::true_const());
+
+        let err =
+            try_strict_hol_true_i("TrueI", &parsed_prop, "unfolding True_def by (rule refl)", &db)
+                .expect_err("compat parsed prop must reject");
+
+        assert!(matches!(err, KernelError::CompatCTerm { op } if op == "try_strict_hol_true_i"));
+    }
+
+    #[test]
+    fn checked_source_env_merge_preserves_equal_declaration() {
+        let mut db = HolTheoremDb::new();
+        let mut source_env = TypeEnv::new();
+        source_env.declare_const("HOL.True", Typ::base("bool"));
+
+        db.merge_checked_source_type_env(source_env).expect("equal declarations may merge");
+
+        assert_eq!(db.type_env.const_type("HOL.True"), Some(&Typ::base("bool")));
+    }
+
+    #[test]
+    fn checked_source_env_merge_rejects_conflicting_const_type() {
+        let mut db = HolTheoremDb::new();
+        db.type_env.declare_const("HOL.True", Typ::base("bool"));
+        let mut source_env = TypeEnv::new();
+        source_env.declare_const("HOL.True", Typ::base("prop"));
+
+        let err = db
+            .merge_checked_source_type_env(source_env)
+            .expect_err("conflicting const declarations must reject");
+
+        assert!(
+            matches!(err, KernelError::KernelInvariant { op, .. } if op == "HolTheoremDb::merge_checked_source_type_env")
+        );
+    }
+
+    #[test]
+    fn checked_source_env_merge_rejects_conflicting_type_decl() {
+        let mut db = HolTheoremDb::new();
+        let mut source_env = TypeEnv::new();
+        source_env.declare_type("bool", 1);
+
+        let err = db
+            .merge_checked_source_type_env(source_env)
+            .expect_err("conflicting type declarations must reject");
+
+        assert!(
+            matches!(err, KernelError::KernelInvariant { op, .. } if op == "HolTheoremDb::merge_checked_source_type_env")
+        );
     }
 }
 

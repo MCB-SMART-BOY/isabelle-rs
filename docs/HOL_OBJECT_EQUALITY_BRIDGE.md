@@ -2,7 +2,8 @@
 
 ## Status
 
-Narrow bridge implemented. `HOL::TrueI` is still not implemented.
+Narrow bridge implemented. `HOL::TrueI` is now implemented as the first
+existing core-file strict theorem slice.
 
 Current implementation status:
 
@@ -10,8 +11,8 @@ Current implementation status:
 HOL.eq term/type diagnostic: done
 try_strict_hol_refl: implemented
 checked-definition transport/fold-back to True: implemented for checked True_def
-try_strict_hol_trueI: not implemented
-core batch StrictClosed: 0/125
+try_strict_hol_true_i: implemented as a narrow TrueI-only adapter
+core batch StrictClosed: 1/125
 ```
 
 The current tests in `src/hol/hol_loader.rs` establish:
@@ -75,7 +76,7 @@ not strict closed theorem sources. They must not be reused to produce
 - Do not implement a broad HOL proof engine.
 - Do not treat `Pure.eq` and `HOL.eq` as interchangeable.
 - Do not use compat, open, admitted, or searchable-only `refl` facts.
-- Do not implement `try_strict_hol_trueI` by bypassing checked `True_def`
+- Do not modify `try_strict_hol_true_i` to bypass checked `True_def`
   transport, proof-shape checks, or final strict-closed validation.
 
 ## Term Shape
@@ -149,7 +150,7 @@ The bridge must reject:
 
 ## `HOL::TrueI` Dependency
 
-After the bridge exists, `HOL::TrueI` may be attempted only by the narrow path:
+`HOL::TrueI` is implemented only by the narrow path:
 
 ```text
 1. recognize theorem name `HOL::TrueI`;
@@ -179,13 +180,17 @@ hol_refl_bridge_rejects_pure_eq_substitution
 hol_refl_bridge_produces_strict_closed_hol_eq
 ```
 
-Later `HOL::TrueI` tests must separately check:
+`HOL::TrueI` tests separately check:
 
 ```text
-strict_hol_trueI_rejects_missing_true_def
-strict_hol_trueI_rejects_compat_refl
-strict_hol_trueI_rejects_non_reflexive_unfolded_rhs
-proof_outcome_counts_hol_trueI_as_strict_closed
+strict_hol_true_i_accepts_checked_true_def_refl_path
+strict_hol_true_i_rejects_missing_true_def
+strict_hol_true_i_rejects_wrong_theorem_name
+strict_hol_true_i_rejects_wrong_prop
+strict_hol_true_i_rejects_wrong_proof_shape
+strict_hol_true_i_rejects_rhs_mismatch
+strict_hol_true_i_rejects_compat_refl_path
+proof_outcome_counts_hol_true_i_as_strict_closed
 ```
 
 The checked-definition transport attack tests live next to the HOL loader and
@@ -198,11 +203,11 @@ settled. The strict kernel proves Pure propositions; this bridge connects the
 HOL object logic to the strict acceptance path and must therefore remain a
 small, named adapter with explicit documentation.
 
-Do not expand this bridge into general equality reasoning. The only immediate
+Do not expand this bridge into general equality reasoning. The completed
 milestone is:
 
 ```text
 test_verify_all_core_files: StrictClosed 0/125 -> 1/125
 ```
 
-and the only intended first consumer is the `HOL::TrueI` slice.
+and the only current consumer is the `HOL::TrueI` slice.

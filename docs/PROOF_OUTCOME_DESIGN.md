@@ -16,14 +16,16 @@ Current implementation:
 - includes a targeted Pure implication identity smoke slice: `A ==> A` can be
   constructed by the strict kernel nucleus, and the current `verify_lemma`
   summary path can count the checked identity adapter as `StrictClosed`.
+- routes the existing core-file theorem `HOL::TrueI` through strict acceptance,
+  raising the sampled core batch to `StrictClosed: 1/125`.
 
 Not yet implemented:
 
 - final theorem-table acceptance has not been rewritten around `ProofOutcome`;
-- no existing HOL/core-file theorem has been migrated to `StrictClosed` yet;
-- `StrictClosed` remains `0/125` in the core verification batch because the
-  sampled core lemmas do not currently route through the targeted identity
-  slice.
+- only one existing HOL/core-file theorem has been migrated to `StrictClosed`
+  so far (`HOL::TrueI`);
+- broad HOL/Isar proof methods still mostly return admitted or compat/open
+  outcomes.
 
 ## Problem
 
@@ -220,18 +222,19 @@ counts with runtime theorem outcomes.
 | Pure reflexivity `t == t` | `KernelRules::reflexive`, checked term certification, `ClosedThm::trust` | Smallest strict kernel smoke test. | May not correspond to a current core-file lemma. |
 | Implication identity `A ==> A` | `KernelRules::assume`, `KernelRules::implies_intr`, checked proposition certification | Exercises hypothesis discharge and closed theorem acceptance. | Targeted smoke slice implemented; still needs routing from an existing core-file lemma. |
 | Simple equality theorem | Reflexivity plus equality encoding adapter | Closer to HOL-facing facts. | HOL equality/object equality boundaries may add noise. |
-| `HOL::TrueI` | Checked `True_def`, strict HOL object-equality/reflexivity bridge, checked-definition transport, narrow adapter | Best current existing core-file candidate. | `True_def` source, strict HOL object-equality/reflexivity, and checked-definition transport are implemented; the narrow `TrueI` adapter is still pending. |
+| `HOL::TrueI` | Checked `True_def`, strict HOL object-equality/reflexivity bridge, checked-definition transport, narrow adapter | First existing core-file `StrictClosed` theorem. | Implemented as a narrow adapter; core batch now reports `StrictClosed: 1/125`. |
 
-Completed smoke slice:
+Completed slices:
 
 ```text
 strict Pure implication identity
+HOL::TrueI existing core-file theorem
 ```
 
-It is the smallest path that tests parser/certifier/export/acceptance rather
-than only kernel unit tests. It does not change the core-file batch because the
-sampled 125 lemmas contain no `A ==> A` / `P ==> P` candidate. The next
-existing-theorem milestone is `HOL::TrueI`, but only after the HOL
-object-equality/reflexivity bridge is implemented and checked-definition
-transport back to `True` is available, without using compat `refl` or treating
-Pure equality as HOL object equality.
+The Pure implication identity is the smallest path that tests
+parser/certifier/export/acceptance rather than only kernel unit tests. It does
+not change the core-file batch because the sampled 125 lemmas contain no
+`A ==> A` / `P ==> P` candidate. `HOL::TrueI` is the first existing-theorem
+milestone and is routed through checked `True_def`, strict HOL object
+reflexivity, and checked-definition transport, without using compat `refl` or
+treating Pure equality as HOL object equality.

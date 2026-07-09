@@ -160,14 +160,15 @@ The project is not close to full Isabelle/HOL:
 | Session/PIDE/LSP | Useful skeletons, not Isabelle session/PIDE infrastructure. |
 | AFP / ecosystem | Out of scope for the current research slice. |
 
-Current core verification status remains conservative:
+Current core verification status remains conservative, but the first existing
+core-file strict theorem slice is now complete:
 
 ```text
-test_verify_all_core_files: 0/125 StrictClosed
+test_verify_all_core_files: 1/125 StrictClosed
 ProofOutcome summary:
-  StrictClosed: 0
+  StrictClosed: 1
   CompatClosedOracleFree: 1
-  Admitted(goal_export_unknown_hyps): 66
+  Admitted(goal_export_unknown_hyps): 65
   Admitted(goal_export_open_subgoals): 3
   Admitted(parser_gap): 3
   Admitted(datatype_stub): 2
@@ -181,39 +182,38 @@ smoke test pass": route one existing parsed theorem through strict acceptance
 without compat/admit/open fallback.
 
 A scan of the sampled 125 core-file lemmas found no parsed proposition of the
-form `A ==> A` / `P ==> P`, so the implication-identity adapter cannot move the
-batch count by itself. The current best first existing-theorem candidate is
-`HOL::TrueI`, whose source proof is `unfolding True_def by (rule refl)`. That
-slice now has the strict HOL object-reflexivity bridge, but still needs a
-checked-definition transport/fold-back step and a narrow `TrueI` adapter, not a
-broader `simp` or proof-engine fallback.
+form `A ==> A` / `P ==> P`, so the implication-identity adapter could not move
+the batch count by itself. The first existing-theorem strict slice is
+`HOL::TrueI`, whose source proof is `unfolding True_def by (rule refl)`. It is
+routed through checked `True_def`, strict HOL object reflexivity, and checked
+`True_def` transport, not through `simp`, compat `refl`, or ProofOutcome
+reclassification.
 
 Targeted `HOL::TrueI` diagnostics and bridge work currently show:
 
 ```text
 Parsed TrueI prop: True
 Parsed TrueI proof: unfolding True_def by (rule refl)
-Current outcome: Admitted(goal_export_unknown_hyps)
+Current outcome: StrictClosed
 True_def parsed theorem / DB fact: missing (expected; definition source is not a theorem)
 True_def checked definition source: done, non-theorem input only
 HOL object-equality/reflexivity bridge: implemented as narrow primitive bridge
 try_strict_hol_refl: implemented
-try_strict_hol_trueI: not implemented
 checked-definition transport/fold-back to True: implemented for checked True_def
+try_strict_hol_true_i adapter: implemented as a narrow TrueI-only adapter
 refl DB fact: compat/open, not strict closed
 Pure.refl DB fact: compat closed-shaped, not strict closed
-Core batch StrictClosed: 0/125
+Core batch StrictClosed: 1/125
 ```
 
-Therefore the first existing-core-file `StrictClosed` milestone is currently
-blocked on the narrow `HOL::TrueI` adapter, not on the prerequisite bridge
-pieces:
+Therefore the first existing-core-file `StrictClosed` milestone has been
+reached through the narrow `HOL::TrueI` adapter:
 
 ```text
 1. True_def checked definition source: done, non-theorem input only
 2. HOL object-equality/reflexivity bridge: implemented as narrow primitive bridge
 3. checked-definition transport/fold-back to True: implemented for checked True_def
-4. try_strict_hol_trueI adapter: not implemented
+4. try_strict_hol_true_i adapter: implemented
 ```
 
 The bridge designs are tracked in
@@ -222,8 +222,8 @@ The bridge designs are tracked in
 explicitly not a general unfolding engine, simplifier, or broad HOL proof
 engine.
 
-Do not implement a `TrueI` special case by returning `True` directly or by using
-the current compat `refl` fact.
+Do not generalize this `TrueI` path by returning `True` directly, using the
+current compat `refl` fact, or turning it into a general unfolding/simp engine.
 
 The former `OPEN_HAS_HYPS` runtime classification has been closed as a trust
 boundary issue: proof-method results with ambient hypotheses are no longer
@@ -237,8 +237,8 @@ Follow-up diagnostics after hardening `RewriteRule::from_thm` showed the
 `exec_proof` fallback chain, so the next fix is the method fallback boundary,
 not conditional rewrite implementation.
 
-The next milestone is not broad HOL/Isar coverage. It is the first existing
-core-file vertical strict-kernel acceptance slice:
+The just-completed milestone is not broad HOL/Isar coverage. It is the first
+existing core-file vertical strict-kernel acceptance slice:
 
 ```text
 test_verify_all_core_files: 0/125 StrictClosed -> 1/125 StrictClosed
@@ -314,8 +314,8 @@ Sledgehammer, SMT, or Code Generator work. The route is:
    trusted theorem tables.
 3. Use the core/kernel overlap inventory and migration matrix to guide every
    proof-boundary change.
-4. Migrate one small theorem path to strict-kernel acceptance and move the core
-   batch from `0/125` to `1/125` `StrictClosed`.
+4. Use the completed `HOL::TrueI` strict slice as the pattern for the next
+   small core-file strict theorem, without generalizing into simp/unfolding.
 5. Continue core hardening only as migration support: diagnostics, boundary
    checks, and adapters, not new trusted proof power in `src/core`.
 6. Split and reduce admitted/compat paths by cause, especially method fallback
