@@ -99,7 +99,8 @@ without compatibility trust:
 - the final result has no hypotheses, no unresolved `tpairs`, no oracle/admit
   footprint, no dummy types, and satisfies `is_strict_closed_proved()`.
 
-The adapter must reject and fall back to the existing admitted path if:
+The adapter must reject into the explicit admitted path, without entering the
+legacy proof fallback, if:
 
 - `True_def` is missing from the checked definition environment;
 - `True_def` or the unfolded RHS contains dummy/compat-only certification;
@@ -116,6 +117,11 @@ result. It is now registered through the minimal strict adapter dispatcher in
 `Rejected(reason)`. Do not generalize it into direct `return StrictClosed(True)`,
 simp, definition rewriting, or another direct theorem-name branch in
 `verify_lemma`.
+
+The ranked scan of the remaining 124 sampled theorems is recorded in
+[NEXT_STRICT_SLICE_CANDIDATES.md](NEXT_STRICT_SLICE_CANDIDATES.md). It recommends
+`HOL::trans` only as the first consumer of a reusable checked HOL equality
+substitution slice, not as another theorem-specific primitive or direct branch.
 
 ### HOL Object-Equality / Reflexivity Bridge Contract
 

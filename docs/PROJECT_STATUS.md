@@ -230,6 +230,9 @@ returns explicit `NotApplicable` / `Proved` / `Rejected(reason)` outcomes so
 future strict slices do not turn `verify_lemma` into a theorem-name switchboard.
 Shape-hit rejections are admitted with `admitted:strict_adapter_*` reasons
 instead of falling through as ordinary legacy proof-engine failures.
+The ranked scan of the remaining 124 sampled theorems and the recommended next
+reusable slice are recorded in
+[NEXT_STRICT_SLICE_CANDIDATES.md](NEXT_STRICT_SLICE_CANDIDATES.md).
 
 The former `OPEN_HAS_HYPS` runtime classification has been closed as a trust
 boundary issue: proof-method results with ambient hypotheses are no longer
