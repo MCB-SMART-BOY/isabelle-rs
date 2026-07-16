@@ -41,8 +41,9 @@ Priority order:
 1. Unify theorem verification outcomes around `ProofOutcome` and a single
    strict theorem acceptance path.
 2. Build the core-to-kernel strangler migration inventory and matrix.
-3. Use the first existing core-file strict slice (`HOL::TrueI`, now `1/125`)
-   as the template for the next narrow strict theorem path.
+3. Use the minimal strict adapter dispatcher and first existing core-file
+   strict slice (`HOL::TrueI`, now `1/125`) as the template for the next narrow
+   strict theorem path.
 4. Continue strict `src/kernel` nucleus stabilization, including firewall
    checks, deterministic substitutions, and explicit conservative resolution
    limits.

@@ -111,8 +111,11 @@ The adapter must reject and fall back to the existing admitted path if:
 Current conclusion: the narrow `HOL::TrueI` adapter is implemented and is the
 first existing core-file strict slice. It checks theorem name, proposition,
 proof shape, checked `True_def`, strict RHS proof, and final strict closed
-result. Do not generalize it into direct `return StrictClosed(True)`, simp, or
-definition rewriting.
+result. It is now registered through the minimal strict adapter dispatcher in
+`src/isar/method.rs`, which returns `NotApplicable`, `Proved`, or
+`Rejected(reason)`. Do not generalize it into direct `return StrictClosed(True)`,
+simp, definition rewriting, or another direct theorem-name branch in
+`verify_lemma`.
 
 ### HOL Object-Equality / Reflexivity Bridge Contract
 
@@ -169,5 +172,6 @@ Recommended order:
    shape. (done)
 6. Implement checked-definition transport/fold-back for checked `True_def`. (done)
 7. Route one existing core-file theorem through a strict `HOL::TrueI` adapter. (done)
-8. Increase the strict closed count only through `StrictClosed`.
-9. Resume admitted-reason reduction based on the new outcome report.
+8. Route strict theorem adapters through the minimal strict adapter dispatcher. (done for `HOL::TrueI`)
+9. Increase the strict closed count only through `StrictClosed`.
+10. Resume admitted-reason reduction based on the new outcome report.

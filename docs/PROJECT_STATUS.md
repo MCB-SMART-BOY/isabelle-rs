@@ -224,6 +224,12 @@ engine.
 
 Do not generalize this `TrueI` path by returning `True` directly, using the
 current compat `refl` fact, or turning it into a general unfolding/simp engine.
+The `TrueI` path is now routed through the minimal strict adapter dispatcher in
+`src/isar/method.rs`. The dispatcher currently registers only this adapter and
+returns explicit `NotApplicable` / `Proved` / `Rejected(reason)` outcomes so
+future strict slices do not turn `verify_lemma` into a theorem-name switchboard.
+Shape-hit rejections are admitted with `admitted:strict_adapter_*` reasons
+instead of falling through as ordinary legacy proof-engine failures.
 
 The former `OPEN_HAS_HYPS` runtime classification has been closed as a trust
 boundary issue: proof-method results with ambient hypotheses are no longer
@@ -314,8 +320,9 @@ Sledgehammer, SMT, or Code Generator work. The route is:
    trusted theorem tables.
 3. Use the core/kernel overlap inventory and migration matrix to guide every
    proof-boundary change.
-4. Use the completed `HOL::TrueI` strict slice as the pattern for the next
-   small core-file strict theorem, without generalizing into simp/unfolding.
+4. Use the completed strict adapter dispatcher and `HOL::TrueI` slice as the
+   pattern for the next small core-file strict theorem, without generalizing
+   into simp/unfolding or adding direct theorem-specific branches.
 5. Continue core hardening only as migration support: diagnostics, boundary
    checks, and adapters, not new trusted proof power in `src/core`.
 6. Split and reduce admitted/compat paths by cause, especially method fallback

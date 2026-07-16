@@ -171,11 +171,19 @@ admitted:class_stub
 admitted:metis_fallback
 admitted:simp_fallback
 admitted:sledgehammer_stub
+admitted:strict_adapter_prop_mismatch
+admitted:strict_adapter_proof_shape_mismatch
+admitted:strict_adapter_missing_checked_definition
+admitted:strict_adapter_certification_failed
+admitted:strict_adapter_replay_failed
+admitted:strict_adapter_kernel_invariant
 ```
 
 Rules:
 
 - Proof fallback must use `admit`, not `assume`.
+- Strict adapter shape hits that fail strict checks must use a specific
+  `admitted:strict_adapter_*` reason instead of falling through silently.
 - Unsupported features and stubs must use `admit`, not fake theorem
   constructors.
 - Attribute transformations that do not have a real kernel derivation must use
@@ -286,6 +294,10 @@ Implemented hardening includes:
   reflexivity for the checked RHS, and checked `True_def` transport to
   `HOL.True`. It must not become a direct `return True`, compat `refl`, or
   general unfolding path;
+- `try_strict_adapter` is the minimal dispatcher for strict theorem adapters.
+  It currently registers only `HOL::TrueI` and reports `NotApplicable`,
+  `Proved`, or `Rejected(reason)` instead of scattering direct special cases
+  through `verify_lemma`;
 - `Thm::check_kernel_invariants(KernelCheckMode::{Compat, Strict})` separates
   legacy structural checks from strict trusted-kernel invariant checks;
 - `tpairs`, `shyps`, and `oracles` propagation audits;

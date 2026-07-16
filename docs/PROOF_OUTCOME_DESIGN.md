@@ -238,3 +238,16 @@ not change the core-file batch because the sampled 125 lemmas contain no
 milestone and is routed through checked `True_def`, strict HOL object
 reflexivity, and checked-definition transport, without using compat `refl` or
 treating Pure equality as HOL object equality.
+
+The `HOL::TrueI` slice now goes through the minimal strict adapter dispatcher:
+
+```text
+try_strict_adapter(ParsedLemma, HolTheoremDb)
+  -> NotApplicable
+  -> Proved(StrictClosed theorem)
+  -> Rejected(reason)
+```
+
+The dispatcher currently registers only `HOL::TrueI`; future strict slices
+should reuse this entry point instead of adding direct branches to
+`verify_lemma`.

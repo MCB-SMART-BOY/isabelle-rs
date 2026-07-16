@@ -3993,6 +3993,99 @@ fn normalize_true_i_prop_for_verify(
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StrictAdapterReject {
+    PropositionMismatch,
+    ProofShapeMismatch,
+    MissingCheckedDefinition,
+    CertificationFailed(String),
+    ReplayFailed(String),
+    KernelInvariant(String),
+}
+
+#[derive(Clone, Debug)]
+pub enum StrictAdapterResult {
+    NotApplicable,
+    Proved(Thm),
+    Rejected(StrictAdapterReject),
+}
+
+fn strict_adapter_reject_admit_reason(reject: &StrictAdapterReject) -> &'static str {
+    match reject {
+        StrictAdapterReject::PropositionMismatch => "admitted:strict_adapter_prop_mismatch",
+        StrictAdapterReject::ProofShapeMismatch => "admitted:strict_adapter_proof_shape_mismatch",
+        StrictAdapterReject::MissingCheckedDefinition => {
+            "admitted:strict_adapter_missing_checked_definition"
+        },
+        StrictAdapterReject::CertificationFailed(_) => {
+            "admitted:strict_adapter_certification_failed"
+        },
+        StrictAdapterReject::ReplayFailed(_) => "admitted:strict_adapter_replay_failed",
+        StrictAdapterReject::KernelInvariant(_) => "admitted:strict_adapter_kernel_invariant",
+    }
+}
+
+fn strict_adapter_reject_from_kernel_error(err: KernelError) -> StrictAdapterReject {
+    match err {
+        KernelError::KernelInvariant { message, .. }
+            if message.contains("proof is not exactly") =>
+        {
+            StrictAdapterReject::ProofShapeMismatch
+        },
+        KernelError::KernelInvariant { message, .. }
+            if message.contains("missing checked True_def") =>
+        {
+            StrictAdapterReject::MissingCheckedDefinition
+        },
+        KernelError::KernelInvariant { message, .. }
+            if message.contains("parsed proposition") || message.contains("not HOL.True") =>
+        {
+            StrictAdapterReject::PropositionMismatch
+        },
+        KernelError::KernelInvariant { message, .. }
+            if message.contains("refl result")
+                || message.contains("did not produce strict closed")
+                || message.contains("rhs is not reflexive") =>
+        {
+            StrictAdapterReject::ReplayFailed(message)
+        },
+        KernelError::DummyType { .. }
+        | KernelError::CompatCTerm { .. }
+        | KernelError::TypeMismatch { .. }
+        | KernelError::UndeclaredConstant(_)
+        | KernelError::NotFunctionType(_) => {
+            StrictAdapterReject::CertificationFailed(err.to_string())
+        },
+        other => StrictAdapterReject::KernelInvariant(other.to_string()),
+    }
+}
+
+pub fn try_strict_adapter(lem: &ParsedLemma, db: &HolTheoremDb) -> StrictAdapterResult {
+    let Some(proof) = lem.proof_script.as_deref() else {
+        return StrictAdapterResult::NotApplicable;
+    };
+
+    match lem.name.as_str() {
+        "TrueI" | "HOL::TrueI" => {
+            let checked_prop = match normalize_true_i_prop_for_verify(lem.theorem.prop(), db) {
+                Ok(prop) => prop,
+                Err(err) => {
+                    return StrictAdapterResult::Rejected(strict_adapter_reject_from_kernel_error(
+                        err,
+                    ));
+                },
+            };
+            match try_strict_hol_true_i(&lem.name, &checked_prop, proof, db) {
+                Ok(thm) => StrictAdapterResult::Proved(thm),
+                Err(err) => {
+                    StrictAdapterResult::Rejected(strict_adapter_reject_from_kernel_error(err))
+                },
+            }
+        },
+        _ => StrictAdapterResult::NotApplicable,
+    }
+}
+
 pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
     AUTO_DEPTH.with(|c| c.set(0));
     // Optimistically assume a real proof; non-proving exit sites downgrade this.
@@ -4032,11 +4125,16 @@ pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
     }
 
     let proof = lem.proof_script.as_ref()?;
-    if matches!(lem.name.as_str(), "TrueI" | "HOL::TrueI")
-        && let Ok(checked_true_prop) = normalize_true_i_prop_for_verify(lem.theorem.prop(), db)
-        && let Ok(strict_true_i) = try_strict_hol_true_i(&lem.name, &checked_true_prop, proof, db)
-    {
-        return Some(strict_true_i);
+    match try_strict_adapter(lem, db) {
+        StrictAdapterResult::Proved(thm) => return Some(thm),
+        StrictAdapterResult::Rejected(reason) => {
+            LAST_OUTCOME.with(|c| c.set(VerifyOutcome::AxiomAccepted));
+            return Some(ThmKernel::admit(
+                CTerm::certify(lem.theorem.prop().term().clone()),
+                strict_adapter_reject_admit_reason(&reason),
+            ));
+        },
+        StrictAdapterResult::NotApplicable => {},
     }
     if proof_allows_strict_imp_identity(proof)
         && let Some(strict_identity) =
@@ -4920,6 +5018,89 @@ mod tests {
 
             verify_lemmas_batch(std::slice::from_ref(&lem))
         });
+        let stats = verify_outcome_stats();
+
+        assert_eq!((verified, attempted), (1, 1));
+        assert_eq!(stats.strict_closed, 1);
+        assert_eq!(stats.total(), 1);
+    }
+
+    #[test]
+    fn strict_adapter_dispatches_true_i() {
+        let lem = parsed_hol_true_i();
+
+        let result = with_hol_true_i_db(|| {
+            let db = HolTheoremDb::get();
+            try_strict_adapter(&lem, db)
+        });
+
+        match result {
+            StrictAdapterResult::Proved(thm) => assert!(thm.is_strict_closed_proved()),
+            other => panic!("expected strict TrueI proof, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn strict_adapter_returns_not_applicable_for_unrelated_lemma() {
+        let lem = pure_identity_lemma();
+
+        let result = with_pure_identity_db(|| {
+            let db = HolTheoremDb::get();
+            try_strict_adapter(&lem, db)
+        });
+
+        assert!(matches!(result, StrictAdapterResult::NotApplicable));
+    }
+
+    #[test]
+    fn strict_adapter_rejects_true_i_with_wrong_proof_shape() {
+        let mut lem = parsed_hol_true_i();
+        lem.proof_script = Some("by (rule refl)".to_string());
+
+        let result = with_hol_true_i_db(|| {
+            let db = HolTheoremDb::get();
+            try_strict_adapter(&lem, db)
+        });
+
+        assert!(matches!(
+            result,
+            StrictAdapterResult::Rejected(StrictAdapterReject::ProofShapeMismatch)
+        ));
+    }
+
+    #[test]
+    fn verify_lemma_uses_strict_adapter_for_true_i() {
+        let lem = parsed_hol_true_i();
+
+        let thm = with_hol_true_i_db(|| verify_lemma(&lem)).expect("TrueI verifies");
+
+        assert!(thm.is_strict_closed_proved());
+        assert_eq!(thm.prop().term(), &crate::hol::hologic::true_const());
+    }
+
+    #[test]
+    fn verify_lemma_records_strict_adapter_rejection_for_true_i() {
+        let mut lem = parsed_hol_true_i();
+        lem.proof_script = Some("by (rule refl)".to_string());
+
+        let thm = with_hol_true_i_db(|| verify_lemma(&lem))
+            .expect("strict adapter rejection should become explicit admission");
+
+        assert!(!thm.is_strict_closed_proved());
+        assert!(
+            thm.oracles()
+                .iter()
+                .any(|oracle| oracle.as_ref() == "admitted:strict_adapter_proof_shape_mismatch")
+        );
+    }
+
+    #[test]
+    fn proof_outcome_still_counts_true_i_as_strict_closed() {
+        let lem = parsed_hol_true_i();
+        reset_verify_stats();
+
+        let (verified, attempted) =
+            with_hol_true_i_db(|| verify_lemmas_batch(std::slice::from_ref(&lem)));
         let stats = verify_outcome_stats();
 
         assert_eq!((verified, attempted), (1, 1));
