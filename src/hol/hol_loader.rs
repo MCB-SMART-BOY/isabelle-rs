@@ -2424,6 +2424,43 @@ fn theorem_name_is_true_i(theorem_name: &str) -> bool {
     matches!(theorem_name, "TrueI" | "HOL::TrueI")
 }
 
+/// Typed failure boundary for the narrow `HOL::TrueI` adapter.
+///
+/// Dispatcher control flow must depend on these variants, never on the display
+/// text of an underlying `KernelError`.
+#[derive(Debug, thiserror::Error)]
+pub enum StrictTrueIError {
+    #[error("theorem name is not TrueI: {actual}")]
+    NameMismatch { actual: String },
+    #[error("parsed proposition is not checked HOL.True")]
+    PropositionMismatch,
+    #[error("proof is not the supported TrueI shape")]
+    ProofShapeMismatch,
+    #[error("missing checked True_def source")]
+    MissingCheckedDefinition,
+    #[error("strict TrueI certification failed: {0}")]
+    CertificationFailed(#[source] KernelError),
+    #[error("strict TrueI replay failed: {0}")]
+    ReplayFailed(#[source] KernelError),
+    #[error("strict TrueI kernel invariant failed: {0}")]
+    KernelInvariant(#[source] KernelError),
+}
+
+fn strict_true_i_invariant(message: impl Into<String>) -> KernelError {
+    KernelError::KernelInvariant { op: "try_strict_hol_true_i", message: message.into() }
+}
+
+fn strict_true_i_dependency_error(err: KernelError) -> StrictTrueIError {
+    match err {
+        KernelError::DummyType { .. }
+        | KernelError::CompatCTerm { .. }
+        | KernelError::TypeMismatch { .. }
+        | KernelError::UndeclaredConstant(_)
+        | KernelError::NotFunctionType(_) => StrictTrueIError::CertificationFailed(err),
+        other => StrictTrueIError::KernelInvariant(other),
+    }
+}
+
 /// Normalize the parsed `TrueI` proposition into a checked `HOL.True` CTerm.
 ///
 /// This is the parser/loader boundary for the existing theorem whose source
@@ -2475,72 +2512,62 @@ pub fn try_strict_hol_true_i(
     parsed_prop: &CTerm,
     proof_text: &str,
     db: &HolTheoremDb,
-) -> Result<Thm, KernelError> {
+) -> Result<Thm, StrictTrueIError> {
     const OP: &str = "try_strict_hol_true_i";
 
     if !theorem_name_is_true_i(theorem_name) {
-        return Err(KernelError::KernelInvariant {
-            op: OP,
-            message: format!("expected TrueI theorem name, found {theorem_name}"),
-        });
+        return Err(StrictTrueIError::NameMismatch { actual: theorem_name.to_string() });
     }
     if !proof_is_strict_true_i_shape(proof_text) {
-        return Err(KernelError::KernelInvariant {
-            op: OP,
-            message: "proof is not exactly `unfolding True_def by (rule refl)`".into(),
-        });
+        return Err(StrictTrueIError::ProofShapeMismatch);
     }
 
-    let checked_true = CTerm::certify_checked(hologic::true_const(), &db.type_env)?;
-    parsed_prop.require_no_dummy_types(OP)?;
-    parsed_prop.require_checked(OP)?;
+    let checked_true = CTerm::certify_checked(hologic::true_const(), &db.type_env)
+        .map_err(StrictTrueIError::CertificationFailed)?;
+    parsed_prop.require_no_dummy_types(OP).map_err(StrictTrueIError::CertificationFailed)?;
+    parsed_prop.require_checked(OP).map_err(StrictTrueIError::CertificationFailed)?;
     if parsed_prop.term() != checked_true.term()
         || parsed_prop.term_type() != checked_true.term_type()
     {
-        return Err(KernelError::KernelInvariant {
-            op: OP,
-            message: "parsed proposition is not checked HOL.True".into(),
-        });
+        return Err(StrictTrueIError::PropositionMismatch);
     }
 
-    let true_def = db.checked_definition_source("True_def").ok_or_else(|| {
-        KernelError::KernelInvariant { op: OP, message: "missing checked True_def source".into() }
-    })?;
+    let true_def = db
+        .checked_definition_source("True_def")
+        .ok_or(StrictTrueIError::MissingCheckedDefinition)?;
     if true_def.lhs != checked_true {
-        return Err(KernelError::KernelInvariant {
-            op: OP,
-            message: "checked True_def lhs is not HOL.True".into(),
-        });
+        return Err(StrictTrueIError::KernelInvariant(strict_true_i_invariant(
+            "checked True_def lhs is not HOL.True",
+        )));
     }
 
     let (lhs, rhs) = hologic::dest_hol_equals(true_def.rhs.term()).ok_or_else(|| {
-        KernelError::KernelInvariant {
-            op: OP,
-            message: "checked True_def rhs is not a HOL.eq proposition".into(),
-        }
+        StrictTrueIError::KernelInvariant(strict_true_i_invariant(
+            "checked True_def rhs is not a HOL.eq proposition",
+        ))
     })?;
     if lhs != rhs {
-        return Err(KernelError::KernelInvariant {
-            op: OP,
-            message: "checked True_def rhs is not reflexive".into(),
-        });
+        return Err(StrictTrueIError::ReplayFailed(strict_true_i_invariant(
+            "checked True_def rhs is not reflexive",
+        )));
     }
 
-    let checked_side = CTerm::certify_checked(lhs.clone(), &db.type_env)?;
-    let rhs_thm = try_strict_hol_refl(checked_side, &db.type_env)?;
+    let checked_side = CTerm::certify_checked(lhs.clone(), &db.type_env)
+        .map_err(StrictTrueIError::CertificationFailed)?;
+    let rhs_thm =
+        try_strict_hol_refl(checked_side, &db.type_env).map_err(strict_true_i_dependency_error)?;
     if rhs_thm.prop() != &true_def.rhs {
-        return Err(KernelError::KernelInvariant {
-            op: OP,
-            message: "strict HOL refl result does not match checked True_def rhs".into(),
-        });
+        return Err(StrictTrueIError::ReplayFailed(strict_true_i_invariant(
+            "strict HOL refl result does not match checked True_def rhs",
+        )));
     }
 
-    let result = try_strict_true_def_transport(true_def, &rhs_thm)?;
+    let result = try_strict_true_def_transport(true_def, &rhs_thm)
+        .map_err(strict_true_i_dependency_error)?;
     if !result.is_strict_closed_proved() || result.prop() != &checked_true {
-        return Err(KernelError::KernelInvariant {
-            op: OP,
-            message: "TrueI adapter did not produce strict closed HOL.True".into(),
-        });
+        return Err(StrictTrueIError::ReplayFailed(strict_true_i_invariant(
+            "TrueI adapter did not produce strict closed HOL.True",
+        )));
     }
 
     Ok(result)
@@ -4322,9 +4349,7 @@ mod tests {
             try_strict_hol_true_i("TrueI", &parsed_prop, "unfolding True_def by (rule refl)", &db)
                 .expect_err("missing checked True_def must reject");
 
-        assert!(
-            matches!(err, KernelError::KernelInvariant { op, .. } if op == "try_strict_hol_true_i")
-        );
+        assert!(matches!(err, StrictTrueIError::MissingCheckedDefinition));
     }
 
     #[test]
@@ -4340,9 +4365,10 @@ mod tests {
         )
         .expect_err("wrong theorem name must reject");
 
-        assert!(
-            matches!(err, KernelError::KernelInvariant { op, .. } if op == "try_strict_hol_true_i")
-        );
+        assert!(matches!(
+            err,
+            StrictTrueIError::NameMismatch { actual } if actual == "NotTrueI"
+        ));
     }
 
     #[test]
@@ -4355,9 +4381,7 @@ mod tests {
             try_strict_hol_true_i("TrueI", &parsed_prop, "unfolding True_def by (rule refl)", &db)
                 .expect_err("wrong proposition must reject");
 
-        assert!(
-            matches!(err, KernelError::KernelInvariant { op, .. } if op == "try_strict_hol_true_i")
-        );
+        assert!(matches!(err, StrictTrueIError::PropositionMismatch));
     }
 
     #[test]
@@ -4368,9 +4392,7 @@ mod tests {
         let err = try_strict_hol_true_i("TrueI", &parsed_prop, "by (rule refl)", &db)
             .expect_err("wrong proof shape must reject");
 
-        assert!(
-            matches!(err, KernelError::KernelInvariant { op, .. } if op == "try_strict_hol_true_i")
-        );
+        assert!(matches!(err, StrictTrueIError::ProofShapeMismatch));
     }
 
     #[test]
@@ -4388,7 +4410,7 @@ mod tests {
             try_strict_hol_true_i("TrueI", &parsed_prop, "unfolding True_def by (rule refl)", &db)
                 .expect_err("mismatched True_def RHS must reject");
 
-        assert!(matches!(err, KernelError::KernelInvariant { .. }));
+        assert!(matches!(err, StrictTrueIError::KernelInvariant(_)));
     }
 
     #[test]
@@ -4403,7 +4425,11 @@ mod tests {
             try_strict_hol_true_i("TrueI", &parsed_prop, "unfolding True_def by (rule refl)", &db)
                 .expect_err("compat refl fact must not substitute for strict HOL.eq bridge");
 
-        assert!(matches!(err, KernelError::DummyType { op } if op == "ThmKernel::hol_object_refl"));
+        assert!(matches!(
+            err,
+            StrictTrueIError::CertificationFailed(KernelError::DummyType { op })
+                if op == "ThmKernel::hol_object_refl"
+        ));
     }
 
     #[test]
@@ -4418,9 +4444,7 @@ mod tests {
             try_strict_hol_true_i("TrueI", &parsed_prop, "unfolding True_def by (rule refl)", &db)
                 .expect_err("checked Free True must not be accepted as HOL.True");
 
-        assert!(
-            matches!(err, KernelError::KernelInvariant { op, .. } if op == "try_strict_hol_true_i")
-        );
+        assert!(matches!(err, StrictTrueIError::PropositionMismatch));
     }
 
     #[test]
@@ -4433,7 +4457,11 @@ mod tests {
             try_strict_hol_true_i("TrueI", &parsed_prop, "unfolding True_def by (rule refl)", &db)
                 .expect_err("dummy typed True must reject");
 
-        assert!(matches!(err, KernelError::DummyType { op } if op == "try_strict_hol_true_i"));
+        assert!(matches!(
+            err,
+            StrictTrueIError::CertificationFailed(KernelError::DummyType { op })
+                if op == "try_strict_hol_true_i"
+        ));
     }
 
     #[test]
@@ -4445,7 +4473,11 @@ mod tests {
             try_strict_hol_true_i("TrueI", &parsed_prop, "unfolding True_def by (rule refl)", &db)
                 .expect_err("compat parsed prop must reject");
 
-        assert!(matches!(err, KernelError::CompatCTerm { op } if op == "try_strict_hol_true_i"));
+        assert!(matches!(
+            err,
+            StrictTrueIError::CertificationFailed(KernelError::CompatCTerm { op })
+                if op == "try_strict_hol_true_i"
+        ));
     }
 
     #[test]

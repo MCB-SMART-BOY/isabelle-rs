@@ -23,7 +23,8 @@ use crate::{
         thm::{CTerm, Hyps, Thm, ThmKernel, ThmTrust},
     },
     hol::hol_loader::{
-        HolTheoremDb, ParsedLemma, normalize_checked_hol_true_prop, try_strict_hol_true_i,
+        HolTheoremDb, ParsedLemma, StrictTrueIError, normalize_checked_hol_true_prop,
+        try_strict_hol_true_i,
     },
     isar::args::Args,
     tools::simp::HolSimplifier,
@@ -3975,7 +3976,7 @@ fn enrich_local_db_with_checked_sources(
 fn normalize_true_i_prop_for_verify(
     parsed_prop: &CTerm,
     db: &HolTheoremDb,
-) -> Result<CTerm, KernelError> {
+) -> Result<CTerm, StrictTrueIError> {
     let mut term = parsed_prop.term().clone();
     term.type_annotate(&db.type_env);
     match &term {
@@ -3985,10 +3986,17 @@ fn normalize_true_i_prop_for_verify(
                 && (typ == &crate::core::types::Typ::base("bool") || typ.is_dummy()) =>
         {
             CTerm::certify_checked(crate::hol::hologic::true_const(), &db.type_env)
+                .map_err(StrictTrueIError::CertificationFailed)
         },
         _ => {
             let annotated = CTerm::certify(term);
-            normalize_checked_hol_true_prop(&annotated, &db.type_env)
+            match annotated.term() {
+                Term::Const { name, .. } if matches!(name.as_ref(), "HOL.True" | "True") => {
+                    normalize_checked_hol_true_prop(&annotated, &db.type_env)
+                        .map_err(StrictTrueIError::CertificationFailed)
+                },
+                _ => Err(StrictTrueIError::PropositionMismatch),
+            }
         },
     }
 }
@@ -4025,38 +4033,21 @@ fn strict_adapter_reject_admit_reason(reject: &StrictAdapterReject) -> &'static 
     }
 }
 
-fn strict_adapter_reject_from_kernel_error(err: KernelError) -> StrictAdapterReject {
+fn strict_adapter_reject_from_true_i_error(err: StrictTrueIError) -> StrictAdapterReject {
     match err {
-        KernelError::KernelInvariant { message, .. }
-            if message.contains("proof is not exactly") =>
-        {
-            StrictAdapterReject::ProofShapeMismatch
-        },
-        KernelError::KernelInvariant { message, .. }
-            if message.contains("missing checked True_def") =>
-        {
-            StrictAdapterReject::MissingCheckedDefinition
-        },
-        KernelError::KernelInvariant { message, .. }
-            if message.contains("parsed proposition") || message.contains("not HOL.True") =>
-        {
-            StrictAdapterReject::PropositionMismatch
-        },
-        KernelError::KernelInvariant { message, .. }
-            if message.contains("refl result")
-                || message.contains("did not produce strict closed")
-                || message.contains("rhs is not reflexive") =>
-        {
-            StrictAdapterReject::ReplayFailed(message)
-        },
-        KernelError::DummyType { .. }
-        | KernelError::CompatCTerm { .. }
-        | KernelError::TypeMismatch { .. }
-        | KernelError::UndeclaredConstant(_)
-        | KernelError::NotFunctionType(_) => {
+        StrictTrueIError::PropositionMismatch => StrictAdapterReject::PropositionMismatch,
+        StrictTrueIError::ProofShapeMismatch => StrictAdapterReject::ProofShapeMismatch,
+        StrictTrueIError::MissingCheckedDefinition => StrictAdapterReject::MissingCheckedDefinition,
+        StrictTrueIError::CertificationFailed(err) => {
             StrictAdapterReject::CertificationFailed(err.to_string())
         },
-        other => StrictAdapterReject::KernelInvariant(other.to_string()),
+        StrictTrueIError::ReplayFailed(err) => StrictAdapterReject::ReplayFailed(err.to_string()),
+        StrictTrueIError::NameMismatch { actual } => StrictAdapterReject::KernelInvariant(format!(
+            "registered TrueI adapter received theorem name {actual}"
+        )),
+        StrictTrueIError::KernelInvariant(err) => {
+            StrictAdapterReject::KernelInvariant(err.to_string())
+        },
     }
 }
 
@@ -4070,7 +4061,7 @@ pub fn try_strict_adapter(lem: &ParsedLemma, db: &HolTheoremDb) -> StrictAdapter
             let checked_prop = match normalize_true_i_prop_for_verify(lem.theorem.prop(), db) {
                 Ok(prop) => prop,
                 Err(err) => {
-                    return StrictAdapterResult::Rejected(strict_adapter_reject_from_kernel_error(
+                    return StrictAdapterResult::Rejected(strict_adapter_reject_from_true_i_error(
                         err,
                     ));
                 },
@@ -4078,7 +4069,7 @@ pub fn try_strict_adapter(lem: &ParsedLemma, db: &HolTheoremDb) -> StrictAdapter
             match try_strict_hol_true_i(&lem.name, &checked_prop, proof, db) {
                 Ok(thm) => StrictAdapterResult::Proved(thm),
                 Err(err) => {
-                    StrictAdapterResult::Rejected(strict_adapter_reject_from_kernel_error(err))
+                    StrictAdapterResult::Rejected(strict_adapter_reject_from_true_i_error(err))
                 },
             }
         },
@@ -4942,7 +4933,7 @@ mod tests {
         lemmas.into_iter().find(|lem| lem.name == "TrueI").expect("HOL TrueI parses")
     }
 
-    fn with_hol_true_i_db<R>(f: impl FnOnce() -> R) -> R {
+    fn hol_true_i_db() -> HolTheoremDb {
         let hol = include_str!("../../theories/HOL/HOL.thy");
         let empty_db = HolTheoremDb::new();
         let lemmas =
@@ -4951,6 +4942,11 @@ mod tests {
         enrich_local_db_with_checked_sources(&mut db, hol)
             .expect("HOL TrueI checked source env must merge");
         HolTheoremDb::add_builtins(&mut db);
+        db
+    }
+
+    fn with_hol_true_i_db<R>(f: impl FnOnce() -> R) -> R {
+        let db = hol_true_i_db();
         HolTheoremDb::with_override(&db, f)
     }
 
@@ -5065,6 +5061,59 @@ mod tests {
         assert!(matches!(
             result,
             StrictAdapterResult::Rejected(StrictAdapterReject::ProofShapeMismatch)
+        ));
+    }
+
+    #[test]
+    fn strict_adapter_rejects_true_i_with_missing_definition() {
+        let lem = parsed_hol_true_i();
+        let mut db = hol_true_i_db();
+        db.checked_definitions.remove("True_def");
+
+        let result = try_strict_adapter(&lem, &db);
+
+        assert!(matches!(
+            result,
+            StrictAdapterResult::Rejected(StrictAdapterReject::MissingCheckedDefinition)
+        ));
+    }
+
+    #[test]
+    fn strict_adapter_rejects_true_i_with_proposition_mismatch() {
+        let mut lem = parsed_hol_true_i();
+        lem.theorem =
+            Arc::new(ThmKernel::assume_compat(CTerm::certify(crate::hol::hologic::false_const())));
+
+        let result = with_hol_true_i_db(|| {
+            let db = HolTheoremDb::get();
+            try_strict_adapter(&lem, db)
+        });
+
+        assert!(matches!(
+            result,
+            StrictAdapterResult::Rejected(StrictAdapterReject::PropositionMismatch)
+        ));
+    }
+
+    #[test]
+    fn strict_adapter_rejection_classification_ignores_error_text() {
+        let misleading_invariant =
+            StrictTrueIError::KernelInvariant(KernelError::KernelInvariant {
+                op: "typed_rejection_test",
+                message: "proof is not exactly missing checked True_def".into(),
+            });
+        let misleading_replay = StrictTrueIError::ReplayFailed(KernelError::KernelInvariant {
+            op: "typed_rejection_test",
+            message: "parsed proposition is not HOL.True".into(),
+        });
+
+        assert!(matches!(
+            strict_adapter_reject_from_true_i_error(misleading_invariant),
+            StrictAdapterReject::KernelInvariant(_)
+        ));
+        assert!(matches!(
+            strict_adapter_reject_from_true_i_error(misleading_replay),
+            StrictAdapterReject::ReplayFailed(_)
         ));
     }
 
