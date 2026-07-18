@@ -40,7 +40,7 @@ mod batch_verify {
     ];
 
     #[test]
-    fn test_tier1_verification() {
+    fn tier1_accept_all_never_reports_verified_theorems() {
         let hol_dir = Path::new("isabelle-source/src/HOL");
         if !hol_dir.exists() {
             eprintln!("Skipping: isabelle-source/src/HOL not found");
@@ -48,7 +48,7 @@ mod batch_verify {
         }
 
         let mut builder = SessionBuilder::new();
-        // Use accept_all for fast theory loading (skip proof replay)
+        // Admission-only loading must not produce verified theorem outcomes.
         builder.set_accept_all(true);
         let count = builder.scan(hol_dir).unwrap();
         eprintln!("Scanned {} theories", count);
@@ -81,17 +81,17 @@ mod batch_verify {
                 }
                 tier1_total += 1;
 
-                // Tier 1 files must have some verified lemmas
-                if !r.status.has_verified() {
-                    eprintln!("    ⚠ WARNING: Tier 1 file {} failed verification!", name);
+                if r.status.has_verified() {
+                    eprintln!("    ⚠ BUG: accept_all reported {} as verified", name);
                 }
             } else {
                 eprintln!("  ❓ {:>15} NOT FOUND", name);
             }
         }
 
-        eprintln!("\n  Tier 1 result: {}/{} files verified", tier1_ok, tier1_total);
-        assert!(tier1_ok > 0, "No tier 1 files verified!");
+        eprintln!("\n  Tier 1 accept_all result: {tier1_ok}/{tier1_total} files verified");
+        assert_eq!(tier1_total, TIER1_FILES.len(), "not all tier 1 files were classified");
+        assert_eq!(tier1_ok, 0, "accept_all admissions must not count as verified");
     }
 
     #[test]
@@ -119,7 +119,10 @@ mod batch_verify {
         // Every result should have a valid status
         for r in &report.results {
             match &r.status {
-                VerifyStatus::FullSuccess => assert!(r.status.rate() > 0.99),
+                VerifyStatus::FullSuccess { attempted } => {
+                    assert!(*attempted > 0);
+                    assert!(r.status.rate() > 0.99);
+                },
                 VerifyStatus::PartialSuccess { verified, attempted, .. } => {
                     assert!(*verified <= *attempted, "verified > attempted for {}", r.name);
                 },

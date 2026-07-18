@@ -1,4 +1,5 @@
-//! Theory verification classifier — categorizes .thy files by verification status.
+//! Legacy theory verification classifier — categorizes .thy files by the
+//! transitional `is_strict_closed_proved()` metric.
 //!
 //! ## Purpose
 //!
@@ -14,11 +15,13 @@
 //! |--------|---------|
 //! | `FullSuccess` | 100% of sampled lemmas verify |
 //! | `PartialSuccess` | Some lemmas verify, some fail |
-//! | `SyntaxError` | File cannot be parsed |
+//! | `SyntaxError` | A parse error prevented complete file processing |
 //! | `TypeError` | Type checking failure in lemmas |
 //! | `ProofFailure` | All lemmas fail proof search |
 //! | `Timeout` | File processing exceeds time budget |
 //! | `NoLemmas` | File has no verifiable lemmas |
+//! | `IoError` | File not found or unreadable |
+//! | `InternalError` | Outer panic prevented attempt-count recovery |
 
 use std::{collections::HashMap, path::PathBuf, time::Duration};
 
@@ -29,14 +32,14 @@ use std::{collections::HashMap, path::PathBuf, time::Duration};
 /// Verification status for a single theory file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VerifyStatus {
-    /// All sampled lemmas verified successfully.
-    FullSuccess,
-    /// Some lemmas verified, some failed.
+    /// All sampled lemmas reached the transitional strict-closed predicate.
+    FullSuccess { attempted: usize },
+    /// Some lemmas reached the transitional strict-closed predicate.
     PartialSuccess { verified: usize, attempted: usize, failed_names: Vec<String> },
-    /// File could not be parsed at all.
-    SyntaxError { message: String },
-    /// Type checking failed on one or more lemmas.
-    TypeError { message: String },
+    /// One or more parse errors prevented complete file processing.
+    SyntaxError { message: String, attempted: usize },
+    /// Type checking or proof-context certification failed on one or more lemmas.
+    TypeError { message: String, attempted: usize },
     /// All attempted lemmas failed proof search.
     ProofFailure { attempted: usize },
     /// Processing exceeded time budget.
@@ -45,18 +48,26 @@ pub enum VerifyStatus {
     NoLemmas,
     /// File not found or unreadable.
     IoError { message: String },
+    /// An outer processing panic prevented recovery of an attempt count.
+    InternalError { message: String },
 }
 
 impl VerifyStatus {
-    /// Whether this status indicates any verified lemmas.
+    /// Whether this status includes any transitional strict-closed lemmas.
     pub fn has_verified(&self) -> bool {
-        matches!(self, VerifyStatus::FullSuccess | VerifyStatus::PartialSuccess { .. })
+        matches!(self, VerifyStatus::FullSuccess { .. } | VerifyStatus::PartialSuccess { .. })
     }
 
-    /// Verification rate as a fraction (0.0 to 1.0).
+    /// Transitional strict-closed rate as a fraction (0.0 to 1.0).
     pub fn rate(&self) -> f64 {
         match self {
-            VerifyStatus::FullSuccess => 1.0,
+            VerifyStatus::FullSuccess { attempted } => {
+                if *attempted == 0 {
+                    0.0
+                } else {
+                    1.0
+                }
+            },
             VerifyStatus::PartialSuccess { verified, attempted, .. } => {
                 if *attempted == 0 {
                     0.0
@@ -71,12 +82,13 @@ impl VerifyStatus {
     /// Short label for reporting.
     pub fn label(&self) -> &'static str {
         match self {
-            VerifyStatus::FullSuccess => "OK",
+            VerifyStatus::FullSuccess { .. } => "OK",
             VerifyStatus::PartialSuccess { .. } => "PARTIAL",
             VerifyStatus::SyntaxError { .. } => "SYNTAX",
             VerifyStatus::TypeError { .. } => "TYPE",
             VerifyStatus::ProofFailure { .. } => "PROOF",
             VerifyStatus::Timeout { .. } => "TIMEOUT",
+            VerifyStatus::InternalError { .. } => "INTERNAL",
             VerifyStatus::NoLemmas => "NO-LEMMA",
             VerifyStatus::IoError { .. } => "IO",
         }
@@ -107,7 +119,7 @@ pub struct VerifyReport {
     pub results: Vec<VerifyResult>,
     /// Count per status label
     pub counts: HashMap<&'static str, usize>,
-    /// Overall verification rate
+    /// Overall transitional strict-closed rate
     pub overall_rate: f64,
     /// Total theorems generated
     pub total_theorems: usize,
@@ -131,12 +143,21 @@ impl VerifyReport {
             total_time += r.elapsed;
 
             match &r.status {
-                VerifyStatus::FullSuccess => {
-                    total_verified += 1;
-                    total_attempted += 1;
+                VerifyStatus::FullSuccess { attempted } => {
+                    total_verified += attempted;
+                    total_attempted += attempted;
                 },
                 VerifyStatus::PartialSuccess { verified, attempted, .. } => {
                     total_verified += verified;
+                    total_attempted += attempted;
+                },
+                VerifyStatus::ProofFailure { attempted } => {
+                    total_attempted += attempted;
+                },
+                VerifyStatus::SyntaxError { attempted, .. } => {
+                    total_attempted += attempted;
+                },
+                VerifyStatus::TypeError { attempted, .. } => {
                     total_attempted += attempted;
                 },
                 _ => {},
@@ -152,7 +173,7 @@ impl VerifyReport {
     /// Print a human-readable report.
     pub fn print(&self) {
         println!("\n╔══════════════════════════════════════════════════════╗");
-        println!("║        Isabelle-rs Verification Report               ║");
+        println!("║   Isabelle-rs Transitional Verification Report       ║");
         println!("╠══════════════════════════════════════════════════════╣");
         println!("║ Files processed:  {:>6}                              ║", self.total);
         println!(
@@ -161,12 +182,13 @@ impl VerifyReport {
         );
         println!("║ Total theorems:   {:>6}                              ║", self.total_theorems);
         println!(
-            "║ Overall rate:     {:>7.1}%                            ║",
+            "║ Transitional:    {:>7.1}%                            ║",
             self.overall_rate * 100.0
         );
         println!("╠══════════════════════════════════════════════════════╣");
 
-        let order = ["OK", "PARTIAL", "TIMEOUT", "PROOF", "TYPE", "SYNTAX", "NO-LEMMA", "IO"];
+        let order =
+            ["OK", "PARTIAL", "TIMEOUT", "INTERNAL", "PROOF", "TYPE", "SYNTAX", "NO-LEMMA", "IO"];
         for label in &order {
             if let Some(count) = self.counts.get(label) {
                 let bar = "█".repeat((*count as f64 / self.total as f64 * 20.0) as usize);
@@ -182,7 +204,9 @@ impl VerifyReport {
         let mut failures: Vec<&VerifyResult> = self
             .results
             .iter()
-            .filter(|r| !matches!(r.status, VerifyStatus::FullSuccess | VerifyStatus::NoLemmas))
+            .filter(|r| {
+                !matches!(r.status, VerifyStatus::FullSuccess { .. } | VerifyStatus::NoLemmas)
+            })
             .collect();
         failures.sort_by(|a, b| {
             a.status.rate().partial_cmp(&b.status.rate()).unwrap_or(std::cmp::Ordering::Equal)
@@ -217,5 +241,72 @@ impl VerifyReport {
             ));
         }
         csv
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn result(name: &str, status: VerifyStatus) -> VerifyResult {
+        VerifyResult {
+            name: name.to_string(),
+            path: PathBuf::from(format!("{name}.thy")),
+            status,
+            elapsed: Duration::ZERO,
+            theorem_count: 0,
+        }
+    }
+
+    #[test]
+    fn overall_rate_weights_all_attempted_lemmas() {
+        let report = VerifyReport::new(vec![
+            result("large", VerifyStatus::FullSuccess { attempted: 100 }),
+            result("failed", VerifyStatus::ProofFailure { attempted: 1 }),
+        ]);
+
+        assert!((report.overall_rate - 100.0 / 101.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn overall_rate_includes_attempts_before_syntax_failure() {
+        let report = VerifyReport::new(vec![
+            result("proved", VerifyStatus::FullSuccess { attempted: 1 }),
+            result(
+                "malformed",
+                VerifyStatus::SyntaxError { message: "syntax error".into(), attempted: 1 },
+            ),
+        ]);
+
+        assert!((report.overall_rate - 0.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn overall_rate_includes_every_counted_failure_attempt() {
+        let report = VerifyReport::new(vec![
+            result("full", VerifyStatus::FullSuccess { attempted: 3 }),
+            result(
+                "partial",
+                VerifyStatus::PartialSuccess {
+                    verified: 1,
+                    attempted: 2,
+                    failed_names: vec!["partial_failure".into()],
+                },
+            ),
+            result(
+                "type",
+                VerifyStatus::TypeError {
+                    message: "proof-context certification failed".into(),
+                    attempted: 4,
+                },
+            ),
+            result(
+                "syntax",
+                VerifyStatus::SyntaxError { message: "parse error".into(), attempted: 5 },
+            ),
+            result("proof", VerifyStatus::ProofFailure { attempted: 6 }),
+        ]);
+
+        assert!((report.overall_rate - 4.0 / 20.0).abs() < f64::EPSILON);
     }
 }

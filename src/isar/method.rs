@@ -203,7 +203,7 @@ impl ProofFailure {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProofOutcome {
-    StrictClosed { summary: TheoremSummary },
+    TransitionalStrictClosed { summary: TheoremSummary },
     CompatClosedOracleFree { summary: TheoremSummary },
     OpenOracleFree { reason: OpenReason, summary: TheoremSummary },
     Admitted { reason: AdmitReason, summary: TheoremSummary },
@@ -211,13 +211,13 @@ pub enum ProofOutcome {
 }
 
 impl ProofOutcome {
-    pub fn is_strict_closed(&self) -> bool {
-        matches!(self, ProofOutcome::StrictClosed { .. })
+    pub fn is_transitional_strict_closed(&self) -> bool {
+        matches!(self, ProofOutcome::TransitionalStrictClosed { .. })
     }
 
     pub fn label(&self) -> String {
         match self {
-            ProofOutcome::StrictClosed { .. } => "StrictClosed".to_string(),
+            ProofOutcome::TransitionalStrictClosed { .. } => "TransitionalStrictClosed".to_string(),
             ProofOutcome::CompatClosedOracleFree { .. } => "CompatClosedOracleFree".to_string(),
             ProofOutcome::OpenOracleFree { reason, .. } => {
                 format!("OpenOracleFree({})", reason.label())
@@ -232,7 +232,11 @@ impl ProofOutcome {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProofOutcomeStats {
-    pub strict_closed: usize,
+    /// Overlay reserved for future theory-context-bound
+    /// `crate::kernel::TrustedTheorem` acceptance. The legacy verifier cannot
+    /// increment it, and `total()` deliberately excludes it.
+    pub kernel_trusted_closed: usize,
+    pub transitional_strict_closed: usize,
     pub compat_closed_oracle_free: usize,
     pub open_oracle_free: BTreeMap<OpenReason, usize>,
     pub admitted: BTreeMap<AdmitReason, usize>,
@@ -242,7 +246,9 @@ pub struct ProofOutcomeStats {
 impl ProofOutcomeStats {
     fn record(&mut self, outcome: &ProofOutcome) {
         match outcome {
-            ProofOutcome::StrictClosed { .. } => self.strict_closed += 1,
+            ProofOutcome::TransitionalStrictClosed { .. } => {
+                self.transitional_strict_closed += 1;
+            },
             ProofOutcome::CompatClosedOracleFree { .. } => self.compat_closed_oracle_free += 1,
             ProofOutcome::OpenOracleFree { reason, .. } => {
                 *self.open_oracle_free.entry(*reason).or_insert(0) += 1;
@@ -256,8 +262,12 @@ impl ProofOutcomeStats {
         }
     }
 
+    /// Number of mutually exclusive legacy-verifier outcomes.
+    ///
+    /// `kernel_trusted_closed` is an overlay until a context-bound acceptance
+    /// outcome exists, so including it here would allow `total > attempted`.
     pub fn total(&self) -> usize {
-        self.strict_closed
+        self.transitional_strict_closed
             + self.compat_closed_oracle_free
             + self.open_oracle_free.values().copied().sum::<usize>()
             + self.admitted.values().copied().sum::<usize>()
@@ -266,7 +276,8 @@ impl ProofOutcomeStats {
 
     pub fn report_lines(&self) -> Vec<String> {
         let mut lines = vec![
-            format!("StrictClosed: {}", self.strict_closed),
+            format!("KernelTrustedClosed: {}", self.kernel_trusted_closed),
+            format!("TransitionalStrictClosed: {}", self.transitional_strict_closed),
             format!("CompatClosedOracleFree: {}", self.compat_closed_oracle_free),
         ];
         for (reason, count) in &self.open_oracle_free {
@@ -305,13 +316,13 @@ impl GoalExportError {
     }
 }
 
-/// Reset the global proved-vs-accepted tally. Call before a verification run.
+/// Reset the global transitional-vs-accepted tally. Call before a verification run.
 pub fn reset_verify_stats() {
     VERIFY_STATS.with(|c| c.set((0, 0)));
     VERIFY_OUTCOME_STATS.with(|c| *c.borrow_mut() = ProofOutcomeStats::default());
 }
 
-/// Read the global proved-vs-accepted tally as `(proved, axiom_accepted)`.
+/// Read the legacy tally as `(transitional_strict_closed, other_accepted)`.
 pub fn verify_stats() -> (usize, usize) {
     VERIFY_STATS.with(|c| c.get())
 }
@@ -347,7 +358,7 @@ fn open_reason_from_thm(thm: &Thm) -> OpenReason {
 fn classify_thm_with_exit(name: &str, thm: &Thm, exit: VerifyOutcome) -> ProofOutcome {
     let summary = TheoremSummary::from_thm(name, thm);
     if thm.is_strict_closed_proved() && exit != VerifyOutcome::AxiomAccepted {
-        return ProofOutcome::StrictClosed { summary };
+        return ProofOutcome::TransitionalStrictClosed { summary };
     }
     if thm.trust_status() == ThmTrust::Admitted || !thm.oracles().is_empty() {
         return ProofOutcome::Admitted { reason: admitted_reason_from_thm(thm), summary };
@@ -371,8 +382,8 @@ pub fn classify_verify_result(name: &str, result: Option<&Thm>) -> ProofOutcome 
     }
 }
 
-fn is_strict_closed_proved_outcome(thm: &Thm) -> bool {
-    classify_verify_result("", Some(thm)).is_strict_closed()
+fn is_transitional_strict_closed_outcome(thm: &Thm) -> bool {
+    classify_verify_result("", Some(thm)).is_transitional_strict_closed()
 }
 
 fn export_proved_goal(
@@ -3771,7 +3782,7 @@ pub fn set_search_budget(budget: usize) {
 }
 
 /// Verify a single .thy file using a local DB — no global LazyLock init.
-/// Returns (verified_count, attempted_count).
+/// Returns `(transitional_strict_closed_count, attempted_count)`.
 /// Uses 3-phase approach: parse with empty DB → build local DB → verify with override.
 /// Load simp rules from core theories (HOL, Orderings, Set, Nat, Fun, Lattices).
 /// Uses with_override to avoid triggering the global LazyLock DB initialization.
@@ -3866,8 +3877,10 @@ pub fn verify_file(source: &str) -> (usize, usize) {
 /// `(name, proof_script, is_proved)` for every attempted lemma instead of a
 /// count. Used to analyze which admitted lemmas the prover cannot yet close.
 ///
-/// `is_proved` requires a closed, oracle-free theorem with no accepted-axiom
-/// exit tag; open `A |- A` results are not counted as proved lemmas.
+/// `is_proved` means `TransitionalStrictClosed`: a legacy `core::Thm` with
+/// strict metadata, closed burdens, no dummy types, and no accepted-axiom exit
+/// tag. It is not a new-kernel `TrustedTheorem`; open `A |- A` results are not
+/// counted.
 pub fn verify_file_diagnostic(source: &str) -> Vec<(String, String, bool)> {
     use crate::hol::hol_loader::HolTheoremDb;
     let empty_db = HolTheoremDb::new();
@@ -3915,7 +3928,7 @@ pub fn verify_file_diagnostic(source: &str) -> Vec<(String, String, bool)> {
             let script = lem.proof_script.clone().unwrap_or_default();
             let result = verify_lemma(lem);
             let outcome = classify_verify_result(&lem.name, result.as_ref());
-            let proved = outcome.is_strict_closed();
+            let proved = outcome.is_transitional_strict_closed();
             out.push((lem.name.clone(), script, proved));
         }
         LOCAL_THEOREM_INDEX.with(|idx| idx.borrow_mut().clear());
@@ -3924,6 +3937,10 @@ pub fn verify_file_diagnostic(source: &str) -> Vec<(String, String, bool)> {
 }
 
 /// Verify lemmas with local index for same-file definitions.
+///
+/// The returned verified count is the transitional legacy metric. New-kernel
+/// trusted acceptance remains zero until this path returns context-bound
+/// `crate::kernel::TrustedTheorem` values.
 /// Checks `VERIFY_DEADLINE` before each lemma — returns partial results if exceeded.
 pub fn verify_lemmas_batch(lemmas: &[ParsedLemma]) -> (usize, usize) {
     LOCAL_THEOREM_INDEX.with(|idx| {
@@ -3948,7 +3965,7 @@ pub fn verify_lemmas_batch(lemmas: &[ParsedLemma]) -> (usize, usize) {
             attempted += 1;
             let result = verify_lemma(lem);
             let outcome = classify_verify_result(&lem.name, result.as_ref());
-            let proved = outcome.is_strict_closed();
+            let proved = outcome.is_transitional_strict_closed();
             if proved {
                 verified += 1;
             }
@@ -4897,7 +4914,7 @@ mod tests {
         assert!(thm.is_fully_proved(), "assume has no oracle footprint");
         assert!(!thm.is_closed(), "assume leaves an ambient hypothesis");
         assert!(!thm.is_closed_proved());
-        assert!(!super::is_strict_closed_proved_outcome(&thm));
+        assert!(!super::is_transitional_strict_closed_outcome(&thm));
     }
 
     fn checked_prop_ct(name: &str) -> CTerm {
@@ -4984,6 +5001,19 @@ lemma TrueI:
         HolTheoremDb::with_override(&db, f)
     }
 
+    fn hol_true_i_db_with_schematic_builtin() -> HolTheoremDb {
+        let mut db = hol_true_i_db();
+        db.by_name.insert(
+            "TrueI".to_string(),
+            Arc::new(ThmKernel::assume_compat(CTerm::certify(Term::var(
+                "P",
+                0,
+                Typ::base("bool"),
+            )))),
+        );
+        db
+    }
+
     #[test]
     fn strict_vertical_slice_pure_imp_identity() {
         let mut env = crate::core::types::TypeEnv::new();
@@ -5000,21 +5030,8 @@ lemma TrueI:
         assert!(thm.tpairs().is_empty());
     }
 
-    fn hol_true_i_db_with_schematic_builtin() -> HolTheoremDb {
-        let mut db = hol_true_i_db();
-        db.by_name.insert(
-            "TrueI".to_string(),
-            Arc::new(ThmKernel::assume_compat(CTerm::certify(Term::var(
-                "P",
-                0,
-                Typ::base("bool"),
-            )))),
-        );
-        db
-    }
-
     #[test]
-    fn proof_outcome_counts_pure_imp_identity_as_strict_closed() {
+    fn proof_outcome_counts_pure_imp_identity_as_transitional_strict_closed() {
         let lem = pure_identity_lemma();
         reset_verify_stats();
 
@@ -5023,12 +5040,13 @@ lemma TrueI:
         let stats = verify_outcome_stats();
 
         assert_eq!((verified, attempted), (1, 1));
-        assert_eq!(stats.strict_closed, 1);
+        assert_eq!(stats.kernel_trusted_closed, 0);
+        assert_eq!(stats.transitional_strict_closed, 1);
         assert_eq!(stats.total(), 1);
     }
 
     #[test]
-    fn proof_outcome_does_not_count_compat_identity_as_strict_closed() {
+    fn proof_outcome_does_not_count_compat_identity_as_transitional_strict_closed() {
         LAST_OUTCOME.with(|c| c.set(VerifyOutcome::Proved));
         let a = prop_ct("A");
         let assumed = ThmKernel::assume_compat(a.clone());
@@ -5037,11 +5055,11 @@ lemma TrueI:
         let outcome = classify_verify_result("compat_imp_identity", Some(&compat_identity));
 
         assert!(matches!(outcome, ProofOutcome::CompatClosedOracleFree { .. }));
-        assert!(!outcome.is_strict_closed());
+        assert!(!outcome.is_transitional_strict_closed());
     }
 
     #[test]
-    fn proof_outcome_counts_hol_true_i_as_strict_closed() {
+    fn proof_outcome_counts_hol_true_i_as_transitional_strict_closed() {
         let lem = parsed_hol_true_i();
         assert_eq!(lem.proof_script.as_deref(), Some("unfolding True_def by (rule refl)"));
         reset_verify_stats();
@@ -5064,7 +5082,8 @@ lemma TrueI:
         let stats = verify_outcome_stats();
 
         assert_eq!((verified, attempted), (1, 1));
-        assert_eq!(stats.strict_closed, 1);
+        assert_eq!(stats.kernel_trusted_closed, 0);
+        assert_eq!(stats.transitional_strict_closed, 1);
         assert_eq!(stats.total(), 1);
     }
 
@@ -5083,18 +5102,6 @@ lemma TrueI:
             StrictAdapterResult::Proved(thm) => assert!(thm.is_strict_closed_proved()),
             other => panic!("expected strict TrueI proof, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn strict_adapter_returns_not_applicable_for_unrelated_lemma() {
-        let lem = pure_identity_lemma();
-
-        let result = with_pure_identity_db(|| {
-            let db = HolTheoremDb::get();
-            try_strict_adapter(&lem, db)
-        });
-
-        assert!(matches!(result, StrictAdapterResult::NotApplicable));
     }
 
     #[test]
@@ -5135,19 +5142,15 @@ lemma GeneralTrue: "True"
     }
 
     #[test]
-    fn strict_adapter_rejects_true_i_with_wrong_proof_shape() {
-        let mut lem = parsed_hol_true_i();
-        lem.proof_script = Some("by (rule refl)".to_string());
+    fn strict_adapter_returns_not_applicable_for_unrelated_lemma() {
+        let lem = pure_identity_lemma();
 
-        let result = with_hol_true_i_db(|| {
+        let result = with_pure_identity_db(|| {
             let db = HolTheoremDb::get();
             try_strict_adapter(&lem, db)
         });
 
-        assert!(matches!(
-            result,
-            StrictAdapterResult::Rejected(StrictAdapterReject::ProofShapeMismatch)
-        ));
+        assert!(matches!(result, StrictAdapterResult::NotApplicable));
     }
 
     #[test]
@@ -5180,16 +5183,18 @@ lemma GeneralTrue: "True"
     }
 
     #[test]
-    fn strict_adapter_rejects_true_i_with_missing_definition() {
-        let lem = parsed_hol_true_i();
-        let mut db = hol_true_i_db();
-        db.checked_definitions.remove("True_def");
+    fn strict_adapter_rejects_true_i_with_wrong_proof_shape() {
+        let mut lem = parsed_hol_true_i();
+        lem.proof_script = Some("by (rule refl)".to_string());
 
-        let result = try_strict_adapter(&lem, &db);
+        let result = with_hol_true_i_db(|| {
+            let db = HolTheoremDb::get();
+            try_strict_adapter(&lem, db)
+        });
 
         assert!(matches!(
             result,
-            StrictAdapterResult::Rejected(StrictAdapterReject::MissingCheckedDefinition)
+            StrictAdapterResult::Rejected(StrictAdapterReject::ProofShapeMismatch)
         ));
     }
 
@@ -5354,6 +5359,20 @@ proof -
     }
 
     #[test]
+    fn strict_adapter_rejects_true_i_with_missing_definition() {
+        let lem = parsed_hol_true_i();
+        let mut db = hol_true_i_db();
+        db.checked_definitions.remove("True_def");
+
+        let result = try_strict_adapter(&lem, &db);
+
+        assert!(matches!(
+            result,
+            StrictAdapterResult::Rejected(StrictAdapterReject::MissingCheckedDefinition)
+        ));
+    }
+
+    #[test]
     fn strict_adapter_rejects_true_i_with_proposition_mismatch() {
         let mut lem = parsed_hol_true_i();
         lem.theorem =
@@ -5367,28 +5386,6 @@ proof -
         assert!(matches!(
             result,
             StrictAdapterResult::Rejected(StrictAdapterReject::PropositionMismatch)
-        ));
-    }
-
-    #[test]
-    fn strict_adapter_rejection_classification_ignores_error_text() {
-        let misleading_invariant =
-            StrictTrueIError::KernelInvariant(KernelError::KernelInvariant {
-                op: "typed_rejection_test",
-                message: "proof is not exactly missing checked True_def".into(),
-            });
-        let misleading_replay = StrictTrueIError::ReplayFailed(KernelError::KernelInvariant {
-            op: "typed_rejection_test",
-            message: "parsed proposition is not HOL.True".into(),
-        });
-
-        assert!(matches!(
-            strict_adapter_reject_from_true_i_error(misleading_invariant),
-            StrictAdapterReject::KernelInvariant(_)
-        ));
-        assert!(matches!(
-            strict_adapter_reject_from_true_i_error(misleading_replay),
-            StrictAdapterReject::ReplayFailed(_)
         ));
     }
 
@@ -5625,6 +5622,28 @@ lemma TrueI:
     }
 
     #[test]
+    fn strict_adapter_rejection_classification_ignores_error_text() {
+        let misleading_invariant =
+            StrictTrueIError::KernelInvariant(KernelError::KernelInvariant {
+                op: "typed_rejection_test",
+                message: "proof is not exactly missing checked True_def".into(),
+            });
+        let misleading_replay = StrictTrueIError::ReplayFailed(KernelError::KernelInvariant {
+            op: "typed_rejection_test",
+            message: "parsed proposition is not HOL.True".into(),
+        });
+
+        assert!(matches!(
+            strict_adapter_reject_from_true_i_error(misleading_invariant),
+            StrictAdapterReject::KernelInvariant(_)
+        ));
+        assert!(matches!(
+            strict_adapter_reject_from_true_i_error(misleading_replay),
+            StrictAdapterReject::ReplayFailed(_)
+        ));
+    }
+
+    #[test]
     fn verify_lemma_uses_strict_adapter_for_true_i() {
         let lem = parsed_hol_true_i();
 
@@ -5788,19 +5807,35 @@ lemma TrueI:
         let stats = verify_outcome_stats();
 
         assert_eq!((verified, attempted), (1, 1));
-        assert_eq!(stats.strict_closed, 1);
+        assert_eq!(stats.kernel_trusted_closed, 0);
+        assert_eq!(stats.transitional_strict_closed, 1);
         assert_eq!(stats.total(), 1);
     }
 
     #[test]
-    fn proof_outcome_classifies_strict_closed() {
+    fn proof_outcome_total_excludes_kernel_trusted_overlay() {
+        let stats = ProofOutcomeStats {
+            kernel_trusted_closed: 1,
+            transitional_strict_closed: 1,
+            ..ProofOutcomeStats::default()
+        };
+
+        assert_eq!(stats.total(), 1);
+        assert_eq!(
+            stats.report_lines()[..2],
+            ["KernelTrustedClosed: 1", "TransitionalStrictClosed: 1"]
+        );
+    }
+
+    #[test]
+    fn proof_outcome_classifies_transitional_strict_closed() {
         LAST_OUTCOME.with(|c| c.set(VerifyOutcome::Proved));
         let thm = ThmKernel::reflexive(checked_prop_ct("A")).unwrap();
 
         let outcome = classify_verify_result("strict_refl", Some(&thm));
 
-        assert!(matches!(outcome, ProofOutcome::StrictClosed { .. }));
-        assert!(outcome.is_strict_closed());
+        assert!(matches!(outcome, ProofOutcome::TransitionalStrictClosed { .. }));
+        assert!(outcome.is_transitional_strict_closed());
     }
 
     #[test]
@@ -5814,7 +5849,7 @@ lemma TrueI:
             outcome,
             ProofOutcome::Admitted { reason: AdmitReason::AxiomAcceptedWithoutOracle, .. }
         ));
-        assert!(!outcome.is_strict_closed());
+        assert!(!outcome.is_transitional_strict_closed());
     }
 
     #[test]
@@ -5825,7 +5860,7 @@ lemma TrueI:
         let outcome = classify_verify_result("compat_refl", Some(&thm));
 
         assert!(matches!(outcome, ProofOutcome::CompatClosedOracleFree { .. }));
-        assert!(!outcome.is_strict_closed());
+        assert!(!outcome.is_transitional_strict_closed());
     }
 
     #[test]
@@ -5839,7 +5874,7 @@ lemma TrueI:
             outcome,
             ProofOutcome::OpenOracleFree { reason: OpenReason::UnknownHyps, .. }
         ));
-        assert!(!outcome.is_strict_closed());
+        assert!(!outcome.is_transitional_strict_closed());
     }
 
     #[test]
@@ -5853,7 +5888,7 @@ lemma TrueI:
             outcome,
             ProofOutcome::Admitted { reason: AdmitReason::ProofEngineFailed, .. }
         ));
-        assert!(!outcome.is_strict_closed());
+        assert!(!outcome.is_transitional_strict_closed());
     }
 
     #[test]
@@ -5901,7 +5936,8 @@ lemma TrueI:
         assert_eq!(verified, 0, "open oracle-free theorem must not count as proved");
         assert_eq!(verify_stats(), (0, 1));
         let outcome_stats = verify_outcome_stats();
-        assert_eq!(outcome_stats.strict_closed, 0);
+        assert_eq!(outcome_stats.kernel_trusted_closed, 0);
+        assert_eq!(outcome_stats.transitional_strict_closed, 0);
         assert_eq!(outcome_stats.total(), 1);
     }
 
@@ -6173,12 +6209,12 @@ lemma TrueI:
             HolTheoremDb::add_builtins(&mut local_db);
             let (v, a) =
                 HolTheoremDb::with_override(&local_db, || super::verify_lemmas_batch(&lemmas));
-            eprintln!("  {}: {}/{}", name, v, a);
+            eprintln!("  {} TransitionalStrictClosed: {}/{}", name, v, a);
             grand_total += a;
             grand_verified += v;
         }
         eprintln!(
-            "Total ({} files): {}/{} verified ({:.1}%)",
+            "Total ({} files) TransitionalStrictClosed: {}/{} ({:.1}%)",
             files.len(),
             grand_verified,
             grand_total,
@@ -6198,17 +6234,19 @@ lemma TrueI:
             ("List", include_str!("../../theories/HOL/List.thy")),
         ];
         let mut method_counts: HashMap<String, usize> = HashMap::new();
-        let mut total_failed = 0usize;
+        let mut total_non_transitional = 0usize;
         for (_name, source) in &files {
             let lemmas = crate::hol::hol_loader::parse_lemmas(source);
             for lem in &lemmas {
                 if lem.proof_script.is_none() {
                     continue;
                 }
-                if verify_lemma(lem).is_some() {
+                let result = verify_lemma(lem);
+                let outcome = classify_verify_result(&lem.name, result.as_ref());
+                if outcome.is_transitional_strict_closed() {
                     continue;
                 }
-                total_failed += 1;
+                total_non_transitional += 1;
                 let proof = lem.proof_script.as_ref().unwrap();
                 let category = if proof.starts_with("by auto") {
                     "by auto"
@@ -6240,13 +6278,13 @@ lemma TrueI:
                 *method_counts.entry(category.to_string()).or_insert(0) += 1;
             }
         }
-        eprintln!("=== Failed lemmas by proof method ===");
+        eprintln!("=== Non-transitional outcomes by proof method ===");
         let mut counts: Vec<_> = method_counts.iter().collect();
         counts.sort_by_key(|(_, c)| std::cmp::Reverse(**c));
         for (method, count) in &counts {
             eprintln!("  {}: {}", method, count);
         }
-        eprintln!("Total failed: {}", total_failed);
+        eprintln!("Total non-transitional: {}", total_non_transitional);
     }
 }
 
@@ -6272,8 +6310,8 @@ mod integration_tests {
             eprintln!("Found lemma: {} with proof: {:?}", lem.name, lem.proof_script);
             let result = verify_lemma(lem);
             match result {
-                Some(thm) if is_strict_closed_proved_outcome(&thm) => {
-                    eprintln!("CLOSED PROVED: {} -> {:?}", lem.name, thm.prop().term())
+                Some(thm) if is_transitional_strict_closed_outcome(&thm) => {
+                    eprintln!("TRANSITIONAL STRICT CLOSED: {} -> {:?}", lem.name, thm.prop().term())
                 },
                 Some(thm) => eprintln!("ACCEPTED/OPEN: {} -> {:?}", lem.name, thm.prop().term()),
                 None => eprintln!("FAILED to verify: {}", lem.name),
@@ -6290,7 +6328,9 @@ mod integration_tests {
                 );
                 let result = verify_lemma(lem);
                 let status = match result {
-                    Some(ref thm) if is_strict_closed_proved_outcome(thm) => "CLOSED PROVED",
+                    Some(ref thm) if is_transitional_strict_closed_outcome(thm) => {
+                        "TRANSITIONAL STRICT CLOSED"
+                    },
                     Some(_) => "ACCEPTED/OPEN",
                     None => "FAILED",
                 };
@@ -6332,14 +6372,14 @@ mod benchmark_tests {
             for lem in with_proofs.iter().take(sample) {
                 let result = verify_lemma(lem);
                 let outcome = classify_verify_result(&lem.name, result.as_ref());
-                if outcome.is_strict_closed() {
+                if outcome.is_transitional_strict_closed() {
                     verified += 1;
                 }
                 record_verify_outcome(&outcome);
             }
             let elapsed = start.elapsed().as_secs_f64();
             eprintln!(
-                "  {}: {}/{} ({:.1}%) in {:.1}s",
+                "  {} TransitionalStrictClosed: {}/{} ({:.1}%) in {:.1}s",
                 name,
                 verified,
                 sample,
@@ -6368,20 +6408,21 @@ mod benchmark_tests {
             let result = verify_lemma(lem);
             let dt = t0.elapsed().as_secs_f64();
             let outcome = classify_verify_result(&lem.name, result.as_ref());
-            let proved = outcome.is_strict_closed();
+            let proved = outcome.is_transitional_strict_closed();
             if proved {
                 verified += 1;
             }
             record_verify_outcome(&outcome);
             if dt > 1.0 {
-                let status = if proved { "CLOSED PROVED".to_string() } else { outcome.label() };
+                let status =
+                    if proved { "TransitionalStrictClosed".to_string() } else { outcome.label() };
                 eprintln!("    SLOW [{}/{}] {}: {:.2}s {}", i + 1, sample, lem.name, dt, status);
             }
         }
 
         let elapsed = start.elapsed().as_secs_f64();
         eprintln!(
-            "  {}: {}/{} ({:.1}%) in {:.2}s",
+            "  {} TransitionalStrictClosed: {}/{} ({:.1}%) in {:.2}s",
             name,
             verified,
             sample,
@@ -6405,7 +6446,7 @@ mod benchmark_tests {
     }
 
     #[test]
-    fn test_verify_all_core_files_reports_at_least_one_strict_closed() {
+    fn core_batch_snapshot_reports_one_transitional_and_zero_kernel_trusted() {
         eprintln!("=== Full Core Benchmark ===");
         reset_verify_stats();
         let files = vec![
@@ -6435,7 +6476,7 @@ mod benchmark_tests {
         }
 
         eprintln!(
-            "=== TOTAL: {}/{} ({:.1}%) ===",
+            "=== TransitionalStrictClosed TOTAL: {}/{} ({:.1}%) ===",
             total_verified,
             total_attempted,
             if total_attempted > 0 {
@@ -6450,10 +6491,13 @@ mod benchmark_tests {
             eprintln!("  {line}");
         }
 
-        assert!(
-            total_verified >= 1,
-            "core batch should contain at least the narrow strict HOL::TrueI slice"
+        assert_eq!(total_attempted, 125, "sampled core theorem count changed");
+        assert_eq!(
+            total_verified, 1,
+            "HOL::TrueI must remain the only transitional sampled theorem"
         );
-        assert!(outcome_stats.strict_closed >= 1);
+        assert_eq!(outcome_stats.kernel_trusted_closed, 0);
+        assert_eq!(outcome_stats.transitional_strict_closed, 1);
+        assert_eq!(outcome_stats.total(), 125);
     }
 }

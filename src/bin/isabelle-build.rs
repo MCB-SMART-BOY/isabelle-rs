@@ -62,7 +62,7 @@ fn main() {
                 total_ok += 1;
                 total_thms += thms;
                 if !cli.quiet {
-                    println!("✅ {} ({} strict proved theorems)", path.display(), thms);
+                    println!("✅ {} ({} TransitionalStrictClosed theorems)", path.display(), thms);
                 }
             },
             Err(errs) => {
@@ -79,7 +79,7 @@ fn main() {
 
     if cli.stats || cli.files.len() > 1 {
         println!(
-            "Total: {} ok, {} failed, {} strict proved theorems",
+            "Total: {} ok, {} failed, {} TransitionalStrictClosed theorems",
             total_ok, total_fail, total_thms
         );
     }
@@ -118,7 +118,7 @@ fn batch_compile(dir: &PathBuf, quiet: bool, accept_all: bool) {
             println!("║  Total files:     {:<4}               ║", result.total);
             println!("║  Succeeded:       {:<4}               ║", result.loaded);
             println!("║  Failed:          {:<4}               ║", result.failed);
-            println!("║  Strict proved:   {:<4}               ║", result.theorems);
+            println!("║  Transitional:   {:<4}               ║", result.theorems);
             println!("╚══════════════════════════════════════╝");
 
             if !result.error_messages.is_empty() && !quiet {

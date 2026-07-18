@@ -22,7 +22,7 @@ use std::{
 
 use crate::{
     core::theory::Theory,
-    theory::{loader::TheoryProcessor, registry::TheoryRegistry},
+    theory::{loader::TheoryProcessor, registry::TheoryRegistry, verify_classifier::VerifyStatus},
 };
 
 // =========================================================================
@@ -78,7 +78,8 @@ pub struct BuildResult {
     pub loaded: usize,
     /// Total number of theories found.
     pub total: usize,
-    /// Total number of strict closed proved theorems registered in final theories.
+    /// Legacy `TransitionalStrictClosed` results registered in core theories.
+    /// This is not a count of new-kernel `TrustedTheorem` values.
     pub theorems: usize,
     /// Number of failed theories.
     pub failed: usize,
@@ -91,6 +92,29 @@ pub struct BuildResult {
 impl BuildResult {
     pub fn is_success(&self) -> bool {
         self.failed == 0
+    }
+}
+
+fn classify_processing_error(message: String, attempted: usize) -> VerifyStatus {
+    let primary = message.lines().next().unwrap_or_default();
+    let is_type_error = primary.contains("proof-context certification")
+        || primary.contains("DummyType")
+        || primary.contains("TypeMismatch")
+        || primary.contains("UndeclaredConstant")
+        || primary.contains("CompatCTerm");
+    if is_type_error {
+        return VerifyStatus::TypeError { message, attempted };
+    }
+
+    let is_syntax_error = primary.contains("parse")
+        || primary.contains("syntax")
+        || primary.contains("token")
+        || primary.contains("E0403")
+        || primary.contains("E0405");
+    if is_syntax_error {
+        VerifyStatus::SyntaxError { message, attempted }
+    } else {
+        VerifyStatus::ProofFailure { attempted }
     }
 }
 
@@ -108,6 +132,8 @@ pub struct SessionBuilder {
     order: Vec<String>,
     /// Accept all lemmas as axioms (skip proof replay).
     accept_all: bool,
+    #[cfg(test)]
+    panic_on_classified_build: bool,
 }
 
 impl SessionBuilder {
@@ -118,6 +144,8 @@ impl SessionBuilder {
             files: HashMap::new(),
             order: Vec::new(),
             accept_all: false,
+            #[cfg(test)]
+            panic_on_classified_build: false,
         }
     }
 
@@ -307,12 +335,7 @@ impl SessionBuilder {
     }
 
     /// Build a single theory and classify the result.
-    fn build_one_classified(
-        &mut self,
-        tf: &TheoryFile,
-    ) -> crate::theory::verify_classifier::VerifyStatus {
-        use crate::theory::verify_classifier::VerifyStatus;
-
+    fn build_one_classified(&mut self, tf: &TheoryFile) -> VerifyStatus {
         let parent = tf
             .imports
             .first()
@@ -320,6 +343,11 @@ impl SessionBuilder {
             .unwrap_or_else(Theory::pure);
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            #[cfg(test)]
+            if self.panic_on_classified_build {
+                panic!("test-only outer classified panic");
+            }
+
             let mut proc = TheoryProcessor::with_parent(parent, &tf.name);
             proc.accept_all = self.accept_all;
             let source = std::fs::read_to_string(&tf.path)
@@ -330,50 +358,31 @@ impl SessionBuilder {
             self.registry.register(Arc::clone(&thy));
 
             let attempted = proc.lemma_count;
-            let indexed = proc.theorem_count();
             let verified = proc.closed_theorem_count().min(attempted);
 
-            if attempted == 0 && indexed == 0 {
-                Ok(VerifyStatus::NoLemmas)
-            } else if proc.errors().is_empty() {
-                if attempted == 0 {
-                    Ok(VerifyStatus::NoLemmas)
-                } else if verified == attempted {
-                    Ok(VerifyStatus::FullSuccess)
-                } else if verified > 0 {
-                    Ok(VerifyStatus::PartialSuccess {
-                        verified,
-                        attempted,
-                        failed_names: Vec::new(),
-                    })
-                } else {
-                    Ok(VerifyStatus::ProofFailure { attempted })
-                }
-            } else {
-                let failed_names: Vec<String> = proc.errors().iter().take(10).cloned().collect();
-                if verified == 0 {
-                    // Check if any errors are syntax-related
-                    let syntax_err = proc.errors().iter().any(|e| {
-                        e.contains("parse") || e.contains("syntax") || e.contains("token")
-                    });
-                    if syntax_err {
-                        Ok(VerifyStatus::SyntaxError {
-                            message: proc.errors().first().cloned().unwrap_or_default(),
-                        })
-                    } else {
-                        Ok(VerifyStatus::ProofFailure { attempted })
-                    }
-                } else {
+            if !proc.errors().is_empty() {
+                if verified > 0 {
+                    let failed_names =
+                        proc.errors().iter().take(10).cloned().collect::<Vec<String>>();
                     Ok(VerifyStatus::PartialSuccess { verified, attempted, failed_names })
+                } else {
+                    Ok(classify_processing_error(proc.errors()[0].clone(), attempted))
                 }
+            } else if attempted == 0 {
+                Ok(VerifyStatus::NoLemmas)
+            } else if verified == attempted {
+                Ok(VerifyStatus::FullSuccess { attempted })
+            } else if verified > 0 {
+                Ok(VerifyStatus::PartialSuccess { verified, attempted, failed_names: Vec::new() })
+            } else {
+                Ok(VerifyStatus::ProofFailure { attempted })
             }
         }));
 
         match result {
-            Ok(Ok(status)) => status,
-            Ok(Err(status)) => status,
-            Err(_) => VerifyStatus::SyntaxError {
-                message: "panic: internal error during processing".to_string(),
+            Ok(Ok(status)) | Ok(Err(status)) => status,
+            Err(_) => VerifyStatus::InternalError {
+                message: "panic: internal error during classified processing".to_string(),
             },
         }
     }
@@ -397,7 +406,6 @@ impl Default for SessionBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::theory::verify_classifier::VerifyStatus;
 
     fn write_temp_theory(name: &str, source: &str) -> std::path::PathBuf {
         let mut path = std::env::temp_dir();
@@ -470,7 +478,8 @@ mod tests {
         builder.order = vec!["Test".into()];
 
         let result = builder.build();
-        assert_eq!(result.loaded, 1);
+        assert_eq!(result.loaded, 0, "invalid statements must fail before accept_all");
+        assert_eq!(result.failed, 1);
         assert_eq!(result.theorems, 0, "admitted accept_all facts are not strict closed proved");
         assert_eq!(builder.theorem_count_for("Test"), 0);
 
@@ -499,7 +508,46 @@ mod tests {
     }
 
     #[test]
-    fn test_accept_all_classifier_is_not_full_success() {
+    fn processing_error_classifies_only_the_primary_line() {
+        let type_message = "E0404: lemma statement requires proof-context certification\n  \
+                            = help: check the command syntax near this line";
+        assert_eq!(
+            classify_processing_error(type_message.to_string(), 2),
+            VerifyStatus::TypeError { message: type_message.to_string(), attempted: 2 }
+        );
+
+        let proof_message = "E0404: proof method failed\n  \
+                             = help: check the command syntax near this line";
+        assert_eq!(
+            classify_processing_error(proof_message.to_string(), 1),
+            VerifyStatus::ProofFailure { attempted: 1 }
+        );
+    }
+
+    #[test]
+    fn malformed_datatype_without_lemmas_is_counted_syntax_error() {
+        let source = "theory Test imports Pure begin\ndatatype broken\nend";
+        let path = write_temp_theory("malformed_datatype", source);
+        let tf = TheoryFile { name: "Test".into(), path: path.clone(), imports: Vec::new() };
+
+        let mut builder = SessionBuilder::new();
+        let status = builder.build_one_classified(&tf);
+
+        assert!(
+            matches!(
+                &status,
+                VerifyStatus::SyntaxError { message, attempted: 0 }
+                    if message.lines().next().is_some_and(|line| line.contains("E0405"))
+            ),
+            "unexpected status: {status:?}"
+        );
+        assert_eq!(builder.theorem_count_for("Test"), 0);
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn accept_all_certification_failure_is_counted_type_error() {
         let source =
             "theory Test imports Pure begin\nlemma trivial: \"A ==> A\"\nby assumption\nend";
         let path = write_temp_theory("accept_all_classifier", source);
@@ -509,9 +557,33 @@ mod tests {
         builder.set_accept_all(true);
         let status = builder.build_one_classified(&tf);
 
-        assert_eq!(status, VerifyStatus::ProofFailure { attempted: 1 });
+        assert!(
+            matches!(
+                &status,
+                VerifyStatus::TypeError { message, attempted: 1 }
+                    if message
+                        .lines()
+                        .next()
+                        .is_some_and(|line| line.contains("proof-context certification"))
+            ),
+            "unexpected status: {status:?}"
+        );
+        assert!(!status.has_verified());
+        assert_eq!(status.label(), "TYPE");
         assert_eq!(builder.theorem_count_for("Test"), 0);
 
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn outer_classified_processing_panic_is_internal_error() {
+        let mut builder = SessionBuilder::new();
+        builder.panic_on_classified_build = true;
+        let tf = TheoryFile { name: "Test".into(), path: PathBuf::new(), imports: Vec::new() };
+
+        let status = builder.build_one_classified(&tf);
+
+        assert!(matches!(status, VerifyStatus::InternalError { .. }));
+        assert_eq!(status.label(), "INTERNAL");
     }
 }

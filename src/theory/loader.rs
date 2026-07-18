@@ -147,9 +147,11 @@ impl TheoryProcessor {
         self.finalize()
     }
 
-    /// Process with verification statistics: (theory, verified_count, total_count).
-    /// "Verified" means strict closed proved: strict construction, no oracles,
-    /// no hypotheses, no unresolved tpairs, and no dummy types.
+    /// Process with legacy statistics:
+    /// `(theory, transitional_strict_closed_count, total_count)`.
+    /// The transitional count means strict legacy construction, no oracles, no
+    /// hypotheses, no unresolved tpairs, and no dummy types. It is not the
+    /// new-kernel `KernelTrustedClosed` metric.
     pub fn process_source_verified(&mut self, source: &str) -> (Arc<Theory>, usize, usize) {
         let thy = self.process_source(source);
         let verified = self.closed_theorem_count();
@@ -300,6 +302,9 @@ impl TheoryProcessor {
     // ── Command processors ──
 
     fn begin_lemma(&mut self, span: &CommandSpan) {
+        // Count the declaration when it is encountered. Certification or proof
+        // failure must not erase an attempted lemma from aggregate rates.
+        self.lemma_count += 1;
         let body = &span.body;
         // Split into: name, statement, [proof]
         let (name, rest) = if let Some(colon) = body.find(':') {
@@ -936,7 +941,6 @@ impl TheoryProcessor {
         if self.accept_all {
             // Fast path: accept all lemmas without proof search
             if let Some(ref pending_name) = self.pending_lemma {
-                self.lemma_count += 1;
                 let stmt = Term::const_("True", Typ::base("prop"));
                 let thm = Arc::new(ThmKernel::admit(
                     CTerm::certify(stmt),
@@ -957,7 +961,6 @@ impl TheoryProcessor {
                     proof.sorry();
                 }
                 if proof.level() <= 2 {
-                    self.lemma_count += 1;
                     if let Some((name, thm)) = proof.extract_theorem() {
                         let attrs = std::mem::take(&mut self.pending_attributes);
                         self.add_theorem_with_attrs(name, Arc::clone(&thm), attrs);
@@ -1081,7 +1084,7 @@ impl TheoryProcessor {
 
     /// Finalize the local theory into an immutable theory.
     pub fn finalize(&mut self) -> Arc<Theory> {
-        // Record all theorems into the local theory
+        // Record transitional strict-closed results into the legacy local theory.
         if let Some(ref mut local) = self.local {
             for (name, thm) in &self.theorems {
                 if thm.as_ref().is_strict_closed_proved() {
@@ -1105,8 +1108,7 @@ impl TheoryProcessor {
         self.theorems.len()
     }
 
-    /// Get the count of accumulated theorem-index entries that are strict
-    /// closed proved lemmas.
+    /// Get the transitional strict-closed count in the legacy theorem index.
     pub fn closed_theorem_count(&self) -> usize {
         self.theorems.iter().filter(|(_, thm)| thm.as_ref().is_strict_closed_proved()).count()
     }
@@ -1314,10 +1316,11 @@ mod tests {
                                 total_indexed += indexed;
                                 total_lemmas += lemmas;
                             },
-                            Ok((false, errs, thm_count, indexed, _lemmas)) => {
+                            Ok((false, errs, thm_count, indexed, lemmas)) => {
                                 failed += 1;
                                 total_theorems += thm_count;
                                 total_indexed += indexed;
+                                total_lemmas += lemmas;
                                 // Classify failure reasons
                                 for err in &errs {
                                     let reason = if err.contains("No equations") {
@@ -1349,7 +1352,7 @@ mod tests {
                 eprintln!("║  Panicked:       {:<4}               ║", panicked);
                 eprintln!("║  Total theorems: {:<4}                 ║", total_theorems);
                 eprintln!("║  Indexed:         {:<4}                 ║", total_indexed);
-                eprintln!("║  Lemmas proved:  {:<4}                 ║", total_lemmas);
+                eprintln!("║  Lemma declarations: {:<4}          ║", total_lemmas);
                 eprintln!("╠══════════════════════════════════════╣");
                 eprintln!("║  Failure breakdown:                  ║");
                 for (reason, count) in failure_reasons.iter() {
