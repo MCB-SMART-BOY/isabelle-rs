@@ -8,7 +8,7 @@
 #
 # The gate verifies:
 #   1. Formatting (cargo +stable fmt --check)
-#   2. Compilation  (cargo +stable check)
+#   2. Compilation  (cargo +stable check --locked)
 #   3. Kernel firewall (no legacy deps, no forbidden patterns)
 #   4. Integration attack tests (kernel_rewrite_soundness)
 #   5. Kernel soundness tests (kernel_soundness)
@@ -66,8 +66,8 @@ banner "1. Formatting (cargo +stable fmt --check)"
 run_step "Formatting" cargo +stable fmt --check || true
 
 # ── 2. Compilation ──
-banner "2. Compilation (cargo +stable check)"
-run_step "Compilation" cargo +stable check || true
+banner "2. Compilation (cargo +stable check --locked)"
+run_step "Compilation" cargo +stable check --locked || true
 
 # ── 3. Kernel firewall ──
 banner "3. Kernel dependency firewall"
@@ -75,25 +75,25 @@ run_step "Firewall" bash scripts/check-kernel-firewall.sh || true
 
 # ── 4. Integration attack tests ──
 banner "4. Kernel rewrite soundness (integration attack tests)"
-run_step "kernel_rewrite_soundness" cargo +stable test --test kernel_rewrite_soundness || true
+run_step "kernel_rewrite_soundness" cargo +stable test --locked --test kernel_rewrite_soundness || true
 
 # ── 5. Kernel soundness tests ──
 banner "5. Kernel soundness (trusted boundary tests)"
-run_step "kernel_soundness" cargo +stable test --test kernel_soundness || true
+run_step "kernel_soundness" cargo +stable test --locked --test kernel_soundness || true
 
 # ── 6. Inline kernel unit tests ──
 banner "6a. Kernel inline unit tests (thm)"
-run_step "kernel::thm" cargo +stable test --lib kernel::thm:: || true
+run_step "kernel::thm" cargo +stable test --locked --lib kernel::thm:: || true
 
 banner "6b. Kernel inline unit tests (unify)"
-run_step "kernel::unify" cargo +stable test --lib kernel::unify::tests:: || true
+run_step "kernel::unify" cargo +stable test --locked --lib kernel::unify::tests:: || true
 
 banner "6c. Kernel inline unit tests (rules)"
-run_step "kernel::rules" cargo +stable test --lib kernel::rules::tests:: || true
+run_step "kernel::rules" cargo +stable test --locked --lib kernel::rules::tests:: || true
 
 # ── 7. Legacy core tests ──
 banner "7. Legacy core:: tests"
-run_step "core::" cargo +stable test --lib core:: || true
+run_step "core::" cargo +stable test --locked --lib core:: || true
 
 # ── Summary ──
 echo ""

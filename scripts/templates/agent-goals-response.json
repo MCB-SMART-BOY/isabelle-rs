@@ -1,0 +1,29 @@
+{
+  "state_id": "s42",
+  "mode": "ProofBackward",
+  "goals": [
+    {
+      "id": "g0",
+      "target": "xs @ [] = xs",
+      "variables": [
+        {
+          "name": "xs",
+          "type": "'a list"
+        }
+      ],
+      "hypotheses": [],
+      "suggestions": [
+        {
+          "kind": "induction",
+          "on": "xs"
+        },
+        {
+          "kind": "simp",
+          "facts": [
+            "append_Nil"
+          ]
+        }
+      ]
+    }
+  ]
+}

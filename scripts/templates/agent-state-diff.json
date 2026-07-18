@@ -1,0 +1,11 @@
+{
+  "before": "s42",
+  "after": "s43",
+  "accepted": true,
+  "new_goals": [],
+  "diagnostics": [],
+  "trust_delta": {
+    "oracles_added": [],
+    "admitted_added": []
+  }
+}
