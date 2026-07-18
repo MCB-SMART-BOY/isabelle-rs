@@ -10,7 +10,7 @@ Custom hooks for isabelle-rs development automation.
 | `PostToolUse` | After a tool executes | Auto-run tests, check for regressions |
 | `Notification` | On system events | Alert on build failures |
 | `SessionStart` | When session begins | Restore environment, check git state |
-| `SessionEnd` | When session ends | Cleanup, auto-commit, generate summary |
+| `SessionEnd` | Manual checklist in this checkout | Cleanup and summary; never auto-commit without an explicit request |
 
 ## Planned Hooks
 
@@ -21,11 +21,14 @@ Checks if Edit targets `src/core/thm.rs` and warns about kernel safety rules.
 After `cargo test` completes, compares with baseline for regressions.
 
 ### Pre-Commit Checklist
-Before `git commit`, runs `cargo check --lib` and `cargo fmt -- --check`.
+Before `git commit`, run the appropriate `scripts/dev-check.sh` mode and the
+Markdown/template policy. Hooks must not create commits autonomously.
 
 ## Hook Configuration
 
 Hooks are configured in `../settings.json` under the `hooks` section.
+`post-session.md` is not wired to an event in the current configuration; run it
+manually before reporting completion.
 Individual hook scripts go in this directory.
 
 ## Related

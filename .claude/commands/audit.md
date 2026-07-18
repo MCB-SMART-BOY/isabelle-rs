@@ -5,9 +5,6 @@ category: safety
 ---
 # /audit
 
-快速内核安全检查。完整流程见 `.claude/skills/audit-kernel.md`。
-
-```bash
-rg 'Typ::dummy()' src/core/thm.rs src/core/logic.rs src/core/drule.rs
-cargo test --lib core::thm
-```
+内核安全检查。运行 `scripts/dev-check.sh strict`，并使用
+`scripts/audit-compat.sh` 查看 legacy compatibility 调用点。审核契约见
+`.claude/skills/audit-kernel.md`。

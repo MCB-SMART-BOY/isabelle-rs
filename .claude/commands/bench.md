@@ -5,12 +5,8 @@ category: meta
 ---
 # /bench
 
-运行完整测试矩阵。SOF 在 `.claude/skills/bench.md`。
+运行维护的验证矩阵。使用 `scripts/dev-check.sh strict`；需要理论
+宽验证时使用 `core`、`tier2`、`tier3` 或 `broad` 模式。
 
-```bash
-cargo test --lib core::thm core::unify tools::metis
-RUST_MIN_STACK=268435456 cargo test test_verify_all_core_files -- --nocapture
-RUST_MIN_STACK=268435456 cargo test --test tier2_verify -- --nocapture
-```
-
-期望: Core 125/125, Tier2 真实证明率 85.8% (3277/3821 proved, 544 admitted).
+当前 sampled core 基线是 `TransitionalStrictClosed: 1/125` 和
+`KernelTrustedClosed: 0/125`，不得声称 `125/125` 可信证明。

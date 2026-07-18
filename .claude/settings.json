@@ -1,10 +1,10 @@
 {
   "project": {
     "name": "isabelle-rs",
-    "description": "Rust reimplementation of the Isabelle proof assistant kernel",
+    "description": "Rust research prototype of an Isabelle/Pure-inspired LCF kernel",
     "language": "rust",
-    "buildCommand": "cargo build",
-    "testCommand": "cargo test",
+    "buildCommand": "scripts/dev-check.sh fast",
+    "testCommand": "scripts/dev-check.sh strict",
     "stackRequirement": "RUST_MIN_STACK=268435456"
   },
 
@@ -14,7 +14,7 @@
       "Bash:cargo bench",
       "Bash:cargo check",
       "Bash:cargo test",
-      "Bash:cargo run --bin isabelle-build",
+      "Bash:cargo run",
       "Bash:cargo clippy",
       "Bash:cargo fmt",
       "Bash:cargo fix",
@@ -37,7 +37,7 @@
       "Bash:git push",
       "Bash:gh pr create",
       "Bash:gh release create",
-      "Bash:RUST_MIN_STACK=* cargo test test_verify_all_core_files"
+      "Bash:RUST_MIN_STACK=* cargo test core_batch_snapshot_reports_one_transitional_and_zero_kernel_trusted"
     ]
   },
 
@@ -47,17 +47,18 @@
   },
 
   "strategy": {
-    "active": "Route A — Stability First",
-    "description": "Fix bugs before adding features: tests → OOM → Tier2 → attributes → docs",
+    "active": "Immutable Context Identity",
+    "description": "Land immutable context identity and mixed-context rejection before the separately reviewed acceptance gate",
     "priorities": [
-      "Fix 5 failing tests",
-      "Fix OOM/stack overflow root causes",
-      "Expand Tier2 verification (6→100+ files)",
-      "Complete attribute system integration",
-      "Full documentation sync"
+      "Introduce immutable SignatureId and TheoryId",
+      "Add one context-bound KernelTrustedClosed acceptance gate",
+      "Preserve a source-aware proposition AST",
+      "Elaborate HOL.Trueprop into CProp",
+      "Install a data-only HOL basis and conservative definitions",
+      "Re-derive HOL::TrueI before HOL::trans"
     ],
-    "noNewFeatures": true,
-    "why": "Core kernel is solid (125/125). Focus on making existing verification work, not adding new features."
+    "noNewFeatures": false,
+    "why": "Foundational trust-boundary work is allowed; theorem-specific HOL expansion is deferred until KernelTrustedClosed reaches 1/125."
   },
 
   "commitRules": {
@@ -69,7 +70,7 @@
 
   "sessionRules": {
     "updateClaudeDir": true,
-    "description": "At end of every conversation, update .claude/rules/README.md, .claude/rules/post-session.md, and CLAUDE.md with current state. The user should never need to repeat preferences."
+    "description": "Keep AGENTS.md and canonical trust/status docs synchronized when semantics change; do not churn every file after every session."
   },
 
   "hooks": {
@@ -126,16 +127,20 @@
 
   "commands": {
     "verifyAll": {
-      "command": "RUST_MIN_STACK=268435456 cargo test test_verify_all_core_files -- --nocapture",
-      "description": "Run full core verification (5 files, needs 256MB stack)"
+      "command": "scripts/dev-check.sh all",
+      "description": "Run the complete documentation, strict-kernel, and broad theory gates."
+    },
+    "coreSnapshot": {
+      "command": "scripts/dev-check.sh core",
+      "description": "Run the exact 125-theorem sampled core snapshot with the maintained stack."
     },
     "benchAll": {
-      "command": "RUST_MIN_STACK=268435456 cargo test --lib",
-      "description": "Run all lib tests with required stack"
+      "command": "scripts/dev-check.sh lib",
+      "description": "Run the explicit stack-sensitive library mode; report the observed result only."
     },
-    "quickTest": {
-      "command": "cargo test --lib core::thm core::unify tools::metis",
-      "description": "Fast kernel + metis tests (32MB stack)"
+    "quickCheck": {
+      "command": "scripts/dev-check.sh fast",
+      "description": "Run stable formatting and locked compilation."
     }
   }
 }

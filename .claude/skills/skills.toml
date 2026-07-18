@@ -5,9 +5,9 @@
 # permissions, and lifecycle status.
 
 [registry]
-version = "2.0.0"
+version = "3.0.0"
 project = "isabelle-rs"
-updated = "2026-06-03"
+updated = "2026-07-18"
 
 # =============================================================================
 # Skill Categories
@@ -20,6 +20,10 @@ updated = "2026-06-03"
 # theory        — theory building, DB search, parse debugging
 # release       — version bumps, changelog, doc sync
 # meta          — benchmarks, test matrices
+#
+# Every skill is subordinate to root AGENTS.md. Active registration means a
+# workflow is available when explicitly scoped; it does not override the
+# immutable-context/acceptance priority order.
 
 # =============================================================================
 # Skill Definitions
@@ -28,15 +32,15 @@ updated = "2026-06-03"
 [[skills]]
 id = "verify"
 name = "Verify Lemma"
-description = "Verify lemma(s) through the six-layer fallback architecture. Run tests, diagnose failures, debug proof search."
+description = "Verify lemmas and reports without conflating searchable, admitted, transitional, or kernel-trusted outcomes."
 category = "verification"
 status = "active"
-version = "2.0.0"
+version = "3.0.0"
 triggers = ["lemma verification", "proof failure", "test failure", "this lemma doesn't prove", "verify fails"]
 permissions = ["Bash:cargo test", "Bash:cargo run", "Read", "Grep"]
-depends_on = [".claude/rules/testing.md", ".claude/rules/proof-methods.md", ".claude/rules/kernel.md"]
+depends_on = ["AGENTS.md", "scripts/README.md", ".claude/rules/testing.md", ".claude/rules/proof-methods.md", ".claude/rules/kernel.md"]
 related_skills = ["debug-overflow", "audit-kernel"]
-lifecycle = { created = "2026-06-03", last_reviewed = "2026-06-03", review_interval_days = 30 }
+lifecycle = { created = "2026-06-03", last_reviewed = "2026-07-18", review_interval_days = 30 }
 
 [[skills]]
 id = "debug-overflow"
@@ -44,62 +48,62 @@ name = "Debug Stack Overflow"
 description = "Diagnose stack overflow errors and select the right iterative conversion pattern (stack, worklist, continuation frames, iterative deepening)."
 category = "debugging"
 status = "active"
-version = "2.0.0"
+version = "3.0.0"
 triggers = ["stack overflow", "overflowed its stack", "SIGABRT", "recursion too deep", "stack overflow at"]
 permissions = ["Bash:cargo test", "Bash:RUST_MIN_STACK", "Read"]
-depends_on = [".claude/rules/iterative.md"]
+depends_on = ["AGENTS.md", ".claude/rules/iterative.md"]
 related_skills = ["verify", "bench"]
 lifecycle = { created = "2026-06-03", last_reviewed = "2026-06-03", review_interval_days = 60 }
 
 [[skills]]
 id = "audit-kernel"
 name = "Audit Kernel"
-description = "Audit kernel code for safety violations: Typ::dummy() presence, Thm field initialization, tpairs/shyps propagation, CTerm invariants."
+description = "Audit strict src/kernel and legacy src/core trust boundaries, context identity, replay, and theorem acceptance."
 category = "safety"
 status = "active"
-version = "2.0.0"
-triggers = ["kernel change", "thm.rs", "logic.rs", "drule.rs", "more_thm.rs", "new inference rule", "kernel safety"]
-permissions = ["Bash:rg", "Bash:cargo test", "Read"]
-depends_on = [".claude/rules/kernel.md"]
+version = "3.0.0"
+triggers = ["kernel change", "theorem construction", "context identity", "proof statistics", "new inference rule", "kernel safety"]
+permissions = ["Bash:cargo test", "Read", "Grep"]
+depends_on = ["AGENTS.md", "docs/KERNEL_TRUSTED_ACCEPTANCE_GAPS.md", ".claude/rules/kernel.md"]
 related_skills = ["verify", "refactor"]
-lifecycle = { created = "2026-06-03", last_reviewed = "2026-06-03", review_interval_days = 60 }
+lifecycle = { created = "2026-06-03", last_reviewed = "2026-07-18", review_interval_days = 60 }
 
 [[skills]]
 id = "add-method"
 name = "Add Proof Method"
-description = "Add a new proof method following the 4-step pattern: enum variant → execute dispatch → implementation → name resolution."
+description = "Add a proof method only when explicitly scoped; broad method coverage is deferred behind context-bound acceptance."
 category = "development"
 status = "active"
-version = "2.0.0"
+version = "3.0.0"
 triggers = ["add proof method", "new search strategy", "port method from Isabelle", "add tactic"]
 permissions = ["Bash:cargo test", "Bash:cargo check", "Read", "Edit"]
-depends_on = [".claude/rules/proof-methods.md"]
+depends_on = ["AGENTS.md", ".claude/rules/proof-methods.md"]
 related_skills = ["add-isar-command", "port-isabelle", "verify"]
 lifecycle = { created = "2026-06-03", last_reviewed = "2026-06-03", review_interval_days = 60 }
 
 [[skills]]
 id = "add-isar-command"
 name = "Add Isar Command"
-description = "Add a new Isar proof language command to the three-mode state machine (Forward/Chain/Backward) with proper goal refinement."
+description = "Add an Isar command only when explicitly scoped; broad command coverage is not the current trusted main line."
 category = "development"
 status = "active"
-version = "2.0.0"
+version = "3.0.0"
 triggers = ["add Isar command", "proof language", "state machine", "have/show", "fix/assume", "qed"]
 permissions = ["Bash:cargo test", "Bash:cargo check", "Read", "Edit"]
-depends_on = [".claude/rules/isar.md"]
+depends_on = ["AGENTS.md", ".claude/rules/isar.md"]
 related_skills = ["add-method", "verify"]
 lifecycle = { created = "2026-06-03", last_reviewed = "2026-06-03", review_interval_days = 60 }
 
 [[skills]]
 id = "port-isabelle"
 name = "Port from Isabelle"
-description = "Port a function or module from Isabelle/ML to isabelle-rs Rust. Map ML types to Rust, translate patterns, add LCF kernel integration."
+description = "Port migration-critical Isabelle/ML semantics without widening trusted construction or conflating Pure and HOL."
 category = "development"
 status = "active"
-version = "2.0.0"
+version = "3.0.0"
 triggers = ["port from Isabelle", "Isabelle ML", "ML to Rust", "new module from Isabelle", "port ML"]
 permissions = ["Bash:cargo test", "Bash:cargo check", "Read", "Edit", "Grep"]
-depends_on = [".claude/rules/kernel.md", ".claude/rules/api-design.md", "docs/GAP_ANALYSIS.md"]
+depends_on = ["AGENTS.md", ".claude/rules/kernel.md", ".claude/rules/api-design.md", "docs/GAP_ANALYSIS.md"]
 related_skills = ["add-method", "refactor", "audit-kernel"]
 lifecycle = { created = "2026-06-03", last_reviewed = "2026-06-03", review_interval_days = 60 }
 
@@ -109,90 +113,90 @@ name = "Safe Refactor"
 description = "Safely refactor isabelle-rs code. Project-specific patterns: kernel safety constraints, method dispatch, theory pipeline, attribute classification."
 category = "development"
 status = "active"
-version = "2.0.0"
+version = "3.0.0"
 triggers = ["refactor", "extract module", "rename", "restructure", "code smell", "clean up"]
 permissions = ["Bash:cargo test", "Bash:cargo clippy", "Bash:cargo fmt", "Read", "Edit", "Grep"]
-depends_on = [".claude/rules/refactoring.md", ".claude/rules/api-design.md"]
+depends_on = ["AGENTS.md", ".claude/rules/refactoring.md", ".claude/rules/api-design.md"]
 related_skills = ["audit-kernel", "add-method", "build-theory"]
 lifecycle = { created = "2026-06-03", last_reviewed = "2026-06-03", review_interval_days = 90 }
 
 [[skills]]
 id = "build-theory"
 name = "Build Theory"
-description = "Build and verify .thy theory files through the TheoryProcessor pipeline. Parse, compile, debug parse failures, generate verification reports."
+description = "Build and classify .thy files while reporting transitional and kernel-trusted results separately."
 category = "theory"
 status = "active"
-version = "2.0.0"
+version = "3.0.0"
 triggers = ["theory loading", ".thy file", "parse failure", "batch compile", "session build", "load theory"]
 permissions = ["Bash:cargo test", "Bash:cargo run", "Read"]
-depends_on = [".claude/rules/theory-loading.md", ".claude/rules/isar.md"]
+depends_on = ["AGENTS.md", "scripts/README.md", ".claude/rules/theory-loading.md", ".claude/rules/isar.md"]
 related_skills = ["verify", "search-db"]
 lifecycle = { created = "2026-06-03", last_reviewed = "2026-06-03", review_interval_days = 60 }
 
 [[skills]]
 id = "search-db"
 name = "Search Theorem Database"
-description = "Quick reference for navigating the HolTheoremDb (42K+ theorems) by name, type convention, pattern (net), or attribute category."
+description = "Navigate HolTheoremDb as a searchable migration index; never present indexed facts as final trusted theorems."
 category = "theory"
 status = "active"
-version = "2.0.0"
+version = "3.0.0"
 triggers = ["find theorem", "lookup rule", "search database", "theorem by name", "where is"]
 permissions = ["Read", "Grep"]
-depends_on = []
+depends_on = ["AGENTS.md"]
 related_skills = ["build-theory", "verify"]
-lifecycle = { created = "2026-06-03", last_reviewed = "2026-06-03", review_interval_days = 90 }
+lifecycle = { created = "2026-06-03", last_reviewed = "2026-07-18", review_interval_days = 90 }
 
 [[skills]]
 id = "bench"
 name = "Run Benchmarks"
-description = "Run the complete test matrix at appropriate stack sizes. Check which suites pass and identify regressions."
+description = "Run the selected repository verification mode and report failures, skips, and stack-sensitive scope exactly."
 category = "meta"
 status = "active"
-version = "2.0.0"
+version = "3.0.0"
 triggers = ["benchmark", "performance", "test all", "regression test", "run all tests"]
 permissions = ["Bash:cargo test", "Bash:RUST_MIN_STACK"]
-depends_on = [".claude/rules/testing.md", ".claude/rules/performance.md"]
+depends_on = ["AGENTS.md", "scripts/README.md", ".claude/rules/testing.md", ".claude/rules/performance.md"]
 related_skills = ["verify", "debug-overflow"]
 lifecycle = { created = "2026-06-03", last_reviewed = "2026-06-03", review_interval_days = 60 }
 
 [[skills]]
 id = "release"
 name = "Release Phase"
-description = "Complete a development phase release: summarize changes, verify correctness, bump version, sync 12 documentation files."
+description = "Prepare an explicitly requested release with honest trust metrics, exact verification, and reviewed dependency/history changes."
 category = "release"
 status = "active"
-version = "2.0.0"
+version = "3.0.0"
 triggers = ["release", "version bump", "phase complete", "changelog", "cut release"]
 permissions = ["Bash:cargo test", "Bash:cargo check", "Bash:cargo clippy", "Read", "Edit", "Bash:git"]
-depends_on = [".claude/rules/post-session.md", ".claude/rules/release.md"]
+depends_on = ["AGENTS.md", ".claude/hooks/post-session.md", ".claude/rules/release.md"]
 related_skills = ["verify", "bench"]
 lifecycle = { created = "2026-06-03", last_reviewed = "2026-06-03", review_interval_days = 90 }
 
 [[skills]]
 id = "run-isabelle-rs"
 name = "Run Isabelle-rs"
-description = "Build, run, test, or verify isabelle-rs. Launch the demo, compile .thy files, run the LSP server, test a change, or verify the kernel is operational."
+description = "Build, launch, test, or verify Isabelle-rs through maintained commands."
 category = "development"
 status = "active"
-version = "1.0.0"
-triggers = ["run", "start", "build", "screenshot", "demo", "compile", "launch"]
+version = "2.0.0"
+triggers = ["run", "start", "build", "screenshot", "demo", "compile", "launch", "test change", "verify kernel"]
 permissions = ["Bash:cargo build", "Bash:cargo run", "Bash:cargo test", "Bash:RUST_MIN_STACK"]
-depends_on = ["CLAUDE.md"]
+depends_on = ["AGENTS.md", "scripts/README.md"]
 related_skills = ["verify", "bench", "build-theory"]
-lifecycle = { created = "2026-06-16", last_reviewed = "2026-06-16", review_interval_days = 60 }
+lifecycle = { created = "2026-06-16", last_reviewed = "2026-07-18", review_interval_days = 60 }
 
 [[skills]]
 id = "sync-docs"
 name = "Sync Documentation"
-description = "Sync docs/ and .claude/ after code changes. Run after modifying src/, adding features, or changing APIs. Keeps ARCHITECTURE.md, GAP_ANALYSIS.md, ROADMAP.md, DEVELOPMENT.md, CLAUDE.md, and skills in sync with the code."
+description = "Synchronize versioned agent rules and current trust/status documentation after semantic changes without rewriting historical snapshots."
 category = "maintenance"
 status = "active"
-version = "1.0.0"
+version = "3.0.0"
 triggers = ["sync docs", "update docs", "doc sync", "stale docs", "after code change", "update documentation"]
 permissions = ["Read", "Write", "Edit", "Bash:git", "Bash:cargo"]
-depends_on = [".claude/rules/post-session.md", ".claude/rules/documentation.md"]
-related_skills = ["release", "refactor"]
-lifecycle = { created = "2026-06-16", last_reviewed = "2026-06-16", review_interval_days = 60 }
+depends_on = ["AGENTS.md", "docs/PROJECT_STATUS.md", ".claude/skills/sync-docs.md"]
+related_skills = ["release", "refactor", "audit-kernel"]
+lifecycle = { created = "2026-06-16", last_reviewed = "2026-07-18", review_interval_days = 60 }
 
 # =============================================================================
 # Skill Lifecycle States

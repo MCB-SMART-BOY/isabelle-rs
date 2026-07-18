@@ -5,13 +5,6 @@ category: verification
 ---
 # /verify-all
 
-完整验证流水线。详见 `.claude/skills/verify.md` + `.claude/skills/bench.md`。
-
-```bash
-cargo test --lib core::thm core::unify tools::metis
-RUST_MIN_STACK=268435456 cargo test test_verify_all_core_files -- --nocapture
-tmux new-session -d -s tier2 "RUST_MIN_STACK=268435456 cargo test --test tier2_verify -- --nocapture 2>&1; exec bash"
-cargo test --test bnf_tests --test integration_tests
-```
-
-期望: Core 125/125, Tier2 真实证明率 85.8% (3277/3821 proved), 700+ tests.
+完整验证入口是 `scripts/dev-check.sh all`。如果只做信任边界变更，
+运行 `strict` 和 `core` 模式即可。实际输出是唯一可报告结果，
+不使用历史的 `125/125` 或固定测试数。
