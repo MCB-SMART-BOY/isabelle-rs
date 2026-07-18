@@ -1,7 +1,8 @@
 # HPC Symbolic Compute Design
 
-Status: design track only. No dependency, source module, or trusted boundary is
-introduced by this document.
+Status: deferred design-only track. No dependency, production module, or trusted
+boundary is introduced here, and this work must not reorder the immutable
+context/acceptance/`TrueI` chain in [ROADMAP.md](ROADMAP.md).
 
 ## Goal
 
@@ -105,20 +106,10 @@ These are trust-boundary requirements, not implementation suggestions:
 The compute layer can only narrow or rank work for trusted CPU paths. Its
 outputs must point back to existing source objects:
 
-```rust
-pub struct FactCandidate {
-    pub fact_id: u32,
-    pub score: u32,
-    pub reason_bits: u32,
-}
-
-pub struct RewriteCandidate {
-    pub rule_id: u32,
-    pub subterm_path_id: u32,
-    pub score: u32,
-    pub reason_bits: u32,
-}
-```
+The shared candidate and backend design types are maintained in the
+design-only standalone
+[symbolic_compute_backend.rs](../scripts/templates/symbolic_compute_backend.rs)
+template. Its compilation does not validate a production compute API.
 
 The follow-up CPU path must:
 
@@ -305,65 +296,13 @@ GPU and SIMD backends need packed, array-oriented data.
 
 Initial design:
 
-```rust
-pub struct PackedTermArena {
-    pub tags: Vec<u32>,
-    pub ty_ids: Vec<u32>,
-    pub symbol_ids: Vec<u32>,
-    pub child_start: Vec<u32>,
-    pub child_len: Vec<u32>,
-    pub children: Vec<u32>,
-    pub root_ids: Vec<u32>,
-}
-
-pub struct PackedFact {
-    pub fact_id: u32,
-    pub prop_root: u32,
-    pub fingerprint_id: u32,
-    pub trust_class: PackedTrustClass,
-}
-
-pub struct PackedRewriteRule {
-    pub rule_id: u32,
-    pub lhs_root: u32,
-    pub rhs_root: u32,
-    pub fingerprint_id: u32,
-}
-
-pub struct TermFingerprint {
-    pub head_symbol: u32,
-    pub result_ty: u32,
-    pub arity: u16,
-    pub depth_bucket: u16,
-    pub symbol_hash: u64,
-    pub type_hash: u64,
-    pub subterm_hash: u64,
-}
-
-pub struct FactCandidate {
-    pub fact_id: u32,
-    pub score: u32,
-    pub reason_bits: u32,
-}
-
-pub struct RewriteCandidate {
-    pub rule_id: u32,
-    pub subterm_path_id: u32,
-    pub score: u32,
-    pub reason_bits: u32,
-}
-
-pub enum PackedTrustClass {
-    StrictClosedProved,
-    Open,
-    Compat,
-    Admitted,
-    SearchOnly,
-}
-```
+The packed structs and `PackedTrustClass` are centralized in
+[symbolic_compute_backend.rs](../scripts/templates/symbolic_compute_backend.rs).
 
 `PackedTrustClass` is advisory. It helps ranking and filtering, but cannot be
-used for theorem acceptance.
+used for theorem acceptance. In particular, it has no `KernelTrustedClosed`
+variant: final trust requires the original context-bound
+`src/kernel::TrustedTheorem`, not packed metadata.
 
 `PackedTermArena` must not become a second source of theorem terms. It is
 derived from existing terms for indexing and batching. Any conversion from
@@ -374,27 +313,9 @@ ordinary raw input and certified again.
 
 Design the trait before implementing GPU support:
 
-```rust
-pub trait SymbolicComputeBackend {
-    fn fingerprint_terms(&self, arena: &PackedTermArena) -> Vec<TermFingerprint>;
-
-    fn prefilter_facts(
-        &self,
-        goal: &TermFingerprint,
-        facts: &[PackedFact],
-        fingerprints: &[TermFingerprint],
-        limit: usize,
-    ) -> Vec<FactCandidate>;
-
-    fn prefilter_rewrites(
-        &self,
-        subterms: &[TermFingerprint],
-        rules: &[PackedRewriteRule],
-        fingerprints: &[TermFingerprint],
-        limit_per_subterm: usize,
-    ) -> Vec<RewriteCandidate>;
-}
-```
+The same design-only template centralizes the proposed
+`SymbolicComputeBackend` trait. This avoids duplicated sketches; standalone
+compilation does not establish compatibility with future production modules.
 
 Implementation order:
 

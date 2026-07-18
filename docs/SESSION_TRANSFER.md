@@ -6,11 +6,13 @@ status.
 
 For current context, read these in order:
 
-1. [PROJECT_STATUS.md](PROJECT_STATUS.md)
-2. [TRUST.md](TRUST.md)
-3. [ROADMAP.md](ROADMAP.md)
-4. [KERNEL_RULES.md](KERNEL_RULES.md)
-5. [KERNEL_ATTACK_TESTS.md](KERNEL_ATTACK_TESTS.md)
+1. Root [AGENTS.md](../AGENTS.md)
+2. [PROJECT_STATUS.md](PROJECT_STATUS.md)
+3. [TRUST.md](TRUST.md)
+4. [KERNEL_TRUSTED_ACCEPTANCE_GAPS.md](KERNEL_TRUSTED_ACCEPTANCE_GAPS.md)
+5. [ROADMAP.md](ROADMAP.md)
+6. [KERNEL_RULES.md](KERNEL_RULES.md)
+7. [KERNEL_ATTACK_TESTS.md](KERNEL_ATTACK_TESTS.md)
 
 ## Current Project Position
 
@@ -25,18 +27,39 @@ Do not describe the current project as a full Rust rewrite of Isabelle.
 
 ## Current Priority
 
-The next engineering track is:
+The sampled baseline remains:
 
-1. Extend T4 proofterm replay beyond the current minimal rule set.
-2. Tighten parser/type/certification boundaries.
-3. Reduce admitted lemmas by classified reason.
-4. Expand HOL/Isar/tool coverage later.
+```text
+TransitionalStrictClosed: 1/125
+KernelTrustedClosed:      0/125
+```
+
+Implementation must proceed in exactly this order:
+
+```text
+immutable SignatureId / TheoryId
+  -> unique context-bound acceptance
+  -> source-aware proposition AST
+  -> checked judgment / constant / type-scheme elaboration
+  -> data-only HOL logic-basis manifest
+  -> generic conservative definition extension
+  -> HOL::TrueI as HOL.Trueprop HOL.True
+  -> HOL::trans only as a later reuse consumer
+```
+
+`refl` and `subst` remain HOL basis axioms. The manifest is data only: it has no
+executable HOL validator or theorem factory. No `hol_subst`, additional theorem
+adapter, or HOL-specific kernel primitive may bypass this order.
 
 ## Known Persistent Debts
 
-- `alpha_eq` Free/Const compatibility.
-- `alpha_eq` Var/Free compatibility.
+- `compat_alpha_eq` Free/Const compatibility outside the strict kernel.
+- `compat_alpha_eq` Var/Free compatibility outside the strict kernel.
 - `Typ::dummy()` at parser/type/certification boundaries.
+- No source-faithful HOL `Trueprop` elaboration or conservative definition
+  mechanism yet.
+- No immutable `SignatureId`, `TheoryId`, or `LogicBasisId` on accepted
+  new-kernel theorems yet.
 - Partial proofterm replay coverage.
 - HOL/Isar tooling far from Isabelle parity.
 
@@ -44,14 +67,7 @@ The next engineering track is:
 
 For trusted-boundary changes:
 
-```bash
-cargo fmt --check
-cargo test --test kernel_soundness
-cargo test core::proofterm::tests::
-cargo test core::thm::tests::
-cargo test --lib core::
-cargo check
-```
+Run `scripts/dev-check.sh strict` from the repository root.
 
 Do not claim broad `cargo test --lib` success unless the theory-loader
 stack-sensitive test has been verified fixed.

@@ -1,9 +1,10 @@
 # isabelle-rs v1.8.1+ → v1.9.0 移交提示词
 
-> Archive note: this is a historical v1.9.0 handoff snapshot. It is not the
-> current project status. For current status, read
+> Archive note: this is a historical v1.9.0 handoff snapshot. Its percentages,
+> method counts, and “complete” labels are not current trust or compatibility
+> claims. Read root [AGENTS.md](../AGENTS.md),
 > [PROJECT_STATUS.md](PROJECT_STATUS.md), [TRUST.md](TRUST.md), and
-> [ROADMAP.md](ROADMAP.md).
+> [ROADMAP.md](ROADMAP.md) instead.
 
 > 本会话：2026-06-04 | 主要成果：完成 Phases 49-54，v1.9.0 基础设施全部交付
 
@@ -13,7 +14,7 @@
 
 isabelle-rs — Isabelle 证明助手内核的 Rust 移植。本会话完成了 v1.9.0 的 6 个 Phase，交付了 HOL 基础设施现代化。
 
-### 当前状态
+### 历史状态快照（不可作为当前状态）
 
 | 指标 | 值 |
 |------|-----|
@@ -81,56 +82,21 @@ Tier2 验证时 `method.rs:2916` panic（attempt to subtract with overflow），
 
 ---
 
-## 四、优先级排序的下一步工作
+## 四、历史会话当时的优先级（已废止）
 
-### 🥇 第一优先：完成 Tier2/Tier3 验证
-
-```bash
-# Tier2 验证（20 files）
-RUST_MIN_STACK=268435456 cargo test --test tier2_verify -- --nocapture
-
-# Tier3 验证（16 files）
-RUST_MIN_STACK=268435456 cargo test --test tier3_verify -- --nocapture
-```
-
-6/20 Tier2 已 100%：Fun (190), Product_Type (166), Sum_Type (22), Lattices (91), Groups (157), Rings (276)。
-
-剩余 14 个 Tier2 文件：Fields, Relation, Equiv_Relations, Map, Finite_Set, Num, Power, Complete_Lattices, Wellfounded, Hilbert_Choice, Transitive_Closure, Partial_Function, Divides (Option 已知溢出被注释掉)。
-
-### 🥈 第二优先：Metis 真正集成
-
-当前 `method.rs` 中 `metis` → `auto` fallback。`src/tools/metis.rs` 有完整的消解证明器 + SAT (DPLL/CDCL)，但 dispatch 没有真正调用它。需要：
-1. 在 `exec_single_method` 中为 `metis` 添加真实 dispatch
-2. 将 metis.rs 的证明引擎连接到 LCF 内核
-
-### 🥉 第三优先：ATP/Sledgehammer 深化
-
-`src/tools/sledgehammer.rs` (362 行) + `src/tools/reconstruct.rs` (452 行) + `src/tools/tptp.rs` (239 行) 都存在但功能有限。
-
-### 后续：栈溢出修复 + 更大规模验证
-
-- 定位 `test_batch_scan_theories` 的精确溢出点（用 thread_local 计数器 + eprintln probe）
-- 扩展验证到 Tier4 (50+ files)
-
+当时的建议依次是扩大 Tier2/Tier3 验证、连接 Metis，以及深化
+ATP/Sledgehammer。它们仅记录 v1.9.0 交接时的方向，现已被
+[`ROADMAP.md`](ROADMAP.md) 中以不可变 theory/signature identity 和唯一
+`KernelTrustedClosed` 接收入口为先的依赖顺序取代。
 ---
 
 ## 五、关键文件和命令
 
 ### 验证命令
 
-```bash
-# 核心 5 文件验证（每次改动后必跑）
-RUST_MIN_STACK=268435456 cargo test test_verify_all_core_files --lib -- --nocapture
-
-# 全量 lib 测试
-RUST_MIN_STACK=268435456 cargo test --lib
-
-# Tier2 验证（慢，15-20 files）
-RUST_MIN_STACK=268435456 cargo test --test tier2_verify -- --nocapture
-
-# 快速编译检查
-cargo check --lib && cargo clippy -- -D warnings
-```
+核心、lib、Tier2 与快速检查命令现分别由
+`scripts/dev-check.sh core`、`lib`、`tier2` 和 `fast` 维护。该归档保留
+历史结果，但不再复制可能失效的命令行。
 
 ### 新增模块速查
 
@@ -185,14 +151,9 @@ cargo check --lib && cargo clippy -- -D warnings
 
 ---
 
-## 七、开始工作
+## 七、当前工作入口
 
-请先阅读 `docs/SESSION_TRANSFER_v1.9.0.md`（就是本文件）和 `CLAUDE.md` 了解项目全貌。
-
-建议顺序：
-1. **跑 Tier2 完整验证** — 了解当前 14 个剩余文件的基线状态
-2. **修复任何验证失败** — 本会话的基础设施应该改善通过率
-3. **Metis 真正集成** — 从 auto fallback 改为真实 dispatch
-4. **ATP/Sledgehammer 深化** — 解锁更多 .thy 文件
-
-每个任务前先查 Isabelle 源码，对照着写。
+不要从本归档选择下一项任务。先阅读根
+[`AGENTS.md`](../AGENTS.md)、[`PROJECT_STATUS.md`](PROJECT_STATUS.md)、
+[`TRUST.md`](TRUST.md) 和 [`ROADMAP.md`](ROADMAP.md)，并按其中当前的
+可信主线和验证要求执行。

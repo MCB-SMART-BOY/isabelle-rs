@@ -4,7 +4,8 @@ This document describes the current Isabelle-rs architecture as a trusted-kernel
 research prototype. It intentionally does not claim feature parity with
 Isabelle/HOL, Isabelle/Isar, or Isabelle/PIDE.
 
-Read [PROJECT_STATUS.md](PROJECT_STATUS.md) first for the canonical status.
+Read root [AGENTS.md](../AGENTS.md), then
+[PROJECT_STATUS.md](PROJECT_STATUS.md), before using this architecture.
 
 ## Architectural Position
 
@@ -16,7 +17,7 @@ Strict TCB (src/kernel/):
     -> CTerm / CProp
     -> KernelRules (15 primitives + resolve1_match + subst_premise + bicompose wrapper)
     -> KernelThm / ClosedThm / OpenThm
-    -> TrustedTheorem (invariant replay)
+    -> TrustedTheorem (current context-free invariant-replay wrapper)
     -> TrustedTheory
 
 Legacy quarantine (src/core/):
@@ -27,19 +28,31 @@ Legacy quarantine (src/core/):
                   subst_premise and conservative bicompose have strict replacements)
     -> Thm
     -> theorem acceptance filters
-    -> proof-search indexes or final trusted theory tables
+    -> proof-search indexes or transitional legacy theory tables
 ```
 
-The project currently prioritizes:
+The current `TrustedTheory` type accepts only `src/kernel::TrustedTheorem`
+values, but it does not yet bind them to immutable theory/signature/logic
+identity or reject conflicting theorem identities. The target final arrow adds
+those checks before recording `KernelTrustedClosed`. No sampled HOL theorem has
+reached that target boundary; `KernelTrustedClosed` is `0/125`.
 
-1. Private theorem fields and kernel-only theorem construction (`pub(in crate::kernel)` visibility).
-2. Explicit `admitted:*` / oracle footprints.
-3. Correct distinction between open, admitted, oracle-free, closed proved, and strict-closed proved theorems.
-4. Strict-kernel invariant replay as an independent derivation check (separate from legacy T4 proofterm replay).
-5. Attack tests for trusted-boundary regressions.
-6. Automated firewall enforcement (`scripts/check-kernel-firewall.sh`, `scripts/check-strict-kernel.sh`).
-7. Design-only high-performance symbolic compute as an untrusted candidate
-   generation/prefilter layer, with CPU strict-kernel acceptance unchanged.
+The project currently prioritizes, in dependency order:
+
+1. Immutable `SignatureId` / `TheoryId` propagation and mixed-context
+   rejection.
+2. One context-bound acceptance API and mutually exclusive
+   `KernelTrustedClosed` outcome.
+3. A source-aware proposition AST before legacy lowering.
+4. Checked judgment/constant/polymorphic-scheme elaboration into `CProp : prop`.
+5. A data-only HOL basis replayed by generic kernel code.
+6. Generic conservative definitions.
+7. A real new-kernel `HOL::TrueI`.
+8. Ongoing private construction, oracle/admit accounting, invariant replay,
+   firewall enforcement, and trusted-boundary attack tests.
+
+Design-only high-performance symbolic compute remains an untrusted parallel
+track and cannot reorder this chain.
 
 It does not currently prioritize broad HOL command coverage, PIDE parity, LSP
 features, Sledgehammer, SMT, or Code Generator work.
@@ -63,13 +76,14 @@ Core theorem classes:
 
 | Class | Shape | Trusted status |
 |---|---|---|
-| Strict closed proved theorem | strict construction, `|- P`, no oracle, no `tpairs`, no dummy types | May enter final trusted theorem tables. |
+| Transitional strict closed theorem | legacy strict construction, `|- P`, no oracle, no `tpairs`, no dummy types | Migration/reporting only; may not enter final `TrustedTheory`. |
+| Kernel-trusted closed theorem | context-bound `src/kernel::TrustedTheorem`, `CProp : prop`, immutable theory/logic provenance, required replay | May enter final `TrustedTheory`. |
 | Compat closed-shaped theorem | no oracle/hyps/`tpairs`, but legacy construction | Searchable only; not trusted output. |
 | Open theorem | `A1, ..., An |- P` | Valid theorem, but not a proved lemma. |
 | Admitted theorem | `|- P` with oracle footprint | Accepted for progress; never counted as independently proved. |
 | Searchable fact | Any theorem-like fact used by proof search | May be open/admitted; not automatically trusted output. |
 
-The acceptance predicate for proved lemmas is:
+The legacy transitional classification predicate is:
 
 ```text
 thm.is_strict_closed_proved()
@@ -81,8 +95,9 @@ thm.is_strict_closed_proved()
 ```
 
 `is_closed_proved()` means closed shape only. `is_fully_proved()` means
-oracle-free only. Neither is sufficient for trusted lemma verification
-statistics once compatibility theorem construction is explicit.
+oracle-free only. `is_strict_closed_proved()` is stronger but still classifies
+legacy `core::Thm`; none of these predicates authorizes final new-kernel
+acceptance.
 
 ### Admit / Oracle Entry
 
@@ -117,7 +132,13 @@ and goal initialization. It must not be used as a proof-failure fallback.
      -> local proof search / method execution
      -> theorem_index searchable facts
      -> LocalTheory::finalize()
-  -> final Theory trusted theorem table
+  -> legacy Theory transitional table
+
+checked source + immutable theory/logic context
+  -> src/kernel::TrustedTheorem over CProp : prop
+  -> required replay in the same context
+  -> KernelTrustedClosed
+  -> final TrustedTheory
 ```
 
 Important split:
@@ -128,13 +149,21 @@ theorem_index / HolTheoremDb
   = may contain open/admitted/generated facts
 
 core::theory::Theory
-  = final trusted theorem table
-  = must only contain `is_strict_closed_proved()` facts
+  = transitional legacy output table
+  = filters with `is_strict_closed_proved()`
+
+src::kernel::TrustedTheory
+  = current new-kernel theorem table, type-gated to `TrustedTheorem`
+  = still lacks the target immutable context and conflict checks
+
+target final trusted table
+  = accepts only context-bound `src/kernel::TrustedTheorem` values
 ```
 
-`SessionBuilder` reports strict closed proved theorem counts. It must not use
-raw indexed theorem entries or compatibility closed-shapes as verified theorem
-statistics.
+`SessionBuilder` reports legacy `TransitionalStrictClosed` counts. It must not
+present them, raw indexed entries, or compatibility closed-shapes as
+`KernelTrustedClosed`; the sampled metrics are `TransitionalStrictClosed: 1/125`
+and `KernelTrustedClosed: 0/125`.
 
 ## Proofterm Replay Flow
 
@@ -183,21 +212,11 @@ Current semantics:
 
 For trusted-boundary code changes:
 
-```bash
-cargo fmt --check
-cargo test --test kernel_soundness
-cargo test core::proofterm::tests::
-cargo test core::thm::tests::
-cargo test --lib core::
-cargo check
-```
+Run `scripts/dev-check.sh strict`.
 
 For broad theory runs:
 
-```bash
-RUST_MIN_STACK=268435456 cargo test test_verify_all_core_files -- --nocapture
-RUST_MIN_STACK=268435456 cargo test --test tier2_verify -- --nocapture
-```
+Run `scripts/dev-check.sh core`, `tier2`, or `tier3`.
 
 Full `cargo test --lib` has a known stack-sensitive loader test in this
 checkout. Report it separately unless it has been verified fixed.

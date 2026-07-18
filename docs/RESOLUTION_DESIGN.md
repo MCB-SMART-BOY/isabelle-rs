@@ -13,6 +13,11 @@ substitutions; `subst_premise` is prop-equality only and fixed lhs -> rhs. Full
 Isabelle-style `bicompose`, `bicompose_eresolve`, lifting, freshening,
 flex-flex pairs, and higher-order unification remain design-phase.
 
+This document does not set the repository's current priority.
+`bicompose_eresolve`, lifting, freshening, and full unification remain deferred
+until immutable theory/signature identity, context-bound acceptance, and the
+first new-kernel `HOL::TrueI` loop are complete.
+
 ## Relationship to `KERNEL_PRIMITIVES.md`
 
 `docs/KERNEL_PRIMITIVES.md` documents the 15 implemented base primitive rules with
@@ -55,44 +60,10 @@ When a goal has zero subgoals (`m = 0`), it is `Δ |- R` — a terminal goal.
 
 ### Implication-Chain Utilities
 
-The strict kernel provides these utilities on `Term`:
-
-```rust
-/// Decompose a proposition into its implication-chain premises and conclusion.
-///
-/// `A ==> B ==> C` returns `([A, B], C)`.
-/// `C` (no implication) returns `([], C)`.
-fn dest_imp_chain(term: &Term) -> (Vec<Term>, Term);
-
-/// Build an implication chain from premises and a conclusion.
-///
-/// `mk_imp_chain([A, B], C)` returns `A ==> B ==> C`.
-/// `mk_imp_chain([], C)` returns `C`.
-fn mk_imp_chain(prems: &[Term], conclusion: &Term) -> Term;
-
-/// Count the premises of a goal state.
-///
-/// `nprems(A ==> B ==> C)` returns `2`.
-/// `nprems(C)` returns `0`.
-fn nprems(prop: &Term) -> usize;
-
-/// Select the i-th subgoal (0-indexed) from a goal state.
-///
-/// `select_subgoal(A ==> B ==> C, 0)` returns `Some(A)`.
-/// `select_subgoal(A ==> B ==> C, 1)` returns `Some(B)`.
-/// `select_subgoal(A ==> B ==> C, 2)` returns `None` (it's the conclusion).
-fn select_subgoal(prop: &Term, i: usize) -> Option<Term>;
-
-/// Replace the i-th subgoal with a list of new premises.
-///
-/// `replace_subgoal_with_premises(A ==> C, 0, [P, Q])` returns `P ==> Q ==> C`.
-/// `replace_subgoal_with_premises(A ==> C, 0, [])` returns `C` (subgoal solved).
-fn replace_subgoal_with_premises(
-    prop: &Term,
-    i: usize,
-    new_prems: &[Term],
-) -> Result<Term, KernelError>;
-```
+The strict kernel provides these utilities on `Term`. Their authoritative
+implementations live in [`src/kernel/term.rs`](../src/kernel/term.rs). A
+standalone API sketch for experimentation is maintained in
+[resolution_api.rs](../scripts/templates/resolution_api.rs).
 
 These utilities are unit-tested and do not require unification.
 
@@ -174,15 +145,9 @@ remains the single ordering primitive for replacing a selected subgoal.
 
 ### Major / Minor Roles
 
-The first API should keep roles explicit:
-
-```rust
-KernelRules::bicompose(
-    rule: &KernelThm,       // major theorem: A1 ==> ... ==> An ==> C
-    goal_state: &KernelThm, // minor theorem: G1 ==> ... ==> Gi ==> ... ==> R
-    selected_subgoal_index: usize,
-) -> Result<KernelThm, KernelError>
-```
+The first API keeps roles explicit. The exact signature is owned by
+[`KernelRules::bicompose`](../src/kernel/rules.rs); the standalone template uses
+the same `rule`, `goal_state`, and `selected_subgoal_index` roles.
 
 Do not infer roles from theorem shape. The `rule` theorem supplies inserted
 premises; the `goal_state` theorem supplies the selected subgoal and retained
@@ -254,16 +219,8 @@ legacy compatibility alpha-equivalence
 
 ### Derivation Replay Strategy
 
-Conservative `bicompose` v1 does **not** add:
-
-```rust
-Derivation::Bicompose {
-    rule: Box<KernelThm>,
-    goal_state: Box<KernelThm>,
-    selected_subgoal_index: usize,
-    subst: Vec<InstEntry>,
-}
-```
+Conservative `bicompose` v1 does **not** add a `Derivation::Bicompose` node
+carrying the two theorems, selected index, and substitution.
 
 It intentionally records `Derivation::Resolve1Match` until the rule grows beyond
 the existing core. Replay therefore remains the existing `Resolve1Match` replay:
@@ -320,7 +277,8 @@ result:
 ```
 
 Note: `bicompose_eresolve` is a higher-level operation that wraps `bicompose`
-with premise solving. It should be implemented after `bicompose` is stable.
+with premise solving. It remains deferred; stability of the wrapper alone is
+not authorization to implement it before the trusted acceptance chain.
 
 ---
 
@@ -470,27 +428,11 @@ but the strict kernel firewall forbids `use crate::core::...`.
 
 ### What the strict kernel needs
 
-A strict matcher/unifier module (`src/kernel/unify.rs`) providing:
-
-```rust
-// ── Internal (pub(in crate::kernel)) API ──
-
-/// Raw structural matcher (in `src/kernel/unify.rs`).
-/// Returns `MatchBinding` with bare `Term` replacements — NOT CTerm.
-/// Only `src/kernel/` modules may call this.
-pub(in crate::kernel) fn match_terms(pattern: &Term, target: &Term)
-    -> Result<Vec<MatchBinding>, KernelError>;
-
-/// Certified-origin wrapper (in `KernelRules`, pub(in crate::kernel)).
-/// Wraps raw MatchBinding into InstEntry via CTerm::from_certified_subterm.
-/// Caller guarantees pattern and target are subterms of certified CProp/KernelThm.
-/// Legacy `src/core/` and upper-layer modules CANNOT call this.
-pub(in crate::kernel) fn match_terms_certified(pattern: &Term, target: &Term)
-    -> Result<Vec<InstEntry>, KernelError>;
-
-// ── There is intentionally NO public API that accepts bare &Term ──
-// ── and returns InstEntry. External code must use ProofContext.    ──
-```
+A strict matcher/unifier module (`src/kernel/unify.rs`) provides the raw matcher,
+while `src/kernel/rules.rs` owns the certified-origin wrapper. Both remain
+`pub(in crate::kernel)`; there is intentionally no public bare-`Term` to
+`InstEntry` conversion. The reusable design skeleton is
+[resolution_api.rs](../scripts/templates/resolution_api.rs).
 
 ### Implementation status
 
@@ -523,10 +465,7 @@ are `CTerm`. This raises a design question: how does `match_terms`, given only
 
 #### The problem
 
-```rust
-// InstEntry requires:
-replacement: CTerm   // ← must be certified (type-checked, no dummy types)
-```
+`InstEntry::replacement` requires a checked `CTerm`.
 
 But `match_terms(pattern: &Term, target: &Term)` receives bare `Term` references,
 not `CTerm` values. A naive implementation might:
@@ -550,28 +489,10 @@ certified propositions**. Specifically:
 Because both inputs trace back to certified `CProp` values, their subterms
 inherit certification by origin. The matcher computes replacements from
 these subterms and wraps them using a `pub(in crate::kernel)` constructor that
-is NOT exposed outside `src/kernel/`:
-
-```rust
-// In src/kernel/cterm.rs — pub(in crate::kernel), NOT pub:
-impl CTerm {
-    /// Wrap a term that is known to originate from a certified CProp.
-    ///
-    /// # Contract (caller MUST guarantee)
-    ///
-    /// 1. The term is a subterm of a previously certified `CProp`.
-    /// 2. The term contains no `Ty::Dummy`.
-    /// 3. The term contains no unbound de Bruijn indices.
-    /// 4. The term's constants are declared in the active `Signature`.
-    ///
-    /// This constructor is `pub(in crate::kernel)` — only `src/kernel/`
-    /// modules can call it. External code and upper-layer modules MUST
-    /// use `ProofContext::certify_term` instead.
-    pub(in crate::kernel) fn from_certified_subterm(term: Term) -> Self {
-        CTerm { term }
-    }
-}
-```
+is NOT exposed outside `src/kernel/`. The authoritative contract and
+implementation are in [`src/kernel/cterm.rs`](../src/kernel/cterm.rs). Its
+constructor remains `pub(in crate::kernel)` and requires certified-subterm
+origin; external code must use `ProofContext::certify_term`.
 
 Key properties:
 
@@ -584,15 +505,9 @@ Key properties:
 
 #### Alternative (rejected): pass `ProofContext` to the matcher
 
-An alternative is to pass `ProofContext` directly to `match_terms`:
-
-```rust
-fn match_terms(
-    ctx: &ProofContext,
-    pattern: &Term,
-    target: &Term,
-) -> Result<Vec<InstEntry>, KernelError>;
-```
+An alternative is to pass `ProofContext` directly to `match_terms` before the
+pattern and target arguments. It remains an architectural option, not a copied
+API template.
 
 This is rejected for the first version because:
 - It couples the matcher to the certification context.
@@ -615,28 +530,18 @@ enforces the certification boundary. No new public API is needed.
 ## 6. Lifting / Freshening Policy
 
 When a rule is applied, its free variables may collide with those in the goal.
-Lifting handles this:
-
-```rust
-/// Lift a rule theorem to avoid variable capture with the goal.
-///
-/// Increments Bound indices and freshens free variables so that the rule
-/// can be safely combined with a goal.
-fn lift_rule(rule: &KernelThm, goal: &KernelThm) -> KernelThm;
-```
+The future `lift_rule` operation must increment bound indices and freshen free
+variables before combining the rule with a goal. Its non-executable API sketch
+is maintained in
+[`scripts/templates/resolution_api.rs`](../scripts/templates/resolution_api.rs).
 
 **First version**: Do NOT implement lifting/freshening. However, the kernel
 MUST NOT silently proceed when a collision would cause incorrect results.
 
 Instead, `resolve1_match` and conservative `bicompose` must **detect** when the
 rule and goal variable spaces collide in a way that requires lifting, and return
-an explicit error rather than proceeding:
-
-```rust
-#[error("variable collision between rule and goal requires lifting: \
-         rule has {rule_var:?}, goal has {goal_var:?}")]
-RequiresLifting { rule_var: Name, goal_var: Name },
-```
+`KernelError::RequiresLifting` rather than proceeding. The authoritative error
+definition is in [`src/kernel/mod.rs`](../src/kernel/mod.rs).
 
 #### What constitutes a collision?
 
@@ -653,20 +558,10 @@ that may be incorrectly identified without lifting/freshening. Specifically:
 #### Conservative detection heuristic (first version)
 
 Current `resolve1_match` / `bicompose` scan the rule and goal for overlapping
-Free names and schematic Var `(name, index)` pairs:
-
-```rust
-fn detect_collision(rule: &KernelThm, goal: &KernelThm) -> Result<(), KernelError> {
-    let rule_frees: HashSet<Name> = rule.prop().free_names();
-    let goal_frees: HashSet<Name> = goal.prop().free_names();
-    let rule_vars: HashSet<(Name, usize)> = rule.prop().var_keys();
-    let goal_vars: HashSet<(Name, usize)> = goal.prop().var_keys();
-    if !rule_frees.is_disjoint(&goal_frees) || !rule_vars.is_disjoint(&goal_vars) {
-        return Err(KernelError::RequiresLifting { ... });
-    }
-    Ok(())
-}
-```
+Free names and schematic Var `(name, index)` pairs. The reviewed implementation
+is [`ThmKernel::detect_collision`](../src/kernel/rules.rs); the corresponding
+public-shape design template remains in
+[`scripts/templates/resolution_api.rs`](../scripts/templates/resolution_api.rs).
 
 This is deliberately conservative: it may reject valid cases, but it will
 never silently produce a wrong theorem. As lifting is implemented, the
@@ -769,21 +664,10 @@ Each resolution rule must have:
 
 ### Q6: Error Types
 
-Current reusable errors:
-
-```rust
-enum KernelError {
-    // ... existing ...
-    /// The selected subgoal index is out of range for the goal state.
-    SubgoalIndexOutOfRange { index: usize, nprems: usize },
-    /// Variable collision between rule and goal requires lifting/freshening.
-    /// First-version resolve1_match does not implement lifting; it returns this
-    /// error instead of silently proceeding with incorrect substitution.
-    RequiresLifting { rule_var: Name, goal_var: Name },
-    /// The rule conclusion is not an implication chain (has no premises to replace with).
-    // (This is actually not an error — rules with 0 premises are fine.)
-}
-```
+Current reusable errors are `KernelError::SubgoalIndexOutOfRange` and
+`KernelError::RequiresLifting`; their authoritative definitions are in
+[`src/kernel/mod.rs`](../src/kernel/mod.rs). Rules with no premises are valid and
+therefore do not require a separate error variant.
 
 Current strict matching failures are propagated from `match_terms_certified`
 as existing `KernelError` values (`TypeMismatch`, `BoundInSubstitution`, or
@@ -823,7 +707,7 @@ unification.
 
 ---
 
-## 11. Recommended Implementation Order
+## 11. Resolution-Family Implementation Order
 
 1. ✅ **Implication-chain utilities** — `dest_imp_chain`, `mk_imp_chain`, `nprems`,
    `select_subgoal`, `replace_subgoal_with_premises`.
@@ -840,11 +724,11 @@ unification.
    variable namespace policy.
 6. ✅ **Conservative `bicompose` implementation** — thin wrapper over
    `resolve1_match`; rejects Free and schematic Var namespace collisions.
-7. **`bicompose_eresolve`** — elimination resolution with premise solving.
+7. **`bicompose_eresolve`** — deferred elimination resolution with premise
+   solving.
 
-Do NOT start workspace splitting, APP, `isabelle.toml`, or AFP benchmarks
-before the resolution-family prototype has a stable compatibility matrix and
-clear limits.
+Do not start item 7, workspace splitting, APP, `isabelle.toml`, or AFP
+benchmarks before the repository's context-bound trusted theorem loop closes.
 
 ---
 

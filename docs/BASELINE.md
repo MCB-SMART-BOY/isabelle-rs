@@ -4,6 +4,10 @@ This document records the trusted-kernel checkpoint created before the Strict
 Kernel Phase. It is a baseline for kernel-boundary work; it is not a claim of
 full Isabelle compatibility.
 
+This is a historical checkpoint. The completed strict-kernel work below is not
+the current next phase; use [ROADMAP.md](ROADMAP.md) for the active
+`SignatureId` / `TheoryId` and acceptance sequence.
+
 ## Baseline Commits
 
 The first trusted-kernel engineering pass is split into these reviewable
@@ -25,17 +29,15 @@ These commits separate:
 
 ## Verified Gate
 
-The current strict-kernel gate is:
+The current strict-kernel gate is `scripts/dev-check.sh strict`, backed by
+[check-strict-kernel.sh](../scripts/check-strict-kernel.sh).
 
-```bash
-bash scripts/check-strict-kernel.sh
-```
-
-This unified gate runs 7 steps: `cargo +stable fmt --check`, `cargo +stable check`,
+This unified gate runs 7 steps: `cargo +stable fmt --check`, `cargo +stable check --locked`,
 `bash scripts/check-kernel-firewall.sh`, and test suites covering kernel rewrite
 soundness, kernel soundness, inline kernel unit tests, and legacy core compatibility.
 
-Current baseline result (post Strict Kernel Phase):
+Recorded baseline result (historical snapshot; use `scripts/dev-check.sh strict`
+for current counts):
 
 ```text
 cargo +stable fmt --check                        passed
@@ -112,9 +114,9 @@ oracles
 This is a minimal kernel derivation replay checker, not a full Isabelle
 `proofterm.ML` implementation.
 
-## Remaining Dirty Files
+## Historical Dirty Files
 
-The trusted-kernel baseline intentionally does not include:
+The original trusted-kernel baseline intentionally did not include:
 
 ```text
 Cargo.lock
@@ -128,19 +130,14 @@ were:
   `ae036f2 deps: update lockfile`;
 - `isabelle-source`: upstream Isabelle submodule pointer movement.
 
-They should be either reverted by the owner or committed separately with
-specific messages such as:
+Dependency and vendor changes must be either reverted by the owner or committed
+separately with an explicit rationale. A lock-only refresh is not justified by
+successful locked metadata alone. Do not mix either file into kernel, trust,
+proofterm, parser, metric, or roadmap changes.
 
-```text
-deps: update dependency lockfile
-vendor: update Isabelle source submodule
-```
+## Historical Next Entry Point — Completed
 
-Do not mix either file into kernel, trust, proofterm, or roadmap changes.
-
-## Next Entry Point
-
-The next code phase is the Strict Kernel Phase:
+The checkpoint originally proposed:
 
 ```text
 kernel_alpha_eq / compat_alpha_eq separation
@@ -149,6 +146,7 @@ Thm invariant checker
 strict kernel mode
 ```
 
-Do not start the next phase by broadening HOL/Isar coverage, adding LSP UI,
-touching WASM runtime, or chasing more `.thy` files. T4 replay expansion should
-resume after strict kernel equality and certification boundaries are stable.
+Those boundaries are now implemented. The current next entry is immutable
+`SignatureId` / `TheoryId` propagation followed by one context-bound theorem
+acceptance API. Do not broaden HOL/Isar coverage or extend legacy replay instead
+of closing that context boundary.

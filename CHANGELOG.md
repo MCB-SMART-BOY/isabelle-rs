@@ -4,6 +4,37 @@ All notable changes to isabelle-rs.
 
 ## [Unreleased]
 
+### Trust Boundary
+- Renamed the sampled legacy strict metric to `TransitionalStrictClosed` and
+  introduced the separate `KernelTrustedClosed` metric. The current honest
+  result is `1/125` transitional and `0/125` new-kernel trusted.
+- Hardened the registered `HOL::TrueI` path so explicit strict adapters run
+  before compatibility parser-gap fallbacks and reject free, dummy-typed,
+  malformed, contextual, or unverifiable source propositions without legacy
+  fallback.
+- Added attack coverage for the existing new-kernel `CProp : prop` boundary;
+  HOL `bool` terms are not valid theorem propositions without `HOL.Trueprop`.
+- Routed theory-scan diagnostics through `ProofOutcome`, so admitted or
+  axiom-accepted theorem-shaped values no longer display as transitional
+  successes.
+- Split registered document commands and keep experimental LSP theorem
+  declarations pending; the document layer does not classify a declaration as
+  verified before it can retain and check the complete proof block.
+
+### Scripts
+- Added `scripts/dev-check.sh` as the common formatting, compilation, strict,
+  sampled-core, theory-tier, library, and documentation verification entrypoint.
+- Added Markdown size/duplication auditing, standalone compilation checks for
+  explicitly design-only Rust templates, and a compatibility-callsite audit.
+  Short explanatory blocks remain allowed; template compilation does not prove
+  production API compatibility.
+- Centralized reusable commands under `scripts/` and reusable design/examples
+  under classified `scripts/templates/`.
+- Kept all build/check/install paths on the committed lockfile. Local installer
+  runs now use the current checkout without pulling another branch.
+- GitHub releases now require a tag matching `Cargo.toml` and the full
+  repository-owned release gate before platform artifacts are built.
+
 ### Docs
 - Repositioned the project as a Rust research prototype of an
   Isabelle/Pure-inspired LCF kernel with explicit oracle footprints,
@@ -12,9 +43,20 @@ All notable changes to isabelle-rs.
 - Rewrote README, architecture, trust, gap-analysis, development, roadmap, and
   session-transfer docs to distinguish full Isabelle parity from the narrower
   trusted-kernel research slice.
-- Updated `~/.codex` reference/rules/skills so future Codex sessions prioritize
-  T4 replay expansion, parser/type boundary hardening, and admitted-reason
-  reduction.
+- Corrected the completion assessment: the Pure kernel research nucleus is
+  meaningful, but the minimal Isabelle/Pure trusted loop, source-aware
+  `Trueprop` elaboration, conservative definitions, immutable theory context,
+  and explicit HOL basis remain incomplete.
+- Added root `AGENTS.md` as the harness-neutral authority and
+  `docs/KERNEL_TRUSTED_ACCEPTANCE_GAPS.md` as the source-audited context identity
+  and minimal acceptance plan.
+- Added the repository-root Apache-2.0 license declared by `Cargo.toml`; bundled
+  Isabelle theory sources retain their separate upstream license.
+- Added the checked HOL proposition normalization contract and proposed HOL
+  logic trusted-extension ADR. No `HOL::trans` adapter or HOL substitution
+  primitive was added.
+- Updated Isabelle-rs-specific `~/.codex` references, rules, and skills to use
+  the corrected metrics, priorities, and centralized scripts.
 
 ## [2.2.1] — 2026-06-21
 

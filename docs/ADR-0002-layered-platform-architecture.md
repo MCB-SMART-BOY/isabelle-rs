@@ -4,6 +4,11 @@
 
 Accepted.
 
+Accepted as a target architecture, not as an implementation-complete or
+near-term-work claim. Workspace/session/APP/LSP/plugin/compute expansion remains
+deferred until the context-bound trusted theorem loop in
+[ROADMAP.md](ROADMAP.md) closes.
+
 ## Context
 
 ADR-0001 established the strangler-pattern kernel reset: `src/kernel/` as the
@@ -154,15 +159,9 @@ Content-addressed incremental checking with snapshot/rollback. Shared
 infrastructure for both LSP (human editing) and Agent protocol (machine proof
 search).
 
-```rust
-pub trait ProofSession {
-    fn snapshot(&self) -> SnapshotId;
-    fn apply_command(&mut self, span: CommandSpan) -> Result<StateDiff>;
-    fn rollback(&mut self, snapshot: SnapshotId);
-    fn goals(&self) -> Vec<GoalView>;
-    fn diagnostics(&self) -> Vec<Diagnostic>;
-}
-```
+A design-only standalone API skeleton is
+[proof_session.rs](../scripts/templates/proof_session.rs). Its standalone
+compilation does not validate integration with the current session API.
 
 ### Layer 6: `isabelle-lsp` / `isabelle-agent` — Interface Protocols
 
@@ -176,24 +175,8 @@ Both share `isabelle-session` but expose different protocol semantics.
 
 Lake-style project scaffolding:
 
-```toml
-[package]
-name = "my-project"
-version = "0.1.0"
-logic = "HOL"
-edition = "2026"
-
-[toolchain]
-isabelle-rs = "2.3.0"
-
-[dependencies]
-AFP = "2026.1"
-
-[build]
-parallel = true
-incremental = true
-deny_admit = true
-```
+The proposed manifest is maintained as
+[isabelle-project.toml](../scripts/templates/isabelle-project.toml).
 
 ### Layer 8: `isabelle-plugin` — Extensibility
 

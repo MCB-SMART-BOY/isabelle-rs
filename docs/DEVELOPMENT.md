@@ -2,55 +2,45 @@
 
 This guide covers day-to-day development commands for Isabelle-rs.
 
-For project positioning, read [PROJECT_STATUS.md](PROJECT_STATUS.md). For the
-trust model, read [TRUST.md](TRUST.md).
+Start with root [AGENTS.md](../AGENTS.md). For project positioning, read
+[PROJECT_STATUS.md](PROJECT_STATUS.md); for trust semantics, read
+[TRUST.md](TRUST.md).
 
 ## Environment
 
 - Rust stable matching the repository toolchain.
 - Cargo.
-- Large theory tests usually need:
-
-```bash
-export RUST_MIN_STACK=268435456
-```
+- Large theory tests use the stack configured by
+  [scripts/dev-check.sh](../scripts/dev-check.sh).
 
 ## Common Commands
 
 Fast checks:
 
-```bash
-cargo fmt --check
-cargo check
-```
+Run `scripts/dev-check.sh fast`.
 
 Trusted-kernel gate (full, all changes):
 
-```bash
-bash scripts/check-strict-kernel.sh
-```
+Run `scripts/dev-check.sh strict`.
 
 This unified gate runs:
 1. `cargo +stable fmt --check`
-2. `cargo +stable check`
+2. `cargo +stable check --locked`
 3. `bash scripts/check-kernel-firewall.sh` (no legacy deps or forbidden patterns in `src/kernel/`)
-4. `cargo +stable test --test kernel_rewrite_soundness` (134 attack tests)
-5. `cargo +stable test --test kernel_soundness` (26 boundary tests)
-6. `cargo +stable test --lib kernel::thm::` (11), `kernel::unify::tests::` (15), `kernel::rules::tests::` (54)
-7. `cargo +stable test --lib core::` (199 compatibility tests)
+4. The current `kernel_rewrite_soundness` attack suite.
+5. The current `kernel_soundness` boundary suite.
+6. The strict `kernel::thm::`, `kernel::unify::tests::`, and
+   `kernel::rules::tests::` inline suites.
+7. The legacy `core::` compatibility suite.
 
 Theory verification:
 
-```bash
-RUST_MIN_STACK=268435456 cargo test test_verify_all_core_files -- --nocapture
-RUST_MIN_STACK=268435456 cargo test --test tier2_verify -- --nocapture
-```
+Run `scripts/dev-check.sh core`, `tier2`, or `tier3`. Use
+`scripts/dev-check.sh broad` for all three.
 
 Broad library test:
 
-```bash
-RUST_MIN_STACK=268435456 cargo test --lib
-```
+Run the explicit `scripts/dev-check.sh lib` mode.
 
 Do not report broad `cargo test --lib` as passing unless the known
 `theory::loader::tests::test_batch_scan_theories` stack-overflow behavior has
@@ -60,19 +50,31 @@ been verified fixed in the current checkout.
 
 For docs-only edits:
 
-```bash
-cargo fmt --check
-cargo check
-```
+Run `scripts/dev-check.sh docs`.
 
 No source test claims should be made unless the relevant tests were actually
 run.
+
+## Documentation And Templates
+
+Markdown may contain short explanatory Bash, Rust, PowerShell, TOML, or JSON
+blocks when they clarify a local contract. Do not maintain large runnable or
+duplicated scripts in documentation.
+
+Put reusable commands and audits in [scripts/](../scripts/), and reusable
+design/configuration skeletons in
+[scripts/templates/](../scripts/templates/). Every template is classified in
+[scripts/templates/README.md](../scripts/templates/README.md).
+`scripts/check-rust-templates.sh` proves only that classified Rust design files
+compile standalone; it does not validate production API compatibility,
+architecture, theorem semantics, or trust.
 
 ## Trusted-Kernel Change Rules
 
 When touching these files:
 
 ```text
+src/kernel/**
 src/core/thm.rs
 src/core/proofterm.rs
 src/core/unify.rs
@@ -103,15 +105,17 @@ Use these terms consistently:
 |---|---|
 | oracle-free | `thm.is_fully_proved()`; no oracle footprint. |
 | closed proved shape | no oracle, no hypotheses, no unresolved `tpairs`; use `thm.is_closed_proved()` for shape only. |
-| strict closed proved | strict construction plus closed proved shape and no dummy types; use `thm.is_strict_closed_proved()` for trusted acceptance. |
+| transitional strict closed | legacy strict construction plus closed proved shape and no dummy types; use `thm.is_strict_closed_proved()` for migration classification only. |
+| kernel-trusted closed | context-bound `src/kernel::TrustedTheorem` over `CProp : prop`, with immutable theory/logic provenance and required replay; the sampled count is `0/125`. |
 | open theorem | valid theorem with hypotheses, such as `A |- A`. |
 | admitted theorem | theorem accepted with explicit oracle footprint. |
 | searchable fact | fact available to proof search; may be open or admitted. |
-| trusted theorem table | final exported table; should only contain strict closed proved theorems. |
+| trusted theorem table | final new-kernel `TrustedTheory`; accepts only context-bound `src/kernel::TrustedTheorem` values, never a legacy classifier result. |
 
 ## Proof Replay Development
 
-Current supported replay rules:
+The legacy `src/core/proofterm.rs` compatibility replay minimum currently
+documents:
 
 ```text
 assume
@@ -121,6 +125,10 @@ transitive
 implies_intr
 implies_elim
 ```
+
+The separate `src/kernel::Derivation` inventory is listed in
+[KERNEL_TRUSTED_ACCEPTANCE_GAPS.md](KERNEL_TRUSTED_ACCEPTANCE_GAPS.md); every
+current variant has a replay arm, but replay is still context-free.
 
 When adding a new replay rule:
 
@@ -136,6 +144,20 @@ When adding a new replay rule:
 use it as a trusted theorem replay gate. Use `Thm::check_proof()` or
 `Thm::validate_proof()`.
 
+## Agent Harness And Review
+
+Repository rules are harness-neutral. Oh My Pi is suitable as the primary
+long-lived harness for context, LSP, structured edits, read-only audit fan-out,
+and isolated worktrees. Codex-compatible models or CLI sessions remain useful
+for bounded implementations, adversarial review, and independent reproduction.
+
+Use separate implementation and review channels for high-risk TCB changes when
+possible. Neither harness memory nor model agreement is proof evidence; source,
+tests, ADRs, and the exact verification output remain authoritative.
+
+Do not create commits, rebase, rewrite history, or push without explicit user
+instruction.
+
 ## Files Not To Touch Accidentally
 
 Do not modify these unless explicitly in scope:
@@ -145,12 +167,26 @@ Cargo.lock
 isabelle-source
 ```
 
-The current repository often has unrelated dirty work. Preserve it.
+An intentional lockfile update needs a dependency or security rationale and
+locked verification. A successful `cargo metadata --locked` proves that the
+lockfile is usable, not that an unexplained refresh belongs in the change.
+Keep dependency/vendor changes separate from parser, trust, metrics, tests, and
+documentation work. Preserve unrelated dirty work.
 
 ## Current Engineering Priorities
 
-1. Extend proofterm replay rule coverage.
-2. Tighten parser/type/certification boundaries.
-3. Reduce admitted lemmas by classified reason.
-4. Expand HOL/Isar features only when doing so reduces admitted counts without
-   widening trusted boundaries.
+1. Introduce immutable `TheoryId` / `SignatureId` values and propagate context
+   identity through strict certification and theorem construction.
+2. Add one context-bound, mutually exclusive `KernelTrustedClosed` acceptance
+   gate while keeping `TransitionalStrictClosed` separate.
+3. Preserve a source-aware proposition AST before legacy term lowering.
+4. Elaborate checked judgments, constants, and polymorphic type schemes,
+   including `HOL.Trueprop`, into `CProp : prop`.
+5. Install the HOL logical basis as an immutable data-only manifest replayed by
+   generic kernel code.
+6. Add a generic conservative definition extension; do not promote
+   `true_def_transport`.
+7. Re-derive `HOL::TrueI` through the new kernel before adding another theorem
+   adapter or object-logic proof primitive.
+8. Extend replay and reduce admitted paths without widening legacy `src/core`
+   trusted proof power.

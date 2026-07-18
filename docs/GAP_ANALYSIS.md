@@ -3,7 +3,8 @@
 This document gives an honest comparison between Isabelle-rs and full
 Isabelle/HOL. It is intentionally conservative.
 
-Read [PROJECT_STATUS.md](PROJECT_STATUS.md) first.
+Read root [AGENTS.md](../AGENTS.md), then
+[PROJECT_STATUS.md](PROJECT_STATUS.md), first.
 
 ## Executive Summary
 
@@ -33,7 +34,7 @@ These are semantic and engineering estimates, not line-count percentages.
 | LCF `Thm` kernel | 50%-60% | Research prototype with recent soundness hardening. |
 | Primitive inference rules | 40%-55% | Important subset implemented; coverage and Isabelle equivalence incomplete. |
 | Oracle/admit tracking | 65%-75% | Strong project area: explicit footprints and propagation. |
-| Closed theorem acceptance | ~70% | Main statistics and final trusted tables use strict closed proved filters. |
+| Closed theorem acceptance | ~70% for legacy filtering; 0 sampled HOL theorems at the target gate | Statistics report `TransitionalStrictClosed`; final `TrustedTheory` still requires context-bound new-kernel theorems. |
 | Proofterm replay/checker | 10%-20% | Minimal derivation replay, not full Isabelle proofterm checker. |
 | Isar proof engine | 25%-35% | Partial state machine and method dispatch. |
 | Simplifier / automation | 10%-20% | Useful prototypes, far from HOL Tools. |
@@ -69,7 +70,8 @@ The project makes these statuses explicit:
 ```text
 oracle-free theorem
 closed proved shape
-strict closed proved theorem
+transitional strict closed theorem
+kernel-trusted closed theorem
 open theorem with hypotheses
 admitted theorem
 searchable fact
@@ -82,6 +84,11 @@ This distinction is central. In particular:
 is_fully_proved() != is_closed_proved() != is_strict_closed_proved()
 ```
 
+All three predicates above inspect legacy `core::Thm`; even
+`is_strict_closed_proved()` is only the `TransitionalStrictClosed` classifier.
+Final acceptance requires a context-bound `src/kernel::TrustedTheorem` over
+`CProp : prop`, immutable theory/logic provenance, and the selected replay gate.
+
 Recent verification diagnostics made this distinction stricter. Proof-method
 results with ambient hypotheses are no longer returned as oracle-free accepted
 lemmas: they must be exported by legal `implies_intr` discharge of known
@@ -90,20 +97,21 @@ context assumptions, or admitted with `admitted:goal_export_*` /
 runtime bucket, but it does not improve proof coverage:
 
 ```text
-test_verify_all_core_files: 1/125 strict closed proved
-dynamic sample after explicit goal export:
-  StrictClosed: 1
-  CLOSED_ORACLE_FREE_NON_STRICT: 1
-  admitted:goal_export_unknown_hyps: 65
-  admitted:proof_engine_failed: 50
-  admitted:goal_export_open_subgoals: 3
-  admitted:parser_gap: 3
-  admitted:datatype_stub: 2
+TransitionalStrictClosed: 1/125
+KernelTrustedClosed:      0/125
+CompatClosedOracleFree: 1
+Admitted(goal_export_unknown_hyps): 65
+Admitted(proof_engine_failed): 50
+Admitted(goal_export_open_subgoals): 3
+Admitted(parser_gap): 3
+Admitted(datatype_stub): 2
 ```
 
-The next useful work is to split and reduce the `goal_export_*` and
-`proof_engine_failed` reasons, not to count closed-shaped compatibility results
-as trusted proofs.
+The next trust-critical sequence is immutable theory/signature identity, one
+context-bound `KernelTrustedClosed` acceptance operation, a source-aware
+proposition AST, checked HOL basis elaboration, and generic conservative
+definitions. Admitted-reason reduction remains useful but must not reclassify
+transitional or compatibility results as trusted proofs.
 
 `RewriteRule::from_thm` now rejects theorem hyps, oracle/admitted footprints,
 unresolved `tpairs`, and Pure-premise conditional rewrites. This prevents open
@@ -119,7 +127,10 @@ target.
 The strict `src/kernel/` nucleus is enforced by automated checks:
 - `scripts/check-kernel-firewall.sh` validates no legacy dependencies or forbidden patterns.
 - `pub(in crate::kernel)` visibility gating prevents upper-layer modules (`src/core/`, `src/isar/`, `src/tools/`) from bypassing certified-origin constructors.
-- `scripts/check-strict-kernel.sh` runs the full 7-step gate (fmt, check, firewall, 134 attack, 26 soundness, 11/15/54 kernel inline, 199 core).
+- `scripts/dev-check.sh strict` runs the maintained full gate: formatting,
+  compilation, firewall, current attack/boundary suites, strict inline suites,
+  and legacy `core::` compatibility tests. The script output is authoritative
+  for test counts.
 
 ### Attack-Test-Driven Kernel Work
 
@@ -149,6 +160,20 @@ Isabelle/ML + Scala:
 - forcing all fallback through typed admitted/oracle footprints.
 
 ## Major Remaining Gaps
+
+### Theory Identity And Acceptance
+
+The largest immediate kernel gap is not another primitive rule. Current
+`CTerm`, `CProp`, `TrustedTheorem`, and `TrustedTheory` values do not carry an
+immutable `SignatureId` / `TheoryId`; `TrustedTheory::add` does not validate
+context identity, ancestry, dependencies, replay context, or name conflicts.
+
+The next source slice must establish immutable context identity and
+mixed-context rejection. Only then can one unique acceptance API safely produce
+the mutually exclusive `KernelTrustedClosed` outcome.
+
+See
+[KERNEL_TRUSTED_ACCEPTANCE_GAPS.md](KERNEL_TRUSTED_ACCEPTANCE_GAPS.md).
 
 ### Term / Type / Certification Boundary
 
@@ -272,12 +297,16 @@ Drop-in replacement for Isabelle
 
 ## Next Work With Highest Research Value
 
-1. Harden kernel equality/certification boundaries.
-2. Extend T4 replay to the next primitive rules after strict kernel semantics
-   are stable.
-3. Reduce `Typ::dummy()` at theorem construction sites.
-4. Shrink admitted lemmas by reason while preserving oracle footprints.
-5. In parallel, design an untrusted high-performance symbolic compute layer
-   for fact/rewrite prefiltering and term fingerprinting; keep theorem
-   acceptance in the CPU strict kernel.
-6. Only then increase HOL/Isar surface coverage.
+1. Introduce immutable `SignatureId` / `TheoryId` and reject mixed-context
+   certification and rule inputs.
+2. Add one context-bound theorem acceptance operation and mutually exclusive
+   `KernelTrustedClosed` outcome.
+3. Preserve a source-aware proposition AST before legacy lowering.
+4. Elaborate checked `HOL.Trueprop` and polymorphic declarations into
+   `CProp : prop`.
+5. Install a data-only HOL basis and generic conservative definitions.
+6. Re-derive `HOL::TrueI` through the new kernel.
+7. Continue replay/attack-test hardening and admitted-reason reduction without
+   adding proof power to legacy `src/core`.
+8. Keep symbolic compute design-only and untrusted; increase broad HOL/Isar
+   coverage only after the trusted loop closes.
