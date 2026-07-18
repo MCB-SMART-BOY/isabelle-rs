@@ -132,10 +132,26 @@ thread_local! {
 }
 const MAX_PARSE_DEPTH: usize = 200;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TermParseStatus {
+    FullyConsumed,
+    Incomplete,
+}
+
 pub fn parse_term(input: &str) -> Option<Term> {
+    parse_term_with_status(input).map(|(term, _)| term)
+}
+
+pub(crate) fn parse_term_with_status(input: &str) -> Option<(Term, TermParseStatus)> {
     PARSE_DEPTH.with(|d| d.set(0));
     let mut s = P::new(Lexer::new(input).tokenize());
-    parse_trm(&mut s)
+    let term = parse_trm(&mut s)?;
+    let status = if matches!(s.kind(), Some(TokenKind::EOF)) {
+        TermParseStatus::FullyConsumed
+    } else {
+        TermParseStatus::Incomplete
+    };
+    Some((term, status))
 }
 
 fn parse_trm(s: &mut P) -> Option<Term> {
@@ -500,9 +516,16 @@ fn parse_trm_flag(s: &mut P, stop_at_imp: bool) -> Option<Term> {
             continue;
         }
 
-        // Type annotation: term :: type  — skip the type
+        // Type annotation: preserve the explicit type on the narrow True alias
+        // boundary. General annotation elaboration remains legacy parser debt.
         if s.is_sym("::") {
             s.adv();
+            if let Term::Const { name, typ } = &mut head
+                && name.as_ref() == "HOL.True"
+            {
+                *typ = parse_typ(s)?;
+                continue;
+            }
             // Skip type tokens until a delimiter
             while s.kind().is_some() {
                 if s.is_sym(")")
@@ -945,7 +968,10 @@ fn parse_atom(s: &mut P) -> Option<Term> {
     match &kind {
         TokenKind::Ident | TokenKind::LongIdent => {
             s.adv();
-            Some(Term::free(Arc::from(src.as_str()), Typ::dummy()))
+            match src.as_str() {
+                "True" | "HOL.True" => Some(hologic::true_const()),
+                _ => Some(Term::free(Arc::from(src.as_str()), Typ::dummy())),
+            }
         },
         TokenKind::String => {
             s.adv();
@@ -1085,6 +1111,49 @@ mod tests {
     fn test_parse_term_lambda() {
         let t = parse_term("%x. x").unwrap();
         assert!(matches!(t, Term::Abs { .. }));
+    }
+
+    #[test]
+    fn test_parse_true_aliases_as_typed_hol_constant() {
+        for alias in ["True", "HOL.True"] {
+            assert_eq!(parse_term(alias), Some(hologic::true_const()));
+            assert_eq!(parse_term(&format!("{alias} :: bool")), Some(hologic::true_const()));
+        }
+    }
+
+    #[test]
+    fn test_parse_true_alias_preserves_conflicting_explicit_type() {
+        for (alias, explicit_type) in [("True", "nat"), ("HOL.True", "prop")] {
+            assert!(matches!(
+                parse_term(&format!("{alias} :: {explicit_type}")),
+                Some(Term::Const { name, typ })
+                    if name.as_ref() == "HOL.True" && typ == Typ::base(explicit_type)
+            ));
+        }
+    }
+
+    #[test]
+    fn test_parse_true_annotation_does_not_swallow_following_equality() {
+        let parsed = parse_term("True :: bool = False").expect("annotated equality should parse");
+
+        assert_ne!(parsed, hologic::true_const());
+        assert!(hologic::dest_hol_equals(&parsed).is_some());
+    }
+
+    #[test]
+    fn test_parse_term_reports_unconsumed_true_suffix() {
+        for source in ["True", "HOL.True :: bool"] {
+            let (parsed, status) =
+                parse_term_with_status(source).expect("complete True source should parse");
+            assert_eq!(parsed, hologic::true_const());
+            assert_eq!(status, TermParseStatus::FullyConsumed);
+        }
+
+        let (parsed, status) = parse_term_with_status("True : {False}")
+            .expect("legacy parser should retain its prefix parse");
+        assert_eq!(parsed, hologic::true_const());
+        assert_eq!(status, TermParseStatus::Incomplete);
+        assert_eq!(parse_term("True : {False}"), Some(hologic::true_const()));
     }
 
     #[test]

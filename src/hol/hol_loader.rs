@@ -7,7 +7,7 @@
 //!
 //! This avoids manually rewriting HOL — we reuse Isabelle's own source.
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use crate::{
     core::{
@@ -19,7 +19,10 @@ use crate::{
         types::{Sort, Symbol, Typ, TypeEnv},
     },
     hol::hologic,
-    isar::term_parser::parse_term,
+    isar::{
+        keyword::Keywords,
+        term_parser::{TermParseStatus, parse_term, parse_term_with_status},
+    },
 };
 
 /// Load the HOL theory by parsing Isabelle's HOL.thy declarations.
@@ -112,6 +115,545 @@ fn find_blocks(source: &str, keyword: &str) -> Vec<String> {
         results.push(content);
     }
     results
+}
+
+#[derive(Debug, Clone, Copy)]
+enum SourceMaskState {
+    Normal,
+    Comment(usize),
+    FormalCommentPrefix(bool),
+    FormalCommentCartouche(usize),
+    MalformedEmbedded,
+    String(bool),
+    AltString(bool),
+    Cartouche(usize),
+    Verbatim,
+}
+
+fn source_chars_start(chars: &[char], at: usize, expected: &str) -> bool {
+    expected.chars().enumerate().all(|(offset, ch)| chars.get(at + offset) == Some(&ch))
+}
+
+fn formal_comment_prefix(chars: &[char], at: usize) -> Option<(usize, bool)> {
+    for (symbol, allows_blanks) in [
+        ("\\<comment>", true),
+        ("\\<^cancel>", false),
+        ("\\<^latex>", false),
+        ("\\<^marker>", false),
+    ] {
+        if source_chars_start(chars, at, symbol) {
+            return Some((symbol.chars().count(), allows_blanks));
+        }
+    }
+    match chars.get(at) {
+        Some('\u{2015}') => Some((1, true)),
+        Some('\u{2326}' | '\u{2710}') => Some((1, false)),
+        _ => None,
+    }
+}
+
+fn emit_source_chars(output: &mut String, chars: &[char], start: usize, len: usize, masked: bool) {
+    for ch in &chars[start..start + len] {
+        output.push(if masked && *ch != '\n' { ' ' } else { *ch });
+    }
+}
+
+/// Mask comments and, optionally, embedded source while preserving line count.
+///
+/// Transitional source guards must inspect only outer syntax. Text inside
+/// comments, quoted strings, cartouches, and verbatim blocks cannot declare a
+/// constant, definition, or context boundary.
+fn mask_isabelle_source(source: &str, mask_embedded: bool) -> String {
+    let chars: Vec<char> = source.chars().collect();
+    let mut output = String::with_capacity(source.len());
+    let mut state = SourceMaskState::Normal;
+    let mut i = 0usize;
+
+    while i < chars.len() {
+        match state {
+            SourceMaskState::Normal => {
+                if source_chars_start(&chars, i, "(*") {
+                    emit_source_chars(&mut output, &chars, i, 2, true);
+                    state = SourceMaskState::Comment(1);
+                    i += 2;
+                } else if let Some((len, allows_blanks)) = formal_comment_prefix(&chars, i) {
+                    emit_source_chars(&mut output, &chars, i, len, true);
+                    state = SourceMaskState::FormalCommentPrefix(allows_blanks);
+                    i += len;
+                } else if chars[i] == '"' {
+                    emit_source_chars(&mut output, &chars, i, 1, mask_embedded);
+                    state = SourceMaskState::String(false);
+                    i += 1;
+                } else if chars[i] == '`' {
+                    emit_source_chars(&mut output, &chars, i, 1, mask_embedded);
+                    state = SourceMaskState::AltString(false);
+                    i += 1;
+                } else if chars[i] == '‹' {
+                    emit_source_chars(&mut output, &chars, i, 1, mask_embedded);
+                    state = SourceMaskState::Cartouche(1);
+                    i += 1;
+                } else if source_chars_start(&chars, i, "\\<open>") {
+                    emit_source_chars(&mut output, &chars, i, 7, mask_embedded);
+                    state = SourceMaskState::Cartouche(1);
+                    i += 7;
+                } else if source_chars_start(&chars, i, "{*") {
+                    emit_source_chars(&mut output, &chars, i, 2, mask_embedded);
+                    state = SourceMaskState::Verbatim;
+                    i += 2;
+                } else {
+                    output.push(chars[i]);
+                    i += 1;
+                }
+            },
+            SourceMaskState::Comment(depth) => {
+                if source_chars_start(&chars, i, "(*") {
+                    emit_source_chars(&mut output, &chars, i, 2, true);
+                    state = SourceMaskState::Comment(depth + 1);
+                    i += 2;
+                } else if source_chars_start(&chars, i, "*)") {
+                    emit_source_chars(&mut output, &chars, i, 2, true);
+                    state = if depth == 1 {
+                        SourceMaskState::Normal
+                    } else {
+                        SourceMaskState::Comment(depth - 1)
+                    };
+                    i += 2;
+                } else {
+                    emit_source_chars(&mut output, &chars, i, 1, true);
+                    i += 1;
+                }
+            },
+            SourceMaskState::FormalCommentPrefix(allows_blanks) => {
+                if chars[i] == '‹' {
+                    emit_source_chars(&mut output, &chars, i, 1, true);
+                    state = SourceMaskState::FormalCommentCartouche(1);
+                    i += 1;
+                } else if source_chars_start(&chars, i, "\\<open>") {
+                    emit_source_chars(&mut output, &chars, i, 7, true);
+                    state = SourceMaskState::FormalCommentCartouche(1);
+                    i += 7;
+                } else {
+                    emit_source_chars(&mut output, &chars, i, 1, true);
+                    if !allows_blanks || !chars[i].is_whitespace() {
+                        state = SourceMaskState::MalformedEmbedded;
+                    }
+                    i += 1;
+                }
+            },
+            SourceMaskState::FormalCommentCartouche(depth) => {
+                if chars[i] == '‹' {
+                    emit_source_chars(&mut output, &chars, i, 1, true);
+                    state = SourceMaskState::FormalCommentCartouche(depth + 1);
+                    i += 1;
+                } else if source_chars_start(&chars, i, "\\<open>") {
+                    emit_source_chars(&mut output, &chars, i, 7, true);
+                    state = SourceMaskState::FormalCommentCartouche(depth + 1);
+                    i += 7;
+                } else if chars[i] == '›' {
+                    emit_source_chars(&mut output, &chars, i, 1, true);
+                    state = if depth == 1 {
+                        SourceMaskState::Normal
+                    } else {
+                        SourceMaskState::FormalCommentCartouche(depth - 1)
+                    };
+                    i += 1;
+                } else if source_chars_start(&chars, i, "\\<close>") {
+                    emit_source_chars(&mut output, &chars, i, 8, true);
+                    state = if depth == 1 {
+                        SourceMaskState::Normal
+                    } else {
+                        SourceMaskState::FormalCommentCartouche(depth - 1)
+                    };
+                    i += 8;
+                } else {
+                    emit_source_chars(&mut output, &chars, i, 1, true);
+                    i += 1;
+                }
+            },
+            SourceMaskState::MalformedEmbedded => {
+                emit_source_chars(&mut output, &chars, i, 1, true);
+                i += 1;
+            },
+            SourceMaskState::String(escaped) => {
+                emit_source_chars(&mut output, &chars, i, 1, mask_embedded);
+                state = if escaped {
+                    SourceMaskState::String(false)
+                } else if chars[i] == '\\' {
+                    SourceMaskState::String(true)
+                } else if chars[i] == '"' {
+                    SourceMaskState::Normal
+                } else {
+                    SourceMaskState::String(false)
+                };
+                i += 1;
+            },
+            SourceMaskState::AltString(escaped) => {
+                emit_source_chars(&mut output, &chars, i, 1, mask_embedded);
+                state = if escaped {
+                    SourceMaskState::AltString(false)
+                } else if chars[i] == '\\' {
+                    SourceMaskState::AltString(true)
+                } else if chars[i] == '`' {
+                    SourceMaskState::Normal
+                } else {
+                    SourceMaskState::AltString(false)
+                };
+                i += 1;
+            },
+            SourceMaskState::Cartouche(depth) => {
+                if chars[i] == '‹' {
+                    emit_source_chars(&mut output, &chars, i, 1, mask_embedded);
+                    state = SourceMaskState::Cartouche(depth + 1);
+                    i += 1;
+                } else if source_chars_start(&chars, i, "\\<open>") {
+                    emit_source_chars(&mut output, &chars, i, 7, mask_embedded);
+                    state = SourceMaskState::Cartouche(depth + 1);
+                    i += 7;
+                } else if chars[i] == '›' {
+                    emit_source_chars(&mut output, &chars, i, 1, mask_embedded);
+                    state = if depth == 1 {
+                        SourceMaskState::Normal
+                    } else {
+                        SourceMaskState::Cartouche(depth - 1)
+                    };
+                    i += 1;
+                } else if source_chars_start(&chars, i, "\\<close>") {
+                    emit_source_chars(&mut output, &chars, i, 8, mask_embedded);
+                    state = if depth == 1 {
+                        SourceMaskState::Normal
+                    } else {
+                        SourceMaskState::Cartouche(depth - 1)
+                    };
+                    i += 8;
+                } else {
+                    emit_source_chars(&mut output, &chars, i, 1, mask_embedded);
+                    i += 1;
+                }
+            },
+            SourceMaskState::Verbatim => {
+                if source_chars_start(&chars, i, "*}") {
+                    emit_source_chars(&mut output, &chars, i, 2, mask_embedded);
+                    state = SourceMaskState::Normal;
+                    i += 2;
+                } else {
+                    emit_source_chars(&mut output, &chars, i, 1, mask_embedded);
+                    i += 1;
+                }
+            },
+        }
+    }
+
+    output
+}
+
+fn starts_outer_command(line: &str, keyword: &str) -> bool {
+    line.trim().strip_prefix(keyword).is_some_and(|rest| {
+        rest.is_empty()
+            || rest.chars().next().is_some_and(char::is_whitespace)
+            || (matches!(keyword, "datatype" | "codatatype") && rest.starts_with('('))
+    })
+}
+
+fn source_command_name(line: &str) -> Option<&str> {
+    let trimmed = line.trim_start();
+    let end = trimmed
+        .char_indices()
+        .find(|(_, ch)| !ch.is_alphanumeric() && *ch != '_')
+        .map(|(index, _)| index)
+        .unwrap_or(trimmed.len());
+    (end > 0).then(|| &trimmed[..end])
+}
+
+fn source_keywords() -> &'static Keywords {
+    static KEYWORDS: LazyLock<Keywords> = LazyLock::new(Keywords::standard);
+    &KEYWORDS
+}
+
+fn is_pure_outer_command(name: &str) -> bool {
+    matches!(
+        name,
+        "default_sort"
+            | "syntax_consts"
+            | "syntax_types"
+            | "alias"
+            | "type_alias"
+            | "hide_class"
+            | "hide_type"
+            | "hide_const"
+            | "hide_fact"
+            | "external_file"
+            | "bibtex_file"
+            | "ROOTS_file"
+            | "generate_file"
+            | "export_generated_files"
+            | "scala_build_generated_files"
+            | "compile_generated_files"
+            | "ML_file_debug"
+            | "ML_file_no_debug"
+            | "SML_file"
+            | "SML_file_debug"
+            | "SML_file_no_debug"
+            | "SML_import"
+            | "SML_export"
+            | "ML_export"
+            | "ML_prf"
+            | "ML_val"
+            | "ML_command"
+            | "syntax_declaration"
+            | "parse_ast_translation"
+            | "parse_translation"
+            | "print_translation"
+            | "typed_print_translation"
+            | "print_ast_translation"
+            | "open_bundle"
+            | "print_bundles"
+            | "experiment"
+            | "instance"
+            | "code_datatype"
+            | "notepad"
+            | "consider"
+            | "define"
+            | "write"
+            | "oops"
+            | "realizers"
+            | "realizability"
+            | "extract_type"
+            | "extract"
+            | "adhoc_overloading"
+            | "no_adhoc_overloading"
+            | "print_options"
+            | "print_context"
+            | "print_definitions"
+            | "print_syntax"
+            | "print_abbrevs"
+            | "print_defn_rules"
+            | "print_locale"
+            | "print_interps"
+            | "print_attributes"
+            | "print_simpset"
+            | "print_rules"
+            | "print_trans_rules"
+            | "print_methods"
+            | "print_antiquotations"
+            | "print_ML_antiquotations"
+            | "thy_deps"
+            | "locale_deps"
+            | "class_deps"
+            | "thm_deps"
+            | "thm_oracles"
+            | "print_term_bindings"
+            | "print_facts"
+            | "print_cases"
+            | "print_statement"
+            | "prop"
+            | "print_codesetup"
+            | "print_context_tracing"
+            | "unused_thms"
+            | "print_state"
+    )
+}
+
+fn is_loader_outer_command(name: &str) -> bool {
+    source_keywords().is_command(name)
+        || is_pure_outer_command(name)
+        || matches!(name, "old_rep_datatype" | "rep_datatype")
+}
+
+fn is_registered_command_line(line: &str) -> bool {
+    source_command_name(line).is_some_and(is_loader_outer_command)
+}
+
+fn registered_command_count(line: &str) -> usize {
+    line.split(|ch: char| !ch.is_alphanumeric() && ch != '_')
+        .filter(|token| !token.is_empty() && is_loader_outer_command(token))
+        .count()
+}
+
+fn registered_command_count_with(
+    line: &str,
+    declared: &std::collections::HashSet<String>,
+) -> usize {
+    line.split(|ch: char| !ch.is_alphanumeric() && ch != '_')
+        .filter(|token| {
+            !token.is_empty() && (is_loader_outer_command(token) || declared.contains(*token))
+        })
+        .count()
+}
+
+fn declared_source_commands(source: &str) -> std::collections::HashSet<String> {
+    let comment_clean = mask_isabelle_source(source, false);
+    let outer = mask_isabelle_source(source, true);
+    let mut commands = std::collections::HashSet::new();
+    let mut in_keywords = false;
+
+    for (source_line, visible_line) in comment_clean.lines().zip(outer.lines()) {
+        let visible = visible_line.trim();
+        if source_command_name(visible) == Some("keywords") {
+            in_keywords = true;
+        }
+        if source_command_name(visible) == Some("abbrevs") {
+            break;
+        }
+        if in_keywords {
+            for (index, quoted) in source_line.split('"').enumerate() {
+                if index % 2 == 1 && !quoted.is_empty() {
+                    commands.insert(quoted.to_string());
+                }
+            }
+        }
+        if visible.split_whitespace().any(|word| word == "begin") {
+            break;
+        }
+    }
+
+    commands
+}
+
+fn is_goal_declaration(keyword: &str) -> bool {
+    matches!(keyword, "instance" | "old_rep_datatype" | "rep_datatype")
+}
+
+fn declaration_header_is_unambiguous(
+    line: &str,
+    keyword: &str,
+    declared: &std::collections::HashSet<String>,
+) -> bool {
+    let mut commands = line.split(|ch: char| !ch.is_alphanumeric() && ch != '_').filter(|token| {
+        !token.is_empty() && (is_loader_outer_command(token) || declared.contains(*token))
+    });
+    if commands.next() != Some(keyword) {
+        return false;
+    }
+    match commands.next() {
+        None => true,
+        Some(next) => is_goal_declaration(keyword) && matches!(next, "by" | "proof" | "apply"),
+    }
+}
+
+fn outer_word_char_index(line: &str, word: &str) -> Option<usize> {
+    let chars: Vec<char> = line.chars().collect();
+    let needle: Vec<char> = word.chars().collect();
+    (0..=chars.len().saturating_sub(needle.len())).find(|&start| {
+        chars.get(start..start + needle.len()) == Some(needle.as_slice())
+            && (start == 0
+                || chars.get(start - 1).is_some_and(|ch| !ch.is_alphanumeric() && *ch != '_'))
+            && chars.get(start + needle.len()).is_none_or(|ch| !ch.is_alphanumeric() && *ch != '_')
+    })
+}
+
+fn truncate_goal_declaration_proof(source: &str, visible: &str, keyword: &str) -> String {
+    if !is_goal_declaration(keyword) {
+        return source.to_string();
+    }
+    let proof_start = ["by", "proof", "apply"]
+        .into_iter()
+        .filter_map(|word| outer_word_char_index(visible, word))
+        .min();
+    match proof_start {
+        Some(at) => source.chars().take(at).collect::<String>().trim_end().to_string(),
+        None => source.to_string(),
+    }
+}
+
+fn is_document_command_line(line: &str) -> bool {
+    source_command_name(line).is_some_and(|name| source_keywords().is_document(name))
+}
+
+fn is_proof_capture_gap_line(line: &str) -> bool {
+    line.trim().is_empty() || is_document_command_line(line)
+}
+
+fn is_theory_command_line(line: &str) -> bool {
+    source_command_name(line).is_some_and(|name| {
+        source_keywords().is_theory(name)
+            || matches!(
+                name,
+                "instance"
+                    | "old_rep_datatype"
+                    | "rep_datatype"
+                    | "ML_prf"
+                    | "ML_val"
+                    | "ML_command"
+            )
+    })
+}
+
+fn is_checked_declaration_continuation(keyword: &str, line: &str) -> bool {
+    if line.is_empty() {
+        return true;
+    }
+    match keyword {
+        "axiomatization" => {
+            matches!(source_command_name(line), Some("and" | "where" | "for")) || line.contains(':')
+        },
+        "definition" => {
+            matches!(source_command_name(line), Some("where" | "for" | "if" | "and"))
+                || line.contains("::")
+                || line.starts_with(['[', '|', '='])
+        },
+        _ => true,
+    }
+}
+
+/// Extract only top-level blocks whose command keyword is visible to outer
+/// syntax. Locale/context declarations and text hidden in comments or
+/// cartouches cannot supply checked-definition evidence.
+fn find_top_level_blocks(source: &str, keyword: &str) -> Vec<String> {
+    let comment_clean = mask_isabelle_source(source, false);
+    let outer_mask = mask_isabelle_source(source, true);
+    let source_lines: Vec<&str> = comment_clean.lines().collect();
+    let outer_lines: Vec<&str> = outer_mask.lines().collect();
+    let nested = nested_source_context(&source_lines);
+    let declared_commands = declared_source_commands(source);
+    let mut results = Vec::new();
+    let mut i = 0usize;
+
+    while i < source_lines.len() {
+        let visible = outer_lines.get(i).copied().unwrap_or_default().trim();
+        let declaration = truncate_goal_declaration_proof(source_lines[i].trim(), visible, keyword);
+        let locale_qualified = declaration
+            .strip_prefix(keyword)
+            .is_some_and(|rest| rest.trim_start().starts_with("(in "));
+        if nested.get(i) == Some(&false)
+            && starts_outer_command(visible, keyword)
+            && declaration_header_is_unambiguous(visible, keyword, &declared_commands)
+            && !locale_qualified
+        {
+            let mut block_lines = vec![declaration];
+            i += 1;
+            while i < source_lines.len() {
+                let next_visible = outer_lines.get(i).copied().unwrap_or_default().trim();
+                if !next_visible.is_empty()
+                    && (registered_command_count_with(next_visible, &declared_commands) > 0
+                        || !is_checked_declaration_continuation(keyword, next_visible))
+                {
+                    break;
+                }
+                block_lines.push(source_lines[i].to_string());
+                i += 1;
+            }
+            let block = block_lines.join("\n");
+            let content = block.trim().strip_prefix(keyword).unwrap_or(&block).trim().to_string();
+            results.push(content);
+        } else {
+            i += 1;
+        }
+    }
+
+    results
+}
+
+/// Reconstruct commands whose headers are visible and top-level while retaining
+/// their comment-clean bodies for existing declaration parsers.
+fn top_level_command_source(source: &str, keywords: &[&str]) -> String {
+    let mut commands = Vec::new();
+    for keyword in keywords {
+        for block in find_top_level_blocks(source, keyword) {
+            let separator = if block.starts_with('(') { "" } else { " " };
+            commands.push(format!("{keyword}{separator}{block}"));
+        }
+    }
+    commands.join("\n\n")
 }
 
 /// Extract the type portion from `name :: "type"  mixfix` or
@@ -264,6 +806,20 @@ pub struct ParsedLemma {
 }
 
 impl ParsedLemma {
+    pub fn source_proposition_status(&self) -> SourcePropositionStatus {
+        self.source_loc
+            .as_ref()
+            .map(|loc| loc.proposition_status)
+            .unwrap_or(SourcePropositionStatus::Unavailable)
+    }
+
+    pub fn source_proposition_shape(&self) -> SourcePropositionShape {
+        self.source_loc
+            .as_ref()
+            .map(|loc| loc.proposition_shape)
+            .unwrap_or(SourcePropositionShape::Unavailable)
+    }
+
     /// Annotate dummy types in this lemma's theorem with types from the TypeEnv.
     /// Returns true if any types were changed.
     pub fn type_annotate(&mut self, env: &crate::core::types::TypeEnv) -> bool {
@@ -278,6 +834,38 @@ impl ParsedLemma {
             }
         }
         false
+    }
+}
+
+/// Whether the legacy source parser consumed the complete proposition text.
+///
+/// This is only parser provenance. It does not certify or prove the resulting
+/// term, but strict adapters must reject source propositions without
+/// `FullyConsumed` provenance rather than accepting a parsed prefix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourcePropositionStatus {
+    FullyConsumed,
+    Incomplete,
+    Unavailable,
+}
+
+/// Narrow source-shape provenance used by the transitional `TrueI` boundary.
+///
+/// This classification is deliberately not a general proposition AST or name
+/// resolver. It prevents the current adapter from accepting parser recovery or
+/// a locally shadowed `True` while checked elaboration remains future work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourcePropositionShape {
+    StandaloneHolTrueAlias,
+    Other,
+    Contextual,
+    Unavailable,
+}
+
+fn source_proposition_status(status: TermParseStatus) -> SourcePropositionStatus {
+    match status {
+        TermParseStatus::FullyConsumed => SourcePropositionStatus::FullyConsumed,
+        TermParseStatus::Incomplete => SourcePropositionStatus::Incomplete,
     }
 }
 
@@ -302,6 +890,8 @@ pub struct DefLocation {
     pub file: String,
     pub line: usize,
     pub name: String,
+    pub proposition_status: SourcePropositionStatus,
+    pub proposition_shape: SourcePropositionShape,
 }
 
 /// Checked source for a definition command.
@@ -323,6 +913,62 @@ pub struct CheckedDefinitionSource {
     pub rhs: CTerm,
     /// Raw quoted definition body from the theory source.
     pub raw_body: String,
+}
+
+fn attach_source_location(lemma: &mut ParsedLemma, source_path: &str, line: usize) {
+    let proposition_status = lemma.source_proposition_status();
+    let proposition_shape = lemma.source_proposition_shape();
+    lemma.source_loc = Some(DefLocation {
+        file: source_path.to_string(),
+        line,
+        name: lemma.name.clone(),
+        proposition_status,
+        proposition_shape,
+    });
+}
+
+fn provisional_source_location(
+    name: &str,
+    proposition_status: SourcePropositionStatus,
+    proposition_shape: SourcePropositionShape,
+) -> Option<DefLocation> {
+    Some(DefLocation {
+        file: String::new(),
+        line: 0,
+        name: name.to_string(),
+        proposition_status,
+        proposition_shape,
+    })
+}
+
+fn has_local_proposition_context(source: &str) -> bool {
+    source.split_whitespace().any(|token| {
+        matches!(
+            token.trim_matches(|ch: char| !ch.is_alphanumeric() && ch != '_'),
+            "fixes"
+                | "assumes"
+                | "defines"
+                | "obtains"
+                | "constrains"
+                | "includes"
+                | "notes"
+                | "if"
+                | "when"
+                | "for"
+        )
+    })
+}
+
+fn source_proposition_shape(source: &str, contextual: bool) -> SourcePropositionShape {
+    if contextual {
+        return SourcePropositionShape::Contextual;
+    }
+    let compact: String = source.split_whitespace().collect();
+    if matches!(compact.as_str(), "True" | "HOL.True" | "True::bool" | "HOL.True::bool") {
+        SourcePropositionShape::StandaloneHolTrueAlias
+    } else {
+        SourcePropositionShape::Other
+    }
 }
 
 /// Parse all `datatype` declarations from .thy source.
@@ -1201,66 +1847,63 @@ fn parse_inductives(source: &str) -> Vec<ParsedLemma> {
 /// Uses the source path to track definition locations (for go-to-definition).
 pub fn parse_lemmas_with_loc(source: &str, source_path: &str) -> Vec<ParsedLemma> {
     let mut lemmas = Vec::new();
-    let lines: Vec<&str> = source.lines().collect();
-    let mut line_map: Vec<usize> = Vec::new(); // line number for each line (1-based)
-    for (idx, _) in lines.iter().enumerate() {
-        line_map.push(idx + 1);
-    }
+    let comment_clean = mask_isabelle_source(source, false);
+    let lines: Vec<&str> = comment_clean.lines().collect();
+    let outer_mask = mask_isabelle_source(source, true);
+    let outer_lines: Vec<&str> = outer_mask.lines().collect();
+    let nested_context = nested_source_context(&lines);
 
-    // First pass: parse datatypes and generate synthetic induction rules
-    for dt in &parse_datatypes(source) {
+    // First pass: generate declarations only from visible top-level commands.
+    let datatype_source = top_level_command_source(
+        source,
+        &["datatype", "codatatype", "old_rep_datatype", "rep_datatype"],
+    );
+    for dt in &parse_datatypes(&datatype_source) {
         lemmas.extend(generate_datatype_lemmas(dt));
         lemmas.extend(generate_bnf_lemmas(dt));
-        // Ctr_Sugar lemmas
         let sugar = crate::hol::ctr_sugar::CtrSugar::from_datatype(dt);
         lemmas.extend(sugar.generate_lemmas());
-        // BNF Lfp lemmas
         let lfp = crate::hol::bnf_lfp::BnfLfp::from_datatype(dt, false);
         lemmas.extend(lfp.generate_lemmas());
     }
-    for pr in &parse_primrecs(source) {
+    let primrec_source = top_level_command_source(source, &["primrec", "fun", "function"]);
+    for pr in &parse_primrecs(&primrec_source) {
         lemmas.extend(generate_primrec_lemmas(pr));
     }
-    for cls in &parse_classes(source) {
+    let class_source = top_level_command_source(source, &["class"]);
+    for cls in &parse_classes(&class_source) {
         lemmas.extend(generate_class_lemmas(cls));
     }
-    // Parse instance declarations: disabled to avoid DB density overflow.
-    // Available via crate::hol::class_system::parse_instances() when needed.
-    // for inst in &super::class_system::parse_instances(source) {
-    //     lemmas.extend(super::class_system::instance_to_lemmas(inst));
-    // }
-    // Parse inductive definitions and generate introduction rules
-    lemmas.extend(parse_inductives(source));
+    // Instance declarations remain disabled to avoid DB density overflow.
+    let inductive_source = top_level_command_source(source, &["inductive", "coinductive"]);
+    lemmas.extend(parse_inductives(&inductive_source));
 
     let mut i = 0;
     while i < lines.len() {
-        let t = lines[i].trim();
+        let visible = outer_lines.get(i).copied().unwrap_or_default().trim();
         let line_no = i + 1;
 
         // Skip datatype lines (already processed)
-        if t.starts_with("datatype ") || t.starts_with("datatype(") {
+        if visible.starts_with("datatype ") || visible.starts_with("datatype(") {
             i += 1;
             continue;
         }
-        if t.starts_with("primrec ") || t.starts_with("fun ") || t.starts_with("function ") {
+        if visible.starts_with("primrec ")
+            || visible.starts_with("fun ")
+            || visible.starts_with("function ")
+        {
             i += 1;
             continue;
         }
-        if t.starts_with("class ") {
+        if visible.starts_with("class ") {
             i += 1;
             continue;
         }
         // Handle `lemmas name = thm` commands
-        if t.starts_with("lemmas ") {
+        if visible.starts_with("lemmas ") {
             if let Some(mut ls) = parse_lemmas_cmd(&lines, &mut i) {
                 for lem in &mut ls {
-                    if lem.source_loc.is_none() {
-                        lem.source_loc = Some(DefLocation {
-                            file: source_path.to_string(),
-                            line: line_no,
-                            name: lem.name.clone(),
-                        });
-                    }
+                    attach_source_location(lem, source_path, line_no);
                 }
                 lemmas.extend(ls);
             } else {
@@ -1268,15 +1911,15 @@ pub fn parse_lemmas_with_loc(source: &str, source_path: &str) -> Vec<ParsedLemma
             }
             continue;
         }
-        if !t.starts_with("lemma ") && !t.starts_with("theorem ") {
+        if !visible.starts_with("lemma ") && !visible.starts_with("theorem ") {
             i += 1;
             continue;
         }
         // Determine if this is inline or multi-line
         let start_i = i;
-        if let Some(mut ls) = parse_one_line(&lines, &mut i) {
-            // Try to capture proof script from subsequent line
-            let (proof, consumed) = capture_proof(&lines, i);
+        if let Some(mut ls) = parse_one_line(&lines, &mut i, nested_context[start_i]) {
+            // Try to capture a proof command visible to outer syntax.
+            let (proof, consumed) = capture_proof(&lines, &outer_lines, i);
             if let Some(ref proof) = proof {
                 for lem in &mut ls {
                     lem.proof_script = Some(proof.clone());
@@ -1288,19 +1931,15 @@ pub fn parse_lemmas_with_loc(source: &str, source_path: &str) -> Vec<ParsedLemma
             }
             // Set source location
             for lem in &mut ls {
-                if lem.source_loc.is_none() {
-                    lem.source_loc = Some(DefLocation {
-                        file: source_path.to_string(),
-                        line: line_no,
-                        name: lem.name.clone(),
-                    });
-                }
+                attach_source_location(lem, source_path, line_no);
             }
             lemmas.extend(ls);
         } else {
             // Try multi-line parse
-            if let Some(mut ls) = parse_multi_line(&lines, &mut i) {
-                let (proof, consumed) = capture_proof(&lines, i);
+            if let Some(mut ls) =
+                parse_multi_line(&lines, &outer_lines, &mut i, nested_context[start_i])
+            {
+                let (proof, consumed) = capture_proof(&lines, &outer_lines, i);
                 if let Some(ref proof) = proof {
                     for lem in &mut ls {
                         lem.proof_script = Some(proof.clone());
@@ -1310,13 +1949,7 @@ pub fn parse_lemmas_with_loc(source: &str, source_path: &str) -> Vec<ParsedLemma
                     i += consumed - 1;
                 }
                 for lem in &mut ls {
-                    if lem.source_loc.is_none() {
-                        lem.source_loc = Some(DefLocation {
-                            file: source_path.to_string(),
-                            line: line_no,
-                            name: lem.name.clone(),
-                        });
-                    }
+                    attach_source_location(lem, source_path, line_no);
                 }
                 lemmas.extend(ls);
             } else {
@@ -1325,6 +1958,47 @@ pub fn parse_lemmas_with_loc(source: &str, source_path: &str) -> Vec<ParsedLemma
         }
     }
     lemmas
+}
+
+/// Conservatively identify source nested below the outer theory `begin`.
+/// Strict adapters fail closed in bundles, contexts, locales, instantiations,
+/// and other nested command blocks until real name-resolution provenance
+/// replaces this transitional guard.
+fn nested_source_context(lines: &[&str]) -> Vec<bool> {
+    let source = lines.join("\n");
+    let outer_mask = mask_isabelle_source(&source, true);
+    let outer_lines: Vec<&str> = outer_mask.lines().collect();
+    let mut blocks: Vec<bool> = Vec::new();
+    let mut pending_local = false;
+    let mut flags = Vec::with_capacity(lines.len());
+    for line in outer_lines {
+        flags.push(blocks.iter().any(|local| *local));
+        let command = line.trim();
+        if matches!(
+            command.split_whitespace().next(),
+            Some(
+                "context"
+                    | "locale"
+                    | "class"
+                    | "instantiation"
+                    | "overloading"
+                    | "bundle"
+                    | "open_bundle"
+                    | "notepad"
+            )
+        ) {
+            pending_local = true;
+        }
+        if command == "begin" || command.ends_with(" begin") {
+            let local = pending_local || !blocks.is_empty();
+            blocks.push(local);
+            pending_local = false;
+        } else if command == "end" || command.starts_with("end ") {
+            blocks.pop();
+            pending_local = false;
+        }
+    }
+    flags
 }
 
 /// Parse all lemma/theorem/fun/inductive/datatype declarations from .thy source.
@@ -1382,96 +2056,187 @@ fn parse_lemmas_cmd(lines: &[&str], i: &mut usize) -> Option<Vec<ParsedLemma>> {
 }
 
 /// Try to capture a proof command from the current position.
-fn capture_proof(lines: &[&str], pos: usize) -> (Option<String>, usize) {
-    if pos >= lines.len() {
+fn capture_proof(lines: &[&str], outer_lines: &[&str], pos: usize) -> (Option<String>, usize) {
+    let mut proof_pos = pos;
+    while proof_pos < lines.len() {
+        let visible = outer_lines.get(proof_pos).copied().unwrap_or_default().trim();
+        if skip_document_command_span(lines, outer_lines, &mut proof_pos) {
+            continue;
+        }
+        if is_proof_capture_gap_line(visible) {
+            proof_pos += 1;
+            continue;
+        }
+        if is_theory_command_line(visible) {
+            return (None, 0);
+        }
+        break;
+    }
+    if proof_pos >= lines.len() {
         return (None, 0);
     }
-    let t = lines[pos].trim();
-    if t.starts_with("by ") || t.starts_with("by(") {
-        // Collect multi-line by proof: join continuation lines (indented)
-        let mut proof = t.to_string();
+
+    let skipped = proof_pos - pos;
+    let pos = proof_pos;
+    let source = lines[pos].trim();
+    let visible = outer_lines.get(pos).copied().unwrap_or_default().trim();
+    let (captured, consumed) = if visible.starts_with("by ") || visible.starts_with("by(") {
+        let mut proof = source.to_string();
         let mut i = pos + 1;
         let mut lines_consumed = 1usize;
         while i < lines.len() {
-            let cont = lines[i];
-            let cont_trim = cont.trim();
-            // Stop at blank lines, comments, or non-indented command lines
-            if cont_trim.is_empty() {
+            let cont_source = lines[i].trim();
+            let cont_visible = outer_lines.get(i).copied().unwrap_or_default().trim();
+            let span_start = i;
+            if skip_document_command_span(lines, outer_lines, &mut i) {
+                lines_consumed += i - span_start;
+                continue;
+            }
+            if is_registered_command_line(cont_visible) {
                 break;
             }
-            if cont_trim.starts_with("--")
-                || cont_trim.starts_with("(*")
-                || cont_trim.starts_with("text")
-            {
-                break;
+            if cont_visible.is_empty() {
+                lines_consumed += 1;
+                i += 1;
+                continue;
             }
-            // Stop if this is a new lemma/theorem/command
-            if !cont.starts_with(' ') && !cont.starts_with('\t') {
-                let ct = cont_trim;
-                if ct.starts_with("lemma ")
-                    || ct.starts_with("theorem ")
-                    || ct.starts_with("by ")
-                    || ct.starts_with("qed")
-                    || ct.starts_with("done")
-                    || ct.starts_with("next")
-                    || ct.starts_with("definition ")
-                    || ct.starts_with("primrec ")
-                    || ct.starts_with("fun ")
-                    || ct.starts_with("datatype ")
-                    || ct.starts_with("inductive ")
-                    || ct.starts_with("class ")
-                {
-                    break;
-                }
-            }
-            // Continuation line — append with space
             proof.push(' ');
-            proof.push_str(cont_trim);
+            proof.push_str(cont_source);
             lines_consumed += 1;
             i += 1;
         }
         (Some(proof), lines_consumed)
-    } else if t.starts_with("apply") {
-        // For apply scripts, just capture the first line for now.
-        (Some(t.to_string()), 1)
-    } else if t.starts_with("proof") {
-        // Capture the FULL structured proof block: from `proof ...` to its
-        // matching `qed`, tracking nested proof/qed pairs. Previously only the
-        // first line (`proof -`) was captured, so the body (obtain/moreover/
-        // ultimately/show ...) was discarded and the lemma could never replay
-        // — it was admitted. The interpreter handles these commands, so giving
-        // it the whole block lets such lemmas be genuinely proved.
-        let mut block: Vec<String> = vec![t.to_string()];
-        let mut depth = 1usize; // we're inside one `proof`
+    } else if visible.starts_with("apply") {
+        let mut script = source.to_string();
         let mut i = pos + 1;
         let mut lines_consumed = 1usize;
         while i < lines.len() {
-            let cont_trim = lines[i].trim();
+            let next_source = lines[i].trim();
+            let next_visible = outer_lines.get(i).copied().unwrap_or_default().trim();
+            let span_start = i;
+            if skip_document_command_span(lines, outer_lines, &mut i) {
+                lines_consumed += i - span_start;
+                continue;
+            }
+            if next_visible.is_empty() {
+                lines_consumed += 1;
+                i += 1;
+                continue;
+            }
+            if next_visible.starts_with("apply") || next_visible.starts_with("done") {
+                script.push('\n');
+                script.push_str(next_source);
+                lines_consumed += 1;
+                i += 1;
+                if next_visible.starts_with("done") {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+        (Some(script), lines_consumed)
+    } else if visible.starts_with("proof") {
+        let mut block = vec![source.to_string()];
+        let mut depth = 1usize;
+        let mut i = pos + 1;
+        let mut lines_consumed = 1usize;
+        while i < lines.len() {
+            let cont_source = lines[i].trim();
+            let cont_visible = outer_lines.get(i).copied().unwrap_or_default().trim();
+            let span_start = i;
+            if skip_document_command_span(lines, outer_lines, &mut i) {
+                lines_consumed += i - span_start;
+                continue;
+            }
+            if is_proof_capture_gap_line(cont_visible) {
+                lines_consumed += 1;
+                i += 1;
+                continue;
+            }
+            if is_theory_command_line(cont_visible) {
+                break;
+            }
             lines_consumed += 1;
-            block.push(cont_trim.to_string());
-            // Nesting: a nested `proof` opens a level, `qed` closes one.
-            // `by`/`.`/`..` terminating a sub-goal do not change block depth.
-            if cont_trim == "proof"
-                || cont_trim.starts_with("proof ")
-                || cont_trim.starts_with("proof(")
+            block.push(cont_source.to_string());
+            if cont_visible == "proof"
+                || cont_visible.starts_with("proof ")
+                || cont_visible.starts_with("proof(")
             {
                 depth += 1;
-            } else if cont_trim == "qed" || cont_trim.starts_with("qed ") {
+            } else if cont_visible == "qed" || cont_visible.starts_with("qed ") {
                 depth -= 1;
                 if depth == 0 {
                     break;
                 }
             }
             i += 1;
-            // Safety bound: don't run away on a malformed/unterminated block.
             if lines_consumed > 400 {
                 break;
             }
         }
         (Some(block.join("\n")), lines_consumed)
+    } else if visible.starts_with("unfolding") || visible.starts_with("using") {
+        let mut script = source.to_string();
+        let mut i = pos + 1;
+        let mut lines_consumed = 1usize;
+        while i < lines.len() {
+            let next_source = lines[i].trim();
+            let next_visible = outer_lines.get(i).copied().unwrap_or_default().trim();
+            let span_start = i;
+            if skip_document_command_span(lines, outer_lines, &mut i) {
+                lines_consumed += i - span_start;
+                continue;
+            }
+            if is_proof_capture_gap_line(next_visible) {
+                lines_consumed += 1;
+                i += 1;
+                continue;
+            }
+            if next_visible.starts_with("unfolding") || next_visible.starts_with("using") {
+                script.push(' ');
+                script.push_str(next_source);
+                lines_consumed += 1;
+                i += 1;
+                continue;
+            }
+            if next_visible.starts_with("by ")
+                || next_visible.starts_with("by(")
+                || next_visible.starts_with("apply")
+                || next_visible.starts_with("proof")
+                || next_visible == "sorry"
+                || next_visible.starts_with("sorry ")
+                || next_visible == "done"
+                || next_visible.starts_with("done ")
+                || next_visible == "qed"
+                || next_visible == "."
+            {
+                let (tail, tail_consumed) = capture_proof(lines, outer_lines, i);
+                if let Some(tail) = tail {
+                    script.push(' ');
+                    script.push_str(&tail);
+                    lines_consumed += tail_consumed;
+                }
+            }
+            break;
+        }
+        (Some(script), lines_consumed)
+    } else if visible == "sorry"
+        || visible.starts_with("sorry ")
+        || visible == "done"
+        || visible.starts_with("done ")
+        || visible == "qed"
+        || visible == "."
+        || visible.starts_with("induction ")
+        || visible.starts_with("cases ")
+        || visible.starts_with("induct ")
+    {
+        (Some(source.to_string()), 1)
     } else {
         (None, 0)
-    }
+    };
+
+    if captured.is_some() { (captured, skipped + consumed) } else { (None, 0) }
 }
 
 /// Strip `(in locale_name)` prefix from a lemma name part.
@@ -1517,9 +2282,16 @@ fn split_name_statement(rest: &str) -> Option<(&str, &str)> {
 }
 
 /// Try to parse an inline (single-line) lemma.
-fn parse_one_line(lines: &[&str], i: &mut usize) -> Option<Vec<ParsedLemma>> {
+fn parse_one_line(
+    lines: &[&str],
+    i: &mut usize,
+    outer_contextual: bool,
+) -> Option<Vec<ParsedLemma>> {
     let line = lines[*i].trim();
     let rest = line.strip_prefix("lemma ").or_else(|| line.strip_prefix("theorem "))?;
+    let contextual = outer_contextual
+        || rest.trim_start().starts_with("(in ")
+        || has_local_proposition_context(rest);
     let rest = strip_locale_prefix(rest);
     let (name_part, after_colon) = split_name_statement(rest)?;
     let after_colon = after_colon.trim();
@@ -1534,7 +2306,7 @@ fn parse_one_line(lines: &[&str], i: &mut usize) -> Option<Vec<ParsedLemma>> {
     let mut stmt_idx = 0usize;
     while let Some(stmt) = extract_quoted(remaining) {
         let conv = convert_syntax(&stmt);
-        if let Some(term) = parse_term(&conv) {
+        if let Some((term, parse_status)) = parse_term_with_status(&conv) {
             let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(term)));
             let lemma_name = if stmt_idx == 0 {
                 if name.is_empty() {
@@ -1551,13 +2323,18 @@ fn parse_one_line(lines: &[&str], i: &mut usize) -> Option<Vec<ParsedLemma>> {
                     format!("{}_{}", name, stmt_idx + 1)
                 }
             };
+            let source_loc = provisional_source_location(
+                &lemma_name,
+                source_proposition_status(parse_status),
+                source_proposition_shape(&stmt, contextual),
+            );
             results.push(ParsedLemma {
                 name: lemma_name,
                 attributes: attrs.clone(),
                 theorem: thm,
                 proof_script: None,
                 alias_for: None,
-                source_loc: None,
+                source_loc,
             });
         }
         stmt_idx += 1;
@@ -1577,12 +2354,132 @@ fn parse_one_line(lines: &[&str], i: &mut usize) -> Option<Vec<ParsedLemma>> {
     }
 }
 
+fn skip_document_command_span(lines: &[&str], outer_lines: &[&str], i: &mut usize) -> bool {
+    let visible = outer_lines.get(*i).copied().unwrap_or_default().trim();
+    if !is_document_command_line(visible) {
+        return false;
+    }
+
+    #[derive(Clone, Copy)]
+    enum Delimiter {
+        String(bool),
+        AltString(bool),
+        Cartouche(usize),
+        Verbatim,
+    }
+
+    let start_line = *i;
+    let mut delimiter = None;
+    for (relative_line, line) in lines[start_line..].iter().enumerate() {
+        let line_index = start_line + relative_line;
+        let chars: Vec<char> = line.chars().collect();
+        let mut at = if relative_line == 0 {
+            source_command_name(line).map_or(0, |name| name.chars().count())
+        } else {
+            0
+        };
+
+        while at < chars.len() {
+            match delimiter {
+                None if chars[at] == '"' => {
+                    delimiter = Some(Delimiter::String(false));
+                    at += 1;
+                },
+                None if chars[at] == '`' => {
+                    delimiter = Some(Delimiter::AltString(false));
+                    at += 1;
+                },
+                None if chars[at] == '‹' => {
+                    delimiter = Some(Delimiter::Cartouche(1));
+                    at += 1;
+                },
+                None if source_chars_start(&chars, at, "\\<open>") => {
+                    delimiter = Some(Delimiter::Cartouche(1));
+                    at += 7;
+                },
+                None if source_chars_start(&chars, at, "{*") => {
+                    delimiter = Some(Delimiter::Verbatim);
+                    at += 2;
+                },
+                None => at += 1,
+                Some(Delimiter::String(escaped)) => {
+                    delimiter = Some(if escaped {
+                        Delimiter::String(false)
+                    } else if chars[at] == '\\' {
+                        Delimiter::String(true)
+                    } else if chars[at] == '"' {
+                        *i = line_index + 1;
+                        return true;
+                    } else {
+                        Delimiter::String(false)
+                    });
+                    at += 1;
+                },
+                Some(Delimiter::AltString(escaped)) => {
+                    delimiter = Some(if escaped {
+                        Delimiter::AltString(false)
+                    } else if chars[at] == '\\' {
+                        Delimiter::AltString(true)
+                    } else if chars[at] == '`' {
+                        *i = line_index + 1;
+                        return true;
+                    } else {
+                        Delimiter::AltString(false)
+                    });
+                    at += 1;
+                },
+                Some(Delimiter::Cartouche(depth)) if chars[at] == '‹' => {
+                    delimiter = Some(Delimiter::Cartouche(depth + 1));
+                    at += 1;
+                },
+                Some(Delimiter::Cartouche(depth)) if source_chars_start(&chars, at, "\\<open>") => {
+                    delimiter = Some(Delimiter::Cartouche(depth + 1));
+                    at += 7;
+                },
+                Some(Delimiter::Cartouche(depth)) if chars[at] == '›' => {
+                    if depth == 1 {
+                        *i = line_index + 1;
+                        return true;
+                    }
+                    delimiter = Some(Delimiter::Cartouche(depth - 1));
+                    at += 1;
+                },
+                Some(Delimiter::Cartouche(depth))
+                    if source_chars_start(&chars, at, "\\<close>") =>
+                {
+                    if depth == 1 {
+                        *i = line_index + 1;
+                        return true;
+                    }
+                    delimiter = Some(Delimiter::Cartouche(depth - 1));
+                    at += 8;
+                },
+                Some(Delimiter::Cartouche(_)) => at += 1,
+                Some(Delimiter::Verbatim) if source_chars_start(&chars, at, "*}") => {
+                    *i = line_index + 1;
+                    return true;
+                },
+                Some(Delimiter::Verbatim) => at += 1,
+            }
+        }
+    }
+
+    *i = lines.len();
+    true
+}
+
 /// Parse a multi-line lemma with assumes/shows block.
 /// Advances `i` past all consumed lines.
-fn parse_multi_line(lines: &[&str], i: &mut usize) -> Option<Vec<ParsedLemma>> {
+fn parse_multi_line(
+    lines: &[&str],
+    outer_lines: &[&str],
+    i: &mut usize,
+    outer_contextual: bool,
+) -> Option<Vec<ParsedLemma>> {
     let header_line = lines[*i].trim();
     let rest =
         header_line.strip_prefix("lemma ").or_else(|| header_line.strip_prefix("theorem "))?;
+    let contextual = outer_contextual || rest.trim_start().starts_with("(in ");
     let rest = strip_locale_prefix(rest);
 
     // Try to split name from statement on the header line.
@@ -1600,7 +2497,7 @@ fn parse_multi_line(lines: &[&str], i: &mut usize) -> Option<Vec<ParsedLemma>> {
             // Advance past header line
             *i += 1;
             // Collect remaining block lines
-            let proof_cmd = collect_block_lines(lines, i, &mut block_lines);
+            let proof_cmd = collect_block_lines(lines, outer_lines, i, &mut block_lines);
             (name, attrs, block_lines, proof_cmd)
         } else {
             // No colon on header line — combine header with next lines until we find a colon
@@ -1610,16 +2507,23 @@ fn parse_multi_line(lines: &[&str], i: &mut usize) -> Option<Vec<ParsedLemma>> {
             let mut found_colon = false;
             while *i < lines.len() {
                 let t = lines[*i].trim();
+                let visible = outer_lines.get(*i).copied().unwrap_or_default().trim();
+                if skip_document_command_span(lines, outer_lines, i) {
+                    continue;
+                }
+                if is_registered_command_line(visible) {
+                    break;
+                }
                 if t.is_empty() {
                     *i += 1;
                     continue;
                 }
-                if t.starts_with("lemma ") || t.starts_with("theorem ") {
+                if visible.starts_with("lemma ") || visible.starts_with("theorem ") {
                     break;
                 }
                 combined.push(' ');
                 combined.push_str(t);
-                if t.contains(':') {
+                if visible.contains(':') {
                     found_colon = true;
                     *i += 1;
                     break;
@@ -1641,12 +2545,12 @@ fn parse_multi_line(lines: &[&str], i: &mut usize) -> Option<Vec<ParsedLemma>> {
             if !after_colon_owned.is_empty() {
                 block_lines.push(after_colon_owned);
             }
-            let proof_cmd = collect_block_lines(lines, i, &mut block_lines);
+            let proof_cmd = collect_block_lines(lines, outer_lines, i, &mut block_lines);
             (name, attrs, block_lines, proof_cmd)
         };
 
     let block = block_lines.join("\n");
-    let mut lemmas = parse_structured_stmt(&block, &name, &attrs)?;
+    let mut lemmas = parse_structured_stmt(&block, &name, &attrs, contextual)?;
     // Set proof_script on all parsed lemmas
     if let Some(ref proof) = proof_cmd {
         for lem in &mut lemmas {
@@ -1656,98 +2560,79 @@ fn parse_multi_line(lines: &[&str], i: &mut usize) -> Option<Vec<ParsedLemma>> {
     Some(lemmas)
 }
 
+fn is_structured_statement_line(line: &str) -> bool {
+    [
+        "assumes",
+        "shows",
+        "and",
+        "fixes",
+        "obtains",
+        "constrains",
+        "defines",
+        "includes",
+        "notes",
+        "for",
+        "if",
+        "when",
+    ]
+    .into_iter()
+    .any(|keyword| {
+        line == keyword
+            || line.strip_prefix(keyword).is_some_and(|rest| rest.starts_with(char::is_whitespace))
+    })
+}
+
 /// Collect block lines after the header (until a proof command or next lemma).
 /// Returns the proof command if one was found.
 /// For multi-line `apply` scripts, collects all lines until `done`.
 fn collect_block_lines(
     lines: &[&str],
+    outer_lines: &[&str],
     i: &mut usize,
     block_lines: &mut Vec<String>,
 ) -> Option<String> {
     let mut proof_cmd = None;
     while *i < lines.len() {
-        let t = lines[*i].trim();
-        if t.is_empty() {
+        let source = lines[*i].trim();
+        let visible = outer_lines.get(*i).copied().unwrap_or_default().trim();
+        if skip_document_command_span(lines, outer_lines, i) {
+            continue;
+        }
+        if source.is_empty() {
             *i += 1;
             continue;
         }
-        if t.starts_with("lemma ") || t.starts_with("theorem ") {
+        if visible.starts_with("lemma ") || visible.starts_with("theorem ") {
             break;
         }
-        let is_proof_cmd = t.starts_with("by ")
-            || t.starts_with("by(")
-            || t.starts_with("proof")
-            || t.starts_with("apply")
-            || t == "done"
-            || t.starts_with("done ")
-            || t.starts_with("unfolding")
-            || t.starts_with("using")
-            || t == "qed"
-            || t == "."
-            || t.starts_with("induction ")
-            || t.starts_with("cases ")
-            || t.starts_with("induct ");
+        let is_proof_cmd = visible.starts_with("by ")
+            || visible.starts_with("by(")
+            || visible.starts_with("proof")
+            || visible.starts_with("apply")
+            || visible == "done"
+            || visible.starts_with("done ")
+            || visible == "sorry"
+            || visible.starts_with("sorry ")
+            || visible.starts_with("unfolding")
+            || visible.starts_with("using")
+            || visible == "qed"
+            || visible == "."
+            || visible.starts_with("induction ")
+            || visible.starts_with("cases ")
+            || visible.starts_with("induct ");
         if is_proof_cmd
-            && !t.starts_with("assumes")
-            && !t.starts_with("shows")
-            && !t.starts_with("and ")
-            && !t.starts_with("fixes")
-            && !t.starts_with("obtains")
+            && !visible.starts_with("assumes")
+            && !visible.starts_with("shows")
+            && !visible.starts_with("and ")
+            && !visible.starts_with("fixes")
+            && !visible.starts_with("obtains")
         {
-            // For `apply` scripts, collect ALL subsequent apply/done lines
-            if t.starts_with("apply") {
-                let mut script = String::from(t);
-                *i += 1;
-                while *i < lines.len() {
-                    let next = lines[*i].trim();
-                    if next.is_empty() {
-                        *i += 1;
-                        continue;
-                    }
-                    if next.starts_with("lemma ") || next.starts_with("theorem ") {
-                        break;
-                    }
-                    if next.starts_with("apply") || next.starts_with("done") {
-                        script.push('\n');
-                        script.push_str(next);
-                        *i += 1;
-                        if next.starts_with("done") {
-                            break;
-                        }
-                    } else {
-                        break;
-                    }
-                }
-                proof_cmd = Some(script);
-            } else if t.starts_with("proof") {
-                // Capture full proof...qed block
-                let mut script = String::from(t);
-                *i += 1;
-                let mut depth = 1u32;
-                while *i < lines.len() && depth > 0 {
-                    let next = lines[*i].trim();
-                    if next.is_empty() {
-                        *i += 1;
-                        continue;
-                    }
-                    if next.starts_with("lemma ") || next.starts_with("theorem ") {
-                        break;
-                    }
-                    script.push('\n');
-                    script.push_str(next);
-                    if next.starts_with("proof") {
-                        depth += 1;
-                    }
-                    if next == "qed" || next.starts_with("qed ") {
-                        depth -= 1;
-                    }
-                    *i += 1;
-                }
-                proof_cmd = Some(script);
-            } else {
-                proof_cmd = Some(t.to_string());
-                *i += 1;
-            }
+            let (captured, consumed) = capture_proof(lines, outer_lines, *i);
+            proof_cmd = captured;
+            *i += consumed.max(1);
+            break;
+        }
+        if !visible.is_empty() && !is_structured_statement_line(visible) {
             break;
         }
         block_lines.push(lines[*i].to_string());
@@ -1761,15 +2646,22 @@ fn parse_structured_stmt(
     block: &str,
     lemma_name: &str,
     attrs: &[String],
+    outer_contextual: bool,
 ) -> Option<Vec<ParsedLemma>> {
     let (assumes_clauses, shows_clauses) = extract_assumes_shows(block)?;
+    let contextual = outer_contextual || has_local_proposition_context(block);
 
     // Parse each assumes clause into a term
     let mut premises: Vec<Term> = Vec::new();
+    let mut premises_fully_consumed = true;
     for clause in &assumes_clauses {
         let conv = convert_syntax(clause);
-        if let Some(t) = parse_term(&conv) {
-            premises.push(t);
+        match parse_term_with_status(&conv) {
+            Some((term, status)) => {
+                premises_fully_consumed &= status == TermParseStatus::FullyConsumed;
+                premises.push(term);
+            },
+            None => premises_fully_consumed = false,
         }
     }
     if premises.is_empty() {
@@ -1778,7 +2670,7 @@ fn parse_structured_stmt(
         let mut show_idx = 0usize;
         for (show_name, show_stmt) in &shows_clauses {
             let conv = convert_syntax(show_stmt);
-            let term = parse_term(&conv)?;
+            let (term, parse_status) = parse_term_with_status(&conv)?;
             let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(term)));
             let name = if show_name.is_empty() {
                 if lemma_name.is_empty() {
@@ -1798,13 +2690,24 @@ fn parse_structured_stmt(
             } else {
                 show_name.clone()
             };
+            let proposition_status =
+                if premises_fully_consumed && parse_status == TermParseStatus::FullyConsumed {
+                    SourcePropositionStatus::FullyConsumed
+                } else {
+                    SourcePropositionStatus::Incomplete
+                };
+            let source_loc = provisional_source_location(
+                &name,
+                proposition_status,
+                source_proposition_shape(show_stmt, contextual),
+            );
             results.push(ParsedLemma {
                 name,
                 attributes: attrs.to_vec(),
                 theorem: thm,
                 proof_script: None,
                 alias_for: None,
-                source_loc: None,
+                source_loc,
             });
             show_idx += 1;
         }
@@ -1817,7 +2720,7 @@ fn parse_structured_stmt(
     let mut show_idx = 0usize;
     for (show_name, show_stmt) in &shows_clauses {
         let conv = convert_syntax(show_stmt);
-        let concl = parse_term(&conv)?;
+        let (concl, parse_status) = parse_term_with_status(&conv)?;
         let mut term = concl;
         for prem in premises.iter().rev() {
             term = Pure::mk_implies(prem.clone(), term);
@@ -1841,13 +2744,24 @@ fn parse_structured_stmt(
         } else {
             show_name.clone()
         };
+        let proposition_status =
+            if premises_fully_consumed && parse_status == TermParseStatus::FullyConsumed {
+                SourcePropositionStatus::FullyConsumed
+            } else {
+                SourcePropositionStatus::Incomplete
+            };
+        let source_loc = provisional_source_location(
+            &name,
+            proposition_status,
+            source_proposition_shape(show_stmt, contextual),
+        );
         results.push(ParsedLemma {
             name,
             attributes: attrs.to_vec(),
             theorem: thm,
             proof_script: None,
             alias_for: None,
-            source_loc: None,
+            source_loc,
         });
         show_idx += 1;
     }
@@ -2313,8 +3227,6 @@ fn merge_multiline_quotes(block: &str) -> Vec<String> {
 // Global theorem store (A3)
 // =========================================================================
 
-use std::sync::LazyLock;
-
 /// All loaded HOL theorems, categorized by attribute.
 /// Uses TheoryGraph for runtime DAG-based loading of ALL theories.
 static HOL_THEOREMS: LazyLock<HolTheoremDb> = LazyLock::new(|| {
@@ -2362,20 +3274,22 @@ pub fn load_all_theories() -> Result<HolTheoremDb, String> {
     Ok(db)
 }
 
-/// Try the narrow strict HOL object-reflexivity bridge.
+/// Try the narrow transitional HOL object-reflexivity bridge.
 ///
-/// This constructs only `|- HOL.eq t t` for a checked HOL term `t`. It is not
-/// a general HOL proof engine, unfolding engine, simplifier, or `TrueI`
-/// adapter.
+/// This constructs only a legacy theorem whose stored proposition is the
+/// bool-valued term `HOL.eq t t`. It is not a new-kernel `CProp`, is ineligible
+/// for `KernelTrustedClosed`, and must not be generalized into more HOL proof
+/// power.
 pub fn try_strict_hol_refl(term: CTerm, type_env: &TypeEnv) -> Result<Thm, KernelError> {
     ThmKernel::hol_object_refl(term, type_env)
 }
 
-/// Try the narrow checked-definition transport for `True_def`.
+/// Try the narrow transitional transport for the legacy `True_def` payload.
 ///
-/// This folds a strict proof of the checked `True_def` RHS back to the checked
-/// `HOL.True` LHS. It is not a general unfolding/folding engine and it does not
-/// make checked definitions into theorem facts.
+/// This folds a legacy strict proof of the payload RHS back to the checked
+/// `HOL.True` LHS. The payload is not a conservative definition certificate,
+/// and the result is not a new-kernel theorem. This is not a general
+/// unfolding/folding engine.
 pub fn try_strict_true_def_transport(
     true_def: &CheckedDefinitionSource,
     rhs_thm: &Thm,
@@ -2401,8 +3315,10 @@ pub fn try_strict_true_def_transport(
     ThmKernel::true_def_transport(true_def.lhs.clone(), true_def.rhs.clone(), rhs_thm)
 }
 
-/// Look up `True_def` in the checked-definition source table and transport a
-/// strict proof of its RHS back to `HOL.True`.
+/// Look up `True_def` in the checked-definition source table and perform the
+/// transitional theorem-specific transport of its RHS back to `HOL.True`.
+/// The payload is not a conservative definition certificate, and the resulting
+/// bool-valued legacy theorem is ineligible for `KernelTrustedClosed`.
 pub fn try_strict_true_def_transport_from_db(
     db: &HolTheoremDb,
     rhs_thm: &Thm,
@@ -2461,7 +3377,7 @@ fn strict_true_i_dependency_error(err: KernelError) -> StrictTrueIError {
     }
 }
 
-/// Normalize the parsed `TrueI` proposition into a checked `HOL.True` CTerm.
+/// Normalize the parsed `TrueI` formula payload into a checked `HOL.True` CTerm.
 ///
 /// This is the parser/loader boundary for the existing theorem whose source
 /// writes `True` while the checked HOL constant is `HOL.True`. It deliberately
@@ -2473,14 +3389,18 @@ pub fn normalize_checked_hol_true_prop(
 ) -> Result<CTerm, KernelError> {
     const OP: &str = "normalize_checked_hol_true_prop";
     parsed_prop.require_no_dummy_types(OP)?;
+    let bool_type = Typ::base("bool");
+    if parsed_prop.term_type() != &bool_type {
+        return Err(KernelError::TypeMismatch {
+            expected: bool_type,
+            actual: parsed_prop.term_type().clone(),
+        });
+    }
 
     match parsed_prop.term() {
         Term::Const { name, typ } if matches!(name.as_ref(), "HOL.True" | "True") => {
-            if typ != &Typ::base("bool") {
-                return Err(KernelError::TypeMismatch {
-                    expected: Typ::base("bool"),
-                    actual: typ.clone(),
-                });
+            if typ != &bool_type {
+                return Err(KernelError::TypeMismatch { expected: bool_type, actual: typ.clone() });
             }
             CTerm::certify_checked(hologic::true_const(), type_env)
         },
@@ -2491,7 +3411,7 @@ pub fn normalize_checked_hol_true_prop(
     }
 }
 
-/// Try the narrow strict adapter for the existing HOL theorem `TrueI`.
+/// Try the narrow transitional adapter for the existing HOL theorem `TrueI`.
 ///
 /// This recognizes only the parsed theorem
 ///
@@ -2500,13 +3420,15 @@ pub fn normalize_checked_hol_true_prop(
 ///   unfolding True_def by (rule refl)
 /// ```
 ///
-/// and composes the already audited strict pieces:
+/// and composes the already audited legacy migration pieces:
 ///
 /// 1. checked `True_def` source;
 /// 2. strict HOL object reflexivity for the checked RHS;
 /// 3. checked `True_def` transport/fold-back to `HOL.True`.
 ///
-/// It is not a general unfolding engine, simplifier, or HOL proof engine.
+/// Its result is a bool-valued legacy theorem classified as
+/// `TransitionalStrictClosed`; it is not a new-kernel `TrustedTheorem`. This is
+/// not a general unfolding engine, simplifier, or HOL proof engine.
 pub fn try_strict_hol_true_i(
     theorem_name: &str,
     parsed_prop: &CTerm,
@@ -2577,8 +3499,10 @@ pub fn try_strict_hol_true_i(
 ///
 /// This is not the final trusted theorem table. It intentionally stores parsed,
 /// generated, builtin, open, and admitted facts for proof search. Consumers that
-/// report proved lemmas or export trusted theory theorems must use
-/// `Thm::is_strict_closed_proved()` or the final `Theory` table instead.
+/// report legacy migration progress may use `Thm::is_strict_closed_proved()`.
+/// Final trusted-theory export instead requires a context-bound
+/// `src/kernel::TrustedTheorem`; no legacy database predicate can promote a
+/// fact into that type.
 pub struct HolTheoremDb {
     pub intros: Vec<Arc<crate::core::thm::Thm>>,
     pub elims: Vec<Arc<crate::core::thm::Thm>>,
@@ -2642,8 +3566,9 @@ impl HolTheoremDb {
 
     /// Count facts in `all` that are strict closed proved theorems.
     ///
-    /// This is useful for audits, but the final trusted theorem table is
-    /// `core::theory::Theory`, not this proof-search database.
+    /// This is useful for transitional audits. `core::theory::Theory` is also a
+    /// legacy table; final trust requires a context-bound new-kernel
+    /// `TrustedTheorem` rather than this predicate.
     pub fn closed_proved_count(&self) -> usize {
         self.all.iter().filter(|thm| thm.is_strict_closed_proved()).count()
     }
@@ -2717,7 +3642,7 @@ impl HolTheoremDb {
         type_env: &TypeEnv,
     ) -> std::collections::HashMap<String, CheckedDefinitionSource> {
         let mut defs = std::collections::HashMap::new();
-        for block in &find_blocks(source, "definition") {
+        for block in &find_top_level_blocks(source, "definition") {
             let decl = block.trim();
             if let Some((name, typ_str, raw_body)) = parse_definition(decl)
                 && let Some(def) = Self::checked_true_def_source(name, typ_str, raw_body, type_env)
@@ -3073,20 +3998,24 @@ impl HolTheoremDb {
     /// Build a TypeEnv from .thy source text by extracting type declarations.
     pub fn build_type_env(source: &str) -> TypeEnv {
         let mut env = TypeEnv::new();
-        // Parse typedecl declarations
-        for cap in &find_declarations(source, "typedecl") {
-            let name = cap.trim();
-            if !name.is_empty() {
+        // Every declaration parser receives only visible top-level commands.
+        for block in find_top_level_blocks(source, "typedecl") {
+            if let Some(name) = block.split_whitespace().next()
+                && !name.is_empty()
+            {
                 env.declare_type(name, 0);
             }
         }
-        // Parse datatype declarations to extract type constructor arities
-        for dt in &parse_datatypes(source) {
+        let datatype_source = top_level_command_source(
+            source,
+            &["datatype", "codatatype", "old_rep_datatype", "rep_datatype"],
+        );
+        for dt in parse_datatypes(&datatype_source) {
             let arity = dt.type_params.len();
             env.declare_type(&dt.name, arity);
         }
-        // Parse class declarations to build the class hierarchy
-        for cls in &parse_classes(source) {
+        let class_source = top_level_command_source(source, &["class"]);
+        for cls in parse_classes(&class_source) {
             let super_syms: Vec<Symbol> =
                 cls.superclasses.iter().map(|s| Symbol::from(s.as_str())).collect();
             env.declare_class(&cls.name, &super_syms);
@@ -3097,13 +4026,13 @@ impl HolTheoremDb {
                 }
             }
         }
-        // Parse instance declarations and add their arities
-        for inst in &super::class_system::parse_instances(source) {
+        let instance_source = top_level_command_source(source, &["instance"]);
+        for inst in super::class_system::parse_instances(&instance_source) {
             let arg_sorts: Vec<Sort> = inst.type_args.iter().map(|_| Sort::top()).collect();
             env.declare_arity(&inst.type_name, &inst.class_name, arg_sorts);
         }
         // Parse axiomatization for constant type signatures
-        for block in &find_blocks(source, "axiomatization") {
+        for block in &find_top_level_blocks(source, "axiomatization") {
             for const_decl in block.split(" and ") {
                 let decl = const_decl.trim();
                 if let Some((name, typ_str)) = parse_const_decl(decl)
@@ -3116,7 +4045,7 @@ impl HolTheoremDb {
             }
         }
         // Parse definition blocks for constant type signatures
-        for block in &find_blocks(source, "definition") {
+        for block in &find_top_level_blocks(source, "definition") {
             let decl = block.trim();
             if let Some((name, typ_str, _defn)) = parse_definition(decl)
                 && let Some(typ) = parse_hol_type_with_env(typ_str, &env)
@@ -4005,6 +4934,542 @@ mod tests {
     }
 
     #[test]
+    fn checked_true_def_requires_visible_top_level_definition() {
+        let hol = include_str!("../../theories/HOL/HOL.thy");
+        let env = HolTheoremDb::build_type_env(hol);
+        let sources = [
+            r#"
+context
+begin
+definition True :: bool
+  where "True \<equiv> ((\<lambda>x::bool. x) = (\<lambda>x. x))"
+end
+"#,
+            r#"
+definition (in malicious_locale) True :: bool
+  where "True \<equiv> ((\<lambda>x::bool. x) = (\<lambda>x. x))"
+"#,
+            r#"
+(*
+definition True :: bool
+  where "True \<equiv> ((\<lambda>x::bool. x) = (\<lambda>x. x))"
+*)
+"#,
+            r#"
+text \<open>
+definition True :: bool
+  where "True \<equiv> ((\<lambda>x::bool. x) = (\<lambda>x. x))"
+\<close>
+"#,
+            r#"
+text ‹
+  \<open>
+  definition True :: bool
+    where "True \<equiv> ((\<lambda>x::bool. x) = (\<lambda>x. x))"
+  ›
+\<close>
+"#,
+        ];
+
+        for source in sources {
+            let defs = HolTheoremDb::build_checked_definition_sources(source, &env);
+            assert!(
+                !defs.contains_key("True_def"),
+                "non-command or contextual definition must not populate checked sources"
+            );
+        }
+    }
+
+    #[test]
+    fn commented_axiomatization_cannot_supply_checked_source_types() {
+        let source = r#"
+(*
+axiomatization eq :: "['a, 'a] \<Rightarrow> bool"
+*)
+definition True :: bool
+  where "True \<equiv> ((\<lambda>x::bool. x) = (\<lambda>x. x))"
+"#;
+
+        let env = HolTheoremDb::build_type_env(source);
+        assert!(env.const_type("HOL.eq").is_none());
+        let defs = HolTheoremDb::build_checked_definition_sources(source, &env);
+        assert!(!defs.contains_key("True_def"));
+    }
+
+    #[test]
+    fn following_text_command_cannot_extend_axiomatization_block() {
+        let source = r#"
+axiomatization dummy :: bool
+text \<open> and eq :: "['a, 'a] \<Rightarrow> bool"
+\<close>
+definition True :: bool
+  where "True \<equiv> ((\<lambda>x::bool. x) = (\<lambda>x. x))"
+"#;
+
+        let env = HolTheoremDb::build_type_env(source);
+        assert_eq!(env.const_type("HOL.dummy"), Some(&Typ::base("bool")));
+        assert!(
+            env.const_type("HOL.eq").is_none(),
+            "a following document command must terminate the visible declaration block"
+        );
+        let defs = HolTheoremDb::build_checked_definition_sources(source, &env);
+        assert!(!defs.contains_key("True_def"));
+    }
+
+    #[test]
+    fn pure_ml_command_cannot_extend_axiomatization_block() {
+        let source = r#"
+axiomatization dummy :: bool
+ML_val \<open>val _ = (); (* and eq :: "['a, 'a] \<Rightarrow> bool" *)\<close>
+definition True :: bool
+  where "True \<equiv> ((\<lambda>x::bool. x) = (\<lambda>x. x))"
+"#;
+
+        let env = HolTheoremDb::build_type_env(source);
+        assert_eq!(env.const_type("HOL.dummy"), Some(&Typ::base("bool")));
+        assert!(env.const_type("HOL.eq").is_none());
+        let defs = HolTheoremDb::build_checked_definition_sources(source, &env);
+        assert!(!defs.contains_key("True_def"));
+    }
+
+    #[test]
+    fn imported_code_command_cannot_extend_axiomatization_block() {
+        let source = r#"
+axiomatization dummy :: bool
+code_printing code_module Attack \<rightharpoonup>
+  (SML) \<open>structure Attack = struct
+(* and eq :: "['a, 'a] \<Rightarrow> bool" *)
+end\<close>
+definition True :: bool
+  where "True \<equiv> ((\<lambda>x::bool. x) = (\<lambda>x. x))"
+"#;
+
+        let env = HolTheoremDb::build_type_env(source);
+        assert_eq!(env.const_type("HOL.dummy"), Some(&Typ::base("bool")));
+        assert!(env.const_type("HOL.eq").is_none());
+        let defs = HolTheoremDb::build_checked_definition_sources(source, &env);
+        assert!(!defs.contains_key("True_def"));
+    }
+
+    #[test]
+    fn header_declared_command_cannot_extend_axiomatization_block() {
+        let source = r#"
+theory Attack
+imports Pure
+keywords "evil" :: thy_decl
+begin
+axiomatization dummy :: bool
+evil \<open>and eq :: "['a, 'a] \<Rightarrow> bool"\<close>
+definition True :: bool
+  where "True \<equiv> ((\<lambda>x::bool. x) = (\<lambda>x. x))"
+end
+"#;
+
+        let env = HolTheoremDb::build_type_env(source);
+        assert_eq!(env.const_type("HOL.dummy"), Some(&Typ::base("bool")));
+        assert!(env.const_type("HOL.eq").is_none());
+        let defs = HolTheoremDb::build_checked_definition_sources(source, &env);
+        assert!(!defs.contains_key("True_def"));
+    }
+
+    #[test]
+    fn same_line_text_command_cannot_extend_axiomatization_block() {
+        let source = r#"
+axiomatization dummy :: bool text \<open> and eq :: "['a, 'a] \<Rightarrow> bool"\<close>
+definition True :: bool
+  where "True \<equiv> ((\<lambda>x::bool. x) = (\<lambda>x. x))"
+"#;
+
+        let env = HolTheoremDb::build_type_env(source);
+        assert!(env.const_type("HOL.dummy").is_none());
+        assert!(env.const_type("HOL.eq").is_none());
+        let defs = HolTheoremDb::build_checked_definition_sources(source, &env);
+        assert!(!defs.contains_key("True_def"));
+    }
+
+    #[test]
+    fn split_header_text_command_cannot_extend_axiomatization_block() {
+        let source = r#"
+axiomatization
+  dummy :: bool text \<open> and eq :: "['a, 'a] \<Rightarrow> bool"\<close>
+definition True :: bool
+  where "True \<equiv> ((\<lambda>x::bool. x) = (\<lambda>x. x))"
+"#;
+
+        let env = HolTheoremDb::build_type_env(source);
+        assert!(env.const_type("HOL.dummy").is_none());
+        assert!(env.const_type("HOL.eq").is_none());
+        let defs = HolTheoremDb::build_checked_definition_sources(source, &env);
+        assert!(!defs.contains_key("True_def"));
+    }
+
+    #[test]
+    fn goal_declaration_headers_keep_payload_before_same_line_proofs() {
+        let source = r#"
+typedecl visible
+class visible_class =
+instance visible :: visible_class by standard
+old_rep_datatype "Ctor :: visible_rep" by auto
+"#;
+
+        let env = HolTheoremDb::build_type_env(source);
+        assert!(env.of_sort(&Typ::base("visible"), &Sort::singleton("visible_class")));
+        assert_eq!(env.type_arity("visible_rep"), Some(0));
+    }
+
+    #[test]
+    fn control_comment_cannot_extend_axiomatization_block() {
+        let source = r#"
+axiomatization dummy :: bool
+\<comment> \<open> and eq :: "['a, 'a] \<Rightarrow> bool"\<close>
+definition True :: bool
+  where "True \<equiv> ((\<lambda>x::bool. x) = (\<lambda>x. x))"
+"#;
+
+        let env = HolTheoremDb::build_type_env(source);
+        assert_eq!(env.const_type("HOL.dummy"), Some(&Typ::base("bool")));
+        assert!(env.const_type("HOL.eq").is_none());
+        let defs = HolTheoremDb::build_checked_definition_sources(source, &env);
+        assert!(!defs.contains_key("True_def"));
+    }
+
+    #[test]
+    fn control_comment_inside_definition_preserves_trailing_body() {
+        let hol = include_str!("../../theories/HOL/HOL.thy");
+        let env = HolTheoremDb::build_type_env(hol);
+        let source = r#"
+definition True :: bool
+  \<comment> \<open>annotation inside the declaration\<close>
+  where "True \<equiv> ((\<lambda>x::bool. x) = (\<lambda>x. x))"
+"#;
+
+        let defs = HolTheoremDb::build_checked_definition_sources(source, &env);
+        assert!(defs.contains_key("True_def"));
+    }
+
+    #[test]
+    fn control_comment_payload_cannot_replace_active_proposition() {
+        let source = r#"
+lemma f:
+  \<comment> \<open>
+assumes "False"
+shows "True"
+\<close>
+  "False"
+  by simp
+"#;
+
+        let lemma = parse_lemmas(source).into_iter().find(|lemma| lemma.name == "f").expect("f");
+        assert!(
+            matches!(
+                lemma.theorem.prop().term(),
+                Term::Const { name, .. } | Term::Free { name, .. }
+                    if matches!(name.as_ref(), "False" | "HOL.False")
+            ),
+            "active proposition was not preserved: {:?}",
+            lemma.theorem.prop().term()
+        );
+        assert_eq!(lemma.proof_script.as_deref(), Some("by simp"));
+    }
+
+    #[test]
+    fn all_formal_comment_prefixes_hide_proposition_payloads() {
+        for prefix in [
+            "\\<comment> ",
+            "\\<^cancel>",
+            "\\<^latex>",
+            "\\<^marker>",
+            "\u{2015} ",
+            "\u{2326}",
+            "\u{2710}",
+        ] {
+            let source = format!(
+                r#"
+lemma f:
+  {prefix}\<open>
+shows "True"
+\<close>
+  "False"
+  by simp
+"#
+            );
+            let lemma =
+                parse_lemmas(&source).into_iter().find(|lemma| lemma.name == "f").expect("f");
+            assert!(
+                matches!(
+                    lemma.theorem.prop().term(),
+                    Term::Const { name, .. } | Term::Free { name, .. }
+                        if matches!(name.as_ref(), "False" | "HOL.False")
+                ),
+                "formal comment prefix leaked payload: {prefix:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn commented_lemma_is_not_parsed_as_source_command() {
+        let source = r#"
+(*
+lemma TrueI: True
+  unfolding True_def by (rule refl)
+*)
+"#;
+
+        assert!(parse_lemmas(source).iter().all(|lemma| lemma.name != "TrueI"));
+    }
+
+    #[test]
+    fn commented_end_cannot_escape_local_theorem_context() {
+        let source = r#"
+context
+begin
+(*
+end
+*)
+lemma TrueI: True
+  unfolding True_def by (rule refl)
+end
+"#;
+
+        let lemma =
+            parse_lemmas(source).into_iter().find(|lemma| lemma.name == "TrueI").expect("TrueI");
+        assert_eq!(lemma.source_proposition_status(), SourcePropositionStatus::FullyConsumed);
+        assert_eq!(lemma.source_proposition_shape(), SourcePropositionShape::Contextual);
+    }
+
+    #[test]
+    fn multiline_alternate_string_cannot_escape_local_theorem_context() {
+        let source = r#"
+context
+begin
+`payload \` still inside alternate string
+end
+`
+lemma TrueI: True
+  unfolding True_def by (rule refl)
+end
+"#;
+
+        let lemma =
+            parse_lemmas(source).into_iter().find(|lemma| lemma.name == "TrueI").expect("TrueI");
+        assert_eq!(lemma.source_proposition_status(), SourcePropositionStatus::FullyConsumed);
+        assert_eq!(lemma.source_proposition_shape(), SourcePropositionShape::Contextual);
+    }
+
+    #[test]
+    fn source_mask_preserves_lines_and_hides_all_embedded_forms() {
+        let source = concat!(
+            "lemma Visible: True\n",
+            "(* lemma Commented: True *)\n",
+            "\"lemma Quoted: True\"\n",
+            "`lemma Alternate: True`\n",
+            "‹lemma Unicode: True \\<open>lemma NestedEncoded: True\\<close>›\n",
+            "\\<open>lemma Encoded: True ‹lemma NestedUnicode: True›\\<close>\n",
+            "{* lemma Verbatim: True *}\n",
+            "lemma Tail: True\n",
+        );
+
+        let comment_clean = mask_isabelle_source(source, false);
+        let outer = mask_isabelle_source(source, true);
+        assert_eq!(source.lines().count(), comment_clean.lines().count());
+        assert_eq!(source.lines().count(), outer.lines().count());
+        assert!(comment_clean.contains("lemma Quoted: True"));
+        assert!(comment_clean.contains("lemma Alternate: True"));
+        for hidden in [
+            "Commented",
+            "Quoted",
+            "Alternate",
+            "Unicode",
+            "NestedEncoded",
+            "Encoded",
+            "NestedUnicode",
+            "Verbatim",
+        ] {
+            assert!(!outer.contains(hidden), "{hidden} must be hidden from outer syntax");
+        }
+        assert!(outer.contains("lemma Visible: True"));
+        assert!(outer.contains("lemma Tail: True"));
+    }
+
+    #[test]
+    fn unterminated_embedded_forms_fail_closed_without_losing_lines() {
+        let sources = [
+            "lemma Visible: True\n(* outer (* inner *)\nlemma Hidden: True\n",
+            "lemma Visible: True\n\"\nlemma Hidden: True\n",
+            "lemma Visible: True\n`\nlemma Hidden: True\n",
+            "lemma Visible: True\n‹\nlemma Hidden: True\n",
+            "lemma Visible: True\n\\<open>\nlemma Hidden: True\n",
+            "lemma Visible: True\n{*\nlemma Hidden: True\n",
+            "lemma Visible: True\n\\<comment> end\nlemma Hidden: True\n",
+            "lemma Visible: True\n\\<^cancel> end\nlemma Hidden: True\n",
+            concat!(
+                "lemma Visible: True\n",
+                "\\<comment> context begin \\<open>x\\<close>\n",
+                "lemma Hidden: True\n",
+            ),
+            concat!(
+                "lemma Visible: True\n",
+                "\\<^cancel> junk \\<open>x\\<close>\n",
+                "lemma Hidden: True\n",
+            ),
+        ];
+
+        for source in sources {
+            let outer = mask_isabelle_source(source, true);
+            assert_eq!(source.lines().count(), outer.lines().count());
+            assert!(outer.contains("lemma Visible: True"));
+            assert!(!outer.contains("Hidden"), "unterminated form leaked outer syntax: {source}");
+        }
+    }
+
+    #[test]
+    fn embedded_declarations_cannot_populate_checked_type_environment() {
+        for embedded in [
+            r#"text "typedecl ghost_type""#,
+            r#"text `typedecl ghost_type`"#,
+            r#"text {* typedecl ghost_type *}"#,
+            r#"text ‹typedecl ghost_type›"#,
+            r#"text \<open>typedecl ghost_type\<close>"#,
+        ] {
+            let env = HolTheoremDb::build_type_env(embedded);
+            assert_eq!(env.type_arity("ghost_type"), None, "embedded declaration: {embedded}");
+        }
+
+        let source = r#"
+typedecl visible_type
+
+class visible_class =
+
+text \<open>
+  end
+  typedecl ghost_type
+
+  datatype ghost_data = Ghost
+
+  class ghost_class =
+
+  instance visible_type :: visible_class
+
+  axiomatization ghost_const :: bool
+
+  axiomatization eq :: "['a, 'a] \<Rightarrow> bool"
+  definition Ghost :: bool where "Ghost \<equiv> True"
+\<close>
+
+typedecl visible_after
+
+axiomatization visible_const :: bool
+"#;
+        let env = HolTheoremDb::build_type_env(source);
+        assert_eq!(env.type_arity("visible_type"), Some(0));
+        assert_eq!(env.type_arity("visible_after"), Some(0));
+        assert_eq!(env.type_arity("ghost_type"), None);
+        assert_eq!(env.type_arity("ghost_data"), None);
+        assert!(env.const_type("HOL.ghost_const").is_none());
+        assert!(env.const_type("HOL.eq").is_none());
+        assert_eq!(env.const_type("HOL.visible_const"), Some(&Typ::base("bool")));
+        assert!(env.const_type("HOL.Ghost").is_none());
+        assert!(env.algebra.all_classes().iter().all(|class| class.as_ref() != "ghost_class"));
+        assert!(!env.of_sort(&Typ::base("visible_type"), &Sort::singleton("visible_class")));
+        let defs = HolTheoremDb::build_checked_definition_sources(source, &env);
+        assert!(!defs.contains_key("Ghost_def"));
+    }
+
+    #[test]
+    fn embedded_generating_declarations_cannot_create_lemmas() {
+        let source = r#"
+text \<open>
+  datatype ghost_data = GhostCtor
+
+  primrec ghost_fun :: "ghost_data \<Rightarrow> bool"
+    where "ghost_fun GhostCtor = True"
+
+  class ghost_class =
+
+  inductive ghost_pred where "ghost_pred"
+\<close>
+"#;
+
+        let lemmas = parse_lemmas(source);
+        assert!(
+            lemmas.is_empty(),
+            "embedded declaration generated lemmas: {:?}",
+            lemmas.iter().map(|lemma| lemma.name.as_str()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn commented_truei_proof_is_not_captured_as_active_proof() {
+        let source = r#"
+lemma TrueI:
+  "True"
+  (*
+  unfolding True_def by (rule refl)
+  *)
+  sorry
+"#;
+
+        let lemma =
+            parse_lemmas(source).into_iter().find(|lemma| lemma.name == "TrueI").expect("TrueI");
+        assert_eq!(lemma.source_proposition_status(), SourcePropositionStatus::FullyConsumed);
+        assert_eq!(
+            lemma.source_proposition_shape(),
+            SourcePropositionShape::StandaloneHolTrueAlias
+        );
+        assert_eq!(lemma.proof_script.as_deref(), Some("sorry"));
+    }
+
+    #[test]
+    fn embedded_structured_proof_commands_are_not_captured() {
+        let source = r#"
+lemma hidden:
+  assumes "A"
+  shows "A"
+proof -
+  text \<open>
+    show A by assumption
+    qed
+  \<close>
+  sorry
+"#;
+
+        let lemma =
+            parse_lemmas(source).into_iter().find(|lemma| lemma.name == "hidden").expect("hidden");
+        assert_eq!(lemma.proof_script.as_deref(), Some("proof -\nsorry"));
+    }
+
+    #[test]
+    fn proof_capture_skips_comments_before_active_command() {
+        let samples = [
+            (
+                r#"
+lemma Commented: "True"
+  \<comment> \<open>the active proof follows this control comment\<close>
+  by blast
+"#,
+                "Commented",
+                "by blast",
+            ),
+            (
+                r#"
+lemma Documented: "True"
+  text \<open>the active proof follows this document command\<close>
+proof -
+  sorry
+"#,
+                "Documented",
+                "proof -\nsorry",
+            ),
+        ];
+
+        for (source, name, expected) in samples {
+            let lemma =
+                parse_lemmas(source).into_iter().find(|lemma| lemma.name == name).expect(name);
+            assert_eq!(lemma.proof_script.as_deref(), Some(expected));
+        }
+    }
+
+    #[test]
     fn hol_eq_type_env_declares_object_equality_shape() {
         let hol = include_str!("../../theories/HOL/HOL.thy");
         let env = HolTheoremDb::build_type_env(hol);
@@ -4016,6 +5481,86 @@ mod tests {
             !hol_eq.contains_dummy(),
             "checked HOL.eq declaration must not contain dummy types"
         );
+    }
+
+    #[test]
+    fn active_unfolding_after_inline_statement_is_captured() {
+        let source = r#"
+lemma TrueI: "True"
+  unfolding True_def by (rule refl)
+"#;
+
+        let lemma =
+            parse_lemmas(source).into_iter().find(|lemma| lemma.name == "TrueI").expect("TrueI");
+        assert_eq!(lemma.proof_script.as_deref(), Some("unfolding True_def by (rule refl)"));
+    }
+
+    #[test]
+    fn split_line_proof_prefixes_capture_terminal_commands() {
+        let samples = [
+            (
+                r#"
+lemma TrueI: "True"
+  unfolding True_def
+  by (rule refl)
+"#,
+                "unfolding True_def by (rule refl)",
+            ),
+            (
+                r#"
+lemma TrueI: "True"
+  using TrueI
+  by assumption
+"#,
+                "using TrueI by assumption",
+            ),
+        ];
+
+        for (source, expected) in samples {
+            let lemma = parse_lemmas(source)
+                .into_iter()
+                .find(|lemma| lemma.name == "TrueI")
+                .expect("TrueI");
+            assert_eq!(lemma.proof_script.as_deref(), Some(expected));
+        }
+    }
+
+    #[test]
+    fn by_capture_stops_at_outer_commands_regardless_of_indentation() {
+        let before_end = r#"
+lemma First: "True"
+  by simp
+end
+"#;
+        let first = parse_lemmas(before_end)
+            .into_iter()
+            .find(|lemma| lemma.name == "First")
+            .expect("First");
+        assert_eq!(first.proof_script.as_deref(), Some("by simp"));
+
+        let before_indented_lemma = r#"
+lemma First: "True"
+  by simp
+  lemma Second: "True"
+    by simp
+"#;
+        let lemmas = parse_lemmas(before_indented_lemma);
+        let first = lemmas.iter().find(|lemma| lemma.name == "First").expect("First");
+        let second = lemmas.iter().find(|lemma| lemma.name == "Second").expect("Second");
+        assert_eq!(first.proof_script.as_deref(), Some("by simp"));
+        assert_eq!(second.proof_script.as_deref(), Some("by simp"));
+
+        let before_instance = r#"
+lemma First: "True"
+  by simp
+instance bool :: finite
+  by standard
+"#;
+        let first = parse_lemmas(before_instance)
+            .into_iter()
+            .find(|lemma| lemma.name == "First")
+            .expect("First");
+        assert_eq!(first.proof_script.as_deref(), Some("by simp"));
     }
 
     #[test]

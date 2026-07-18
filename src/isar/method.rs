@@ -23,8 +23,8 @@ use crate::{
         thm::{CTerm, Hyps, Thm, ThmKernel, ThmTrust},
     },
     hol::hol_loader::{
-        HolTheoremDb, ParsedLemma, StrictTrueIError, normalize_checked_hol_true_prop,
-        try_strict_hol_true_i,
+        HolTheoremDb, ParsedLemma, SourcePropositionShape, SourcePropositionStatus,
+        StrictTrueIError, normalize_checked_hol_true_prop, try_strict_hol_true_i,
     },
     isar::args::Args,
     tools::simp::HolSimplifier,
@@ -3977,32 +3977,23 @@ fn normalize_true_i_prop_for_verify(
     parsed_prop: &CTerm,
     db: &HolTheoremDb,
 ) -> Result<CTerm, StrictTrueIError> {
-    let mut term = parsed_prop.term().clone();
-    term.type_annotate(&db.type_env);
-    match &term {
-        crate::core::term::Term::Const { name, typ }
-        | crate::core::term::Term::Free { name, typ }
-            if matches!(name.as_ref(), "HOL.True" | "True")
-                && (typ == &crate::core::types::Typ::base("bool") || typ.is_dummy()) =>
+    parsed_prop
+        .require_no_dummy_types("normalize_true_i_prop_for_verify")
+        .map_err(StrictTrueIError::CertificationFailed)?;
+    match parsed_prop.term() {
+        Term::Const { name, typ }
+            if matches!(name.as_ref(), "HOL.True" | "True") && typ == &Typ::base("bool") =>
         {
-            CTerm::certify_checked(crate::hol::hologic::true_const(), &db.type_env)
+            normalize_checked_hol_true_prop(parsed_prop, &db.type_env)
                 .map_err(StrictTrueIError::CertificationFailed)
         },
-        _ => {
-            let annotated = CTerm::certify(term);
-            match annotated.term() {
-                Term::Const { name, .. } if matches!(name.as_ref(), "HOL.True" | "True") => {
-                    normalize_checked_hol_true_prop(&annotated, &db.type_env)
-                        .map_err(StrictTrueIError::CertificationFailed)
-                },
-                _ => Err(StrictTrueIError::PropositionMismatch),
-            }
-        },
+        _ => Err(StrictTrueIError::PropositionMismatch),
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StrictAdapterReject {
+    SourcePropositionUnverified { status: SourcePropositionStatus, shape: SourcePropositionShape },
     PropositionMismatch,
     ProofShapeMismatch,
     MissingCheckedDefinition,
@@ -4020,6 +4011,9 @@ pub enum StrictAdapterResult {
 
 fn strict_adapter_reject_admit_reason(reject: &StrictAdapterReject) -> &'static str {
     match reject {
+        StrictAdapterReject::SourcePropositionUnverified { .. } => {
+            "admitted:strict_adapter_source_prop_unverified"
+        },
         StrictAdapterReject::PropositionMismatch => "admitted:strict_adapter_prop_mismatch",
         StrictAdapterReject::ProofShapeMismatch => "admitted:strict_adapter_proof_shape_mismatch",
         StrictAdapterReject::MissingCheckedDefinition => {
@@ -4052,12 +4046,24 @@ fn strict_adapter_reject_from_true_i_error(err: StrictTrueIError) -> StrictAdapt
 }
 
 pub fn try_strict_adapter(lem: &ParsedLemma, db: &HolTheoremDb) -> StrictAdapterResult {
-    let Some(proof) = lem.proof_script.as_deref() else {
+    let Some(proof) = lem.proof_script.as_deref().filter(|proof| !proof.trim().is_empty()) else {
         return StrictAdapterResult::NotApplicable;
     };
 
     match lem.name.as_str() {
         "TrueI" | "HOL::TrueI" => {
+            let source_status = lem.source_proposition_status();
+            let source_shape = lem.source_proposition_shape();
+            if source_status != SourcePropositionStatus::FullyConsumed
+                || source_shape != SourcePropositionShape::StandaloneHolTrueAlias
+            {
+                return StrictAdapterResult::Rejected(
+                    StrictAdapterReject::SourcePropositionUnverified {
+                        status: source_status,
+                        shape: source_shape,
+                    },
+                );
+            }
             let checked_prop = match normalize_true_i_prop_for_verify(lem.theorem.prop(), db) {
                 Ok(prop) => prop,
                 Err(err) => {
@@ -4082,10 +4088,22 @@ pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
     // Optimistically assume a real proof; non-proving exit sites downgrade this.
     LAST_OUTCOME.with(|c| c.set(VerifyOutcome::Proved));
 
+    let db = HolTheoremDb::get();
+    match try_strict_adapter(lem, db) {
+        StrictAdapterResult::Proved(thm) => return Some(thm),
+        StrictAdapterResult::Rejected(reason) => {
+            LAST_OUTCOME.with(|c| c.set(VerifyOutcome::AxiomAccepted));
+            return Some(ThmKernel::admit(
+                CTerm::certify(lem.theorem.prop().term().clone()),
+                strict_adapter_reject_admit_reason(&reason),
+            ));
+        },
+        StrictAdapterResult::NotApplicable => {},
+    }
+
     // If a built-in Var-override exists, use it directly (skip proof replay).
     // This covers lemmas whose proofs use complex patterns (multi-method chains,
     // [THEN] composition, named iprover premises) that aren't fully supported yet.
-    let db = HolTheoremDb::get();
     if let Some(builtin) = db.by_name.get(&lem.name) {
         let builtin_term = builtin.prop().term();
         let has_vars = has_schematic_vars(builtin_term);
@@ -4116,17 +4134,6 @@ pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
     }
 
     let proof = lem.proof_script.as_ref()?;
-    match try_strict_adapter(lem, db) {
-        StrictAdapterResult::Proved(thm) => return Some(thm),
-        StrictAdapterResult::Rejected(reason) => {
-            LAST_OUTCOME.with(|c| c.set(VerifyOutcome::AxiomAccepted));
-            return Some(ThmKernel::admit(
-                CTerm::certify(lem.theorem.prop().term().clone()),
-                strict_adapter_reject_admit_reason(&reason),
-            ));
-        },
-        StrictAdapterResult::NotApplicable => {},
-    }
     if proof_allows_strict_imp_identity(proof)
         && let Some(strict_identity) =
             try_strict_pure_imp_identity(lem.theorem.prop().term(), &db.type_env)
@@ -4933,6 +4940,33 @@ mod tests {
         lemmas.into_iter().find(|lem| lem.name == "TrueI").expect("HOL TrueI parses")
     }
 
+    fn parsed_true_i_from_source(source: &str) -> crate::hol::hol_loader::ParsedLemma {
+        let empty_db = HolTheoremDb::new();
+        let lemmas =
+            HolTheoremDb::with_override(&empty_db, || crate::hol::hol_loader::parse_lemmas(source));
+        lemmas.into_iter().find(|lem| lem.name == "TrueI").expect("attack TrueI parses")
+    }
+
+    fn parsed_true_i_with_unconsumed_suffix() -> crate::hol::hol_loader::ParsedLemma {
+        parsed_true_i_from_source(
+            r#"
+lemma TrueI:
+  "True \<in> {False}"
+  unfolding True_def by (rule refl)
+"#,
+        )
+    }
+
+    fn hol_true_i_with_prop(prop: Term) -> crate::hol::hol_loader::ParsedLemma {
+        hol_true_i_with_cterm(CTerm::certify(prop))
+    }
+
+    fn hol_true_i_with_cterm(prop: CTerm) -> crate::hol::hol_loader::ParsedLemma {
+        let mut lem = parsed_hol_true_i();
+        lem.theorem = Arc::new(ThmKernel::assume_compat(prop));
+        lem
+    }
+
     fn hol_true_i_db() -> HolTheoremDb {
         let hol = include_str!("../../theories/HOL/HOL.thy");
         let empty_db = HolTheoremDb::new();
@@ -4964,6 +4998,19 @@ mod tests {
         assert!(thm.hyps().is_empty());
         assert!(thm.oracles().is_empty());
         assert!(thm.tpairs().is_empty());
+    }
+
+    fn hol_true_i_db_with_schematic_builtin() -> HolTheoremDb {
+        let mut db = hol_true_i_db();
+        db.by_name.insert(
+            "TrueI".to_string(),
+            Arc::new(ThmKernel::assume_compat(CTerm::certify(Term::var(
+                "P",
+                0,
+                Typ::base("bool"),
+            )))),
+        );
+        db
     }
 
     #[test]
@@ -5024,6 +5071,8 @@ mod tests {
     #[test]
     fn strict_adapter_dispatches_true_i() {
         let lem = parsed_hol_true_i();
+        assert_eq!(lem.source_proposition_status(), SourcePropositionStatus::FullyConsumed);
+        assert_eq!(lem.source_proposition_shape(), SourcePropositionShape::StandaloneHolTrueAlias);
 
         let result = with_hol_true_i_db(|| {
             let db = HolTheoremDb::get();
@@ -5049,6 +5098,43 @@ mod tests {
     }
 
     #[test]
+    fn split_line_unfolding_matches_inline_dispatch_end_to_end() {
+        let inline_source = r#"
+lemma GeneralTrue: "True"
+  unfolding True_def by (rule refl)
+"#;
+        let split_source = r#"
+lemma GeneralTrue: "True"
+  unfolding True_def
+  by (rule refl)
+"#;
+        let empty_db = HolTheoremDb::new();
+        let parse = |source: &str| {
+            HolTheoremDb::with_override(&empty_db, || {
+                crate::hol::hol_loader::parse_lemmas(source)
+                    .into_iter()
+                    .find(|lemma| lemma.name == "GeneralTrue")
+                    .expect("GeneralTrue")
+            })
+        };
+        let inline = parse(inline_source);
+        let split = parse(split_source);
+        assert_eq!(split.proof_script, inline.proof_script);
+        assert_eq!(split.proof_script.as_deref(), Some("unfolding True_def by (rule refl)"));
+
+        let db = hol_true_i_db();
+        let inline_thm =
+            HolTheoremDb::with_override(&db, || verify_lemma(&inline)).expect("inline result");
+        let split_thm =
+            HolTheoremDb::with_override(&db, || verify_lemma(&split)).expect("split result");
+        assert_eq!(split_thm.prop(), inline_thm.prop());
+        assert_eq!(split_thm.trust_status(), inline_thm.trust_status());
+        assert_eq!(split_thm.hyps(), inline_thm.hyps());
+        assert_eq!(split_thm.oracles(), inline_thm.oracles());
+        assert_eq!(split_thm.tpairs(), inline_thm.tpairs());
+    }
+
+    #[test]
     fn strict_adapter_rejects_true_i_with_wrong_proof_shape() {
         let mut lem = parsed_hol_true_i();
         lem.proof_script = Some("by (rule refl)".to_string());
@@ -5065,6 +5151,35 @@ mod tests {
     }
 
     #[test]
+    fn strict_adapter_returns_not_applicable_without_explicit_proof() {
+        for proof_script in [None, Some("  \n".to_string())] {
+            let mut lem = parsed_hol_true_i();
+            lem.proof_script = proof_script;
+
+            let result = with_hol_true_i_db(|| {
+                let db = HolTheoremDb::get();
+                try_strict_adapter(&lem, db)
+            });
+
+            assert!(matches!(result, StrictAdapterResult::NotApplicable));
+        }
+    }
+
+    #[test]
+    fn verify_lemma_keeps_parser_gap_behavior_without_explicit_proof() {
+        for proof_script in [None, Some("  \n".to_string())] {
+            let mut lem = parsed_hol_true_i();
+            lem.proof_script = proof_script;
+            let db = hol_true_i_db_with_schematic_builtin();
+
+            let thm = HolTheoremDb::with_override(&db, || verify_lemma(&lem))
+                .expect("missing proof should retain compatibility behavior");
+
+            assert!(thm.oracles().iter().any(|oracle| oracle.as_ref() == "admitted:parser_gap"));
+        }
+    }
+
+    #[test]
     fn strict_adapter_rejects_true_i_with_missing_definition() {
         let lem = parsed_hol_true_i();
         let mut db = hol_true_i_db();
@@ -5076,6 +5191,166 @@ mod tests {
             result,
             StrictAdapterResult::Rejected(StrictAdapterReject::MissingCheckedDefinition)
         ));
+    }
+
+    #[test]
+    fn commented_truei_proof_cannot_be_elevated_by_strict_adapter() {
+        let lem = parsed_true_i_from_source(
+            r#"
+lemma TrueI:
+  "True"
+  (*
+  unfolding True_def by (rule refl)
+  *)
+  sorry
+"#,
+        );
+        assert_eq!(lem.proof_script.as_deref(), Some("sorry"));
+
+        let result = with_hol_true_i_db(|| {
+            let db = HolTheoremDb::get();
+            try_strict_adapter(&lem, db)
+        });
+        assert!(matches!(
+            result,
+            StrictAdapterResult::Rejected(StrictAdapterReject::ProofShapeMismatch)
+        ));
+
+        let thm = with_hol_true_i_db(|| verify_lemma(&lem))
+            .expect("explicit adapter rejection must remain an admitted result");
+        assert!(!thm.is_strict_closed_proved());
+        assert!(
+            thm.oracles()
+                .iter()
+                .any(|oracle| oracle.as_ref() == "admitted:strict_adapter_proof_shape_mismatch")
+        );
+    }
+
+    #[test]
+    fn formal_comment_truei_payloads_cannot_be_elevated() {
+        let db = hol_true_i_db();
+        for prefix in ["\\<comment> ", "\\<^cancel>", "\\<^latex>", "\\<^marker>"] {
+            let source = format!(
+                r#"
+lemma TrueI:
+  {prefix}\<open>
+  shows "True"
+  \<close>
+  shows "False"
+  unfolding True_def by (rule refl)
+"#
+            );
+            let lem = parsed_true_i_from_source(&source);
+            assert_eq!(lem.source_proposition_status(), SourcePropositionStatus::FullyConsumed);
+            assert_eq!(lem.source_proposition_shape(), SourcePropositionShape::Other);
+            assert!(matches!(
+                lem.theorem.prop().term(),
+                Term::Const { name, .. } | Term::Free { name, .. }
+                    if matches!(name.as_ref(), "False" | "HOL.False")
+            ));
+
+            let result = HolTheoremDb::with_override(&db, || try_strict_adapter(&lem, &db));
+            assert!(matches!(
+                result,
+                StrictAdapterResult::Rejected(StrictAdapterReject::SourcePropositionUnverified {
+                    status: SourcePropositionStatus::FullyConsumed,
+                    shape: SourcePropositionShape::Other,
+                })
+            ));
+
+            let thm = HolTheoremDb::with_override(&db, || verify_lemma(&lem))
+                .expect("formal-comment payload must remain an admitted rejection");
+            assert!(!thm.is_strict_closed_proved());
+            assert!(thm.oracles().iter().any(|oracle| {
+                oracle.as_ref() == "admitted:strict_adapter_source_prop_unverified"
+            }));
+        }
+    }
+
+    #[test]
+    fn document_cartouche_named_truei_show_cannot_be_elevated() {
+        let source = r#"
+lemma victim:
+  shows "False"
+text \<open>
+shows TrueI: "True" \<close> note refl
+unfolding True_def by (rule refl)
+"#;
+        let empty_db = HolTheoremDb::new();
+        let lemmas =
+            HolTheoremDb::with_override(&empty_db, || crate::hol::hol_loader::parse_lemmas(source));
+        assert_eq!(lemmas.len(), 1);
+        let lemma = &lemmas[0];
+        assert_eq!(lemma.name, "victim");
+        assert!(matches!(
+            lemma.theorem.prop().term(),
+            Term::Const { name, .. } | Term::Free { name, .. }
+                if matches!(name.as_ref(), "False" | "HOL.False")
+        ));
+        assert_eq!(lemma.proof_script.as_deref(), Some("unfolding True_def by (rule refl)"));
+
+        let db = hol_true_i_db();
+        let result = HolTheoremDb::with_override(&db, || try_strict_adapter(lemma, &db));
+        assert!(!matches!(result, StrictAdapterResult::Proved(_)));
+        let thm = HolTheoremDb::with_override(&db, || verify_lemma(lemma)).expect("compat result");
+        assert!(!thm.is_strict_closed_proved());
+    }
+
+    #[test]
+    fn ml_prf_cartouche_named_truei_show_cannot_be_elevated() {
+        let source = r#"
+lemma victim:
+  shows "False"
+ML_prf \<open>
+(*
+shows TrueI: "True"
+*)
+val _ = ()
+\<close>
+unfolding True_def by (rule refl)
+"#;
+        let empty_db = HolTheoremDb::new();
+        let lemmas =
+            HolTheoremDb::with_override(&empty_db, || crate::hol::hol_loader::parse_lemmas(source));
+        assert_eq!(lemmas.len(), 1);
+        let lemma = &lemmas[0];
+        assert_eq!(lemma.name, "victim");
+        assert!(matches!(
+            lemma.theorem.prop().term(),
+            Term::Const { name, .. } | Term::Free { name, .. }
+                if matches!(name.as_ref(), "False" | "HOL.False")
+        ));
+        assert!(
+            lemma.proof_script.is_none(),
+            "an unsupported proof command must stop statement/proof capture"
+        );
+    }
+
+    #[test]
+    fn embedded_structured_proof_cannot_close_lemma() {
+        let source = r#"
+lemma Hidden: "True"
+proof -
+  text \<open>
+    show True by assumption \<close> note refl
+  sorry
+"#;
+        let empty_db = HolTheoremDb::new();
+        let lemma = HolTheoremDb::with_override(&empty_db, || {
+            crate::hol::hol_loader::parse_lemmas(source)
+                .into_iter()
+                .find(|lemma| lemma.name == "Hidden")
+                .expect("Hidden")
+        });
+        assert_eq!(lemma.proof_script.as_deref(), Some("proof -\nsorry"));
+
+        let thm = with_hol_true_i_db(|| verify_lemma(&lemma))
+            .expect("active sorry must produce an admitted theorem");
+        assert!(!thm.is_strict_closed_proved());
+        assert!(
+            thm.oracles().iter().any(|oracle| oracle.as_ref().starts_with("admitted:")),
+            "hidden qed must not close the theorem before active sorry"
+        );
     }
 
     #[test]
@@ -5118,6 +5393,238 @@ mod tests {
     }
 
     #[test]
+    fn strict_adapter_rejects_free_true_alias() {
+        let lem = hol_true_i_with_prop(Term::free("True", Typ::base("bool")));
+
+        let result = with_hol_true_i_db(|| {
+            let db = HolTheoremDb::get();
+            try_strict_adapter(&lem, db)
+        });
+
+        assert!(matches!(
+            result,
+            StrictAdapterResult::Rejected(StrictAdapterReject::PropositionMismatch)
+        ));
+    }
+
+    #[test]
+    fn strict_adapter_rejects_dummy_typed_true() {
+        let lem = hol_true_i_with_prop(Term::const_("True", Typ::dummy()));
+
+        let result = with_hol_true_i_db(|| {
+            let db = HolTheoremDb::get();
+            try_strict_adapter(&lem, db)
+        });
+
+        assert!(matches!(
+            result,
+            StrictAdapterResult::Rejected(StrictAdapterReject::CertificationFailed(_))
+        ));
+    }
+
+    #[test]
+    fn strict_adapter_rejects_true_with_mismatched_cterm_type() {
+        let lem = hol_true_i_with_cterm(CTerm::certify_typed(
+            crate::hol::hologic::true_const(),
+            Typ::base("prop"),
+        ));
+
+        let result = with_hol_true_i_db(|| {
+            let db = HolTheoremDb::get();
+            try_strict_adapter(&lem, db)
+        });
+
+        assert!(matches!(
+            result,
+            StrictAdapterResult::Rejected(StrictAdapterReject::CertificationFailed(_))
+        ));
+    }
+
+    #[test]
+    fn strict_adapter_rejects_explicitly_mistyped_true_alias() {
+        let parsed = crate::isar::term_parser::parse_term("True :: nat")
+            .expect("parser should retain the conflicting source annotation");
+        let lem = hol_true_i_with_prop(parsed);
+
+        let result = with_hol_true_i_db(|| {
+            let db = HolTheoremDb::get();
+            try_strict_adapter(&lem, db)
+        });
+
+        assert!(matches!(
+            result,
+            StrictAdapterResult::Rejected(StrictAdapterReject::PropositionMismatch)
+        ));
+    }
+
+    #[test]
+    fn strict_adapter_rejects_source_equality_after_true_annotation() {
+        let source = r#"
+lemma TrueI:
+  "True :: bool = False"
+  unfolding True_def by (rule refl)
+"#;
+        let empty_db = HolTheoremDb::new();
+        let lemmas =
+            HolTheoremDb::with_override(&empty_db, || crate::hol::hol_loader::parse_lemmas(source));
+        let lem = lemmas.into_iter().find(|lem| lem.name == "TrueI").expect("TrueI parses");
+        assert_ne!(lem.theorem.prop().term(), &crate::hol::hologic::true_const());
+        assert!(crate::hol::hologic::dest_hol_equals(lem.theorem.prop().term()).is_some());
+
+        let result = with_hol_true_i_db(|| {
+            let db = HolTheoremDb::get();
+            try_strict_adapter(&lem, db)
+        });
+
+        assert!(matches!(result, StrictAdapterResult::Rejected(_)));
+    }
+
+    #[test]
+    fn strict_adapter_rejects_unconsumed_source_proposition_suffix() {
+        let lem = parsed_true_i_with_unconsumed_suffix();
+        assert_eq!(lem.theorem.prop().term(), &crate::hol::hologic::true_const());
+        assert_eq!(lem.source_proposition_status(), SourcePropositionStatus::Incomplete);
+
+        let result = with_hol_true_i_db(|| {
+            let db = HolTheoremDb::get();
+            try_strict_adapter(&lem, db)
+        });
+
+        assert!(matches!(
+            result,
+            StrictAdapterResult::Rejected(StrictAdapterReject::SourcePropositionUnverified {
+                status: SourcePropositionStatus::Incomplete,
+                shape: SourcePropositionShape::Other,
+            })
+        ));
+    }
+
+    #[test]
+    fn strict_adapter_rejects_recovered_true_source() {
+        let lem = parsed_true_i_from_source(
+            r#"
+lemma TrueI:
+  "True ="
+  unfolding True_def by (rule refl)
+"#,
+        );
+        assert_eq!(lem.theorem.prop().term(), &crate::hol::hologic::true_const());
+        assert_eq!(lem.source_proposition_status(), SourcePropositionStatus::FullyConsumed);
+        assert_eq!(lem.source_proposition_shape(), SourcePropositionShape::Other);
+
+        let result = with_hol_true_i_db(|| {
+            let db = HolTheoremDb::get();
+            try_strict_adapter(&lem, db)
+        });
+
+        assert!(matches!(
+            result,
+            StrictAdapterResult::Rejected(StrictAdapterReject::SourcePropositionUnverified {
+                status: SourcePropositionStatus::FullyConsumed,
+                shape: SourcePropositionShape::Other,
+            })
+        ));
+    }
+
+    #[test]
+    fn strict_adapter_rejects_contextual_true_source() {
+        let sources = [
+            r#"
+lemma TrueI:
+  fixes True :: bool
+  shows True
+  unfolding True_def by (rule refl)
+"#,
+            r#"
+lemma TrueI:
+  includes malicious_bundle
+  shows True
+  unfolding True_def by (rule refl)
+"#,
+            r#"
+theory Attack
+imports HOL
+begin
+context
+  fixes True :: bool
+begin
+lemma TrueI: True
+  unfolding True_def by (rule refl)
+end
+end
+"#,
+            r#"
+context
+  fixes True :: bool
+begin
+lemma TrueI: True
+  unfolding True_def by (rule refl)
+end
+"#,
+            r#"
+lemma (in shadow) TrueI: True
+  unfolding True_def by (rule refl)
+"#,
+            r#"
+lemma TrueI:
+  "True"
+  if "False"
+  unfolding True_def by (rule refl)
+"#,
+            r#"
+lemma TrueI:
+  "True"
+  when "False"
+  unfolding True_def by (rule refl)
+"#,
+            r#"
+lemma TrueI:
+  notes malicious_fact
+  shows True
+  unfolding True_def by (rule refl)
+"#,
+        ];
+
+        for source in sources {
+            let lem = parsed_true_i_from_source(source);
+            assert_eq!(lem.theorem.prop().term(), &crate::hol::hologic::true_const());
+            assert_eq!(lem.source_proposition_status(), SourcePropositionStatus::FullyConsumed);
+            assert_eq!(lem.source_proposition_shape(), SourcePropositionShape::Contextual);
+
+            let result = with_hol_true_i_db(|| {
+                let db = HolTheoremDb::get();
+                try_strict_adapter(&lem, db)
+            });
+            assert!(matches!(
+                result,
+                StrictAdapterResult::Rejected(StrictAdapterReject::SourcePropositionUnverified {
+                    status: SourcePropositionStatus::FullyConsumed,
+                    shape: SourcePropositionShape::Contextual,
+                })
+            ));
+        }
+    }
+
+    #[test]
+    fn strict_adapter_rejects_true_i_without_source_provenance() {
+        let mut lem = parsed_hol_true_i();
+        lem.source_loc = None;
+
+        let result = with_hol_true_i_db(|| {
+            let db = HolTheoremDb::get();
+            try_strict_adapter(&lem, db)
+        });
+
+        assert!(matches!(
+            result,
+            StrictAdapterResult::Rejected(StrictAdapterReject::SourcePropositionUnverified {
+                status: SourcePropositionStatus::Unavailable,
+                shape: SourcePropositionShape::Unavailable,
+            })
+        ));
+    }
+
+    #[test]
     fn verify_lemma_uses_strict_adapter_for_true_i() {
         let lem = parsed_hol_true_i();
 
@@ -5131,8 +5638,9 @@ mod tests {
     fn verify_lemma_records_strict_adapter_rejection_for_true_i() {
         let mut lem = parsed_hol_true_i();
         lem.proof_script = Some("by (rule refl)".to_string());
+        let db = hol_true_i_db_with_schematic_builtin();
 
-        let thm = with_hol_true_i_db(|| verify_lemma(&lem))
+        let thm = HolTheoremDb::with_override(&db, || verify_lemma(&lem))
             .expect("strict adapter rejection should become explicit admission");
 
         assert!(!thm.is_strict_closed_proved());
@@ -5141,10 +5649,137 @@ mod tests {
                 .iter()
                 .any(|oracle| oracle.as_ref() == "admitted:strict_adapter_proof_shape_mismatch")
         );
+        assert!(!thm.oracles().iter().any(|oracle| oracle.as_ref() == "admitted:parser_gap"));
     }
 
     #[test]
-    fn proof_outcome_still_counts_true_i_as_strict_closed() {
+    fn verify_lemma_rejects_unconsumed_true_source_before_parser_gap() {
+        let lem = parsed_true_i_with_unconsumed_suffix();
+        let db = hol_true_i_db_with_schematic_builtin();
+
+        let thm = HolTheoremDb::with_override(&db, || verify_lemma(&lem))
+            .expect("incomplete source proposition should become explicit admission");
+
+        assert!(!thm.is_strict_closed_proved());
+        assert!(
+            thm.oracles().iter().any(|oracle| {
+                oracle.as_ref() == "admitted:strict_adapter_source_prop_unverified"
+            })
+        );
+        assert!(!thm.oracles().iter().any(|oracle| oracle.as_ref() == "admitted:parser_gap"));
+    }
+
+    #[test]
+    fn verify_lemma_rejects_recovered_and_contextual_true_sources_before_parser_gap() {
+        let sources = [
+            r#"
+lemma TrueI:
+  "True ="
+  unfolding True_def by (rule refl)
+"#,
+            r#"
+lemma TrueI:
+  fixes True :: bool
+  shows True
+  unfolding True_def by (rule refl)
+"#,
+            r#"
+lemma TrueI:
+  includes malicious_bundle
+  shows True
+  unfolding True_def by (rule refl)
+"#,
+            r#"
+lemma TrueI:
+  "True"
+  if "False"
+  unfolding True_def by (rule refl)
+"#,
+        ];
+
+        for source in sources {
+            let lem = parsed_true_i_from_source(source);
+            let db = hol_true_i_db_with_schematic_builtin();
+            let thm = HolTheoremDb::with_override(&db, || verify_lemma(&lem))
+                .expect("unverified source proposition should become explicit admission");
+
+            assert!(!thm.is_strict_closed_proved());
+            assert!(thm.oracles().iter().any(|oracle| {
+                oracle.as_ref() == "admitted:strict_adapter_source_prop_unverified"
+            }));
+            assert!(!thm.oracles().iter().any(|oracle| oracle.as_ref() == "admitted:parser_gap"));
+        }
+    }
+
+    #[test]
+    fn verify_lemma_does_not_normalize_free_true_into_hol_true() {
+        let lem = hol_true_i_with_prop(Term::free("True", Typ::base("bool")));
+
+        let thm = with_hol_true_i_db(|| verify_lemma(&lem))
+            .expect("Free True rejection should become explicit admission");
+
+        assert!(!thm.is_strict_closed_proved());
+        assert!(
+            thm.oracles()
+                .iter()
+                .any(|oracle| oracle.as_ref() == "admitted:strict_adapter_prop_mismatch")
+        );
+        assert!(matches!(
+            thm.prop().term(),
+            Term::Free { name, typ }
+                if name.as_ref() == "True" && typ == &Typ::base("bool")
+        ));
+    }
+
+    #[test]
+    fn verify_lemma_does_not_normalize_dummy_true_into_hol_true() {
+        let lem = hol_true_i_with_prop(Term::const_("True", Typ::dummy()));
+
+        let thm = with_hol_true_i_db(|| verify_lemma(&lem))
+            .expect("dummy True rejection should become explicit admission");
+
+        assert!(!thm.is_strict_closed_proved());
+        assert!(
+            thm.oracles()
+                .iter()
+                .any(|oracle| oracle.as_ref() == "admitted:strict_adapter_certification_failed")
+        );
+        assert!(CTerm::term_contains_dummy_type(thm.prop().term()));
+    }
+
+    #[test]
+    fn verify_lemma_does_not_normalize_mistyped_true_into_hol_true() {
+        let lem = hol_true_i_with_cterm(CTerm::certify_typed(
+            crate::hol::hologic::true_const(),
+            Typ::base("prop"),
+        ));
+
+        let thm = with_hol_true_i_db(|| verify_lemma(&lem))
+            .expect("mistyped True rejection should become explicit admission");
+
+        assert!(!thm.is_strict_closed_proved());
+        assert!(
+            thm.oracles()
+                .iter()
+                .any(|oracle| oracle.as_ref() == "admitted:strict_adapter_certification_failed")
+        );
+    }
+
+    #[test]
+    fn verify_lemma_runs_strict_adapter_before_parser_gap_override() {
+        let lem = parsed_hol_true_i();
+        let db = hol_true_i_db_with_schematic_builtin();
+
+        let thm = HolTheoremDb::with_override(&db, || verify_lemma(&lem))
+            .expect("registered adapter should run before parser-gap override");
+
+        assert!(thm.is_strict_closed_proved());
+        assert_eq!(thm.prop().term(), &crate::hol::hologic::true_const());
+        assert!(thm.oracles().is_empty());
+    }
+
+    #[test]
+    fn proof_outcome_still_counts_true_i_as_transitional_strict_closed() {
         let lem = parsed_hol_true_i();
         reset_verify_stats();
 
