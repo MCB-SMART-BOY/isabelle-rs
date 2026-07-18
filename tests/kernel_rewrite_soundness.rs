@@ -59,6 +59,66 @@ fn undeclared_free_is_rejected() {
 }
 
 #[test]
+fn reject_bool_as_theorem_proposition() {
+    let mut sig = Signature::new();
+    sig.declare_const("b", ty("bool"));
+    let ctx = ProofContext::new(sig);
+
+    let err = ctx.certify_prop(RawTerm::const_("b", ty("bool"))).unwrap_err();
+
+    assert!(matches!(err, KernelError::NotProposition(actual) if actual == ty("bool")));
+}
+
+#[test]
+fn reject_hol_true_bool_without_trueprop() {
+    let mut sig = Signature::new();
+    sig.declare_const("HOL.True", ty("bool"));
+    let ctx = ProofContext::new(sig);
+
+    let err = ctx.certify_prop(RawTerm::const_("HOL.True", ty("bool"))).unwrap_err();
+
+    assert!(matches!(err, KernelError::NotProposition(actual) if actual == ty("bool")));
+}
+
+#[test]
+fn reject_hol_eq_bool_without_trueprop() {
+    let nat = ty("nat");
+    let bool_ty = ty("bool");
+    let eq_ty = Ty::arrow(nat.clone(), Ty::arrow(nat.clone(), bool_ty.clone()));
+    let mut sig = Signature::new();
+    sig.declare_const("HOL.eq", eq_ty.clone());
+    sig.declare_const("a", nat.clone());
+    sig.declare_const("b", nat.clone());
+    let ctx = ProofContext::new(sig);
+    let object_eq = RawTerm::app(
+        RawTerm::app(RawTerm::const_("HOL.eq", eq_ty), RawTerm::const_("a", nat.clone())),
+        RawTerm::const_("b", nat),
+    );
+
+    let err = ctx.certify_prop(object_eq).unwrap_err();
+
+    assert!(matches!(err, KernelError::NotProposition(actual) if actual == bool_ty));
+}
+
+#[test]
+fn declared_trueprop_wraps_hol_true_as_cprop() {
+    let bool_ty = ty("bool");
+    let trueprop_ty = Ty::arrow(bool_ty.clone(), Ty::prop());
+    let mut sig = Signature::new();
+    sig.declare_const("HOL.True", bool_ty.clone());
+    sig.declare_const("HOL.Trueprop", trueprop_ty.clone());
+    let ctx = ProofContext::new(sig);
+    let proposition = RawTerm::app(
+        RawTerm::const_("HOL.Trueprop", trueprop_ty),
+        RawTerm::const_("HOL.True", bool_ty),
+    );
+
+    let checked = ctx.certify_prop(proposition).expect("Trueprop True should have type prop");
+
+    assert_eq!(checked.term().ty(), Ty::prop());
+}
+
+#[test]
 fn dummy_type_is_not_constructible() {
     assert!(matches!(Ty::base("dummy"), Err(KernelError::ReservedDummyType)));
 }
