@@ -1,20 +1,16 @@
 # Isabelle-rs CI Pipeline
 #
-# 4-stage pipeline:
-#   1. Quick Checks (fmt, clippy) — < 2 min
-#   2. Unit Tests — < 5 min
-#   3. Integration Tests — < 10 min
-#   4. Extended Checks (audit, doc, release build)
-#
-# Requires nightly Rust (edition 2024).
+# Verification is split by responsibility. Repository-owned scripts define the
+# strict-kernel, sampled-core, and documentation gates; every Cargo resolution
+# uses the committed lockfile and the stable toolchain.
 
 name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
   workflow_dispatch:  # manual trigger
 
 env:
@@ -47,7 +43,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - run: cargo clippy --lib -- -W clippy::all -D clippy::correctness
+      - run: cargo clippy --locked --lib -- -W clippy::all -D clippy::correctness
 
   # ==========================================================================
   # Stage 2: Unit Tests (parallel, < 5 min)
@@ -74,7 +70,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --lib ${{ matrix.module }}
+      - run: cargo test --locked --lib ${{ matrix.module }}
 
   test-unit-isar:
     name: "unit / isar"
@@ -93,7 +89,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --lib ${{ matrix.module }}
+      - run: cargo test --locked --lib ${{ matrix.module }}
 
   test-unit-hol:
     name: "unit / hol"
@@ -111,7 +107,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --lib ${{ matrix.module }}
+      - run: cargo test --locked --lib ${{ matrix.module }}
 
   # ==========================================================================
   # Stage 3: Integration Tests (< 10 min)
@@ -124,22 +120,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
       - uses: Swatinem/rust-cache@v2
-      - name: Core verification benchmark
-        run: cargo test test_verify_all_core_files -- --nocapture
+      - name: Strict kernel gate
+        run: bash scripts/dev-check.sh strict
+      - name: Sampled core trust snapshot
+        run: bash scripts/dev-check.sh core
       - name: BNF/datatype tests
-        run: cargo test --test bnf_tests
+        run: cargo test --locked --test bnf_tests
       - name: Integration tests
-        run: cargo test --test integration_tests
-      - name: Property-based tests (non-blocking — random failures are known)
-        run: cargo test --test proptest || true
+        run: cargo test --locked --test integration_tests
+      - name: Property-based tests (advisory)
+        continue-on-error: true
+        run: cargo test --locked --test proptest
 
   # ==========================================================================
   # Stage 4: Extended Checks
   # ==========================================================================
 
   audit:
-    name: "security audit"
+    name: "security audit (advisory)"
     needs: [test-integration]
     runs-on: ubuntu-latest
     steps:
@@ -147,7 +148,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@cargo-audit
-      - run: cargo audit || true
+      - name: Report RustSec advisories
+        continue-on-error: true
+        run: cargo audit
 
   docs:
     name: "docs"
@@ -156,8 +159,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
       - uses: Swatinem/rust-cache@v2
-      - run: cargo doc --no-deps --document-private-items
+      - run: bash scripts/dev-check.sh docs
+      - run: cargo doc --locked --no-deps --document-private-items
 
   release-build:
     name: "release build"
@@ -167,7 +173,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release
+      - run: cargo build --locked --release
 
   # ==========================================================================
   # Platform verification (no tests, just compiles)
@@ -181,7 +187,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check
+      - run: cargo check --locked
 
   build-windows:
     name: "build / windows"
@@ -191,4 +197,4 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check
+      - run: cargo check --locked
