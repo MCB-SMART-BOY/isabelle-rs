@@ -1,889 +1,254 @@
 # Roadmap
 
-This roadmap follows the current project positioning:
+This is the current dependency-ordered roadmap. Root
+[AGENTS.md](../AGENTS.md), [PROJECT_STATUS.md](PROJECT_STATUS.md), and
+[TRUST.md](TRUST.md) define the authoritative position; historical phase plans
+and transfer notes do not override them.
+
+## Current State
 
 ```text
-Rust Isabelle/Pure-inspired LCF kernel prototype
-with explicit oracle footprints, closed-theorem acceptance,
-and minimal proofterm replay.
+TransitionalStrictClosed: 1/125
+KernelTrustedClosed:      0/125
 ```
 
-The next phases should not chase broad Isabelle/HOL coverage first. The route is
-to converge the legacy core and strict kernel around a single theorem acceptance
-path, use that path for small existing core-file strict slices, and expand only
-where the trust boundary remains explicit.
+The strict `src/kernel` nucleus has checked `CProp : prop`, private theorem
+construction, the base Pure rule set, conservative resolution prototypes, and
+derivation replay. It does not yet have immutable theory/signature identity or
+a context-bound final acceptance operation.
 
-## Strategy
+The existing `HOL::TrueI` path is a bool-valued legacy migration experiment.
+It is not the first new-kernel HOL theorem.
 
-Current status:
-
-| Track | Status |
-|---|---|
-| Strict kernel nucleus (`src/kernel/`) | Base primitive set implemented plus conservative `resolve1_match`, `subst_premise`, and `bicompose` wrapper; ADR-0001 strangler pattern active. |
-| Legacy T2 primitive rule hardening | Strict kernel alpha-equivalence split out; `Typ::dummy()` and certification remain known debts in legacy core. |
-| Checked instantiation | Production paths closed over `instantiate_checked`. |
-| Admit/oracle tracking | Explicit, classified, and propagated. |
-| Closed theorem acceptance | Main path, session reporting, and final trusted tables use `is_strict_closed_proved()`. |
-| T4 proofterm replay | Legacy proofterm replay remains minimal; strict `src/kernel` invariant replay covers its implemented derivations. |
-| Proof outcome unification | Phase 1 summary classifier is implemented; reports distinguish strict closed, compat closed oracle-free, open oracle-free, admitted, and failed outcomes without changing theorem construction. |
-| Core-to-kernel migration | `src/core` currently remains a legacy proof engine; target architecture reduces it to compatibility, automation, diagnostics, and migration adapters. |
-| First strict slice | Targeted Pure `A ==> A` smoke slice exists; `HOL::TrueI` is the first existing core-file theorem routed to `StrictClosed` through checked `True_def`, strict HOL object reflexivity, checked `True_def` transport, and a narrow adapter. |
-| HPC symbolic compute | Design-only parallel track for untrusted candidate generation, fingerprinting, and prefiltering; no Burn/CubeCL dependency and no kernel dependency. |
-| HOL/Isar feature parity | Not current priority. |
-
-Architecture vision: ADR-0002 establishes a layered platform architecture
-(strangler kernel → workspace → session → agent → plugin). The phases below
-follow the dependency order: kernel first, then workspace, then session/agent
-infrastructure.
-
-Priority order:
-
-1. Unify theorem verification outcomes around `ProofOutcome` and a single
-   strict theorem acceptance path.
-2. Build the core-to-kernel strangler migration inventory and matrix.
-3. Use the minimal strict adapter dispatcher and first existing core-file
-   strict slice (`HOL::TrueI`, now `1/125`) as the template for the next narrow
-   strict theorem path.
-4. Continue strict `src/kernel` nucleus stabilization, including firewall
-   checks, deterministic substitutions, and explicit conservative resolution
-   limits.
-5. Reduce admitted and compat paths by classified cause, not by hiding fallback
-   paths.
-6. Extend strict-kernel replay/invariant coverage only after rule contracts and
-   compatibility boundaries are stable.
-7. Split into Cargo workspace (`isabelle-kernel` crate first).
-8. Design session incremental engine (snapshot/rollback/content-addressed cache).
-9. Build `isabelle.toml` project system (Lake-style).
-10. Design Agent Proof Protocol (APP).
-11. Expand HOL/Isar/tool coverage only where it reduces admitted counts without
-    weakening trust boundaries.
-12. Harden WASM plugin sandbox boundaries.
-13. AFP large-scale benchmark.
-
-Near-term main line is core-to-kernel strangler migration:
+## Trusted Main Line
 
 ```text
-ProofOutcome design and reporting
-core/kernel overlap inventory
-migration matrix
-first strict closed theorem vertical slice
-first existing core-file strict closed theorem
-admitted/compat reason reduction by cause
+immutable SignatureId / TheoryId
+  -> unique context-bound acceptance
+  -> source-aware proposition AST
+  -> checked judgment / constant / type-scheme elaboration
+  -> data-only HOL logic-basis manifest
+  -> generic conservative definition extension
+  -> HOL::TrueI as HOL.Trueprop HOL.True
+  -> HOL::trans only as a later reuse consumer
 ```
 
-Design documents:
+The order is mandatory. A later phase may be designed in parallel, but it may
+not enter trusted production paths before its prerequisites.
 
-- [PROOF_OUTCOME_DESIGN.md](PROOF_OUTCOME_DESIGN.md)
-- [CORE_KERNEL_OVERLAP_INVENTORY.md](CORE_KERNEL_OVERLAP_INVENTORY.md)
-- [MIGRATION_MATRIX.md](MIGRATION_MATRIX.md)
-- [HOL_OBJECT_EQUALITY_BRIDGE.md](HOL_OBJECT_EQUALITY_BRIDGE.md)
+Phases 1 and 2 form the first bounded implementation sequence, but they land as
+separate reviewable changes. The immediate next change is Phase 1 only:
+immutable context identity, propagation, and mixed-context rejection, with no
+new acceptance API or `ProofOutcome` change. Phase 2 starts only after those
+context invariants pass review. Do not start Phase 3 in parallel.
 
-Parallel non-blocking design track:
+## Phase 1: Immutable Context Identity — Slice Foundation
 
-- Design a backend-agnostic high-performance symbolic compute layer for
-  mechanical proof workloads: term/fact fingerprinting, fact prefiltering,
-  rewrite candidate filtering, finite-domain counterexample search, and batch
-  proof-obligation quick rejection.
-- Start with a deterministic CPU baseline. Burn/CubeCL is only a future
-  optional backend candidate after packed symbolic data structures and tests
-  exist.
-- Do not add Burn/CubeCL to `src/kernel`, do not introduce a Burn dependency
-  before the CPU baseline, and do not let GPU/multi-backend output become
-  `TrustedTheorem`.
+### Goal
 
-Design document: [HPC_SYMBOLIC_COMPUTE_DESIGN.md](HPC_SYMBOLIC_COMPUTE_DESIGN.md).
+Make it impossible to combine certified terms or theorems from unrelated
+signatures by accident.
 
-## Phase 0: Baseline and Documentation Sync
+### Minimum implementation
 
-Status: complete for the first trusted-kernel checkpoint.
+1. Add private, opaque `SignatureId` and `TheoryId` types.
+2. Replace silent declaration overwrite with checked monotonic extension.
+3. Define canonical, domain-separated identity input for validated
+   declarations and parent identity.
+4. Bind `ProofContext`, `CTerm`, `CProp`, `KernelThm`, `ClosedThm`, and
+   `TrustedTheorem` to the relevant context identity.
+5. Reject mixed-context inputs in every strict rule before theorem
+   construction.
+6. Preserve parent contexts unchanged when creating an extension.
 
-Goal:
+Do not add a hashing dependency merely to make the type look content-addressed.
+First specify and test canonical declaration encoding, domain separation, and
+collision/error behavior. Any dependency and `Cargo.lock` change needs a
+separate rationale.
 
-- Preserve the current T2/trust/T4 work as a reviewable baseline.
-- Make README, docs, root `CLAUDE.md`, and `~/.codex` agree on the same project
-  positioning.
-- Remove misleading "Rust rewrite of Isabelle" and "feature complete" language.
-- Make `PROJECT_STATUS.md` the canonical high-level status.
+### Required attacks
 
-Files:
+- equal canonical signatures produce equal IDs;
+- declaration order has the documented deterministic meaning;
+- a conflicting constant declaration is rejected, not overwritten;
+- extending a signature does not mutate the parent;
+- a `CProp` certified under signature A cannot be used with signature B;
+- two contexts with the same surface names but different declarations do not
+  interoperate;
+- callers cannot construct or spoof identity values.
 
-```text
-README.md
-CLAUDE.md
-docs/PROJECT_STATUS.md
-docs/BASELINE.md
-docs/TRUST.md
-docs/ARCHITECTURE.md
-docs/GAP_ANALYSIS.md
-docs/ROADMAP.md
-docs/DEVELOPMENT.md
-~/.codex/references/isabelle-rs.md
-~/.codex/rules/isabelle-rs.md
-~/.codex/skills/isabelle-rs-*/SKILL.md
-```
+### Exit condition
 
-Done when:
+Focused identity tests and the existing strict gate pass. No proof outcome or
+sampled HOL count changes.
 
-- The baseline commits and trusted gate are recorded.
-- All high-level docs describe the project as a research prototype, not a full
-  Isabelle rewrite.
-- All proof-rate language distinguishes `is_fully_proved()` from
-  `is_strict_closed_proved()`.
-- The next engineering plan starts with T4 replay, not more HOL/Isar features.
+## Phase 2: Unique Context-Bound Acceptance — Slice Completion
 
-Current baseline commits:
-
-```text
-e60580b kernel: harden primitive rules and checked instantiation
-7465d48 trust: require closed proved theorems for trusted acceptance
-2dee3d0 proofterm: add minimal burden-aware derivation replay
-eef6d80 docs: reposition project as trusted Rust LCF kernel prototype
-```
-
-The next active code phase should start at Phase 1.
-
-## Phase 1: Strict Kernel Boundary
-
-Target work:
-
-```text
-kernel_alpha_eq / compat_alpha_eq separation
-CTerm::certify_checked
-Thm invariant checker
-strict kernel mode
-```
-
-Status:
-
-- `kernel_alpha_eq` is now strict for trusted theorem construction.
-- `compat_alpha_eq` preserves legacy Free/Const, Var/Free, and dummy-binder
-  behavior only for explicitly named compatibility paths.
-
-Next strict-boundary tasks:
-
-- Add a checked certification API that rejects dummy-typed trusted inputs.
-- Add theorem invariant checks for primitive-rule outputs.
-- Add a strict-kernel mode that requires strict certification and invariant
-  checks before counting trusted results.
-
-## Legacy Replay Backlog
-
-The sections below preserve the legacy `src/core` proofterm replay backlog.
-They are not the active strict-kernel architecture plan. New trusted kernel
-work should first land in `src/kernel`; legacy replay work is useful only when
-it supports an adapter or a compatibility audit without weakening the new TCB.
-
-## Phase 2: T4 Replay Batch 1
-
-Target rules:
-
-```text
-beta_conversion
-forall_intr
-forall_elim
-```
-
-Why first:
-
-- These rules are small enough to replay independently.
-- They stress de Bruijn substitution, free-variable side conditions, and binder
-  type checks.
-- They extend proof replay beyond implication/equality without involving full
-  unification or resolution.
-
-Primary files:
-
-```text
-src/core/thm.rs
-src/core/proofterm.rs
-src/core/logic.rs
-src/core/term.rs
-src/core/term_subst.rs
-tests/kernel_soundness.rs
-docs/KERNEL_RULES.md
-docs/KERNEL_ATTACK_TESTS.md
-docs/TRUST.md
-```
-
-Implementation tasks:
-
-- Add proofterm constructors or derivation records for each rule if missing.
-- Replay `beta_conversion` by checking the input is `(Abs body) arg` and using
-  the same bound substitution semantics as `ThmKernel::beta_conversion`.
-- Replay `forall_intr` with the same free-in-hypotheses side condition as the
-  kernel.
-- Replay `forall_elim` with binder/argument known-type compatibility.
-- Ensure replay compares `prop`, `hyps`, `tpairs`, and `oracles`.
-
-Required attack tests:
-
-- Replay `(λx. x) a` as `a`, not raw `Bound(0)`.
-- `forall_intr` replay rejects a variable free in hypotheses.
-- `forall_elim` replay rejects known binder/argument type mismatch.
-- Tampering final theorem fields after each rule makes `check_proof()` fail.
-- Applying the rule to an admitted premise fails independent replay by oracle
-  footprint.
-
-Done when:
-
-```bash
-cargo fmt --check
-cargo test core::proofterm::tests::
-cargo test core::thm::tests::
-cargo test --test kernel_soundness
-cargo test --lib core::
-cargo check
-```
-
-## Phase 3: T4 Replay Batch 2
-
-Target rules:
-
-```text
-combination
-abstraction
-equal_intr
-equal_elim
-```
-
-Notes:
-
-- `combination` must mirror known function-domain compatibility checks.
-- `abstraction` must preserve the free-variable-in-hypotheses side condition.
-- Add `equal_intr` / `equal_elim` only if they are implemented or needed by
-  current derived rules; otherwise document them as missing Pure rules.
-
-Primary files:
-
-```text
-src/core/thm.rs
-src/core/proofterm.rs
-src/core/logic.rs
-src/core/types.rs
-tests/kernel_soundness.rs
-```
-
-Required attack tests:
-
-- Known argument-domain mismatch in `combination` fails replay.
-- `abstraction` cannot abstract a free variable from hypotheses.
-- Open premise burdens are preserved.
-- Oracle premise makes independent replay fail.
-- Unsupported equality rules are reported as unsupported, not as successful.
-
-Done when:
-
-- All supported rules replay successfully for positive cases.
-- All known side-condition attacks fail closed.
-- `docs/KERNEL_RULES.md` marks replay support per rule.
-
-## Phase 4: T4 Replay Batch 3
-
-Target rules:
-
-```text
-instantiate_checked
-generalize
-```
-
-Why this is risky:
-
-- Instantiation touches schematic variables, type variables, and environment
-  application.
-- Existing T2 hardening solved production instantiation, but replay must prove
-  the recorded instantiation is the same one.
-
-Primary files:
-
-```text
-src/core/thm.rs
-src/core/proofterm.rs
-src/core/envir.rs
-src/core/unify.rs
-src/core/term_subst.rs
-src/core/type_infer.rs
-```
-
-Required design decisions:
-
-- Proof records must include enough environment data to replay substitution.
-- Replay must call checked substitution semantics, not raw `env.apply_*`
-  without type checks.
-- If a replay environment contains dummy types, behavior must be documented and
-  tested.
-
-Required attack tests:
-
-- `?x::nat := b::bool` fails replay.
-- Schematic variable indices cannot be ignored.
-- Type-variable instantiation preserves known type constraints.
-- Successful instantiation preserves all burdens.
-
-Done when:
-
-- Production theorem instantiation and replay instantiation have the same
-  acceptance/rejection semantics for known concrete type mismatches.
-
-## Phase 5: T4 Replay Batch 4
-
-Target rules:
-
-```text
-bicompose (strict conservative wrapper implemented; full legacy semantics remain compatibility debt)
-bicompose_eresolve (⚠️ LEGACY CORE)
-subst_premise (strict conservative version implemented; legacy-core version remains compatibility debt)
-```
-
-Why last:
-
-- These rules involve resolution, premise selection, unification, and
-  propagation of multiple theorem burdens.
-- The strict-kernel resolution family (`resolve1`/`bicompose` in `src/kernel/`)
-  will need its own T4 replay strategy; see `docs/RESOLUTION_DESIGN.md`.
-- They are the most likely place for `alpha_eq`, `Typ::dummy()`, and
-  `Option<Thm>` diagnostics to hide mistakes.
-
-Primary files:
-
-```text
-src/core/thm.rs
-src/core/proofterm.rs
-src/core/unify.rs
-src/core/envir.rs
-src/core/tactic.rs
-src/core/bires.rs
-```
-
-Required attack tests:
-
-- Resolution cannot cross known concrete type mismatches.
-- E-resolution cannot discharge the wrong hypothesis.
-- Legacy-core `subst_premise` cannot rewrite across Free/Const or Var/Free
-  confusion once strict `alpha_eq` is enabled; strict `subst_premise` already
-  uses exact selected-subgoal matching.
-- Multi-premise burdens union exactly: `hyps`, `tpairs`, `shyps`, `oracles`.
-- Unsupported or failed resolution replay is distinguishable from proof
-  tampering.
-
-Done when:
-
-- Replay can validate the main proof-search generated derivations without
-  silently trusting unsupported rules.
-
-## Phase 6: Parser / Type / Certification Boundary
-
-Goal:
-
-Reduce kernel tolerance by making front-end terms better certified before they
-reach `ThmKernel`.
-
-Primary files:
-
-```text
-src/isar/term_parser.rs
-src/core/type_infer.rs
-src/core/types.rs
-src/core/thm.rs
-src/hol/hol_loader.rs
-src/theory/loader.rs
-```
-
-Tasks:
-
-- Make parser/loader distinguish `Const`, `Free`, `Var`, and `Bound` more
-  accurately.
-- Prefer annotated/certified terms at theorem construction sites.
-- Reduce `Typ::dummy()` in propositions accepted by kernel rules.
-- Replace semantic correction through `alpha_eq` with correct term
-  construction earlier in the pipeline.
-- Enable ignored Free/Const and Var/Free attack tests once representation is
-  aligned.
-
-Done when:
-
-- `alpha_eq` broad Free/Const suffix matching can be removed or narrowed.
-- `alpha_eq` Var/Free compatibility can be removed or narrowed.
-- Existing Tier2 proof rate does not rely on unsound kernel matching.
-
-## Phase 7: Admitted Lemma Reduction
-
-Goal:
-
-Shrink admitted counts by cause while preserving honest oracle footprints.
-
-Do not target "100%" by hiding fallback. Every remaining admitted fact must keep
-its `admitted:*` reason.
-
-Initial targets:
-
-```text
-Rings
-Lattices_Big
-Complete_Lattices
-Parity
-Power
-Map
-Order_Relation
-```
-
-Likely work areas:
-
-```text
-src/core/simplifier.rs
-src/tools/simp.rs
-src/isar/attrib.rs
-src/isar/method.rs
-src/isar/linarith.rs
-src/hol/hol_loader.rs
-```
-
-Tasks:
-
-- Categorize admitted lemmas by reason:
-  `admitted:proof_engine_failed`, `admitted:parser_gap`,
-  `admitted:unsupported_method`, `admitted:attribute_transformation`,
-  `admitted:datatype_stub`, `admitted:class_stub`, `admitted:metis_fallback`,
-  `admitted:simp_fallback`.
-- Improve named theorem handling for `field_simps`, `algebra_simps`, intro,
-  elim, dest, and simp attributes.
-- Add conditional rewrite support only where it can be justified by kernel
-  derivations or explicit admitted footprints.
-- Improve simp/linarith cooperation for arithmetic-heavy files.
-
-Done when:
-
-- Admitted count decreases with a reason-by-reason report.
-- No admitted path is reclassified as proved without a kernel derivation or
-  proof replay support.
-
-## Phase 8: Optional Proof Replay Integration
-
-Goal:
-
-Make independent replay available in verification workflows after enough
-primitive rules are supported.
-
-Tasks:
-
-- Add a CLI or test flag such as `--check-proof` or an equivalent verifier
-  option.
-- Make replay failures classify as:
-  unsupported rule, oracle/admitted theorem, tampered proof, or burden mismatch.
-- Keep replay optional until coverage is broad enough to avoid excessive false
-  negatives.
-- Never let replay success replace `is_strict_closed_proved()`; strict closed theorem
-  acceptance remains required.
-
-Done when:
-
-- Core theorem batches can optionally run proof replay on strict closed proved results.
-- Unsupported rules are reported as coverage gaps, not trust failures.
-
-## Phase 9: Compatibility Matrix
-
-Goal:
-
-Establish structured, measurable compatibility tracking rather than anecdotal
-claims.
-
-Primary files:
-
-```text
-tests/compatibility/
-docs/COMPATIBILITY.md
-```
-
-Tasks:
-
-- Define compatibility levels:
-  ```text
-  Level 0: Core syntax compatibility
-  Level 1: Pure compatibility
-  Level 2: HOL-Main compatibility
-  Level 3: Library compatibility
-  Level 4: AFP selected benchmark (20 entries)
-  Level 5: AFP large-scale compatibility
-  Level 6: Major tools compatibility
-  ```
-- Build CI that reports per-file proved/admitted/oracle counts.
-- Track admitted count per version as a regression gate.
-- Compare output with reference Isabelle where applicable.
-
-Done when:
-
-- Each version has a published compatibility report.
-- Admitted count never increases between versions.
-
-## Parallel Non-Blocking Track: HPC Symbolic Compute
-
-Status: design-only. This track does not reorder the strict-kernel,
-compatibility-matrix, admitted-inventory, or workspace-split phases.
-
-Goal:
-
-Introduce an untrusted, backend-agnostic compute layer for large mechanical
-symbolic workloads around proof search, without changing Isabelle-style user
-commands and without expanding the trusted kernel.
-
-Primary document:
-
-```text
-docs/HPC_SYMBOLIC_COMPUTE_DESIGN.md
-```
-
-First-stage tasks:
-
-```text
-PackedTermArena
-PackedFact
-PackedRewriteRule
-TermFingerprint
-FactCandidate
-RewriteCandidate
-SymbolicComputeBackend
-CpuSymbolicBackend
-```
-
-Candidate future backend:
-
-```text
-BurnSymbolicBackend / CubeCL backend behind an optional feature
-```
-
-Initial workloads:
-
-- term and fact fingerprinting;
-- fact prefiltering for proof search;
-- rewrite rule candidate filtering for simplifier paths;
-- finite-domain counterexample search;
-- batch proof-obligation quick rejection.
-
-Trust contract:
-
-- `compute` returns candidates, scores, fingerprints, and diagnostics only.
-- `compute` cannot construct or accept theorems.
-- exact proof-search transitions still run on CPU and call the kernel;
-- theorem acceptance remains strict CPU kernel replay/check;
-- `src/kernel` does not depend on `compute`, Burn, CubeCL, WGPU, CUDA, or any
-  backend-specific crate.
-
-Done when:
-
-- CPU packed-IR/fingerprint prototype exists outside `src/kernel`;
-- candidate prefilters are tested against exact CPU matching/search;
-- benchmark data shows a batch-size regime where acceleration is plausible;
-- no trusted theorem can be produced from compute output without kernel replay.
-
-## Phase 10: Cargo Workspace Split
-
-Goal:
-
-Extract `isabelle-kernel` as the first independent crate, enforcing the
-dependency direction established by ADR-0002.
-
-Primary deliverable:
-
-```text
-crates/isabelle-kernel/  — strict TCB, minimal deps, no tokio/LSP/WASM
-```
-
-Tasks:
-
-- Move `src/kernel/` to `crates/isabelle-kernel/src/`.
-- Define `isabelle-kernel/Cargo.toml` with minimal dependencies.
-- Ensure `isabelle-kernel` compiles and tests independently.
-- Establish the dependency rule: no other crate may be depended on by the kernel.
-- Legacy `src/core/` stays in the root crate until migration is complete.
-
-Done when:
-
-```bash
-cargo test -p isabelle-kernel
-cargo test --test kernel_rewrite_soundness
-```
-
-## Phase 11: Session Incremental Engine
-
-Goal:
-
-Design and implement a content-addressed incremental checking engine with
-snapshot/rollback, serving as shared infrastructure for both LSP and Agent
-protocol.
-
-Primary files:
-
-```text
-crates/isabelle-session/src/
-```
-
-Key API:
+Implement one operation conceptually equivalent to:
 
 ```rust
-pub trait ProofSession {
-    fn snapshot(&self) -> SnapshotId;
-    fn apply_command(&mut self, span: CommandSpan) -> Result<StateDiff>;
-    fn rollback(&mut self, snapshot: SnapshotId);
-    fn goals(&self) -> Vec<GoalView>;
-    fn diagnostics(&self) -> Vec<Diagnostic>;
-}
+pub fn accept_closed_theorem(
+    theory: &TrustedTheory,
+    theorem: ClosedThm,
+) -> Result<TrustedTheorem, KernelError>;
 ```
 
-Cache structure:
+The exact ownership shape may change during implementation, but the operation
+must:
+
+- check exact theory/signature identity;
+- require `CProp : prop` and no open hypotheses or unresolved obligations;
+- replay in the supplied immutable context;
+- recompute and validate all axiom, definition, and theorem dependencies;
+- reject compat, admitted, search-fact, and legacy inputs;
+- leave trusted-table storage to a typed operation that rejects context mismatch
+  and duplicate/conflicting names without silent overwrite.
+
+After this exists:
+
+- `ClosedThm::trust` becomes internal or is removed;
+- `KernelTrustedClosed` becomes a mutually exclusive `ProofOutcome` variant
+  that owns the returned `TrustedTheorem`;
+- the temporary reporting overlay is removed;
+- synthetic Pure `A ==> A` tests correct and wrong-context acceptance without
+  changing the 125-theorem HOL benchmark.
+
+Detailed audit:
+[KERNEL_TRUSTED_ACCEPTANCE_GAPS.md](KERNEL_TRUSTED_ACCEPTANCE_GAPS.md).
+
+## Phase 3: Source-Aware Proposition AST
+
+Preserve source semantics before legacy term lowering:
 
 ```text
-target/isabelle/
-  cache/
-    spans/
-    theories/
-    thms/
-    proofcerts/
-  diagnostics.db
-  graph.db
+Pure implication versus HOL implication
+Pure equality versus HOL.eq
+Const / Free / Var / Bound identity
+binder scope
+explicit types and sorts
+source spans
+notation and name-resolution provenance
+HOL.Trueprop insertion positions
 ```
 
-Done when:
+The current `SourcePropositionStatus` and `SourcePropositionShape` values remain
+transitional rejection metadata only.
 
-- Snapshot/rollback round-trips preserve theorem state.
-- Incremental checking correctly invalidates only changed spans.
-- Parallel build produces deterministic results.
+Do not repair a damaged legacy `CTerm` by guessing what the source meant.
 
-## Phase 12: isabelle.toml Project System
+## Phase 4: Checked Declarations And Proposition Elaboration
 
-Goal:
+Use one provenance-bearing pipeline for `typedecl`, `judgment`, `consts`,
+`axiomatization`, and `definition`.
 
-Lake-style project scaffolding with dependency locking and toolchain pinning.
-
-Primary deliverable:
-
-```bash
-isabelle-rs new my_project
-isabelle-rs build
-isabelle-rs test
-isabelle-rs fmt
-isabelle-rs lsp
-isabelle-rs doc
-isabelle-rs add AFP/Graph_Theory
-```
-
-Project structure:
+The first required judgment is:
 
 ```text
-my_project/
-  isabelle.toml
-  isabelle.lock
-  toolchain.toml
-  src/
-    Main.thy
-  tests/
-  docs/
-  target/
+HOL.Trueprop : bool => prop
 ```
 
-Configuration features (`isabelle.toml`):
+The elaborator must resolve checked polymorphic schemes and sorts, preserve the
+source skeleton, insert `Trueprop` only at recorded judgment positions, and
+return a checked `CProp` without constructing a theorem.
 
-```toml
-[build]
-parallel = true
-incremental = true
-deny_admit = true       # CI gate: no admitted theorems
-max_oracles = 0          # CI gate: no oracle dependencies
-trust_report = true      # generate per-build trust report
-proof_certificates = true # generate proof certificates
-```
+Do not add a `HOL.Trueprop` string special case to legacy
+`HolTheoremDb::build_type_env`.
 
-Done when:
+## Phase 5: Data-Only HOL Logic Basis
 
-- `isabelle-rs new` scaffolds a working project.
-- `isabelle-rs build` produces a trust report.
-- `deny_admit = true` fails the build when any theorem is admitted.
-
-## Phase 13: Agent Proof Protocol (APP)
-
-Goal:
-
-Design a structured protocol for machine proof search that operates at the
-proof-state level, not the text level.
-
-Primary files:
+Install the Isabelle/HOL logical basis as immutable data:
 
 ```text
-crates/isabelle-agent/src/
+HOL.Trueprop judgment
+HOL.eq declaration
+refl axiom schema
+subst axiom schema
+ext axiom schema when required
 ```
 
-Core API:
+Generic kernel code validates declaration schemes, installs the basis,
+instantiates axioms, records dependencies, and replays derivations. The
+manifest contains no callbacks, theorem factories, executable validators, or
+theorem-name special cases.
+
+Do not add `ThmKernel::hol_*` or `KernelRules::hol_*` proof shortcuts.
+
+## Phase 6: Generic Conservative Definition Extension
+
+Implement a theorem-independent operation that:
+
+- requires a fresh constant;
+- validates the declaration and legal definition left-hand side;
+- checks a closed, well-typed RHS with no direct or indirect self-reference;
+- checks type variables, sorts, and parent-theory dependencies;
+- returns a child theory and replayable Pure meta-equality definition theorem.
+
+The legacy `CheckedDefinitionSource` and `true_def_transport` mechanisms remain
+transitional evidence only.
+
+## Phase 7: First Real HOL Theorem
+
+Re-derive:
 
 ```text
-proof/open_project
-proof/open_theory
-proof/get_state
-proof/get_goals
-proof/search_facts
-proof/apply_command
-proof/try_method
-proof/rollback
-proof/replay
-proof/minimize
-proof/trust_report
-proof/export_certificate
+|- HOL.Trueprop HOL.True
 ```
 
-`get_goals` returns structured JSON:
-
-```json
-{
-  "state_id": "s42",
-  "mode": "ProofBackward",
-  "goals": [
-    {
-      "id": "g0",
-      "target": "xs @ [] = xs",
-      "variables": [{"name": "xs", "type": "'a list"}],
-      "hypotheses": [],
-      "suggestions": [
-        {"kind": "induction", "on": "xs"},
-        {"kind": "simp", "facts": ["append_Nil"]}
-      ]
-    }
-  ]
-}
-```
-
-`apply_command` returns a state diff:
-
-```json
-{
-  "before": "s42",
-  "after": "s43",
-  "accepted": true,
-  "new_goals": [],
-  "diagnostics": [],
-  "trust_delta": {"oracles_added": [], "admitted_added": []}
-}
-```
-
-Design principle:
+Required chain:
 
 ```text
-                 ┌──────────────┐
-VS Code/Neovim ← │ isabelle-lsp  │
-                 └──────┬───────┘
-                        │
-                 ┌──────▼───────┐
-                 │ isabelle-session │
-                 └──────▲───────┘
-                        │
-Agent/Codex/Claude ← ┌──┴──────────┐
-                     │ isabelle-agent │
-                     └──────────────┘
+source-aware TrueI
+  -> checked Trueprop elaboration
+  -> immutable HOL theory
+  -> installed refl schema instance
+  -> conservative True_def theorem
+  -> ordinary Pure equality/congruence transport
+  -> context-bound TrustedTheorem
+  -> unique acceptance
+  -> KernelTrustedClosed: 1/125
 ```
 
-LSP serves humans; APP serves machines. Both share the session layer.
+Only this milestone authorizes changing the sampled kernel-trusted count.
 
-Done when:
+## Phase 8: Reuse Consumer
 
-- Agent can call `get_goals` and receive structured goal state.
-- Agent can `apply_command` and receive a state diff.
-- Agent can `rollback` to a previous snapshot.
-- `trust_report` accurately reflects oracle/admitted footprint.
+`HOL::trans` may be implemented only after Phase 7. It must reuse the same
+source AST, elaborator, immutable HOL context, installed `subst` schema,
+dependency replay, and acceptance operation. It must not introduce a
+`try_strict_hol_trans` theorem-name bridge.
 
-## Phase 14: WASM Plugin Sandbox Hardening
+## Parallel Maintenance
 
-Goal:
+Allowed when it does not delay or weaken the main line:
 
-Enforce capability boundaries on WASM plugins: plugins must not construct
-trusted theorems directly, modify kernel state, bypass oracle footprint, or
-silently admit.
+- strict-kernel attack-test and replay hardening;
+- classified admitted/compat diagnostics;
+- documentation and agent-rule synchronization;
+- design-only deterministic CPU symbolic-compute work.
 
-Primary files:
+Compute remains an untrusted candidate producer. Burn/CubeCL/GPU work, if ever
+added, stays outside the kernel and cannot produce theorem values.
 
-```text
-crates/isabelle-plugin-wasm/src/
-```
+## Deferred Platform Work
 
-Plugin capabilities (allowed):
+Defer until the trusted HOL loop closes:
 
-```text
-custom tactic
-proof search strategy
-domain-specific simplifier
-theorem search extension
-Agent strategy plugin
-document generation plugin
-```
-
-Plugin restrictions (forbidden):
-
-```text
-direct trusted theorem construction
-kernel state modification
-oracle footprint bypass
-silent admit
-```
-
-Plugin return boundary: proof script, proof term, method suggestion, fact
-ranking, diagnostic — never a raw theorem.
-
-Done when:
-
-- Plugin capability violations are rejected at the WASM boundary.
-- Plugin-produced proof scripts must pass kernel checking before theorem acceptance.
-
-## Phase 15: AFP Large-Scale Benchmark
-
-Goal:
-
-Systematic compatibility measurement against AFP entries.
-
-Primary files:
-
-```text
-tests/afp/
-```
-
-Tasks:
-
-- Select 20 representative AFP entries.
-- Build automated compatibility CI.
-- Track per-entry proved/admitted/oracle counts.
-- Require admitted count to be non-increasing between versions.
-- Publish per-version compatibility report.
-
-Done when:
-
-- 20 AFP entries have compatibility status.
-- CI gate rejects admitted-count regressions.
-- Compatibility report is generated per release.
-
-## Later Work
-
-Only after the above tracks are stable:
-
-- Broaden Isar grammar and structured proof coverage.
-- Improve HOL packages where they reduce admitted counts.
-- Extend LSP integration with richer IDE features.
-- Consider Sledgehammer/SMT/Code Generator only as non-core research tracks.
-- WASM plugin marketplace and registry.
+- Cargo workspace split;
+- session snapshot/rollback engine;
+- `isabelle.toml` project system;
+- Agent Proof Protocol;
+- broad LSP/PIDE/WASM/plugin work;
+- broad HOL/Isar/tool coverage;
+- AFP-scale claims.
 
 ## Standing Verification Policy
 
-For kernel, proof replay, or theorem acceptance changes:
+- Documentation/agent changes: `scripts/dev-check.sh docs`.
+- Kernel or trust-boundary changes: `scripts/dev-check.sh strict`.
+- Sampled HOL metric changes: `scripts/dev-check.sh core`.
+- Broader theory claims: run the exact relevant `tier2`, `tier3`, or `broad`
+  mode.
 
-```bash
-bash scripts/check-strict-kernel.sh
-```
-
-This unified gate covers: `cargo +stable fmt --check`, `cargo +stable check`,
-`bash scripts/check-kernel-firewall.sh`, `cargo test --test kernel_rewrite_soundness`
-(134 attack tests), `cargo test --test kernel_soundness` (26 boundary tests),
-`cargo test --lib kernel::thm::` (11), `cargo test --lib kernel::unify::tests::` (15),
-`cargo test --lib kernel::rules::tests::` (54), `cargo test --lib core::` (199).
-
-For theory-wide claims:
-
-```bash
-RUST_MIN_STACK=268435456 cargo test test_verify_all_core_files -- --nocapture
-RUST_MIN_STACK=268435456 cargo test --test tier2_verify -- --nocapture
-```
-
-Do not report full `cargo test --lib` success unless the current checkout has
-verified the known theory-loader stack overflow is fixed.
+Report observed results only. Do not infer project API correctness from a
+standalone template compile, mathematical trust from an oracle-free count, or
+dependency intent from a successful locked metadata command.

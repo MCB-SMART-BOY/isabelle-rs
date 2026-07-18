@@ -8,7 +8,7 @@ Accepted.
 
 The first trusted-engineering pass made legacy theorem accounting more honest:
 compatibility theorems, open theorems, and admitted facts no longer count as
-strict closed proved lemmas. It also introduced strict alpha-equivalence,
+transitional strict-closed lemmas. It also introduced strict alpha-equivalence,
 checked CTerms, theorem trust taint, and strict invariant checks.
 
 That remains a patch over the legacy architecture. The old `src/core`,
@@ -92,7 +92,11 @@ Every primitive rule must have:
   or narrower. Legacy `src/core`, Isar, HOL, tools, and session modules must
   enter through strict certification or explicit adapters.
 - `ProofObligation` is separate from theorem values.
-- `TrustedTheory` accepts only `TrustedTheorem`.
+- The current `TrustedTheory` accepts only the nominal `TrustedTheorem` type,
+  but its context-free `add` operation is not final acceptance. The target
+  additionally requires immutable theory/logic provenance and context replay as
+  specified by ADR-0003 and
+  [KERNEL_TRUSTED_ACCEPTANCE_GAPS.md](KERNEL_TRUSTED_ACCEPTANCE_GAPS.md).
 - `SearchFactDb` may hold untrusted facts but cannot promote them to
   trusted theorems.
 - Old Isar/HOL/tactic migration should happen through adapters after the

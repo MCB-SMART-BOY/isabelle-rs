@@ -2,8 +2,8 @@
 
 ## Status
 
-Narrow `True_def` transport is implemented as the next prerequisite for the
-first existing core-file `StrictClosed` theorem.
+Narrow legacy `True_def` transport is implemented for the first existing
+core-file `TransitionalStrictClosed` experiment.
 
 Current chain:
 
@@ -12,8 +12,17 @@ True_def checked definition source: done, non-theorem input only
 HOL object-equality/reflexivity bridge: done
 checked-definition transport/fold-back for True_def: done in this phase
 try_strict_hol_true_i: implemented as a narrow TrueI-only adapter
-core batch StrictClosed: 1/125
+core batch TransitionalStrictClosed: 1/125
+KernelTrustedClosed: 0/125
 ```
+
+This theorem-specific transport produces a bool-valued legacy theorem without
+a conservative definition certificate or immutable theory identity. It is
+ineligible for `KernelTrustedClosed` and must not be expanded into general
+definition rewriting in legacy core; a future
+conservative-definition mechanism belongs with the object-logic boundary
+proposed in
+[ADR-0003-hol-logic-trusted-extension.md](ADR-0003-hol-logic-trusted-extension.md).
 
 ## Purpose
 
@@ -26,8 +35,10 @@ rhs: HOL.eq (λx::bool. x) (λx::bool. x)
 ```
 
 This source is not a theorem, not a searchable fact, and not proof progress by
-itself. It only gives a checked definitional relation that a named, auditable
-transport step may use.
+itself. It is a checked legacy payload, not a certified conservative
+definition: it establishes neither constant freshness nor closure,
+non-recursion, type/sort discipline, theory ancestry, or a Pure equality
+theorem.
 
 The narrow transport step is:
 
@@ -44,7 +55,8 @@ result:
 
 ## Trust Boundary
 
-This transport is a TCB extension point. It is not:
+This transport expands the transitional legacy trusted surface. It is not part
+of the target TCB and is not:
 
 - general unfolding;
 - general definition rewriting;
@@ -68,12 +80,12 @@ conditions hold:
 - `true_def.lhs` is checked, dummy-free, and exactly `HOL.True`;
 - `true_def.rhs` is checked, dummy-free, and exactly
   `HOL.eq (λx::bool. x) (λx::bool. x)`;
-- `rhs_thm` is strict closed proved;
+- `rhs_thm` satisfies the legacy transitional strict-closed predicate;
 - `rhs_thm.prop == true_def.rhs`;
 - the result has no hypotheses, unresolved `tpairs`, oracle/admit footprint,
   or dummy types;
 - the result is marked `ThmTrust::Strict` and classifies as
-  `ProofOutcome::StrictClosed`.
+  `ProofOutcome::TransitionalStrictClosed`.
 
 ## Rejection Conditions
 
@@ -120,11 +132,11 @@ proof shape: unfolding True_def by (rule refl)
 checked True_def source exists
 try_strict_hol_refl proves the checked RHS
 true_def_transport folds RHS back to HOL.True
-final theorem is StrictClosed
+final legacy theorem is TransitionalStrictClosed
 ```
 
-The core batch now reports `StrictClosed: 1/125`, with `HOL::TrueI` as the
-first existing theorem routed through strict acceptance.
+The core batch reports `TransitionalStrictClosed: 1/125`.
+`KernelTrustedClosed` remains `0/125`.
 
 ## Attack Tests
 

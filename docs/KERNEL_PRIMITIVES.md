@@ -13,8 +13,13 @@ for the new TCB, not a description of the legacy `src/core` implementation.
 - Theorem values are produced only by `KernelRules`.
 - `ProofObligation` is not a theorem.
 - `ClosedThm` is a wrapper for theorems with no hypotheses.
-- `TrustedTheorem` is a checked `ClosedThm`.
-- `TrustedTheory` accepts only `TrustedTheorem`.
+- The current `TrustedTheorem` is a context-free invariant-replayed
+  `ClosedThm`; the name does not yet imply theory identity.
+- The current `TrustedTheory` accepts only that nominal Rust type, but its
+  `add` operation does not check context/ancestry or reject replacement.
+- Final object-logic acceptance requires immutable
+  theory/signature/logic-extension provenance and replay in that same context;
+  the current sampled `KernelTrustedClosed` count is `0/125`.
 - `SearchFactDb` facts are not trusted theorem-table entries.
 
 ## `assume`
@@ -49,7 +54,8 @@ Side conditions:
 Result:
 
 - no hypotheses;
-- eligible for `TrustedTheorem` after invariant replay.
+- can pass current context-free invariant replay; final trust still requires the
+  context-bound acceptance gate.
 
 ## `symmetric`
 
@@ -133,7 +139,8 @@ Side conditions:
 Result:
 
 - no hypotheses;
-- eligible for `TrustedTheorem` after invariant replay.
+- can pass current context-free invariant replay; final trust still requires the
+  context-bound acceptance gate.
 
 Attack tests cover:
 
@@ -637,6 +644,8 @@ implementation. See that document for:
   matcher → `resolve1_match` prototype → conservative `subst_premise` →
   conservative `bicompose` wrapper are implemented; full Isabelle-style
   `bicompose` and `bicompose_eresolve` remain future work.
+  They are deferred until immutable context acceptance and the first
+  new-kernel `HOL::TrueI` loop close.
 - Open design questions (9 items).
 - Attack test plans.
 

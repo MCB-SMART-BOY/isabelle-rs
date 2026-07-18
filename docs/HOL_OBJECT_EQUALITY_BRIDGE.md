@@ -2,8 +2,8 @@
 
 ## Status
 
-Narrow bridge implemented. `HOL::TrueI` is now implemented as the first
-existing core-file strict theorem slice.
+Narrow legacy bridge implemented. `HOL::TrueI` is the first existing core-file
+`TransitionalStrictClosed` slice, not a new-kernel trusted theorem.
 
 Current implementation status:
 
@@ -12,8 +12,15 @@ HOL.eq term/type diagnostic: done
 try_strict_hol_refl: implemented
 checked-definition transport/fold-back to True: implemented for checked True_def
 try_strict_hol_true_i: implemented as a narrow TrueI-only adapter
-core batch StrictClosed: 1/125
+core batch TransitionalStrictClosed: 1/125
+KernelTrustedClosed: 0/125
 ```
+
+This bridge produces a bool-valued legacy `core::Thm`, has no immutable theory
+or logic-extension identity, and cannot enter `KernelTrustedClosed`. It must not
+be generalized with additional HOL primitives in `src/core`; the target
+replacement boundary is proposed in
+[ADR-0003-hol-logic-trusted-extension.md](ADR-0003-hol-logic-trusted-extension.md).
 
 The current tests in `src/hol/hol_loader.rs` establish:
 
@@ -25,8 +32,8 @@ The current tests in `src/hol/hol_loader.rs` establish:
 - `try_strict_hol_refl` accepts only checked input terms and checked `HOL.eq`
   declarations, and rejects missing/dummy `HOL.eq` and compatibility inputs.
 
-This document specifies the next prerequisite for the first existing core-file
-`StrictClosed` slice:
+This document records the transitional experiment used by the first existing
+core-file `TransitionalStrictClosed` slice:
 
 ```text
 HOL::TrueI:
@@ -40,7 +47,8 @@ as proof progress. `try_strict_hol_refl` can prove the unfolded reflexive HOL
 object equality, and `true_def_transport` can fold that exact checked RHS back
 to `HOL.True`. `HOL::TrueI` remains unsafe to accept until a narrow adapter
 checks the theorem name, parsed proposition, proof shape, checked definition,
-RHS proof, and final `StrictClosed` result.
+RHS proof, and final `TransitionalStrictClosed` result. Those checks do not supply
+`HOL.Trueprop`, a theory context, or new-kernel theorem provenance.
 
 ## Problem
 
@@ -66,8 +74,8 @@ It does not prove:
 ```
 
 The current searchable `refl` facts in the HOL database are compatibility facts,
-not strict closed theorem sources. They must not be reused to produce
-`ProofOutcome::StrictClosed`.
+not transitional strict-closed theorem sources. They must not be reused to
+produce `ProofOutcome::TransitionalStrictClosed`.
 
 ## Non-Goals
 
@@ -94,26 +102,28 @@ HOL.eq : α => α => bool
 t      : α
 ```
 
-The result proposition is the boolean term `HOL.eq t t` lifted through the
-current HOL proposition representation used by the verified slice. It must not
-be represented as Pure meta-equality unless the proposition explicitly requires
-meta-equality.
+The current result is the boolean term `HOL.eq t t : bool`; it is not lifted
+through `HOL.Trueprop` and therefore is not a valid `CProp` for final kernel
+acceptance. It must not be represented as Pure meta-equality either. A future
+HOL elaborator must construct `HOL.Trueprop (HOL.eq t t) : prop` from the source
+judgment position before kernel certification.
 
 ## Trust Decision
 
-The bridge is treated as a narrow HOL object-logic primitive
-bridge:
+The bridge is treated only as a named legacy migration derivation:
 
 ```text
 try_strict_hol_refl(t)
   input:
     checked HOL term t : α
   output:
-    strict closed theorem for HOL.eq t t
+    legacy TransitionalStrictClosed theorem for HOL.eq t t : bool
 ```
 
-This is a TCB extension point. It is not derived from Pure reflexivity alone.
-Until a fuller HOL axiom package and replay path exists, the bridge must be:
+This expands the transitional `src/core` trusted surface but is not part of the
+target Pure kernel or HOL logic extension. It is not derived from Pure
+reflexivity alone and is ineligible for `KernelTrustedClosed`. While it remains,
+the bridge must be:
 
 - explicitly named;
 - documented in `TRUST.md`;
@@ -134,7 +144,8 @@ Until a fuller HOL axiom package and replay path exists, the bridge must be:
 - The result has no hypotheses.
 - The result has no unresolved `tpairs`.
 - The result has no oracle/admit footprint.
-- The result is marked strict and classifies as `ProofOutcome::StrictClosed`.
+- The result is marked strict and classifies as
+  `ProofOutcome::TransitionalStrictClosed`.
 
 ## Rejection Conditions
 
@@ -160,7 +171,7 @@ The bridge must reject:
 5. unfold to the expected reflexive HOL object equality;
 6. call `try_strict_hol_refl` on the checked RHS term;
 7. transport back to `True` through the documented checked `True_def` step;
-8. accept only if the final theorem is `StrictClosed`.
+8. classify the final legacy theorem as `TransitionalStrictClosed` only.
 ```
 
 The transport step is documented separately in
@@ -190,7 +201,7 @@ strict_hol_true_i_rejects_wrong_prop
 strict_hol_true_i_rejects_wrong_proof_shape
 strict_hol_true_i_rejects_rhs_mismatch
 strict_hol_true_i_rejects_compat_refl_path
-proof_outcome_counts_hol_true_i_as_strict_closed
+proof_outcome_counts_hol_true_i_as_transitional_strict_closed
 ```
 
 The checked-definition transport attack tests live next to the HOL loader and
@@ -198,16 +209,17 @@ proofterm replay tests and include `true_def_transport_*` coverage.
 
 ## Implementation Boundary
 
-The bridge should live outside `src/kernel` until the object-logic trust story is
-settled. The strict kernel proves Pure propositions; this bridge connects the
-HOL object logic to the strict acceptance path and must therefore remain a
-small, named adapter with explicit documentation.
+The bridge remains quarantined outside `src/kernel` and must not be copied into
+the future HOL object-logic layer. The target path installs explicit HOL axiom
+schemas and conservative definitions in an immutable context, then derives a
+`CProp` using generic kernel operations.
 
 Do not expand this bridge into general equality reasoning. The completed
 milestone is:
 
 ```text
-test_verify_all_core_files: StrictClosed 0/125 -> 1/125
+TransitionalStrictClosed: 0/125 -> 1/125
+KernelTrustedClosed:      0/125
 ```
 
 and the only current consumer is the `HOL::TrueI` slice.

@@ -23,9 +23,10 @@ the rule-level ledger, not a claim of full Isabelle `thm.ML` equivalence.
 - `is_fully_proved()` means oracle-free only.
 - `is_closed_proved()` means oracle-free closed shape only; compatibility
   theorems may satisfy it.
-- Trusted lemma acceptance must use `is_strict_closed_proved()` (strict
+- Transitional legacy classification uses `is_strict_closed_proved()` (strict
   construction, oracle-free, no hypotheses, no unresolved `tpairs`, no dummy
-  types).
+  types). Final trusted acceptance requires a context-bound
+  `src/kernel::TrustedTheorem` instead.
 - `admit` is the only intentional unproved-entry point and must tag `oracles`.
 - `instantiate_checked` is the production theorem-instantiation boundary; the
   old infallible `instantiate` entry point is not available in production code.
@@ -61,8 +62,9 @@ the rule-level ledger, not a claim of full Isabelle `thm.ML` equivalence.
   frees must be declared there before certification; checked proof goals no
   longer auto-declare names from the raw term being certified.
 - `Thm` records `ThmTrust::{Strict, Compat, Admitted}`. Compatibility theorem
-  construction is tainted and cannot enter trusted theorem tables even if the
-  theorem is oracle-free and closed-shaped.
+  construction is tainted and cannot enter even the transitional legacy table
+  when strict filtering applies. No legacy `ThmTrust` value authorizes final
+  new-kernel `TrustedTheory` acceptance.
 - `Thm::check_kernel_invariants(KernelCheckMode::Strict)` is the strict audit
   gate for theorem internals: it requires `ThmTrust::Strict`, checked
   proposition/hypothesis CTerms, no dummy types in burdens, exact `maxidx`, no
@@ -88,8 +90,8 @@ the rule-level ledger, not a claim of full Isabelle `thm.ML` equivalence.
 | `assume_compat` | `ThmKernel::assume_compat` | `A |- A` | compatibility CTerm accepted | no oracle; `ThmTrust::Compat`; not a strict trusted entry | legacy parser/HOL/test scaffolding only |
 | `reflexive` | `ThmKernel::reflexive` | `|- t == t` | checked CTerm, no dummy; derived equality CTerm remains checked | clean theorem; `ThmTrust::Strict` | `checked_cterm_constructs_checked_reflexive_theorem` |
 | `reflexive_compat` | `ThmKernel::reflexive_compat` | `|- t == t` | compatibility CTerm accepted, may carry dummy | clean theorem shape but `ThmTrust::Compat` | `reflexive_compat_is_closed_shaped_but_not_strict_trusted` |
-| `hol_object_refl` | `ThmKernel::hol_object_refl` / `try_strict_hol_refl` | `|- HOL.eq t t` | checked input CTerm; checked `HOL.eq : α => α => bool`; no dummy; not derived from Pure `reflexive` | clean theorem; `ThmTrust::Strict`; derivation `hol_object_refl` | `hol_refl_bridge_*`; `core::proofterm::tests::{hol_object_refl_replay_succeeds,pure_reflexive_replay_rejects_hol_object_equality}` |
-| `true_def_transport` | `ThmKernel::true_def_transport` / `try_strict_true_def_transport` | `|- True_def.rhs` to `|- HOL.True` | checked `True_def` source only; lhs must be `HOL.True`; rhs must be the exact reflexive HOL.eq body; premise must be strict closed proved | clean theorem; `ThmTrust::Strict`; derivation `true_def_transport`; not general unfolding | `true_def_transport_*`; `core::proofterm::tests::{true_def_transport_replay_succeeds,true_def_transport_replay_rejects_wrong_rhs}` |
+| `hol_object_refl` | `ThmKernel::hol_object_refl` / `try_strict_hol_refl` | legacy `|- HOL.eq t t : bool` | checked input CTerm; checked `HOL.eq : α => α => bool`; no dummy; not derived from Pure `reflexive` | transitional theorem; `ThmTrust::Strict`; derivation `hol_object_refl`; ineligible for `KernelTrustedClosed` | `hol_refl_bridge_*`; `core::proofterm::tests::{hol_object_refl_replay_succeeds,pure_reflexive_replay_rejects_hol_object_equality}` |
+| `true_def_transport` | `ThmKernel::true_def_transport` / `try_strict_true_def_transport` | legacy `|- True_def.rhs` to `|- HOL.True : bool` | legacy checked `True_def` payload only; lhs must be `HOL.True`; rhs must be the exact reflexive HOL.eq body; premise must satisfy the transitional strict-closed predicate | transitional theorem; `ThmTrust::Strict`; derivation `true_def_transport`; no conservative definition certificate or immutable theory identity | `true_def_transport_*`; `core::proofterm::tests::{true_def_transport_replay_succeeds,true_def_transport_replay_rejects_wrong_rhs}` |
 | `symmetric` | `ThmKernel::symmetric` | `Γ |- t == u` to `Γ |- u == t` | input must be equality | clone all premise burdens | oracle and shyp propagation tests |
 | `transitive` | `ThmKernel::transitive` | `Γ |- t == u`, `Δ |- u == v` to `Γ∪Δ |- t == v` | middle terms strict-kernel alpha-equal; known middle-term and equality types compatible | union all premise burdens | type-mismatch and alpha-confusion attack tests |
 | `combination` | `ThmKernel::combination` | `f == g`, `x == y` to `f x == g y` | first equality type must be function; known argument type compatible with domain | union all premise burdens | known mismatch and well-typed tests |
@@ -131,15 +133,16 @@ the rule-level ledger, not a claim of full Isabelle `thm.ML` equivalence.
   undeclared local frees even when the raw term carries non-dummy type
   annotations. This is a proof-context certification boundary, not just a
   no-dummy wrapper.
-- `assume_compat` / `reflexive_compat` produce `ThmTrust::Compat`; final
-  trusted theory tables and verified counts use `is_strict_closed_proved()`, so
-  closed-shaped compatibility theorems remain searchable but untrusted.
-- `is_strict_closed_proved()` is a cheap trusted-acceptance predicate.
+- `assume_compat` / `reflexive_compat` produce `ThmTrust::Compat`; transitional
+  legacy tables and counts use `is_strict_closed_proved()`, so closed-shaped
+  compatibility theorems remain searchable but do not enter that bucket.
+- `is_strict_closed_proved()` is a cheap transitional-classification predicate.
   `check_kernel_invariants(Strict)` is the stronger audit predicate and should
   be used in strict-kernel tests and future CI gates.
 - Passing `check_kernel_invariants(Strict)` means strict theorem internal
-  consistency, not final closed theorem acceptance. Final trusted tables still
-  use `is_strict_closed_proved()`.
+  consistency, not final closed theorem acceptance. The final target
+  `TrustedTheory` accepts only a `src/kernel::TrustedTheorem` bound to immutable
+  theory/logic context and replayed in that context; the current type does not.
 - Unsupported replay rules may pass structural strict invariants but still fail
   `check_proof()` with an explicit unsupported-rule error.
 - `ThmKernel::assume_checked` and `ThmKernel::reflexive_checked` remain
@@ -151,9 +154,9 @@ the rule-level ledger, not a claim of full Isabelle `thm.ML` equivalence.
 - Proof-object replay currently supports only `assume`, `reflexive`,
   `symmetric`, `transitive`, `implies_intr`, and `implies_elim`. Other kernel
   rules intentionally fail replay until their constructors/checkers are added.
-- The next replay expansion batch is `beta_conversion`, `forall_intr`, and
-  `forall_elim`; then `combination`/`abstraction`, then
-  `instantiate_checked`, then resolution/substitution rules.
+- Legacy replay expansion is deferred behind immutable context identity and
+  acceptance. Its backlog starts with `beta_conversion`/`forall_*`, then
+  `combination`/`abstraction`, checked instantiation, and resolution rules.
 - `ProofBody::check(expected_prop)` remains a proposition-only compatibility
   helper and must not be used as a trusted theorem replay gate. The low-level
   proofterm check helpers are crate-internal; the public trusted entry points
@@ -254,20 +257,23 @@ precisely:
   one generic `"admitted"` tag for the audited exit sites.
 - Lemma statistics first stopped at `Thm::is_closed_proved()`, not just an empty
   oracle footprint; open `A |- A` theorems no longer count as proved lemmas.
-  The strict-kernel phase further requires `Thm::is_strict_closed_proved()` so
-  compatibility closed-shapes no longer count either.
+  The legacy transitional phase further requires
+  `Thm::is_strict_closed_proved()` so compatibility closed-shapes no longer
+  count either. This predicate does not authorize new-kernel trust.
 - Non-derivational theorem attribute transformations now use
   `admitted:attribute_transformation` instead of `assume`-wrapping the result.
-- `TheoryProcessor::process_source_verified` and final `LocalTheory` registration
-  now require `is_strict_closed_proved()`; `accept_all` remains searchable in
-  the local index as an admitted theorem but does not enter the final trusted
-  theorem table.
-- `SessionBuilder` now reports strict closed proved theorem counts instead of
-  indexed theorem entries; `accept_all` and compatibility-only files are not
+- `TheoryProcessor::process_source_verified` and legacy `LocalTheory`
+  registration now require `is_strict_closed_proved()`; `accept_all` remains
+  searchable in the local index as an admitted theorem but does not enter the
+  transitional table. Final `TrustedTheory` acceptance is a separate
+  context-bound new-kernel gate.
+- `SessionBuilder` reports `TransitionalStrictClosed` counts instead of indexed
+  theorem entries; `accept_all` and compatibility-only files are not
   `FullSuccess`.
 - `HolTheoremDb` is explicitly a proof-search fact index. It may contain open,
-  admitted, or compatibility facts in `by_name`/nets, so trusted statistics
-  must use strict `closed_proved_count()` or the final `Theory` table.
+  admitted, or compatibility facts in `by_name`/nets, so transitional
+  statistics must use strict `closed_proved_count()` or the legacy `Theory`
+  table. Final trust requires a context-bound `src/kernel::TrustedTheorem`.
 - T4 proof replay has a minimal closed loop for
   `assume/reflexive/symmetric/transitive/implies_intr/implies_elim`. Tampering
   with a theorem proposition or nested premise derivation is rejected by

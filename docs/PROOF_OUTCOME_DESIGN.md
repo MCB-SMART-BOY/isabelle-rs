@@ -4,26 +4,34 @@
 
 Phase 1 summary classifier implemented in `src/isar/method.rs`.
 
+The implemented `ProofOutcome::TransitionalStrictClosed` variant classifies
+legacy `core::Thm + ThmTrust::Strict`. The distinct target metric
+`KernelTrustedClosed`, backed by `src/kernel::TrustedTheorem` and `CProp : prop`,
+is currently `0/125` and is not yet represented by this enum.
+
 Current implementation:
 
 - defines `ProofOutcome`, `TheoremSummary`, `OpenReason`, `AdmitReason`, and
   `ProofFailure`;
 - classifies existing `verify_lemma` results without changing theorem
   construction;
-- keeps `StrictClosed` separate from compat, open, admitted, and failed
+- keeps `TransitionalStrictClosed` separate from compat, open, admitted, and failed
   outcomes;
-- makes `test_verify_all_core_files` print ProofOutcome summary counts.
+- makes `core_batch_snapshot_reports_one_transitional_and_zero_kernel_trusted`
+  print and assert the exact sampled `ProofOutcome` summary;
 - includes a targeted Pure implication identity smoke slice: `A ==> A` can be
   constructed by the strict kernel nucleus, and the current `verify_lemma`
-  summary path can count the checked identity adapter as `StrictClosed`.
-- routes the existing core-file theorem `HOL::TrueI` through strict acceptance,
-  raising the sampled core batch to `StrictClosed: 1/125`.
+  summary path can count the checked identity adapter as
+  `TransitionalStrictClosed`.
+- routes the existing core-file theorem `HOL::TrueI` through the narrow
+  transitional adapter, raising the sampled core batch to
+  `TransitionalStrictClosed: 1/125` while `KernelTrustedClosed` remains `0/125`;
 
 Not yet implemented:
 
 - final theorem-table acceptance has not been rewritten around `ProofOutcome`;
-- only one existing HOL/core-file theorem has been migrated to `StrictClosed`
-  so far (`HOL::TrueI`);
+- only one existing HOL/core-file theorem has been classified as
+  `TransitionalStrictClosed` so far (`HOL::TrueI`);
 - broad HOL/Isar proof methods still mostly return admitted or compat/open
   outcomes.
 
@@ -45,23 +53,26 @@ These are not interchangeable. In particular:
 
 ```text
 oracle-free != strict proved
-compat closed != strict closed
+compat closed != transitional strict closed
 open theorem != accepted theorem
 ```
 
 Recent goal-export work made this boundary more honest: proof-method results
 with unknown hypotheses are now admitted with `goal_export_*` reasons instead
-of being reported as misleading open oracle-free results. The next step is to
-replace scattered predicates and string reasons with one explicit outcome model.
+of being reported as misleading open oracle-free results. The summary/reporting
+model is implemented. The remaining outcome change is intentionally blocked on
+immutable context identity and a real kernel acceptance value.
 
 ## Goals
 
 - Provide a single classification for every theorem verification attempt.
-- Make trusted theorem-table acceptance depend only on strict closed outcomes.
+- Keep the `TransitionalStrictClosed` bucket diagnostic-only for final trust.
+- Make final theorem-table acceptance depend on a context-bound
+  `KernelTrustedClosed` value carrying `src/kernel::TrustedTheorem`.
 - Keep compat/oracle-free facts searchable without counting them as proved.
 - Structure admitted and failure reasons for stable reports.
-- Give the core-to-kernel migration a measurable target: `0/125 -> 1/125`
-  `StrictClosed` in the core verification batch.
+- Keep both migration metrics visible: transitional legacy coverage is `1/125`,
+  while new-kernel coverage remains `KernelTrustedClosed: 0/125`.
 
 ## Non-Goals
 
@@ -73,30 +84,9 @@ replace scattered predicates and string reasons with one explicit outcome model.
 ## Proposed Outcome Model
 
 The implemented Phase 1 shape is intentionally summary-first. It stores a
-`TheoremSummary` rather than moving theorem ownership through every caller:
-
-```rust
-pub enum ProofOutcome {
-    StrictClosed {
-        summary: TheoremSummary,
-    },
-    CompatClosedOracleFree {
-        summary: TheoremSummary,
-    },
-    OpenOracleFree {
-        reason: OpenReason,
-        summary: TheoremSummary,
-    },
-    Admitted {
-        reason: AdmitReason,
-        summary: TheoremSummary,
-    },
-    Failed {
-        reason: ProofFailure,
-        name: String,
-    },
-}
-```
+`TheoremSummary` rather than moving theorem ownership through every caller.
+The authoritative Rust definition is
+[`ProofOutcome`](../src/isar/method.rs), not a copied documentation template.
 
 The model intentionally separates theorem storage from theorem summaries. A
 report does not need to retain a full legacy theorem to explain why a proof did
@@ -106,34 +96,30 @@ not become trusted.
 
 | Outcome | Meaning | Trusted theorem table? |
 |---|---|---|
-| `StrictClosed` | Result was constructed by the strict path, has no oracles, no hypotheses, no unresolved `tpairs`, no dummy types, and passed the required acceptance gate. | Yes |
+| `TransitionalStrictClosed` | Legacy `core::Thm + ThmTrust::Strict` result with no oracles, hypotheses, unresolved `tpairs`, or dummy types. | No |
 | `CompatClosedOracleFree` | Legacy theorem is closed-shaped and oracle-free, but not strict. | No |
 | `OpenOracleFree` | Legacy theorem is oracle-free but still has open hypotheses, subgoals, unresolved `tpairs`, or another open condition. | No |
 | `Admitted` | The system accepted an unproved proposition with an explicit reason. | No |
 | `Failed` | The proof attempt failed without producing an accepted theorem. | No |
 
-Only `StrictClosed` may enter final trusted theorem tables. All other outcomes
-may be useful for proof search, diagnostics, or migration prioritization, but
-their taint must not be erased.
+None of the current summary variants is sufficient for final trusted-theory
+acceptance. Only the future `KernelTrustedClosed` gate may enter final trusted
+theorem tables. It must retain a `src/kernel::TrustedTheorem`, certify a
+`CProp : prop`, bind an immutable theory/logic context, and satisfy the required
+replay policy. Current outcomes remain useful for search, diagnostics, and
+migration prioritization, but their provenance must not be erased.
 
 ## Structured Reasons
 
-Initial `OpenReason` categories:
+Implemented `OpenReason` categories:
 
 ```text
 UnknownHyps
-OpenSubgoals
 UnresolvedTpairs
-PropMismatch
-SelfGoalHyp
-RulePremiseHyp
-MethodFallbackHyp
-LocalAssumeLeak
-ParserCompatOpen
 Other
 ```
 
-Initial `AdmitReason` categories:
+Implemented `AdmitReason` categories:
 
 ```text
 GoalExportUnknownHyps
@@ -145,40 +131,52 @@ GoalInitializationFailed
 ParserGap
 DatatypeStub
 AttributeTransformation
-ProofEngineFailed
-FinalGeneralizeFallback
 UnsupportedMethod
-FactLookupFailed
+ProofEngineFailed
+AxiomAcceptedWithoutOracle
 OracleOrAdmittedResult
 Other
 ```
 
-Initial `ProofFailure` categories:
+Implemented `ProofFailure` categories:
 
 ```text
 MethodNone
-UnsupportedStructuredIsar
-ReplayFailed
-StrictCertificationFailed
-KernelReplayMismatch
-Timeout
-Panic
-Other
 ```
 
 String reasons such as `admitted:goal_export_unknown_hyps` can remain as a
 compatibility layer, but the target report should be derived from structured
 reason values.
 
+Registered adapter source-provenance failure uses the exact oracle reason
+`admitted:strict_adapter_source_prop_unverified`. It remains an `Admitted`
+outcome and must not be classified as `ParserGap`: the registered adapter was
+applicable, but its source proposition failed the typed status/shape gate. The
+exact oracle string remains on the admitted theorem; the current aggregate
+classifier maps it to `AdmitReason::Other` because there is no dedicated
+structured variant. This hardening therefore does not change the sampled
+outcome counts or existing ProofOutcome categories.
+
 ## Acceptance Policy
 
-Final theorem acceptance must flow through one gate:
+Final theorem acceptance must flow through the new-kernel gate, not through the
+legacy summary label:
 
 ```text
-proof method / replay / adapter
-  -> ProofOutcome
-  -> StrictClosed only enters TrustedTheory / trusted theorem tables
+checked elaboration / kernel derivation / replay
+  -> src/kernel::TrustedTheorem bound to SignatureId + TheoryId
+     + Option<LogicBasisId>
+  -> KernelTrustedClosed
+  -> TrustedTheory / final trusted theorem tables
+
+legacy verification
+  -> ProofOutcome::TransitionalStrictClosed
+  -> TransitionalStrictClosed report only
 ```
+
+`LogicBasisId` is the sole object-logic identity vocabulary. `None` means
+Pure-only ancestry; every HOL or other object-logic theorem must carry the exact
+basis ID installed in its accepted theory.
 
 Rules:
 
@@ -194,60 +192,108 @@ Rules:
 Verification reports should become stable outputs over `ProofOutcome`:
 
 ```text
-StrictClosed: N
+KernelTrustedClosed: M  # temporary overlay; excluded from total()
+TransitionalStrictClosed: N
 CompatClosedOracleFree: N
 OpenOracleFree(reason): N
 Admitted(reason): N
 Failed(reason): N
 ```
+Until trusted Roadmap Phase 2 (the reporting table's Phase 3),
+`KernelTrustedClosed` is an overlay excluded from `ProofOutcomeStats::total()`.
+Once context-bound acceptance exists, it becomes a mutually exclusive
+`ProofOutcome` variant and the overlay is removed.
 
 This replaces one-off diagnostic runners and avoids conflating static call-site
 counts with runtime theorem outcomes.
+
+## Trusted Implementation Order
+
+The trusted implementation order is mandatory:
+
+```text
+immutable SignatureId / TheoryId
+  -> unique context-bound acceptance
+  -> source-aware proposition AST
+  -> checked judgment / constant / type-scheme elaboration
+  -> data-only HOL logic-basis manifest
+  -> generic conservative definition extension
+  -> HOL::TrueI as HOL.Trueprop HOL.True
+  -> HOL::trans only as a later reuse consumer
+```
+
+The reporting-phase table below records classifier rollout only. It does not
+reorder these trust gates or authorize skipping one.
 
 ## Migration Phases
 
 | Phase | Gate |
 |---|---|
-| Phase 0: design | This document exists and status docs point to it. |
+| Phase 0: design | Implemented; status docs point to this model. |
 | Phase 1: summary classifier | Implemented. Existing `verify_lemma` results are summarized without changing theorem construction. |
-| Phase 2: report integration | Core verification reports count `ProofOutcome` buckets instead of ad-hoc strings. |
-| Phase 3: acceptance integration | Final theorem tables accept only `StrictClosed`. |
-| Phase 4a: targeted strict slice | Direct `A ==> A` strict-kernel smoke test and ProofOutcome adapter test classify the checked identity as `StrictClosed`. |
-| Phase 4b: first core-file strict slice | At least one existing core verification theorem is classified as `StrictClosed`. |
+| Phase 2: report integration | Implemented. Core reports and the 125-theorem snapshot use the explicit buckets. |
+| Phase 3: context-bound acceptance | Next after immutable `SignatureId` / `TheoryId`: add the unique context-bound, mutually exclusive `KernelTrustedClosed` value carrying a new-kernel theorem, then remove the overlay. |
+| Phase 4a: targeted transitional slice | Implemented. Direct `A ==> A` smoke and adapter tests exercise the migration classifier. |
+| Phase 4b: first core-file transitional slice | Implemented by legacy `HOL::TrueI`; no second transitional adapter is planned. |
 
-## First Strict Closed Slice Candidates
+## Transitional Slice History — No Further Adapter
 
 | Candidate | Required strict rules | Advantages | Risks |
 |---|---|---|---|
-| Pure reflexivity `t == t` | `KernelRules::reflexive`, checked term certification, `ClosedThm::trust` | Smallest strict kernel smoke test. | May not correspond to a current core-file lemma. |
-| Implication identity `A ==> A` | `KernelRules::assume`, `KernelRules::implies_intr`, checked proposition certification | Exercises hypothesis discharge and closed theorem acceptance. | Targeted smoke slice implemented; still needs routing from an existing core-file lemma. |
-| Simple equality theorem | Reflexivity plus equality encoding adapter | Closer to HOL-facing facts. | HOL equality/object equality boundaries may add noise. |
-| `HOL::TrueI` | Checked `True_def`, strict HOL object-equality/reflexivity bridge, checked-definition transport, narrow adapter | First existing core-file `StrictClosed` theorem. | Implemented as a narrow adapter; core batch now reports `StrictClosed: 1/125`. |
+| Pure reflexivity `t == t` | `KernelRules::reflexive`, checked term certification, `ClosedThm::trust` | Small strict-nucleus smoke test. | Context-free trust is insufficient; reuse only after ID-bound acceptance exists. |
+| Implication identity `A ==> A` | `KernelRules::assume`, `KernelRules::implies_intr`, checked proposition certification | Existing synthetic smoke for legal hypothesis discharge. | Use next for wrong-context acceptance tests, not as a sampled HOL result. |
+| Simple equality theorem | Reflexivity plus an equality encoding | Potential later HOL-facing reuse. | Not a next slice; requires the common elaboration and HOL-basis boundary. |
+| `HOL::TrueI` | Checked legacy `True_def` payload, legacy HOL object-equality/reflexivity bridge, theorem-specific transport, narrow adapter | First existing core-file `TransitionalStrictClosed` theorem. | Historical migration experiment only; re-derive through the new kernel instead of adding another adapter. |
 
 Completed slices:
 
 ```text
 strict Pure implication identity
-HOL::TrueI existing core-file theorem
+HOL::TrueI existing core-file transitional theorem
 ```
 
-The Pure implication identity is the smallest path that tests
-parser/certifier/export/acceptance rather than only kernel unit tests. It does
-not change the core-file batch because the sampled 125 lemmas contain no
-`A ==> A` / `P ==> P` candidate. `HOL::TrueI` is the first existing-theorem
-milestone and is routed through checked `True_def`, strict HOL object
-reflexivity, and checked-definition transport, without using compat `refl` or
-treating Pure equality as HOL object equality.
+The Pure implication identity is the smallest existing synthetic path for
+testing legal discharge. Its next use is a context-identity/acceptance unit,
+not another parser or theorem adapter. It does not change the sampled batch,
+which contains no `A ==> A` / `P ==> P` candidate.
+
+`HOL::TrueI` is the first existing-theorem transitional milestone. It routes
+through checked legacy `True_def`, strict legacy HOL object reflexivity, and
+checked-definition transport without using compat `refl` or conflating Pure and
+HOL equality. None of those bridges supplies final context-bound acceptance.
 
 The `HOL::TrueI` slice now goes through the minimal strict adapter dispatcher:
 
 ```text
 try_strict_adapter(ParsedLemma, HolTheoremDb)
   -> NotApplicable
-  -> Proved(StrictClosed theorem)
+  -> Proved(legacy TransitionalStrictClosed theorem)
   -> Rejected(reason)
 ```
 
-The dispatcher currently registers only `HOL::TrueI`; future strict slices
-should reuse this entry point instead of adding direct branches to
-`verify_lemma`.
+For the registered `HOL::TrueI` adapter with an explicit proof, dispatch first
+requires `SourcePropositionStatus::FullyConsumed` together with
+`SourcePropositionShape::StandaloneHolTrueAlias`. Every other pair returns
+`Rejected(SourcePropositionUnverified { status, shape })`; `verify_lemma` records
+`admitted:strict_adapter_source_prop_unverified` instead of parser-gap or
+legacy fallback. Missing or empty proof scripts remain `NotApplicable` and
+retain their compatibility behavior.
+
+This includes `FullyConsumed + Other` after parser recovery of malformed
+`True =`, `FullyConsumed + Contextual` for local `fixes`, `includes`, `notes`,
+`if`, `when`, locale-qualified, or enclosing-context sources, and
+`Unavailable + Unavailable` without source provenance. The shape is a
+transitional fail-closed guard, not a name-resolved source AST and not a new
+`ProofOutcome` trust category.
+
+The dispatcher remains `HOL::TrueI`-only. No second transitional adapter is
+planned; the next synthetic proof exercise belongs to immutable context
+identity and the context-bound acceptance API, not another legacy dispatcher
+branch.
+
+The current Phase 1 `TransitionalStrictClosed` summary does not carry a
+new-kernel theorem handle, theory context, or `LogicBasisId` provenance. The
+target model described in
+[ADR-0003-hol-logic-trusted-extension.md](ADR-0003-hol-logic-trusted-extension.md)
+must add those to the eventual `TrustedTheorem` acceptance path; a summary
+classification alone cannot install or authorize a HOL logic extension.

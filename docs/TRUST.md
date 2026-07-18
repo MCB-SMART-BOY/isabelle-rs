@@ -10,9 +10,11 @@ If Isabelle-rs cannot prove a proposition, it may accept it only through an
 explicit oracle/admit footprint. Open theorems, admitted theorems, searchable
 facts, and closed proved lemmas must remain distinguishable.
 
-This document should be read together with
-[PROJECT_STATUS.md](PROJECT_STATUS.md), [KERNEL_RULES.md](KERNEL_RULES.md),
-[KERNEL_PRIMITIVES.md](KERNEL_PRIMITIVES.md),
+Agents should read root [AGENTS.md](../AGENTS.md) first. This document should
+then be read together with
+[PROJECT_STATUS.md](PROJECT_STATUS.md),
+[KERNEL_TRUSTED_ACCEPTANCE_GAPS.md](KERNEL_TRUSTED_ACCEPTANCE_GAPS.md),
+[KERNEL_RULES.md](KERNEL_RULES.md), [KERNEL_PRIMITIVES.md](KERNEL_PRIMITIVES.md),
 [RESOLUTION_DESIGN.md](RESOLUTION_DESIGN.md), and
 [KERNEL_ATTACK_TESTS.md](KERNEL_ATTACK_TESTS.md).
 
@@ -39,13 +41,13 @@ implementation.
 | T3 trust footprint tracking | Unproved acceptance is explicit and propagates through later inference. | Strong project area; `admitted:*`/oracle footprints are explicit. |
 | T4 independent replay | A small checker replays proof objects and compares theorem burdens. | Minimal replay prototype for six rules. |
 
-Full de Bruijn-style trust requires all four. Current work is in the strict
-kernel phase: hardening equality and certification before expanding T4 replay
-coverage.
+Full de Bruijn-style trust requires all four. The current main line is no
+longer another legacy replay batch: it is immutable theory/signature identity,
+context-bound theorem acceptance, and then source-aware HOL elaboration.
 
 ## Strict Kernel Nucleus
 
-`src/kernel/` is the new strict TCB nucleus. It is not a replacement for all old
+`src/kernel/` is the candidate target TCB nucleus. It is not a replacement for all old
 `src/core`/Isar/HOL code yet; it is an isolated target architecture used to make
 bad states unrepresentable before adapters migrate legacy paths into it.
 
@@ -80,6 +82,9 @@ Current strict nucleus constraints:
   `pub(in crate::kernel)` or narrower, not crate-wide `pub(crate)`;
 - primitive rules are the only constructors;
 - `TrustedTheory` accepts only `TrustedTheorem`;
+- target final object-logic acceptance will additionally bind the theorem to
+  immutable theory/signature/logic-extension identity; this binding is not yet
+  implemented;
 - `SearchFactDb` cannot promote facts to trusted theorems.
 
 Current strict nucleus implementation includes the base primitive rule set,
@@ -115,7 +120,8 @@ check_kernel_invariants(Strict)
   != the theorem is a closed lemma
 
 is_strict_closed_proved()
-  => the theorem is eligible for trusted theorem-table/statistics acceptance
+  => the legacy theorem is eligible for TransitionalStrictClosed statistics
+  != the theorem is eligible for new-kernel TrustedTheory acceptance
   != proof replay has necessarily covered every primitive rule used
 
 check_proof() / validate_proof()
@@ -133,11 +139,12 @@ Use these terms:
 
 | Status | Meaning | Counts as trusted proved lemma? |
 |---|---|---|
-| Strict closed proved theorem | strict kernel construction, `|- P`, no oracle footprint, no `tpairs`, no dummy types | Yes |
+| Transitional strict closed theorem | legacy `core::Thm + ThmTrust::Strict`, closed-shaped, oracle-free, no dummy types | No; migration/reporting only |
+| Kernel-trusted closed theorem | context-bound `src/kernel::TrustedTheorem` whose conclusion is `CProp : prop` and whose selected replay gate succeeds | Yes |
 | Compat closed-shaped theorem | no oracle/hyps/`tpairs`, but constructed through legacy compatibility paths | No |
 | Oracle-free open theorem | `A1, ..., An |- P`, no oracle footprint | No |
 | Admitted theorem | accepted proposition with `admitted:*` oracle footprint | No |
-| Searchable fact | fact available to proof search; may be open/admitted/generated/compat | No, unless also strict closed proved |
+| Searchable fact | fact available to proof search; may be open/admitted/generated/compat/transitional | No |
 
 `ThmKernel::assume(A)` constructs:
 
@@ -171,6 +178,7 @@ admitted:class_stub
 admitted:metis_fallback
 admitted:simp_fallback
 admitted:sledgehammer_stub
+admitted:strict_adapter_source_prop_unverified
 admitted:strict_adapter_prop_mismatch
 admitted:strict_adapter_proof_shape_mismatch
 admitted:strict_adapter_missing_checked_definition
@@ -184,6 +192,12 @@ Rules:
 - Proof fallback must use `admit`, not `assume`.
 - Strict adapter shape hits that fail strict checks must use a specific
   `admitted:strict_adapter_*` reason instead of falling through silently.
+- The registered explicit-proof `TrueI` adapter must require both
+  `SourcePropositionStatus::FullyConsumed` and
+  `SourcePropositionShape::StandaloneHolTrueAlias`. Any other status or shape
+  is rejected as
+  `admitted:strict_adapter_source_prop_unverified`, not reclassified as
+  `admitted:parser_gap` and not sent to legacy proof fallback.
 - Unsupported features and stubs must use `admit`, not fake theorem
   constructors.
 - Attribute transformations that do not have a real kernel derivation must use
@@ -191,13 +205,11 @@ Rules:
 - Oracle footprints must union through multi-premise rules and be preserved
   through single-premise rules.
 
-## Closed Theorem Acceptance
+## Closed Theorem Reporting And Acceptance
 
-A theorem may be counted as a verified lemma only if:
-
-```rust
-thm.is_strict_closed_proved()
-```
+The current legacy batch increments its transitional verified count only if
+`thm.is_strict_closed_proved()`; the exact implementation is in
+[`src/isar/method.rs`](../src/isar/method.rs).
 
 `is_closed_proved()` remains a useful closed-shape predicate:
 
@@ -207,29 +219,28 @@ thm.oracles().is_empty()
 && thm.tpairs().is_empty()
 ```
 
-It is not sufficient for trusted acceptance because a compatibility theorem can
-have that shape. The strict gate additionally requires:
+It is not sufficient even for the transitional count because a compatibility
+theorem can have that shape. The legacy strict filter additionally requires:
 
 ```text
 thm.trust_status() == ThmTrust::Strict
 && !thm.contains_dummy_type()
 ```
 
-For audit gates, use:
+For audit gates, use
+`thm.check_kernel_invariants(KernelCheckMode::Strict)` from the legacy theorem
+API rather than copying a detached Rust snippet.
 
-```rust
-thm.check_kernel_invariants(KernelCheckMode::Strict)
-```
-
-`is_strict_closed_proved()` is the cheap theorem-table/statistics predicate.
+`is_strict_closed_proved()` is the cheap legacy table/statistics predicate.
 `check_kernel_invariants(Strict)` is stronger: it rejects compat/admitted
 provenance, residual dummy types, malformed proposition CTerms, `maxidx` drift,
 oracle-tainted strict theorems, and burden mismatches for the currently
 replay-supported derivation subset.
 
 It is not a closed-lemma predicate. Open strict theorems are legal theorem
-values. Closed trusted acceptance remains a separate `is_strict_closed_proved()`
-decision.
+values. Final new-kernel acceptance is a separate decision: the value must be a
+context-bound `TrustedTheorem` over `CProp : prop` and pass the selected replay
+policy before it becomes `KernelTrustedClosed`.
 
 Current architecture:
 
@@ -243,13 +254,25 @@ HolTheoremDb.checked_definitions
   = not theorem facts
   = not proof progress
 
-final Theory theorem table
-  = trusted exported theorem table
-  = accepts only is_strict_closed_proved()
+legacy Theory theorem table
+  = transitional/export compatibility table
+  = currently filters with is_strict_closed_proved()
+
+new-kernel TrustedTheory
+  = current theorem table, type-gated to TrustedTheorem
+  = does not yet enforce immutable context identity or name conflicts
+
+target final trusted table
+  = accepts only context-bound TrustedTheorem values
+  = reported as KernelTrustedClosed
 ```
 
-`SessionBuilder` and verification statistics should report strict closed proved
-theorem counts, not raw indexed theorem entries or compatibility closed shapes.
+`SessionBuilder` and verification statistics must report
+`TransitionalStrictClosed` separately from `KernelTrustedClosed`, rather than
+conflating either with raw indexed entries or compatibility closed shapes.
+Until that context-bound outcome exists, `kernel_trusted_closed` is a reporting
+overlay and is deliberately excluded from `ProofOutcomeStats::total()`; the
+legacy outcome buckets alone partition attempted theorems.
 
 ## T2 Kernel Status
 
@@ -275,29 +298,44 @@ Implemented hardening includes:
   their own Const/Free types into a temporary trusted environment;
 - `Thm` records `ThmTrust::{Strict, Compat, Admitted}` so compatibility
   theorems cannot be counted as trusted even if they are oracle-free and closed;
-- final trusted tables, `SessionBuilder`, and `HolTheoremDb::closed_proved_count`
-  now use `is_strict_closed_proved()`;
+- legacy tables, `SessionBuilder`, and `HolTheoremDb::closed_proved_count`
+  currently use `is_strict_closed_proved()` for transitional filtering; this is
+  not the future `TrustedTheory` authorization gate;
 - `HolTheoremDb::checked_definitions` keeps checked definition sources, starting
   with `True_def`, separate from searchable facts and trusted theorem tables;
-- `ThmKernel::hol_object_refl` / `try_strict_hol_refl` is a narrow HOL
-  object-logic primitive bridge for `HOL.eq t t`; it requires checked input and
-  checked `HOL.eq`, records a separate `hol_object_refl` derivation, and must
-  not treat Pure equality or compat `refl` as proof of HOL object equality;
+- `ThmKernel::hol_object_refl` / `try_strict_hol_refl` is a narrow transitional
+  bridge for the bool-valued legacy term `HOL.eq t t`; it records a separate
+  derivation but is not a `CProp` theorem and is ineligible for
+  `KernelTrustedClosed`;
 - `ThmKernel::true_def_transport` / `try_strict_true_def_transport` is a narrow
-  checked-definition transport bridge for `True_def` only; it requires a
-  checked `True_def` source and a strict closed proof of the exact checked RHS,
-  records a separate `true_def_transport` derivation, and must not become
-  general unfolding or definition rewriting;
-- `try_strict_hol_true_i` is the first existing core-file strict adapter. It
+  theorem-specific legacy transport for `True_def`; its checked payload is not
+  a conservative definition certificate, and the bridge must not become the
+  template for general definitions or new HOL proof power;
+- `try_strict_hol_true_i` is the first existing core-file transitional adapter. It
   accepts only `TrueI` / `HOL::TrueI` with proof
   `unfolding True_def by (rule refl)`, checked `True_def`, strict HOL object
   reflexivity for the checked RHS, and checked `True_def` transport to
   `HOL.True`. It must not become a direct `return True`, compat `refl`, or
   general unfolding path;
-- `try_strict_adapter` is the minimal dispatcher for strict theorem adapters.
-  It currently registers only `HOL::TrueI` and reports `NotApplicable`,
-  `Proved`, or `Rejected(reason)` instead of scattering direct special cases
-  through `verify_lemma`;
+- `try_strict_adapter` is the minimal dispatcher for transitional theorem
+  adapters. It currently registers only `HOL::TrueI` and reports
+  `NotApplicable`, `Proved`, or `Rejected(reason)` instead of scattering direct
+  special cases through `verify_lemma`. The compatibility `parse_term` API may
+  still return a parsed prefix, but the loader records typed status and shape
+  provenance:
+  `SourcePropositionStatus::{FullyConsumed, Incomplete, Unavailable}` and
+  `SourcePropositionShape::{StandaloneHolTrueAlias, Other, Contextual,
+  Unavailable}`. The registered explicit-proof `TrueI` adapter proceeds only
+  for `FullyConsumed + StandaloneHolTrueAlias`; every other combination rejects
+  with
+  `admitted:strict_adapter_source_prop_unverified` before the legacy parser-gap
+  override. Thus parser-recovered `True =` is `FullyConsumed + Other`, while a
+  lemma with local `fixes` / `includes`, a locale qualifier, or an enclosing
+  context is `FullyConsumed + Contextual`; neither may use the adapter. Exact standalone
+  source aliases `True` / `HOL.True` are resolved to canonical
+  `Const("HOL.True", bool)`; the strict entry rejects Free, dummy-typed, and
+  outer-`CTerm`-type-mismatched True inputs. Missing and empty proof scripts
+  remain `NotApplicable` and retain compatibility parser-gap behavior;
 - `Thm::check_kernel_invariants(KernelCheckMode::{Compat, Strict})` separates
   legacy structural checks from strict trusted-kernel invariant checks;
 - `tpairs`, `shyps`, and `oracles` propagation audits;
@@ -312,9 +350,21 @@ Known debts:
 |---|---|---|
 | Compatibility Free/Const suffix matching | `compat_alpha_eq` still exists for parser/loader legacy paths. | Keep it out of trusted rules; fix parser/loader/type annotations and remove the compat need. |
 | Compatibility Var/Free matching | `compat_alpha_eq` still exists for schematic-variable parser gaps. | Keep it out of trusted rules; align theorem DB and parser variable representation. |
+| Transitional source-shape guard | `parse_term` may return a prefix or recover `True =` as `True`; local context may shadow the surface name. The current status/shape metadata is a fail-closed lexical guard, not a name-resolved AST or certification token. | Require `FullyConsumed + StandaloneHolTrueAlias` for the narrow adapter, reject every other combination, and replace the guard with source-aware checked elaboration. |
 | `Typ::dummy()` tolerance | Lets ill-typed terms survive too far. | Migrate trusted paths to `CTerm::certify_checked` and checked kernel entry points. |
 | Best-effort `CTerm::certify` | Still widely used by parser/HOL/Isar compatibility paths. | Keep it compatibility-only; explicit `_compat` theorem constructors are migration debt, not TCB. |
 | `Option<Thm>` proof-search APIs | Can hide `KernelError` diagnostics. | Move trusted paths toward `Result<Option<Thm>, KernelError>`. |
+
+The next checked HOL proposition boundary is specified in
+[CHECKED_HOL_PROPOSITION_NORMALIZATION.md](CHECKED_HOL_PROPOSITION_NORMALIZATION.md).
+The proposed target separation between the Pure kernel, a trusted HOL
+object-logic extension, Isar adapters, and legacy core is recorded in
+[ADR-0003-hol-logic-trusted-extension.md](ADR-0003-hol-logic-trusted-extension.md).
+The current `TransitionalStrictClosed: 1/125` migration result uses legacy
+`core::Thm` with strict trust metadata. `KernelTrustedClosed` is `0/125`: no
+current HOL slice has a checked
+`CProp : prop`, immutable theory/logic context, explicit HOL axiom-basis
+provenance, and fully supported new-kernel replay.
 
 Trusted kernel rules use `Hyps::kernel_alpha_eq`. The old broad matching is
 isolated as `Hyps::compat_alpha_eq` and must remain explicitly marked as
@@ -351,35 +401,27 @@ Current trusted replay behavior:
 This is a minimal kernel derivation replay checker. It is not full Isabelle
 `proofterm.ML` or `Proof_Checker.thm_of_proof`.
 
-Next replay expansion batches:
+Deferred replay backlog:
 
-1. `beta_conversion`, `forall_intr`, `forall_elim`.
-2. `combination`, `abstraction`, `equal_intr`, `equal_elim`.
-3. `instantiate_checked`, `generalize`.
-4. Conservative `subst_premise` and `bicompose` wrapper are implemented; future
-   work is full `bicompose` semantics and `bicompose_eresolve` strict
-   replacements. Legacy-core resolution remains compatibility debt. See
-   `docs/RESOLUTION_DESIGN.md`.
+```text
+beta_conversion / forall_intr / forall_elim
+combination / abstraction / equal_intr / equal_elim
+instantiate_checked / generalize
+legacy resolution-family coverage
+```
+
+This is not the current dependency chain. Resume it after immutable context
+identity and acceptance are stable, or for a focused soundness fix.
 
 ## Verification Commands
 
 Trusted-kernel gate:
 
-```bash
-cargo fmt --check
-cargo test --test kernel_soundness
-cargo test core::proofterm::tests::
-cargo test core::thm::tests::
-cargo test --lib core::
-cargo check
-```
+Run `scripts/dev-check.sh strict`.
 
 Large theory runs:
 
-```bash
-RUST_MIN_STACK=268435456 cargo test test_verify_all_core_files -- --nocapture
-RUST_MIN_STACK=268435456 cargo test --test tier2_verify -- --nocapture
-```
+Run `scripts/dev-check.sh core`, `tier2`, or `tier3`.
 
 Do not claim broad `cargo test --lib` success unless the known theory-loader
 stack overflow has been verified fixed.
@@ -388,7 +430,10 @@ stack overflow has been verified fixed.
 
 When reporting project status:
 
-- Use `is_strict_closed_proved()`-derived counts for verified lemmas.
+- Label `is_strict_closed_proved()`-derived counts as
+  `TransitionalStrictClosed`, not kernel-trusted verified lemmas.
+- Report `KernelTrustedClosed` separately from actual context-bound
+  `src/kernel::TrustedTheorem` values; it is currently `0/125` for sampled HOL.
 - State admitted counts separately.
 - State open theorem facts separately when relevant.
 - Do not equate searchable facts with trusted theorem-table entries.

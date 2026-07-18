@@ -1,6 +1,8 @@
 # Compatibility Constructor Call-Site Audit
 
-Generated on 2026-06-28 during the Strict Kernel Phase.
+Generated on 2026-06-28 during the Strict Kernel Phase. The numeric tables are
+a dated historical snapshot; they were not regenerated for the 2026-07 trust
+boundary patch and must not be read as current checkout counts.
 
 Scope:
 
@@ -15,10 +17,10 @@ each site has already been semantically migrated.
 
 Commands:
 
-```bash
-rg -n "assume_compat\(" src tests --glob '!target'
-rg -n "reflexive_compat\(" src tests --glob '!target'
-```
+Run [scripts/audit-compat.sh](../scripts/audit-compat.sh) for the current
+checkout. It keeps constructor, compatibility equality, and unchecked
+certification scans in one maintained place and uses `grep` when `rg` is
+unavailable.
 
 ## Summary
 
@@ -34,7 +36,7 @@ right migration direction is:
 compat constructor remains searchable/debug-only
   -> classify the call site
   -> migrate to checked CTerm + strict rule, real derivation, or admit
-  -> never count as trusted closed proved until strict
+  -> never count as TransitionalStrictClosed until strict construction and closed burdens hold
 ```
 
 ## Category Meanings
