@@ -1,4 +1,4 @@
-//! Isabelle-rs: A modern reimplementation of the Isabelle proof assistant in Rust.
+//! Isabelle-rs: an Isabelle/Pure-inspired LCF kernel research prototype in Rust.
 
 #![allow(dead_code)]
 #![allow(unused_variables)]
@@ -6,14 +6,14 @@
 #![allow(unreachable_patterns)]
 //! ## Modes
 //!
-//! - **Demo mode** (default): Showcases the trusted kernel, type system, and terms.
-//! - **LSP mode** (`--lsp`): Runs as a Language Server Protocol server for editors.
+//! - **Demo mode** (default): Shows legacy kernel, term, proof-state, and LSP prototypes.
+//! - **LSP mode** (`--lsp`): Runs the experimental Language Server Protocol server.
 //!
 //! ## Architecture
 //!
 //! ```text
 //! isabelle-rs
-//! ├── core/          Trusted kernel (LCF architecture)
+//! ├── core/          Legacy proof engine and migration kernel
 //! │   ├── types.rs   Sort, Typ (type system)
 //! │   ├── term.rs    Term (lambda calculus)
 //! │   └── thm.rs     ThmKernel (inference rules)
@@ -58,7 +58,7 @@ fn run_lsp_server() {
     let _ = tracing_subscriber::fmt::try_init();
     eprintln!("╔══════════════════════════════════════════════╗");
     eprintln!("║  Isabelle-rs LSP Server                      ║");
-    eprintln!("║  Language Server Protocol for Isabelle       ║");
+    eprintln!("║  Experimental partial LSP implementation      ║");
     eprintln!("╚══════════════════════════════════════════════╝");
 
     let executor = Arc::new(RealExecutor::new());
@@ -68,12 +68,12 @@ fn run_lsp_server() {
     server.run();
 }
 
-/// Run in demo mode (showcases the kernel).
+/// Run the research-prototype demo.
 fn run_demo() {
     let _ = tracing_subscriber::fmt::try_init();
     println!("╔══════════════════════════════════════════════╗");
-    println!("║  Isabelle-rs: Isabelle Kernel in Rust        ║");
-    println!("║  A modern proof assistant with LSP support   ║");
+    println!("║  Isabelle-rs: LCF Kernel Research Prototype  ║");
+    println!("║  Partial tooling; not Isabelle-compatible     ║");
     println!("╠══════════════════════════════════════════════╣");
     println!("║  Run with --lsp to start LSP server          ║");
     println!("╚══════════════════════════════════════════════╝\n");
@@ -253,25 +253,21 @@ end"#;
 }
 
 fn demo_lsp() {
-    println!("─── LSP Protocol Support ───");
-    println!("Supported LSP features:");
-    println!("  ✅ initialize / shutdown");
-    println!("  ✅ textDocument/didOpen / didChange / didClose");
-    println!("  ✅ textDocument/publishDiagnostics");
-    println!("  ✅ textDocument/hover");
-    println!("  ✅ textDocument/completion");
-    println!("  ✅ textDocument/definition");
-    println!("  ✅ textDocument/documentSymbol");
-    println!("  ✅ isabelle/proofGoals (extension)");
+    println!("─── Experimental LSP Protocol ───");
+    println!("Implemented handlers:");
+    println!("  initialize / shutdown");
+    println!("  textDocument/didOpen / didChange / didClose");
+    println!("  textDocument/publishDiagnostics and hover");
+    println!("  isabelle/proofGoals (extension)");
+    println!("Prototype handlers:");
+    println!("  completion / definition / documentSymbol");
     println!();
 
-    println!("─── Project State v0.7.0 ───");
-    println!("  Isar proof engine:      ✅ Complete (3 modes, 30+ commands)");
-    println!("  Theory loading:         ✅ Pipeline + inheritance");
-    println!("  Session builder:        ✅ DAG + batch compile");
-    println!("  Real file processing:   ✅ 90/115 HOL files (78%)");
-    println!("  CLI tool:               ✅ isabelle-build");
-    println!("  LCF kernel:             ✅ 15 ops, 100% Isabelle");
-    println!("  Tests:                  ✅ All passing");
+    println!("─── Current Trust Position ───");
+    println!("  Candidate strict kernel: checked local nucleus; not the sole TCB");
+    println!("  Sampled HOL: 1/125 transitional, 0/125 kernel-trusted");
+    println!("  HOL / Isar / LSP: partial research prototypes");
+    println!("  Full Isabelle compatibility: not implemented");
+    println!("  Canonical status: docs/PROJECT_STATUS.md");
     println!();
 }

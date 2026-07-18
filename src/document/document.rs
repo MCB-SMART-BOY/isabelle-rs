@@ -250,9 +250,13 @@ impl Node {
     /// Parse the document into commands using the Isabelle tokenizer.
     /// Commands are separated by semicolons or toplevel keyword boundaries.
     fn parse_commands(content: &str) -> Vec<Command> {
-        use crate::isar::token::{Lexer, TokenKind};
+        use crate::isar::{
+            keyword::Keywords,
+            token::{Lexer, TokenKind},
+        };
 
         let tokens = Lexer::new(content).tokenize();
+        let keywords = Keywords::standard();
         let mut commands = Vec::new();
         let mut current = String::new();
         let mut start_offset = 0;
@@ -295,8 +299,10 @@ impl Node {
                         start_offset = tok.offset + 1;
                     }
                 },
-                TokenKind::Keyword(kw) if kw.as_ref() == "theory" && !current.is_empty() => {
-                    // New theory command starts — flush previous
+                TokenKind::Keyword(_) | TokenKind::Ident | TokenKind::LongIdent
+                    if keywords.is_command(&tok.source) && !current.trim().is_empty() =>
+                {
+                    // A registered outer-syntax command starts a new document command.
                     let range = Range {
                         start: Position {
                             line: offset_to_line(content, start_offset),
@@ -304,10 +310,8 @@ impl Node {
                         },
                         end: Position { line: offset_to_line(content, tok.offset), character: 0 },
                     };
-                    if !current.trim().is_empty() {
-                        commands.push(Command::new(current.trim().to_string(), range, id));
-                        id += 1;
-                    }
+                    commands.push(Command::new(current.trim().to_string(), range, id));
+                    id += 1;
                     current = String::new();
                     start_offset = tok.offset;
                     current.push_str(&tok.source);
@@ -515,5 +519,17 @@ mod tests {
             start: Position { line: id, character: 0 },
             end: Position { line: id, character: 10 },
         }
+    }
+
+    #[test]
+    fn document_splits_registered_outer_commands() {
+        let commands = Node::parse_commands(
+            "theory Test\nimports HOL\nbegin\nlemma foo: \"A\"\nproof\napply rule\ndone\nend",
+        );
+
+        assert!(commands.iter().any(|command| command.kind == CommandKind::Lemma));
+        assert!(commands.iter().any(|command| command.kind == CommandKind::Proof));
+        assert!(commands.iter().any(|command| command.kind == CommandKind::Apply));
+        assert!(commands.iter().any(|command| command.kind == CommandKind::By));
     }
 }

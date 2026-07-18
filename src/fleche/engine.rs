@@ -78,55 +78,33 @@ impl CommandExecutor for RealExecutor {
                 });
             },
             "lemma" | "theorem" | "corollary" | "proposition" => {
-                // Try to verify this lemma using the HOL theorem database
+                // A declaration is not a completed proof. The experimental document
+                // executor does not yet retain and classify the full proof block, so
+                // it must leave the goal open rather than call `verify_lemma` here.
                 let parsed = parse_lemmas(trimmed);
                 if let Some(lem) = parsed.first() {
-                    match crate::isar::method::verify_lemma(lem) {
-                        Some(_thm) => {
-                            // Success! The lemma is verified.
-                            diags.push(Diagnostic {
-                                range: cmd.range.clone(),
-                                severity: Some(DiagnosticSeverity::Information),
-                                code: Some("lemma-verified".into()),
-                                source: Some("isabelle-rs".into()),
-                                message: format!("✅ Verified: {}", lem.name),
-                                related_information: None,
-                            });
-                            ctx.in_proof = false;
-                            ctx.proof_state = Some(ProofState {
-                                goals: vec![],
-                                background_goals: vec![],
-                                has_unsolved: false,
-                            });
-                        },
-                        None => {
-                            // Verification failed — report as warning with proof state
-                            diags.push(Diagnostic {
-                                range: cmd.range.clone(),
-                                severity: Some(DiagnosticSeverity::Warning),
-                                code: Some("lemma-unverified".into()),
-                                source: Some("isabelle-rs".into()),
-                                message: format!(
-                                    "⚠️ Unverified: {} (proof script may be incomplete or method \
-                                     not supported)",
-                                    lem.name
-                                ),
-                                related_information: None,
-                            });
-                            ctx.in_proof = true;
-                            ctx.proof_state = Some(ProofState {
-                                goals: vec![ProofGoal {
-                                    hyps: vec![],
-                                    conclusion: lem.name.clone(),
-                                    id: Some(format!("goal-{}", cmd.id)),
-                                }],
-                                background_goals: vec![],
-                                has_unsolved: true,
-                            });
-                        },
-                    }
+                    diags.push(Diagnostic {
+                        range: cmd.range.clone(),
+                        severity: Some(DiagnosticSeverity::Warning),
+                        code: Some("lemma-proof-pending".into()),
+                        source: Some("isabelle-rs".into()),
+                        message: format!(
+                            "Proof pending for {}; declaration alone is not a verified theorem",
+                            lem.name
+                        ),
+                        related_information: None,
+                    });
+                    ctx.in_proof = true;
+                    ctx.proof_state = Some(ProofState {
+                        goals: vec![ProofGoal {
+                            hyps: vec![],
+                            conclusion: lem.name.clone(),
+                            id: Some(format!("goal-{}", cmd.id)),
+                        }],
+                        background_goals: vec![],
+                        has_unsolved: true,
+                    });
                 } else {
-                    // Couldn't parse
                     diags.push(Diagnostic {
                         range: cmd.range.clone(),
                         severity: Some(DiagnosticSeverity::Error),
@@ -138,13 +116,17 @@ impl CommandExecutor for RealExecutor {
                 }
             },
             "definition" | "fun" | "primrec" | "datatype" | "inductive" => {
-                // Definitions are always "accepted" (they're axiomatic in our kernel)
+                // The document skeleton records the declaration but does not turn it
+                // into a kernel theorem or conservative definition certificate.
                 diags.push(Diagnostic {
                     range: cmd.range.clone(),
                     severity: Some(DiagnosticSeverity::Information),
-                    code: Some("definition-accepted".into()),
+                    code: Some("definition-unchecked".into()),
                     source: Some("isabelle-rs".into()),
-                    message: format!("📝 {}", trimmed.chars().take(80).collect::<String>()),
+                    message: format!(
+                        "Definition parsed but not kernel-accepted: {}",
+                        trimmed.chars().take(80).collect::<String>()
+                    ),
                     related_information: None,
                 });
             },
@@ -273,9 +255,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_real_executor_lemma() {
+    fn lemma_declaration_remains_pending() {
         let exec = RealExecutor::new();
-        // Lemma "A" can be verified (axiom acceptance), so in_proof should be false
         let cmd = Command::new(
             "lemma foo: \"A\"".into(),
             Range {
@@ -285,20 +266,35 @@ mod tests {
             0,
         );
         let mut ctx = CheckContext::default();
-        let _diags = exec.execute(&cmd, &mut ctx);
-        // Verified lemma — not in proof mode
-        assert!(!ctx.in_proof, "Verified lemma should exit proof mode");
+
+        let diags = exec.execute(&cmd, &mut ctx);
+
+        assert!(ctx.in_proof, "a declaration must not close the LSP proof state");
+        assert!(ctx.proof_state.as_ref().is_some_and(|state| state.has_unsolved));
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].code.as_deref(), Some("lemma-proof-pending"));
+        assert!(diags[0].message.contains("declaration alone is not a verified theorem"));
     }
 
     #[test]
-    fn test_fleche_with_real_executor() {
+    fn full_document_does_not_verify_a_declaration_before_proof_close() {
         let engine = Fleche::new(Arc::new(RealExecutor::new()));
+        let uri = "file:///test.thy";
         let diags = engine.open_file(
-            "file:///test.thy",
-            "theory Test\nlemma foo: \"A\"\nproof\napply rule\ndone",
+            uri,
+            "theory Test\nimports HOL\nbegin\nlemma foo: \"A\"\nproof\napply rule\ndone\nend",
         );
-        for d in &diags {
-            println!("  diag: {:?}", d.message);
-        }
+
+        assert!(
+            diags.iter().any(|diag| diag.code.as_deref() == Some("lemma-proof-pending")),
+            "the document parser must expose the lemma declaration to the executor"
+        );
+        assert!(!diags.iter().any(|diag| {
+            matches!(
+                diag.code.as_deref(),
+                Some("lemma-transitional-strict-closed" | "lemma-verified")
+            )
+        }));
+        assert!(engine.get_proof_state(uri, 4).is_some_and(|state| state.has_unsolved));
     }
 }

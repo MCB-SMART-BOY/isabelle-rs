@@ -325,6 +325,12 @@ mod tests {
 mod scale_tests {
     use super::*;
 
+    fn is_transitional_strict_closed(lemma: &ParsedLemma) -> bool {
+        let result = crate::isar::method::verify_lemma(lemma);
+        crate::isar::method::classify_verify_result(&lemma.name, result.as_ref())
+            .is_transitional_strict_closed()
+    }
+
     #[test]
     fn test_scan_full_hol() {
         let mut graph = TheoryGraph::new();
@@ -481,7 +487,7 @@ mod scale_tests {
         HolTheoremDb::add_builtins(&mut db);
         eprintln!("DB: {} theorems, {} by-name", db.all.len(), db.by_name.len());
 
-        // Verify sample lemmas using the custom DB
+        // Classify sampled lemmas using the custom legacy DB.
         HolTheoremDb::with_override(&db, || {
             let target_files = [
                 "Fun.thy",
@@ -508,7 +514,7 @@ mod scale_tests {
                 let sample = with_proofs.len().min(15);
                 let mut verified = 0;
                 for lem in with_proofs.iter().take(sample) {
-                    if crate::isar::method::verify_lemma(lem).is_some() {
+                    if is_transitional_strict_closed(lem) {
                         verified += 1;
                     }
                 }
@@ -517,7 +523,7 @@ mod scale_tests {
                 eprintln!("  {}: {}/{}", fname, verified, sample);
             }
             eprintln!(
-                "Beyond-core: {}/{} ({:.1}%)",
+                "Beyond-core TransitionalStrictClosed: {}/{} ({:.1}%)",
                 total_v,
                 total_a,
                 if total_a > 0 { (total_v as f64 / total_a as f64) * 100.0 } else { 0.0 }
@@ -676,7 +682,7 @@ mod scale_tests {
                 }
                 let mut verified = 0;
                 for lem in with_proofs.iter().take(sample) {
-                    if crate::isar::method::verify_lemma(lem).is_some() {
+                    if is_transitional_strict_closed(lem) {
                         verified += 1;
                     }
                 }
@@ -689,7 +695,7 @@ mod scale_tests {
 
         let pct = if total_a > 0 { (total_v as f64 / total_a as f64) * 100.0 } else { 0.0 };
         eprintln!(
-            "Extended ({}/{} files): {}/{} ({:.1}%)",
+            "Extended TransitionalStrictClosed ({}/{} files): {}/{} ({:.1}%)",
             target_files.len(),
             target_files.len(),
             total_v,
@@ -743,7 +749,7 @@ mod scale_tests {
             }
             let mut verified = 0;
             for lem in with_proofs.iter().take(sample) {
-                if crate::isar::method::verify_lemma(lem).is_some() {
+                if is_transitional_strict_closed(lem) {
                     verified += 1;
                 }
             }
@@ -753,10 +759,10 @@ mod scale_tests {
             eprintln!("  {}: {}/{} ({:.0}%)", fname, verified, sample, pct);
         }
         let pct = if total_a > 0 { (total_v as f64 / total_a as f64) * 100.0 } else { 0.0 };
-        eprintln!("Global DB: {}/{} ({:.1}%)", total_v, total_a, pct);
+        eprintln!("Global DB TransitionalStrictClosed: {}/{} ({:.1}%)", total_v, total_a, pct);
     }
 
-    /// Systematic scan: verify sample lemmas from many HOL files with cumulative DB.
+    /// Systematic scan: classify sampled lemmas from many HOL files with a cumulative DB.
     #[test]
     fn test_verify_systematic() {
         let hol_dir = Path::new("isabelle-source/src/HOL");
@@ -806,7 +812,7 @@ mod scale_tests {
 
                     let mut verified = 0;
                     for lem in with_proofs.iter().take(sample) {
-                        if crate::isar::method::verify_lemma(lem).is_some() {
+                        if is_transitional_strict_closed(lem) {
                             verified += 1;
                         }
                     }
@@ -823,7 +829,7 @@ mod scale_tests {
         });
 
         eprintln!(
-            "Systematic: {}/{} files fully verified, {}/{} theorems ({:.1}%)",
+            "Systematic: {}/{} files all transitional, {}/{} TransitionalStrictClosed ({:.1}%)",
             passed,
             passed + failed,
             total_verified,
@@ -936,7 +942,7 @@ mod scale_tests {
 
             HolTheoremDb::with_override(&db, || {
                 for lem in with_proofs.iter().take(sample) {
-                    if crate::isar::method::verify_lemma(lem).is_some() {
+                    if is_transitional_strict_closed(lem) {
                         verified += 1;
                     }
                 }
@@ -950,7 +956,10 @@ mod scale_tests {
         }
 
         let pct = if total_a > 0 { (total_v as f64 / total_a as f64) * 100.0 } else { 0.0 };
-        eprintln!("Expanded ({} files): {}/{} ({:.1}%)", passed_files, total_v, total_a, pct);
+        eprintln!(
+            "Expanded TransitionalStrictClosed ({} files): {}/{} ({:.1}%)",
+            passed_files, total_v, total_a, pct
+        );
     }
 
     /// Verify additional theory files beyond the core beyond-core set. (OLD)
@@ -1059,7 +1068,7 @@ mod scale_tests {
 
             HolTheoremDb::with_override(&db, || {
                 for lem in with_proofs.iter().take(sample) {
-                    if crate::isar::method::verify_lemma(lem).is_some() {
+                    if is_transitional_strict_closed(lem) {
                         verified += 1;
                     }
                 }
@@ -1073,6 +1082,9 @@ mod scale_tests {
         }
 
         let pct = if total_a > 0 { (total_v as f64 / total_a as f64) * 100.0 } else { 0.0 };
-        eprintln!("Expanded ({} files): {}/{} ({:.1}%)", passed_files, total_v, total_a, pct);
+        eprintln!(
+            "Expanded TransitionalStrictClosed ({} files): {}/{} ({:.1}%)",
+            passed_files, total_v, total_a, pct
+        );
     }
 }

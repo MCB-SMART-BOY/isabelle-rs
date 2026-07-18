@@ -4,7 +4,7 @@
 mod diag_tests {
     use crate::{
         hol::hol_loader::{HolTheoremDb, parse_lemmas},
-        isar::method::verify_lemma,
+        isar::method::{classify_verify_result, verify_lemma},
     };
 
     #[test]
@@ -42,16 +42,18 @@ mod diag_tests {
             let mut ok = 0usize;
             for (i, lem) in structured.iter().take(sample).enumerate() {
                 eprintln!("    [{}/{}] {} ...", i + 1, sample, lem.name);
-                if verify_lemma(lem).is_some() {
+                let result = verify_lemma(lem);
+                let outcome = classify_verify_result(&lem.name, result.as_ref());
+                if outcome.is_transitional_strict_closed() {
                     ok += 1;
-                    eprintln!("      OK");
+                    eprintln!("      TransitionalStrictClosed");
                 } else {
                     let preview =
                         lem.proof_script.as_ref().map(|p| &p[..p.len().min(60)]).unwrap_or("");
-                    eprintln!("      FAIL: {}", preview);
+                    eprintln!("      {}: {}", outcome.label(), preview);
                 }
             }
-            eprintln!("  Result: {}/{}", ok, sample);
+            eprintln!("  TransitionalStrictClosed: {}/{}", ok, sample);
         }
     }
 }
