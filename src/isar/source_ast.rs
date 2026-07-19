@@ -18,12 +18,17 @@
 //! - Any method named `assume_is_checked`, `into_trusted_term`, `certify`, or
 //!   `trust`.
 //!
-//! Source spans and `SourceId` are for diagnostics and provenance reporting
-//! only; they do not enter `TheoremId` or any other kernel identity digest.
+//! Source spans and `SourceId` are caller-supplied diagnostic metadata. They
+//! are deliberately forgeable and do not enter `TheoremId`, dependencies, or
+//! any other kernel identity or authority check.
 
 use std::sync::Arc;
 
-/// Identifies a source file or session input.
+/// Caller-supplied label for a source file or session input.
+///
+/// This is diagnostic metadata, not a content digest or trusted provenance
+/// token. Equal labels need not identify equal bytes, and callers may construct
+/// any label.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SourceId(Arc<str>);
 
@@ -31,21 +36,31 @@ impl SourceId {
     pub fn new(id: impl Into<Arc<str>>) -> Self {
         Self(id.into())
     }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
-/// 0-indexed byte range in the source text.
+/// Half-open, 0-indexed byte range `[start, end)` in the labelled source.
+///
+/// The data-only AST does not validate ordering or source bounds. A parser or
+/// elaborator consuming spans must validate them against the exact source
+/// bytes before using them for diagnostics. Spans never confer trust.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SourceSpan {
     pub start: usize,
     pub end: usize,
 }
 
-/// An unresolved name from source text — never `Const`, `Free`, or `Var` yet.
+/// Exact unresolved name spelling from source text.
+///
+/// A dot or theory-like prefix is retained as text, not preclassified as
+/// qualification. Name resolution later decides whether the spelling denotes
+/// a constant, free, schematic variable, bound occurrence, or syntax name.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SourceName {
     pub spelling: Arc<str>,
-    /// True if the source contained a qualified "Thy.name" form.
-    pub qualified: bool,
 }
 
 /// A source-level type annotation — unresolved, no arity/sort checking.
@@ -56,13 +71,15 @@ pub enum SourceType {
     Arrow { from: Box<SourceType>, to: Box<SourceType>, span: SourceSpan },
 }
 
-/// Binder kind as it appears in the source.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum BinderKind {
-    Forall,
-    Exists,
-    Lambda,
-    Epsilon,
+/// Exact unresolved syntax token and its source location.
+///
+/// Tokens such as `!!`, `ALL`, `EX`, and lambda syntax remain raw spellings.
+/// Their Pure/HOL meaning is assigned only by a declaration-aware parser or
+/// elaborator.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct SourceSyntax {
+    pub spelling: Arc<str>,
+    pub span: SourceSpan,
 }
 
 /// One bound variable in a source binder.
@@ -86,13 +103,13 @@ pub enum SourceExpr {
         span: SourceSpan,
     },
     Binder {
-        kind: BinderKind,
+        syntax: SourceSyntax,
         binders: Vec<SourceBinder>,
         body: Box<SourceExpr>,
         span: SourceSpan,
     },
     SyntaxApplication {
-        syntax: SourceName,
+        syntax: SourceSyntax,
         arguments: Vec<SourceExpr>,
         span: SourceSpan,
     },
@@ -135,7 +152,7 @@ pub struct SourceProposition {
 /// use isabelle_rs::core::term::Term;
 /// // This conversion must not exist: source names are unresolved.
 /// let _: Term = SourceExpr::Name {
-///     name: SourceName { spelling: "x".into(), qualified: false },
+///     name: SourceName { spelling: "x".into() },
 ///     span: SourceSpan { start: 0, end: 1 },
 /// }.into();
 /// ```
@@ -148,7 +165,7 @@ pub struct SourceProposition {
 ///     source: SourceId::new("test.thy"),
 ///     span: SourceSpan { start: 0, end: 1 },
 ///     expression: SourceExpr::Name {
-///         name: SourceName { spelling: "A".into(), qualified: false },
+///         name: SourceName { spelling: "A".into() },
 ///         span: SourceSpan { start: 0, end: 1 },
 ///     },
 /// }.into();
@@ -162,7 +179,7 @@ pub struct SourceProposition {
 ///     source: SourceId::new("test.thy"),
 ///     span: SourceSpan { start: 0, end: 1 },
 ///     expression: SourceExpr::Name {
-///         name: SourceName { spelling: "A".into(), qualified: false },
+///         name: SourceName { spelling: "A".into() },
 ///         span: SourceSpan { start: 0, end: 1 },
 ///     },
 /// }.into();
@@ -176,7 +193,7 @@ pub struct SourceProposition {
 ///     source: SourceId::new("test.thy"),
 ///     span: SourceSpan { start: 0, end: 1 },
 ///     expression: SourceExpr::Name {
-///         name: SourceName { spelling: "A".into(), qualified: false },
+///         name: SourceName { spelling: "A".into() },
 ///         span: SourceSpan { start: 0, end: 1 },
 ///     },
 /// }.into();
@@ -190,22 +207,28 @@ pub struct SourceProposition {
 ///     source: SourceId::new("test.thy"),
 ///     span: SourceSpan { start: 0, end: 1 },
 ///     expression: SourceExpr::Name {
-///         name: SourceName { spelling: "A".into(), qualified: false },
+///         name: SourceName { spelling: "A".into() },
 ///         span: SourceSpan { start: 0, end: 1 },
 ///     },
 /// }.into();
 /// ```
 ///
 /// ```compile_fail
-/// use isabelle_rs::isar::source_ast::{SourceExpr, SourceName, SourceSpan};
+/// use isabelle_rs::isar::source_ast::{
+///     SourceExpr, SourceId, SourceName, SourceProposition, SourceSpan,
+/// };
 /// use isabelle_rs::kernel::ContextStamp;
-/// // No ContextStamp appears in the source AST public API.
-/// fn _leak(e: SourceExpr) -> ContextStamp {
-///     match e {
-///         SourceExpr::Name { .. } => ContextStamp::dummy_for_test(),
-///         _ => ContextStamp::dummy_for_test(),
-///     }
-/// }
+/// // The source proposition has no field from which trusted context can leak.
+/// let proposition = SourceProposition {
+///     source: SourceId::new("test.thy"),
+///     span: SourceSpan { start: 0, end: 1 },
+///     expression: SourceExpr::Name {
+///         name: SourceName { spelling: "A".into() },
+///         span: SourceSpan { start: 0, end: 1 },
+///     },
+/// };
+/// let SourceProposition { context, .. } = proposition;
+/// let _: ContextStamp = context;
 /// ```
 #[allow(unused_imports)]
 mod _compile_fail_guards {
@@ -217,25 +240,30 @@ mod _compile_fail_guards {
 mod tests {
     use super::*;
 
-    fn name(s: &str) -> SourceName {
-        SourceName { spelling: s.into(), qualified: s.contains('.') }
+    fn name(spelling: &str) -> SourceName {
+        SourceName { spelling: spelling.into() }
     }
 
     fn span(start: usize, end: usize) -> SourceSpan {
         SourceSpan { start, end }
     }
 
+    fn syntax(spelling: &str, start: usize, end: usize) -> SourceSyntax {
+        SourceSyntax { spelling: spelling.into(), span: span(start, end) }
+    }
+
     #[test]
     fn span_preservation_through_nested_application() {
-        let inner = SourceExpr::Name { name: name("f"), span: span(0, 1) };
-        let arg = SourceExpr::Name { name: name("x"), span: span(2, 3) };
-        let app = SourceExpr::Application {
-            function: Box::new(inner),
-            argument: Box::new(arg),
+        let function = SourceExpr::Name { name: name("f"), span: span(0, 1) };
+        let argument = SourceExpr::Name { name: name("x"), span: span(2, 3) };
+        let application = SourceExpr::Application {
+            function: Box::new(function),
+            argument: Box::new(argument),
             span: span(0, 3),
         };
-        assert_eq!(app.span(), span(0, 3));
-        match &app {
+
+        assert_eq!(application.span(), span(0, 3));
+        match &application {
             SourceExpr::Application { function, argument, .. } => {
                 assert_eq!(function.span(), span(0, 1));
                 assert_eq!(argument.span(), span(2, 3));
@@ -245,113 +273,169 @@ mod tests {
     }
 
     #[test]
-    fn qualified_name_round_trip() {
-        let qname = name("HOL.True");
-        assert!(qname.qualified);
-        assert_eq!(qname.spelling.as_ref(), "HOL.True");
+    fn source_spans_are_half_open_byte_ranges() {
+        let source = "λx. x";
+        let lambda_end = "λ".len();
+        assert_eq!(lambda_end, 2);
+        assert_eq!(&source[span(0, lambda_end).start..span(0, lambda_end).end], "λ");
 
-        let uname = name("True");
-        assert!(!uname.qualified);
-        assert_eq!(uname.spelling.as_ref(), "True");
-    }
+        let binder = SourceExpr::Binder {
+            syntax: syntax("λ", 0, lambda_end),
+            binders: vec![SourceBinder {
+                name: name("x"),
+                typ: None,
+                span: span(lambda_end, lambda_end + 1),
+            }],
+            body: Box::new(SourceExpr::Name {
+                name: name("x"),
+                span: span(source.len() - 1, source.len()),
+            }),
+            span: span(0, source.len()),
+        };
 
-    #[test]
-    fn binder_shadowing_preserves_distinct_nodes() {
-        let inner = SourceExpr::Binder {
-            kind: BinderKind::Forall,
-            binders: vec![SourceBinder { name: name("x"), typ: None, span: span(5, 6) }],
-            body: Box::new(SourceExpr::Name { name: name("x"), span: span(7, 8) }),
-            span: span(0, 9),
-        };
-        let outer = SourceExpr::Binder {
-            kind: BinderKind::Forall,
-            binders: vec![SourceBinder { name: name("x"), typ: None, span: span(1, 2) }],
-            body: Box::new(inner.clone()),
-            span: span(0, 9),
-        };
-        // They are structurally distinct even with same binder name spelling.
-        assert_ne!(outer, inner);
-        match &outer {
-            SourceExpr::Binder { body, .. } => match body.as_ref() {
-                SourceExpr::Binder { binders, .. } => {
-                    assert_eq!(binders[0].name.spelling.as_ref(), "x");
-                },
-                _ => unreachable!(),
+        assert_eq!(binder.span(), span(0, source.len()));
+        match binder {
+            SourceExpr::Binder { syntax, binders, body, .. } => {
+                assert_eq!(&source[syntax.span.start..syntax.span.end], "λ");
+                assert_eq!(&source[binders[0].span.start..binders[0].span.end], "x");
+                assert_eq!(&source[body.span().start..body.span().end], "x");
             },
             _ => unreachable!(),
         }
     }
 
     #[test]
-    fn no_const_free_distinction_all_names_are_sourceexpr_name() {
-        // All of these are SourceExpr::Name — no Const/Free variant exists.
-        for spelling in &["True", "f", "x", "HOL.True"] {
-            let expr = SourceExpr::Name { name: name(spelling), span: span(0, 0) };
-            assert!(matches!(expr, SourceExpr::Name { .. }));
+    fn dotted_and_bare_names_remain_unclassified_spellings() {
+        let dotted = name("HOL.True");
+        let bare = name("True");
+
+        assert_eq!(dotted.spelling.as_ref(), "HOL.True");
+        assert_eq!(bare.spelling.as_ref(), "True");
+    }
+
+    #[test]
+    fn binder_syntax_remains_unresolved_surface_text() {
+        let pure = SourceExpr::Binder {
+            syntax: syntax("!!", 0, 2),
+            binders: vec![SourceBinder { name: name("x"), typ: None, span: span(3, 4) }],
+            body: Box::new(SourceExpr::Name { name: name("P"), span: span(6, 7) }),
+            span: span(0, 7),
+        };
+        let object = SourceExpr::Binder {
+            syntax: syntax("ALL", 0, 3),
+            binders: vec![SourceBinder { name: name("x"), typ: None, span: span(4, 5) }],
+            body: Box::new(SourceExpr::Name { name: name("P"), span: span(7, 8) }),
+            span: span(0, 8),
+        };
+
+        match (pure, object) {
+            (
+                SourceExpr::Binder { syntax: pure_syntax, .. },
+                SourceExpr::Binder { syntax: object_syntax, .. },
+            ) => {
+                assert_eq!(pure_syntax.spelling.as_ref(), "!!");
+                assert_eq!(object_syntax.spelling.as_ref(), "ALL");
+            },
+            _ => unreachable!(),
         }
     }
 
     #[test]
-    fn fake_span_does_not_affect_expression_equality() {
-        let expr = SourceExpr::Name { name: name("A"), span: span(0, 1) };
-        let prop_a = SourceProposition {
-            source: SourceId::new("a.thy"),
-            span: span(0, 1),
-            expression: expr.clone(),
+    fn binder_shadowing_preserves_distinct_source_nodes() {
+        let inner = SourceExpr::Binder {
+            syntax: syntax("ALL", 7, 10),
+            binders: vec![SourceBinder { name: name("x"), typ: None, span: span(11, 12) }],
+            body: Box::new(SourceExpr::Name { name: name("x"), span: span(14, 15) }),
+            span: span(7, 15),
         };
-        let prop_b = SourceProposition {
-            source: SourceId::new("b.thy"),
-            span: span(10, 11),
-            expression: expr,
+        let outer = SourceExpr::Binder {
+            syntax: syntax("ALL", 0, 3),
+            binders: vec![SourceBinder { name: name("x"), typ: None, span: span(4, 5) }],
+            body: Box::new(inner.clone()),
+            span: span(0, 15),
         };
-        // Different source/span → not equal.
-        assert_ne!(prop_a, prop_b);
-        // But expressions are equal.
-        assert_eq!(prop_a.expression, prop_b.expression);
+
+        assert_ne!(outer, inner);
+        match &outer {
+            SourceExpr::Binder { binders: outer_binders, body, .. } => {
+                let SourceExpr::Binder { binders: inner_binders, .. } = body.as_ref() else {
+                    unreachable!()
+                };
+                assert_eq!(outer_binders[0].name.spelling.as_ref(), "x");
+                assert_eq!(inner_binders[0].name.spelling.as_ref(), "x");
+                assert_ne!(outer_binders[0].span, inner_binders[0].span);
+            },
+            _ => unreachable!(),
+        }
     }
 
     #[test]
-    fn source_ast_has_no_context_stamp_field() {
-        // Verify structurally: no ContextStamp appears in the public types.
-        // This test exists as a runtime check that the types are self-contained.
-        let prop = SourceProposition {
+    fn all_unresolved_names_share_one_source_variant() {
+        for spelling in ["True", "f", "x", "HOL.True"] {
+            let expression = SourceExpr::Name { name: name(spelling), span: span(0, 0) };
+            assert!(matches!(expression, SourceExpr::Name { .. }));
+        }
+    }
+
+    #[test]
+    fn diagnostic_source_metadata_is_separate_from_expression_structure() {
+        let expression = SourceExpr::Name { name: name("A"), span: span(0, 1) };
+        let first = SourceProposition {
+            source: SourceId::new("a.thy"),
+            span: span(0, 1),
+            expression: expression.clone(),
+        };
+        let second = SourceProposition {
+            source: SourceId::new("forged-label"),
+            span: span(10, 11),
+            expression,
+        };
+
+        assert_ne!(first, second);
+        assert_eq!(first.expression, second.expression);
+        assert_eq!(second.source.as_str(), "forged-label");
+    }
+
+    #[test]
+    fn source_ast_is_constructible_without_trusted_context() {
+        let proposition = SourceProposition {
             source: SourceId::new("test.thy"),
             span: span(0, 1),
             expression: SourceExpr::Name { name: name("A"), span: span(0, 1) },
         };
-        // Construction succeeds without any ContextStamp, TheoryId, etc.
-        assert_eq!(prop.source.0.as_ref(), "test.thy");
+
+        assert_eq!(proposition.source.as_str(), "test.thy");
     }
 
     #[test]
     fn source_group_preserves_inner_span() {
         let inner = SourceExpr::Name { name: name("P"), span: span(1, 2) };
-        let group = SourceExpr::Group { inner: Box::new(inner.clone()), span: span(0, 3) };
+        let group = SourceExpr::Group { inner: Box::new(inner), span: span(0, 3) };
+
         assert_eq!(group.span(), span(0, 3));
         match &group {
-            SourceExpr::Group { inner: box_inner, .. } => {
-                assert_eq!(box_inner.span(), span(1, 2));
-            },
+            SourceExpr::Group { inner, .. } => assert_eq!(inner.span(), span(1, 2)),
             _ => unreachable!(),
         }
     }
 
     #[test]
-    fn syntax_application_preserves_raw_arguments() {
-        let args = vec![
+    fn syntax_application_preserves_raw_operator_and_arguments() {
+        let arguments = vec![
             SourceExpr::Name { name: name("a"), span: span(0, 1) },
-            SourceExpr::Name { name: name("b"), span: span(2, 3) },
+            SourceExpr::Name { name: name("b"), span: span(6, 7) },
         ];
-        let syntax = SourceExpr::SyntaxApplication {
-            syntax: name("{*}"),
-            arguments: args.clone(),
-            span: span(0, 5),
+        let application = SourceExpr::SyntaxApplication {
+            syntax: syntax("⊗", 2, 5),
+            arguments: arguments.clone(),
+            span: span(0, 7),
         };
-        match &syntax {
-            SourceExpr::SyntaxApplication { arguments, .. } => {
-                assert_eq!(arguments.len(), 2);
-                assert_eq!(arguments[0], args[0]);
-                assert_eq!(arguments[1], args[1]);
+
+        match &application {
+            SourceExpr::SyntaxApplication { syntax, arguments: actual, .. } => {
+                assert_eq!(syntax.spelling.as_ref(), "⊗");
+                assert_eq!(syntax.span, span(2, 5));
+                assert_eq!(actual, &arguments);
             },
             _ => unreachable!(),
         }
