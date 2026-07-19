@@ -59,7 +59,13 @@ struct DependencyId {
     digest: [u8; 32],
 }
 
-/// Canonical dependencies reconstructed by accepting replay.
+/// Canonical logical dependencies reconstructed by accepting replay.
+///
+/// Theorem entries identify replayed theorem content; they do not grant
+/// theorem-reference authority. Replay must first validate the exact sealed
+/// `TrustedTheorem` token (`id`, `name`, and `accepted_in`) against the current
+/// owner ancestry. The resulting `TheoremId` is recorded here only after that
+/// authorization succeeds.
 #[derive(Clone, Default, PartialEq, Eq)]
 pub struct DependencySet {
     entries: BTreeSet<DependencyId>,
@@ -508,6 +514,11 @@ impl TrustedTheory {
         Ok(())
     }
 
+    /// Check replay-derived logical dependency IDs after token authorization.
+    ///
+    /// `Derivation::TheoremRef` replay has already required the exact accepted
+    /// token in this owner's ancestry. Digest lookup here is a consistency
+    /// check for the canonical dependency set, not an authority check.
     fn resolves(&self, dependencies: &DependencySet) -> bool {
         dependencies.entries.iter().all(|dependency| match dependency.kind {
             DependencyKind::Axiom | DependencyKind::Definition => false,

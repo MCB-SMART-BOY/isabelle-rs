@@ -204,6 +204,34 @@ fn theorem_name_changes_child_identity_not_theorem_identity() {
 }
 
 #[test]
+fn same_logical_theorem_id_does_not_merge_sibling_token_authority() {
+    let parent = theory("Pure", &["A"]);
+    let (left, left_token) =
+        accept_closed_theorem(&parent, "left_name", implication_identity(&parent, "A")).unwrap();
+    let (right, right_token) =
+        accept_closed_theorem(&parent, "right_name", implication_identity(&parent, "A")).unwrap();
+
+    assert_eq!(left_token.id(), right_token.id());
+    assert_ne!(left_token.accepted_in(), right_token.accepted_in());
+    assert!(KernelRules::theorem_ref(&left, &left_token).is_ok());
+    assert!(KernelRules::theorem_ref(&right, &right_token).is_ok());
+    assert!(matches!(
+        KernelRules::theorem_ref(&left, &right_token),
+        Err(KernelError::UnknownTheoremDependency)
+    ));
+    assert!(matches!(
+        KernelRules::theorem_ref(&right, &left_token),
+        Err(KernelError::UnknownTheoremDependency)
+    ));
+
+    let left_reference = KernelRules::theorem_ref(&left, &left_token).unwrap();
+    let right_reference = KernelRules::theorem_ref(&right, &right_token).unwrap();
+    let (_, left_alias) = accept_closed_theorem(&left, "alias", left_reference).unwrap();
+    let (_, right_alias) = accept_closed_theorem(&right, "alias", right_reference).unwrap();
+    assert_ne!(left_alias.id(), right_alias.id());
+}
+
+#[test]
 fn unused_same_stamp_free_substitution_is_rejected() {
     let parent = theory("Pure", &["A"]);
     let candidate = implication_identity(&parent, "A");
