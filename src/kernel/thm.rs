@@ -14,19 +14,6 @@ pub struct OpenThm(KernelThm);
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClosedThm(KernelThm);
 
-/// Invariant-replayed theorem value. Construction remains inside the strict
-/// kernel until the context-owning acceptance API exists.
-///
-/// ```compile_fail
-/// use isabelle_rs::kernel::ClosedThm;
-///
-/// fn bypass_acceptance(closed: ClosedThm) {
-///     let _ = closed.trust();
-/// }
-/// ```
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TrustedTheorem(ClosedThm);
-
 impl KernelThm {
     pub(in crate::kernel) fn new(hyps: Vec<CProp>, prop: CProp, derivation: Derivation) -> Self {
         let context = prop.context();
@@ -103,6 +90,11 @@ impl ClosedThm {
         ClosedThm(inner)
     }
 
+    #[cfg(test)]
+    pub(in crate::kernel) fn from_kernel_unchecked_for_test(inner: KernelThm) -> Self {
+        ClosedThm(inner)
+    }
+
     pub fn as_kernel(&self) -> &KernelThm {
         &self.0
     }
@@ -113,29 +105,6 @@ impl ClosedThm {
 
     pub fn into_kernel(self) -> KernelThm {
         self.0
-    }
-
-    pub(in crate::kernel) fn trust(self) -> Result<TrustedTheorem, KernelError> {
-        super::invariant::check_kernel_thm(self.as_kernel())?;
-        Ok(TrustedTheorem(self))
-    }
-}
-
-impl TrustedTheorem {
-    pub fn as_closed(&self) -> &ClosedThm {
-        &self.0
-    }
-
-    pub fn prop(&self) -> &CProp {
-        self.0.as_kernel().prop()
-    }
-
-    pub fn context(&self) -> ContextStamp {
-        self.0.as_kernel().context()
-    }
-
-    pub fn proved_in(&self) -> TheoryId {
-        self.0.as_kernel().proved_in()
     }
 }
 

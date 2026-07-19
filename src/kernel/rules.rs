@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use super::{
     CProp, CTerm, ClosedThm, ContextStamp, Derivation, InstEntry, KernelError, KernelThm, Name,
-    OpenThm, Term, Ty,
+    OpenThm, ProofContext, Term, TrustedTheorem, TrustedTheory, Ty,
     thm::{prop_from_term, remove_hyp, union_hyps},
     unify,
 };
@@ -18,6 +18,24 @@ fn require_same_context(expected: ContextStamp, actual: ContextStamp) -> Result<
 pub struct KernelRules;
 
 impl KernelRules {
+    /// Import one replay-accepted ancestor theorem into the current immutable
+    /// theory context.
+    pub fn theorem_ref(
+        theory: &TrustedTheory,
+        theorem: &TrustedTheorem,
+    ) -> Result<ClosedThm, KernelError> {
+        if !theory.contains_theorem(theorem) {
+            return Err(KernelError::UnknownTheoremDependency);
+        }
+        let context = ProofContext::new(theory.snapshot().clone());
+        let prop = context.recertify_prop(theorem.prop())?;
+        Ok(ClosedThm::new(KernelThm::new(
+            Vec::new(),
+            prop,
+            Derivation::TheoremRef { theorem: theorem.clone() },
+        )))
+    }
+
     pub fn assume(prop: CProp) -> OpenThm {
         let thm = KernelThm::new(vec![prop.clone()], prop.clone(), Derivation::Assume { prop });
         OpenThm::new(thm)

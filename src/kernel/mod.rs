@@ -28,8 +28,11 @@ pub use rules::KernelRules;
 pub use search_fact::{SearchFact, SearchFactDb};
 pub use signature::Signature;
 pub use term::{RawTerm, Term};
-pub use theory::{TheorySnapshot, TrustedTheory};
-pub use thm::{ClosedThm, KernelThm, OpenThm, TrustedTheorem};
+pub use theory::{
+    DependencyKind, DependencySet, TheoremId, TheorySnapshot, TrustedTheorem, TrustedTheory,
+    accept_closed_theorem,
+};
+pub use thm::{ClosedThm, KernelThm, OpenThm};
 pub use typ::Ty;
 
 use thiserror::Error;
@@ -47,6 +50,21 @@ pub enum KernelError {
     UndeclaredFree(Name),
     #[error("strict signature declaration `{name}` already exists")]
     DuplicateDeclaration { name: Name },
+
+    #[error("trusted theorem name `{name}` already exists in the theory ancestry")]
+    DuplicateTheorem { name: Name },
+
+    #[error("theorem candidate still has {hypotheses} undischarged hypotheses")]
+    TheoremNotClosed { hypotheses: usize },
+
+    #[error("accepting derivation replay does not exactly reproduce the theorem candidate")]
+    AcceptanceReplayMismatch,
+
+    #[error("accepting replay produced a dependency absent from the trusted theory ancestry")]
+    UnknownTheoremDependency,
+
+    #[error("derivation is unsupported by context-bound accepting replay")]
+    UnsupportedAcceptanceDerivation,
 
     #[error("untrusted signature snapshot digest does not match its declarations")]
     SignatureDigestMismatch,
@@ -83,9 +101,6 @@ pub enum KernelError {
 
     #[error("kernel invariant violation: {0}")]
     Invariant(String),
-
-    #[error("search facts are not trusted theorems")]
-    SearchFactNotTrusted,
 
     #[error("expected a beta redex ((λx. body) arg), got `{0:?}`")]
     BetaRedexExpected(Ty),

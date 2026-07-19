@@ -1,4 +1,4 @@
-use super::{InstEntry, KernelError, Name, Ty};
+use super::{InstEntry, KernelError, Name, Ty, identity::CanonicalEncoder};
 
 /// Raw term accepted at the edge of the strict kernel.
 ///
@@ -369,6 +369,62 @@ impl Term {
                 Term::Imp { premise: rp, conclusion: rc },
             ) => lp.alpha_eq(rp) && lc.alpha_eq(rc),
             _ => false,
+        }
+    }
+
+    /// Canonical semantic encoding used by accepted-theorem identities.
+    ///
+    /// Binder labels and cached result types are omitted: the former are not
+    /// logical data, and the latter are revalidated before this encoder runs.
+    pub(in crate::kernel) fn write_theorem_canonical(&self, encoder: &mut CanonicalEncoder) {
+        match self {
+            Term::Const { name, ty } => {
+                encoder.write_u8(0);
+                encoder.write_name(name);
+                ty.write_canonical(encoder);
+            },
+            Term::Free { name, ty } => {
+                encoder.write_u8(1);
+                encoder.write_name(name);
+                ty.write_canonical(encoder);
+            },
+            Term::Var { name, index, ty } => {
+                encoder.write_u8(2);
+                encoder.write_name(name);
+                encoder.write_u64(*index as u64);
+                ty.write_canonical(encoder);
+            },
+            Term::Bound { index, ty } => {
+                encoder.write_u8(3);
+                encoder.write_u64(*index as u64);
+                ty.write_canonical(encoder);
+            },
+            Term::Abs { param_ty, body, .. } => {
+                encoder.write_u8(4);
+                param_ty.write_canonical(encoder);
+                body.write_theorem_canonical(encoder);
+            },
+            Term::Forall { param_ty, body, .. } => {
+                encoder.write_u8(5);
+                param_ty.write_canonical(encoder);
+                body.write_theorem_canonical(encoder);
+            },
+            Term::App { func, arg, .. } => {
+                encoder.write_u8(6);
+                func.write_theorem_canonical(encoder);
+                arg.write_theorem_canonical(encoder);
+            },
+            Term::Eq { object_ty, lhs, rhs } => {
+                encoder.write_u8(7);
+                object_ty.write_canonical(encoder);
+                lhs.write_theorem_canonical(encoder);
+                rhs.write_theorem_canonical(encoder);
+            },
+            Term::Imp { premise, conclusion } => {
+                encoder.write_u8(8);
+                premise.write_theorem_canonical(encoder);
+                conclusion.write_theorem_canonical(encoder);
+            },
         }
     }
 

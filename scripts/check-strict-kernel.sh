@@ -10,7 +10,7 @@
 #   1. Formatting (cargo +stable fmt --check)
 #   2. Compilation  (cargo +stable check --locked)
 #   3. Kernel firewall (no legacy deps, no forbidden patterns)
-#   4. Integration attack tests (rewrite soundness and context identity)
+#   4. Integration attack tests (rewrite, context, acceptance, compile-fail)
 #   5. Kernel soundness tests (kernel_soundness)
 #   6. Inline kernel unit tests (thm, unify, rules, theory)
 #   7. Legacy core compatibility tests (core::)
@@ -79,6 +79,12 @@ run_step "kernel_rewrite_soundness" cargo +stable test --locked --test kernel_re
 
 banner "4b. Kernel context identity (integration attack tests)"
 run_step "kernel_context_identity" cargo +stable test --locked --test kernel_context_identity || true
+
+banner "4c. Kernel trusted acceptance (integration attack tests)"
+run_step "kernel_trusted_acceptance" cargo +stable test --locked --test kernel_trusted_acceptance || true
+
+banner "4d. Strict public boundaries (compile-fail doctests)"
+run_step "kernel doctests" cargo +stable test --locked --doc kernel || true
 
 # ── 5. Kernel soundness tests ──
 banner "5. Kernel soundness (trusted boundary tests)"

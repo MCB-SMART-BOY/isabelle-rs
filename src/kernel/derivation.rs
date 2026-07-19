@@ -1,7 +1,10 @@
-use super::{CProp, CTerm, InstEntry, KernelThm, Name, Ty};
+use super::{CProp, CTerm, InstEntry, KernelThm, Name, TrustedTheorem, Ty};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Derivation {
+    TheoremRef {
+        theorem: TrustedTheorem,
+    },
     Assume {
         prop: CProp,
     },

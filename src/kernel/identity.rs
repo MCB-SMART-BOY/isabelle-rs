@@ -94,6 +94,11 @@ impl ContextStamp {
     pub(in crate::kernel) fn new(theory: TheoryId, signature: SignatureId) -> Self {
         Self { theory, signature }
     }
+
+    pub(in crate::kernel) fn write_canonical(self, encoder: &mut CanonicalEncoder) {
+        self.theory.write_canonical(encoder);
+        self.signature.write_canonical(encoder);
+    }
 }
 
 impl fmt::Debug for SignatureId {

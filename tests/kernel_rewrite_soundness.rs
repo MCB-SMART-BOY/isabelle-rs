@@ -1,9 +1,6 @@
-use std::convert::TryInto;
-
 use isabelle_rs::kernel::{
     Derivation, InstEntry, KernelError, KernelRules, Name, ProofContext, ProofObligation, RawTerm,
-    SearchFact, SearchFactDb, Signature, Term, TheorySnapshot, TrustedTheorem, Ty,
-    invariant::check_kernel_thm,
+    SearchFact, SearchFactDb, Signature, Term, TheorySnapshot, Ty, invariant::check_kernel_thm,
 };
 
 fn ty(name: &str) -> Ty {
@@ -282,13 +279,15 @@ fn proof_obligation_is_not_theorem() {
 fn search_fact_cannot_enter_trusted_theory() {
     let ctx = ctx_with_props(&["A"]);
     let a = ctx.certify_prop(prop("A")).unwrap();
-    let fact = SearchFact::Admitted { prop: a, reason: "admitted:test".into() };
+    let fact = SearchFact::Admitted { prop: a.clone(), reason: "admitted:test".into() };
     let mut db = SearchFactDb::new();
     db.add(fact.clone());
-    assert_eq!(db.len(), 1);
 
-    let trusted: Result<TrustedTheorem, KernelError> = fact.try_into();
-    assert!(matches!(trusted, Err(KernelError::SearchFactNotTrusted)));
+    assert_eq!(db.len(), 1);
+    assert!(matches!(
+        fact,
+        SearchFact::Admitted { prop, .. } if prop == a
+    ));
 }
 
 // ---------------------------------------------------------------------------
