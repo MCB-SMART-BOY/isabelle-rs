@@ -171,6 +171,26 @@ duplicate names are rejected rather than replaced.
 The function returns `(child_theory, accepted_token)`. This tuple is necessary:
 the fact name and theorem ID are part of the immutable child `TheoryId`.
 
+### Logical identity versus token authority
+
+`TheoremId` and `DependencySet` are canonical logical identity data.
+`DependencySet` intentionally stores a referenced theorem's `TheoremId`, not
+its `accepted_in` child. This does not collapse authorization:
+
+- `KernelRules::theorem_ref` requires the exact sealed token's `id`, fact
+  `name`, and `accepted_in` value in the supplied owner ancestry;
+- accepting replay repeats that exact-token check before inserting the logical
+  dependency ID;
+- equal theorem content accepted under different names may share a
+  `TheoremId`, but the tokens are not interchangeable across sibling branches;
+- a dependent theorem ID includes its own exact `ContextStamp`, so proofs built
+  in distinct sibling branches remain distinct.
+
+The digest-only `TrustedTheory::resolves` check is post-replay consistency, not
+proof authority. A future persistence format must serialize and revalidate
+accepted-token provenance; it must never reconstruct authority from a
+`DependencySet` alone.
+
 The strict theorem representation has no legacy `tpairs`, `shyps`, oracle, or
 admit field. Those burdens are unrepresentable inside the current nucleus, but
 there is still no production legacy-to-kernel conversion that proves they were
@@ -265,7 +285,8 @@ The Pure acceptance boundary is complete for current derivations. A real HOL
 2. an authorized data-only logic-basis manifest and `LogicBasisId`;
 3. generic replayable axiom-schema instances with exact axiom dependencies;
 4. generic conservative definition certificates and dependencies;
-5. a source-aware proposition AST and declaration-aware elaborator;
+5. parser integration plus a declaration-aware elaborator that consumes the
+   implemented data-only source AST;
 6. an explicit burden-complete adapter, if any legacy theorem is ever migrated.
 
 None may be replaced by theorem names, source-shape metadata, executable HOL
@@ -332,10 +353,23 @@ an accepted token precedence over any legacy result, and
 path currently supplies no token, preserving the `0/125` benchmark.
 
 The acceptance attack suite covers wrong theory/signature, stale parents,
-sibling tokens, duplicate names, tampered derivations/conclusions,
-same-stamp undeclared frees, malformed checked-term caches, owner/store
-mismatches, search-fact erasure, alpha-canonical IDs, dependency ordering/kinds,
-and an independent golden theorem-ID vector.
+sibling tokens, duplicate names, tampered derivations/conclusions, same-stamp
+undeclared frees, malformed checked-term caches, owner/store mismatches,
+search-fact erasure, alpha-canonical IDs, dependency ordering/kinds, an
+independent golden theorem-ID vector, and the distinction between equal logical
+theorem IDs and non-interchangeable sibling acceptance tokens.
+
+### Post-commit verification audit
+
+The immutable-context baseline `38c5f14` (then `origin/dev`) and all five
+candidate commits independently pass `cargo +stable check --locked` and
+`scripts/check-strict-kernel.sh` when built with isolated Cargo targets.
+`cargo +stable check --locked --all-targets` fails at that baseline and every
+candidate with the same four pre-existing benchmark errors: two private
+`proofterm::check_proof` calls and two `Result<Thm>` argument mismatches in
+`benches/kernel_benchmarks.rs`. No
+candidate introduced an all-targets regression; the gate is nevertheless not
+green.
 
 ## Required Implementation Order
 
@@ -357,20 +391,22 @@ and an independent golden theorem-ID vector.
   HOL benchmark;
 - `KernelTrustedClosed` is a real exclusive outcome, still `0/125`.
 
-### 3. Source-aware proposition AST — in progress
+### 3. Source-aware proposition AST — data model implemented
 
-- `src/isar/source_ast.rs` provides `SourceProposition`, `SourceExpr`, and
-  `SourceType` as unresolved source-level syntax with preserved spans;
-- every name is an unresolved `SourceName` (no `Const`/`Free`/`Var`
-  distinction at the AST level);
+- `src/isar/source_ast.rs` provides `SourceProposition`, `SourceExpr`,
+  `SourceType`, and `SourceSyntax` as unresolved source-level data;
+- `SourceName` retains exact spelling without a parser-time qualified-name,
+  `Const`, `Free`, `Var`, or `Bound` classification;
+- binder/operator syntax remains a raw `SourceSyntax` spelling plus span, not a
+  fixed Pure/HOL semantic enum;
+- `SourceSpan` is a half-open byte range `[start, end)`, while `SourceId` is a
+  caller-supplied label; both are forgeable diagnostics and confer no trust;
 - no `ContextStamp`, `SignatureId`, `TheoryId`, `CProp`, `ClosedThm`, or
   `TrustedTheorem` appears in the module or its public API;
-- compile-fail doc-tests enforce the absence of `From` conversions into
-  `Term`, `CProp`, `ClosedThm`, `TrustedTheorem`, and `DependencySet`;
-- `SourceSpan` and `SourceId` are for diagnostics only; they do not enter
-  `TheoremId` or any kernel identity digest;
-- an explicit elaborator (`SourceProposition → CProp`) is deferred to
-  Change C2 (checked judgment / constant / type-scheme elaboration).
+- compile-fail doc-tests enforce the absence of conversions into `Term`,
+  `CProp`, `ClosedThm`, `TrustedTheorem`, and `DependencySet`;
+- parser integration, full-consumption binding, name/syntax resolution,
+  type/sort checking, and judgment insertion are deferred to Change C2.
 
 ### 4. Checked judgment / constant / type-scheme elaboration
 

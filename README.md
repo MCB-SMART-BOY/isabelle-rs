@@ -42,6 +42,12 @@ Do not claim full `cargo test --lib` success unless the known
 verified as fixed in the current checkout; the explicit wrapper mode is
 `scripts/dev-check.sh lib`.
 
+`cargo +stable check --locked --all-targets` currently fails in the pre-existing
+`benches/kernel_benchmarks.rs` target: two calls use the private
+`proofterm::check_proof`, and two implication benchmarks pass `Result<Thm>`
+instead of `Thm`. The same four errors occur at `origin/dev`; do not report the
+all-targets gate as green until that separate benchmark debt is fixed.
+
 ## Trust Model
 
 The core rule is simple:
@@ -81,6 +87,7 @@ See [docs/TRUST.md](docs/TRUST.md).
 | Oracle/admit tracking | Explicit `admitted:*` footprint tracking and propagation. |
 | Closed theorem acceptance | `accept_closed_theorem` is the sole sealed-token constructor. It validates exact owner identity, recursive replay, closedness, dependencies, immutable owner/store consistency, and duplicate names before returning a child `TrustedTheory` plus `TrustedTheorem`. |
 | Searchable facts vs trusted table | `HolTheoremDb` and `SearchFactDb` are proof-search/migration indexes with no conversion into the sealed token. |
+| Source proposition AST | `src/isar/source_ast.rs` is a data-only, parser-independent syntax model with raw name/syntax spellings, grouping, binders, type annotations, and half-open byte spans. It carries no trusted context and has no conversion into kernel propositions or theorems. |
 | Sampled HOL trust metrics | `TransitionalStrictClosed: 1/125`; `KernelTrustedClosed: 0/125`. Synthetic Pure acceptance is excluded; current `HOL::TrueI` remains bool-valued legacy output. |
 | Proofterm replay | Every current strict `Derivation` variant replays with exact `TheoryId` / `SignatureId` propagation. Ancestor theorem dependencies are supported; object-logic axiom/basis and conservative-definition replay remain absent. |
 | Isar/HOL/tools | Partial implementation; useful for experiments, not feature-compatible with Isabelle. |
@@ -115,10 +122,11 @@ Current priority order (aligned with ADR-0002 layered platform vision):
 
 1. Keep the completed immutable context identity and exact-owner acceptance
    boundary stable.
-2. Preserve a source-aware proposition AST before lowering to legacy terms.
-3. Elaborate checked judgments, constants, and polymorphic type schemes,
-   including explicit `HOL.Trueprop`, into the existing `CProp : prop`
-   boundary.
+2. Keep the implemented data-only source proposition AST unresolved and
+   disconnected from theorem authority.
+3. Next, integrate source parsing and elaborate checked judgments, constants,
+   and polymorphic type schemes, including explicit `HOL.Trueprop`, into the
+   existing `CProp : prop` boundary.
 4. Install the HOL logical basis as an immutable data-only manifest replayed by
    generic kernel code.
 5. Add a generic conservative definition extension; do not promote

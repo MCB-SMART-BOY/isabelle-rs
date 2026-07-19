@@ -37,10 +37,10 @@ KernelTrustedClosed:      0/125
 Implementation must proceed in exactly this order:
 
 ```text
-immutable SignatureId / TheoryId
-  -> unique context-bound acceptance
-  -> source-aware proposition AST
-  -> checked judgment / constant / type-scheme elaboration
+immutable SignatureId / TheoryId [implemented]
+  -> unique context-bound acceptance [implemented]
+  -> data-only source proposition AST [implemented]
+  -> checked parser/declaration/type-scheme elaboration [next]
   -> data-only HOL logic-basis manifest
   -> generic conservative definition extension
   -> HOL::TrueI as HOL.Trueprop HOL.True

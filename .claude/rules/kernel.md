@@ -2,8 +2,8 @@
 description: Candidate src/kernel TCB and legacy src/core trust rules.
 globs: src/kernel/**, src/core/thm.rs, src/core/proofterm.rs, tests/kernel_*.rs
 alwaysApply: false
-version: 5.0
-updated: 2026-07-18
+version: 5.1
+updated: 2026-07-19
 ---
 # Kernel Rules
 
@@ -19,6 +19,7 @@ and replay data through every inference.
 
 Legacy strict shape counts only as `TransitionalStrictClosed`.
 `KernelTrustedClosed` requires the token returned by exact-owner
-`accept_closed_theorem`; object-logic results additionally require the missing
-authorized basis/axiom/definition layers. Run `scripts/dev-check.sh strict` and
-update the trust/attack ledgers.
+`accept_closed_theorem`; a logical `TheoremId` dependency alone grants no
+authority. Object-logic results additionally require the missing authorized
+basis/axiom/definition layers. Run `scripts/dev-check.sh strict` and update the
+trust/attack ledgers.

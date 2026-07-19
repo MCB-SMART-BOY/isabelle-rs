@@ -107,11 +107,12 @@ Admitted(parser_gap): 3
 Admitted(datatype_stub): 2
 ```
 
-Immutable theory/signature identity is now implemented. The next trust-critical
-sequence is one context/dependency-aware `KernelTrustedClosed` acceptance
-operation, a source-aware proposition AST, checked HOL basis elaboration, and
-generic conservative definitions. Admitted-reason reduction remains useful but
-must not reclassify transitional or compatibility results as trusted proofs.
+Immutable theory/signature identity, exact-owner acceptance, exclusive outcome
+classification, and a data-only unresolved source AST are now implemented. The
+next trust-critical sequence is parser integration plus checked declaration and
+proposition elaboration, followed by authorized HOL basis schemas and generic
+conservative definitions. Admitted-reason reduction remains useful but must not
+reclassify transitional or compatibility results as trusted proofs.
 
 `RewriteRule::from_thm` now rejects theorem hyps, oracle/admitted footprints,
 unresolved `tpairs`, and Pure-premise conditional rewrites. This prevents open
@@ -303,11 +304,11 @@ Drop-in replacement for Isabelle
 ## Next Work With Highest Research Value
 
 1. Keep immutable `SignatureId` / `TheoryId` and mixed-context rejection stable.
-2. Add one context/dependency-aware theorem acceptance operation and mutually
-   exclusive `KernelTrustedClosed` outcome.
-3. Preserve a source-aware proposition AST before legacy lowering.
-4. Elaborate checked `HOL.Trueprop` and polymorphic declarations into
-   `CProp : prop`.
+2. Keep exact-owner theorem acceptance and mutually exclusive
+   `KernelTrustedClosed` classification stable.
+3. Keep the data-only source AST unresolved and outside theorem authority.
+4. Next, integrate source parsing and elaborate checked `HOL.Trueprop` plus
+   polymorphic declarations into `CProp : prop`.
 5. Install a data-only HOL basis and generic conservative definitions.
 6. Re-derive `HOL::TrueI` through the new kernel.
 7. Continue replay/attack-test hardening and admitted-reason reduction without

@@ -8,10 +8,11 @@ permissions: [Bash:cargo test, Bash:cargo check, Read, Edit]
 ---
 # Add Isar Command
 
-Broad Isar expansion is deferred until the `CProp`/`Trueprop`, immutable theory,
-conservative definition, and explicit HOL-basis boundaries close. If a command
-is required for that migration, inspect `src/isar/proof.rs`,
-`src/isar/toplevel.rs`, and the existing dispatch tests before editing.
+Broad Isar expansion is deferred until the implemented data-only source AST is
+integrated with checked `CProp`/`Trueprop` elaboration, then the explicit HOL
+basis and conservative-definition boundaries close. If a command is required
+for that migration, inspect `src/isar/proof.rs`, `src/isar/toplevel.rs`, and the
+existing dispatch tests before editing.
 
 The command must preserve proof-mode invariants, return typed errors, and never
 turn parser or method failure into `assume`. Add focused tests, then run

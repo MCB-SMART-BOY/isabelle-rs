@@ -2,8 +2,10 @@
 
 ## Status
 
-Design and diagnostic only. No production normalizer, theorem adapter, HOL
-substitution rule, or trusted primitive is implemented by this document.
+The data-only source AST representation is implemented, but parser integration,
+declaration-aware elaboration, and normalization remain design-only. No
+production normalizer, theorem adapter, HOL substitution rule, or trusted
+primitive is implemented by this document.
 
 The targeted diagnostic case is the proposition of `HOL::trans`:
 
@@ -17,6 +19,10 @@ does not authorize a `try_strict_hol_trans` adapter or increase either
 `TransitionalStrictClosed: 1/125` or `KernelTrustedClosed: 0/125`. The first HOL
 trust milestone remains re-deriving `HOL::TrueI` through the new kernel; `trans`
 is an eventual reuse consumer after the wider theory/logic gates close.
+
+`src/isar/source_ast.rs` deliberately stores raw names/syntax and diagnostic
+spans only. It does not yet distinguish Pure/HOL meanings, resolve namespaces,
+check types, insert judgments, carry trusted context, or produce `CProp`.
 
 ## Boundary
 
@@ -267,15 +273,18 @@ message text.
 Before this normalizer can be implemented safely, the parser/signature boundary
 must provide:
 
-1. mandatory full-consumption provenance and a proposition AST that
-   distinguishes meta connectives from HOL formulas;
-2. exact source symbol identity and scope for Const, Free, and Var nodes;
-3. preserved explicit type annotations instead of discarding `::` syntax;
-4. checked extraction of `judgment` declarations, beginning with
+1. connect mandatory full-consumption provenance to the implemented
+   `SourceProposition` data model;
+2. resolve raw `SourceSyntax` under the active syntax tables so meta
+   connectives and HOL formulas remain distinguishable after elaboration;
+3. resolve exact source symbol identity and scope for Const, Free, Var, and
+   Bound nodes;
+4. preserve and check explicit source type annotations instead of discarding
+   `::` syntax;
+5. extract checked `judgment` declarations, beginning with
    `HOL.Trueprop : bool => prop`;
-5. deterministic polymorphic constraint solving anchored in checked constant
-   schemes;
-6. a skeleton projection and source-to-normalized provenance record.
+6. solve polymorphic constraints deterministically from checked constant
+   schemes and emit a source-to-normalized provenance record.
 
 The proposed API must not accept a theorem name, proof script, search fact, or
 `HolTheoremDb` fact as type or name-resolution evidence. The legacy parsed

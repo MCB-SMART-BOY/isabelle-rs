@@ -62,8 +62,10 @@ For `src/kernel/`:
 - `accept_closed_theorem` is the only trusted-token constructor; it owns exact
   owner replay, recursive recertification, dependency reconstruction, duplicate
   rejection, and immutable accepted-fact insertion;
-- ancestor theorem reuse requires `KernelRules::theorem_ref` and records a
-  replay-derived `TheoremId` dependency;
+- ancestor theorem reuse requires `KernelRules::theorem_ref`; replay checks the
+  exact sealed token (`id`, `name`, and `accepted_in`) in owner ancestry before
+  recording its logical `TheoremId` dependency;
+- a canonical `DependencySet` is theorem identity data, never proof authority.
 
 For `src/core/`:
 
@@ -85,20 +87,22 @@ The implementation order is strict:
    exact mixed-context rejection stable;
 2. keep the implemented context/dependency-aware acceptance API and mutually
    exclusive `KernelTrustedClosed` outcome stable;
-3. preserve a source-aware proposition AST before legacy term lowering;
-4. elaborate checked judgments, constants, and polymorphic type schemes,
-   including `HOL.Trueprop`, into `CProp : prop`;
+3. keep the implemented data-only source proposition AST semantically
+   unresolved: `SourceName` and `SourceSyntax` retain exact spellings,
+   `SourceSpan` is half-open diagnostic metadata, and no trusted context or
+   conversion into kernel values exists;
+4. next, integrate source parsing and elaborate checked judgments, constants,
+   and polymorphic type schemes, including `HOL.Trueprop`, into `CProp : prop`;
 5. install a data-only HOL logic-basis manifest, validated and replayed by
    generic kernel code;
 6. add a generic conservative definition extension;
 7. re-derive `HOL::TrueI` as `HOL.Trueprop HOL.True` through the new kernel;
 8. only then consider `HOL::trans` as a reuse consumer.
 
-The immediate next implementation change is item 3 only: source-aware
-proposition syntax that preserves meta/HOL connective identity, scopes, term
-namespaces, checked type/sort annotations, spans, and judgment positions before
-legacy lowering. Do not connect it to a theorem adapter until item 4 is also
-checked.
+The immediate next implementation change is item 4. The source AST does not
+classify dotted names, Pure/HOL binders, constants, frees, variables, or
+judgment positions at construction time; a declaration-aware parser/elaborator
+must resolve those meanings without adding a direct source-to-theorem path.
 
 Read `docs/KERNEL_TRUSTED_ACCEPTANCE_GAPS.md` before changing this chain.
 
@@ -192,3 +196,7 @@ For the current main line, also run the focused wrong-context and deterministic
 identity tests introduced by the slice. Report exact observed outputs. Do not
 claim full `cargo test --lib` success unless the stack-sensitive theory-loader
 batch is proven fixed in the current checkout.
+
+`cargo +stable check --locked --all-targets` has four known pre-existing
+benchmark compile errors on `origin/dev`; see `docs/BASELINE.md`. Report that
+gate separately rather than claiming it passed.

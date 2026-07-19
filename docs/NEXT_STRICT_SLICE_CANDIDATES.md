@@ -189,10 +189,11 @@ The historical recommendation assumed a new object-logic bridge. The trust
 correction supersedes that path: none of the remaining 124 sampled theorems is
 eligible for a `KernelTrustedClosed` increase.
 
-The next source work is immutable theory/signature identity and the unique
-acceptance gate, followed by source-aware proposition preservation, checked
-elaboration, conservative definitions, and an explicit replayable HOL basis.
-It is not another theorem adapter or legacy TCB bridge.
+Immutable theory/signature identity, unique acceptance, and the unresolved
+source-AST data model are now implemented. The next source work is parser
+integration plus checked declaration/type-scheme elaboration, followed by an
+explicit replayable HOL basis and conservative definitions. It is not
+another theorem adapter or legacy TCB bridge.
 
 The required parser-to-checked boundary is now specified in
 [CHECKED_HOL_PROPOSITION_NORMALIZATION.md](CHECKED_HOL_PROPOSITION_NORMALIZATION.md),

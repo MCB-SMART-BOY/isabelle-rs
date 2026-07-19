@@ -147,11 +147,11 @@ Thm invariant checker
 strict kernel mode
 ```
 
-Those boundaries, immutable context identity, and the exact-owner acceptance
-gate are now implemented. The current next entry is a source-aware proposition
-AST followed by checked declaration/type-scheme elaboration. Do not broaden
-HOL/Isar coverage or extend legacy replay instead of closing that source
-boundary.
+Those boundaries, immutable context identity, exact-owner acceptance, and the
+data-only source proposition AST are now implemented. The current next entry is
+parser integration plus checked declaration/type-scheme elaboration. Do not
+broaden HOL/Isar coverage or extend legacy replay instead of closing that
+source-to-checked boundary.
 
 ## Broad-Suite Failure Baseline
 
@@ -192,3 +192,22 @@ theory::loader::tests::test_structured_proof
 ```
 
 Verified 2026-07-19 against `HEAD` of local `dev`.
+
+## Post-Commit All-Targets Audit
+
+On 2026-07-19, `cargo +stable check --locked` and
+`scripts/check-strict-kernel.sh` passed independently at baseline `38c5f14`
+(then `origin/dev`) and candidate commits `502acd2`, `3c72167`, `929d04e`,
+`6840533`, and `6336271`.
+
+`cargo +stable check --locked --all-targets` failed identically at all six
+points with four errors in `benches/kernel_benchmarks.rs`:
+
+```text
+E0603: proofterm::check_proof is private (two calls)
+E0308: implies_intr/implies_elim receive &Result<Thm> (two calls)
+```
+
+This proves the benchmark failure predates the candidate series; it does not
+make the all-targets gate pass. Keep this debt separate from kernel acceptance,
+outcome classification, and source-AST changes.

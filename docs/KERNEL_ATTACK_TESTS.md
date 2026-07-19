@@ -160,6 +160,9 @@ legacy parser/loader paths can be isolated and audited explicitly.
   quantifier payload;
 - malformed cached application, abstraction, equality, and bound types;
 - ancestry-authorized theorem references and replay-derived dependencies;
+- equal logical theorem content accepted under different sibling fact names
+  yields equal `TheoremId`s but non-interchangeable `(name, accepted_in)` tokens;
+  aliases derived in those branches have distinct context-bound IDs;
 - proof-erased search facts and private accepted-token construction;
 - alpha-canonical, proof-irrelevant theorem identity;
 - changed term namespace/index/type/node and dependency-kind identity;
@@ -169,13 +172,30 @@ legacy parser/loader paths can be isolated and audited explicitly.
   bucket;
 - preservation of `KernelTrustedClosed: 0/125` in the sampled HOL run.
 
+## Source AST Boundary Attacks
+
+`src/isar/source_ast.rs` unit and compile-fail tests now cover:
+
+- half-open UTF-8 byte spans and nested span preservation;
+- raw dotted/bare name spellings without qualification classification;
+- raw Pure/HOL-looking binder syntax without a semantic binder enum;
+- distinct source nodes for shadowed binders;
+- grouping and syntax-application structure;
+- caller-forgeable diagnostic source labels separated from expression shape;
+- absence of `ContextStamp` fields and direct conversions into `Term`, `CProp`,
+  `ClosedThm`, `TrustedTheorem`, or `DependencySet`.
+
+These tests protect a data representation only. They do not prove parser
+integration, source authenticity, name resolution, type elaboration, or theorem
+acceptance.
+
 ## Next Attack Tests To Add
 
 The next batches follow the remaining dependency order:
 
-- source-aware proposition preservation: missing provenance, Pure/HOL equality
-  confusion, false constant aliases, binder/variable identity changes,
-  unconsumed source, and display-text-independent typed errors;
+- parser-to-AST integration: missing provenance, Pure/HOL syntax confusion,
+  false aliases, binder/variable resolution changes, unconsumed source, invalid
+  spans, and display-text-independent typed errors;
 - checked elaboration: inconsistent polymorphic constraints, bad sorts,
   missing/double `HOL.Trueprop`, and changed proposition skeletons;
 - HOL basis/definitions: uninstalled or mismatched manifests, forged basis IDs,

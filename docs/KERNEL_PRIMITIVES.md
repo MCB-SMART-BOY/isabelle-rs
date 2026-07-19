@@ -17,8 +17,9 @@ for the new TCB, not a description of the legacy `src/core` implementation.
 - `ProofObligation` is not a theorem.
 - `ClosedThm` is a wrapper for theorems with no hypotheses.
 - `TrustedTheorem` is a private accepted seal over a replayed `ClosedThm`,
-  canonical `TheoremId`, exact proof/acceptance theory identities, and
-  replay-derived dependencies.
+  canonical logical `TheoremId`, exact proof/acceptance theory identities, and
+  replay-derived dependencies. The dependency set does not itself grant
+  theorem-reference authority.
 - `TrustedTheory` is immutable owner/fact ancestry. `accept_closed_theorem` is
   the only token constructor and atomically returns the fact child plus token;
   duplicate names and owner/store mismatches fail closed.
@@ -37,9 +38,11 @@ output: ClosedThm in the owner's current context
 ```
 
 This is fact reuse, not a new logical axiom. Construction and replay both check
-the non-forgeable token against theory ancestry, recertify the proposition in
-the descendant signature, and record the referenced `TheoremId`. A sibling or
-stale token is rejected.
+the exact non-forgeable token (`id`, `name`, and `accepted_in`) against theory
+ancestry, recertify the proposition in the descendant signature, and only then
+record the referenced logical `TheoremId`. Equal-content sibling tokens may
+share that ID but are not interchangeable; a sibling or stale token is
+rejected.
 
 ## `assume`
 

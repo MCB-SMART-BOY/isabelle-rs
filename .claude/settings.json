@@ -47,12 +47,12 @@
   },
 
   "strategy": {
-    "active": "Immutable Context Identity",
-    "description": "Land immutable context identity and mixed-context rejection before the separately reviewed acceptance gate",
+    "active": "Checked HOL Elaboration",
+    "description": "Integrate the data-only source AST with declaration-aware checked elaboration without creating theorem authority",
     "priorities": [
-      "Introduce immutable SignatureId and TheoryId",
-      "Add one context-bound KernelTrustedClosed acceptance gate",
-      "Preserve a source-aware proposition AST",
+      "Keep immutable SignatureId and TheoryId stable",
+      "Keep exact-owner KernelTrustedClosed acceptance stable",
+      "Keep SourceProposition unresolved and untrusted",
       "Elaborate HOL.Trueprop into CProp",
       "Install a data-only HOL basis and conservative definitions",
       "Re-derive HOL::TrueI before HOL::trans"

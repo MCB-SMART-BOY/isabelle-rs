@@ -26,8 +26,8 @@ It is not the first new-kernel HOL theorem.
 ```text
 immutable SignatureId / TheoryId [implemented]
   -> unique context-bound acceptance [implemented]
-  -> source-aware proposition AST [next]
-  -> checked judgment / constant / type-scheme elaboration
+  -> data-only source proposition AST [implemented]
+  -> checked source parsing + judgment / constant / type-scheme elaboration [next]
   -> data-only HOL logic-basis manifest
   -> generic conservative definition extension
   -> HOL::TrueI as HOL.Trueprop HOL.True
@@ -37,9 +37,10 @@ immutable SignatureId / TheoryId [implemented]
 The order is mandatory. A later phase may be designed in parallel, but it may
 not enter trusted production paths before its prerequisites.
 
-Phases 1 and 2 landed as separately reviewed changes. Their synthetic Pure
-tests do not enter the HOL benchmark. Phase 3 is now the first unfinished
-dependency; later trusted phases must not bypass it.
+Phases 1 and 2 landed with synthetic Pure tests outside the HOL benchmark.
+Phase 3 now supplies only an untrusted syntax data model; it deliberately has
+no parser integration, semantic resolution, trusted context, or kernel
+conversion. Phase 4 is the first unfinished dependency.
 
 ## Phase 1: Immutable Context Identity — Implemented
 
@@ -119,27 +120,36 @@ attacks without changing the 125-theorem HOL benchmark.
 Detailed audit:
 [KERNEL_TRUSTED_ACCEPTANCE_GAPS.md](KERNEL_TRUSTED_ACCEPTANCE_GAPS.md).
 
-## Phase 3: Source-Aware Proposition AST
+## Phase 3: Source-Aware Proposition AST — Data Model Implemented
 
-Preserve source semantics before legacy term lowering:
+`src/isar/source_ast.rs` now preserves source structure before any trusted
+elaboration:
 
 ```text
-Pure implication versus HOL implication
-Pure equality versus HOL.eq
-Const / Free / Var / Bound identity
-binder scope
-explicit types and sorts
-source spans
-notation and name-resolution provenance
-HOL.Trueprop insertion positions
+SourceProposition { SourceId, SourceSpan, SourceExpr }
+SourceExpr::{Name, Application, Binder, SyntaxApplication, TypeAscription, Group}
+SourceType::{Name, Application, Arrow}
 ```
 
-The current `SourcePropositionStatus` and `SourcePropositionShape` values remain
-transitional rejection metadata only.
+`SourceName` stores exact spelling without preclassifying dotted text as a
+qualified constant. `SourceSyntax` stores raw binder/operator spelling and its
+span instead of hard-coding Pure/HOL binder meaning. `SourceSpan` is a
+half-open byte range `[start, end)` and `SourceId` is a caller-supplied label;
+both are forgeable diagnostic metadata, not trusted provenance.
+
+The model has no `ContextStamp`, `SignatureId`, `TheoryId`, `CProp`,
+`ClosedThm`, or `TrustedTheorem`, and compile-fail tests forbid direct
+conversion into kernel or legacy theorem authority.
+
+This phase does **not** yet parse Isabelle source into the model, resolve
+`Const` / `Free` / `Var` / `Bound`, classify Pure versus HOL syntax, check
+types/sorts, or record authorized judgment insertion. Those are Phase 4
+responsibilities. Transitional `SourcePropositionStatus` and
+`SourcePropositionShape` remain separate rejection metadata.
 
 Do not repair a damaged legacy `CTerm` by guessing what the source meant.
 
-## Phase 4: Checked Declarations And Proposition Elaboration
+## Phase 4: Checked Declarations And Proposition Elaboration — Next
 
 Use one provenance-bearing pipeline for `typedecl`, `judgment`, `consts`,
 `axiomatization`, and `definition`.

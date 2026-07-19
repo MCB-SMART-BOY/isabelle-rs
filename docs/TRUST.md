@@ -85,8 +85,10 @@ Current strict nucleus constraints:
 - acceptance recursively recertifies and replays the candidate under the exact
   immutable owner, reconstructs dependencies, rejects duplicate names, and
   atomically returns the child theory plus accepted token;
-- accepted theorem references require an ancestor token and record its
-  `TheoremId` dependency;
+- accepted theorem references require the exact ancestor token (`id`, `name`,
+  and `accepted_in`) before replay records its logical `TheoremId` dependency;
+- replay-derived dependency sets are canonical theorem-identity data, not a
+  substitute for token authority;
 - object-logic acceptance still requires the missing authorized
   logic-basis/axiom/definition layer;
 - `SearchFactDb` cannot promote facts to trusted theorems.
@@ -320,6 +322,10 @@ Implemented hardening includes:
 - theorem identity uses a versioned fixed-width canonical encoding, omits proof
   structure and binder display names, and includes exact context, proposition
   constructors/types, and sorted dependency kinds;
+- equal theorem content accepted under different fact names may share a logical
+  `TheoremId`, but the sealed tokens have different `accepted_in` values and
+  are not interchangeable across sibling branches; dependent theorem IDs also
+  commit to the exact branch `ContextStamp`;
 - `ProofOutcome::KernelTrustedClosed` is token-backed and mutually exclusive;
   the synthetic Pure acceptance tests are not connected to the HOL benchmark;
 - `HolTheoremDb::checked_definitions` keeps checked definition sources, starting
@@ -388,6 +394,14 @@ immutable contexts, but no current HOL slice has source-aware elaboration,
 authorized HOL basis/axiom provenance, conservative definitions, and a
 new-kernel proof reaching that gate.
 
+The data-only source proposition AST is now implemented separately from both
+legacy terms and the strict kernel. It retains raw `SourceName` /
+`SourceSyntax` spellings and half-open byte spans. `SourceId` and spans are
+caller-supplied, forgeable diagnostics; the module carries no trusted context
+and exposes no conversion to `CProp`, `ClosedThm`, or `TrustedTheorem`.
+Parser integration, declaration-aware resolution, and checked elaboration are
+still missing.
+
 Trusted kernel rules use `Hyps::kernel_alpha_eq`. The old broad matching is
 isolated as `Hyps::compat_alpha_eq` and must remain explicitly marked as
 compatibility-only until front-end representation gaps are fixed.
@@ -448,6 +462,10 @@ Run `scripts/dev-check.sh core`, `tier2`, or `tier3`.
 
 Do not claim broad `cargo test --lib` success unless the known theory-loader
 stack overflow has been verified fixed.
+
+`cargo +stable check --locked --all-targets` is not currently a green gate:
+four benchmark compile errors reproduce unchanged on `origin/dev`. This is
+separate pre-existing benchmark debt, not evidence against the strict gate.
 
 ## Reporting Rules
 

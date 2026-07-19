@@ -41,12 +41,13 @@ chain, so `KernelTrustedClosed` remains `0/125`.
 The project currently prioritizes, in dependency order:
 
 1. Keep completed immutable context identity and exact-owner acceptance stable.
-2. Preserve a source-aware proposition AST before legacy lowering.
-3. Elaborate checked judgments, constants, and polymorphic schemes into
-   `CProp : prop`.
-4. A data-only HOL basis replayed by generic kernel code.
-5. Generic conservative definitions.
-6. A real new-kernel `HOL::TrueI`.
+2. Keep the implemented data-only source proposition AST unresolved and outside
+   theorem authority.
+3. Next, integrate source parsing and elaborate checked judgments, constants,
+   and polymorphic schemes into `CProp : prop`.
+4. Install a data-only HOL basis replayed by generic kernel code.
+5. Add generic conservative definitions.
+6. Re-derive a real new-kernel `HOL::TrueI`.
 7. Ongoing private construction, oracle/admit accounting, invariant replay,
    firewall enforcement, and trusted-boundary attack tests.
 
@@ -133,7 +134,9 @@ and goal initialization. It must not be used as a proof-failure fallback.
      -> LocalTheory::finalize()
   -> legacy Theory transitional table
 
-checked source + authorized immutable theory/logic context
+data-only SourceProposition
+  -> declaration-aware parser/elaborator [not implemented]
+  -> checked source + authorized immutable theory/logic context
   -> ClosedThm over CProp : prop
   -> accept_closed_theorem with recursive replay/dependency validation
   -> child TrustedTheory + sealed TrustedTheorem

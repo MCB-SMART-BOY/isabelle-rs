@@ -2,12 +2,14 @@
 
 ## Status
 
-Phase 1 summary classifier implemented in `src/isar/method.rs`.
+The summary classifier, token-owning kernel outcome, and statistics integration
+are implemented in `src/isar/method.rs`.
 
-The implemented `ProofOutcome::TransitionalStrictClosed` variant classifies
-legacy `core::Thm + ThmTrust::Strict`. The distinct target metric
-`KernelTrustedClosed`, backed by `src/kernel::TrustedTheorem` and `CProp : prop`,
-is currently `0/125` and is not yet represented by this enum.
+`ProofOutcome::TransitionalStrictClosed` classifies legacy
+`core::Thm + ThmTrust::Strict`. The mutually exclusive
+`ProofOutcome::KernelTrustedClosed` owns a real
+`src/kernel::TrustedTheorem`; its sampled HOL count remains `0/125` because the
+production HOL verifier supplies no accepted token.
 
 Current implementation:
 
@@ -27,11 +29,12 @@ Current implementation:
   transitional adapter, raising the sampled core batch to
   `TransitionalStrictClosed: 1/125` while `KernelTrustedClosed` remains `0/125`;
 
-Not yet implemented:
+Still not implemented:
 
-- final theorem-table acceptance has not been rewritten around `ProofOutcome`;
+- production HOL verification and final HOL theorem-table storage do not
+  produce or consume accepted new-kernel tokens;
 - only one existing HOL/core-file theorem has been classified as
-  `TransitionalStrictClosed` so far (`HOL::TrueI`);
+  `TransitionalStrictClosed` (`HOL::TrueI`);
 - broad HOL/Isar proof methods still mostly return admitted or compat/open
   outcomes.
 
@@ -212,10 +215,10 @@ counts with runtime theorem outcomes.
 The trusted implementation order is mandatory:
 
 ```text
-immutable SignatureId / TheoryId
-  -> unique context-bound acceptance
-  -> source-aware proposition AST
-  -> checked judgment / constant / type-scheme elaboration
+immutable SignatureId / TheoryId [implemented]
+  -> unique context-bound acceptance [implemented]
+  -> data-only source proposition AST [implemented]
+  -> checked parser/declaration/type-scheme elaboration [next]
   -> data-only HOL logic-basis manifest
   -> generic conservative definition extension
   -> HOL::TrueI as HOL.Trueprop HOL.True
@@ -233,6 +236,7 @@ reorder these trust gates or authorize skipping one.
 | Phase 1: summary classifier | Implemented. Existing `verify_lemma` results are summarized without changing theorem construction. |
 | Phase 2: report integration | Implemented. Core reports and the 125-theorem snapshot use the explicit buckets. |
 | Phase 3: context-bound acceptance | Implemented: exact-owner replay, dependency reconstruction, duplicate-safe immutable insertion, sealed token, and exclusive `KernelTrustedClosed`; synthetic Pure tests stay outside the HOL benchmark. |
+| Phase 3a: source syntax data model | Implemented: unresolved names/syntax, grouping, binders, source types, and diagnostic spans with no trusted-context or theorem conversion. Parser integration and elaboration remain separate. |
 | Phase 4a: targeted transitional slice | Implemented. Direct `A ==> A` smoke and adapter tests exercise the migration classifier. |
 | Phase 4b: first core-file transitional slice | Implemented by legacy `HOL::TrueI`; no second transitional adapter is planned. |
 

@@ -305,15 +305,15 @@ acceptance input. Future implementation proceeds in this order:
    propagate exact context stamps through strict certification, theorem
    construction, current rules, and replay. This does not authorize a HOL basis
    or accept a theorem.
-2. Implement the unique context-bound, mutually exclusive
-   `KernelTrustedClosed` acceptance gate. Exercise it first with the existing
-   synthetic Pure `A ==> A` unit; do not count that unit in the 125-theorem HOL
-   benchmark.
-3. Preserve source proposition structure in a source-aware AST that retains
-   meta/HOL connective roles, scopes, identities, spans, types/sorts, and
-   implicit judgment positions.
-4. Implement theorem-independent checked declaration and proposition
-   elaboration as specified in
+2. [Implemented] Use the unique context-bound, mutually exclusive
+   `KernelTrustedClosed` acceptance gate. Synthetic Pure `A ==> A` exercises it
+   without entering the 125-theorem HOL benchmark.
+3. [Data model implemented] Preserve source proposition structure in
+   `src/isar/source_ast.rs` as raw names, syntax tokens, grouping, binders,
+   source types, and half-open diagnostic spans. The model deliberately does
+   not assign Pure/HOL meanings, carry trusted context, or construct a theorem.
+4. [Next] Integrate source parsing and implement theorem-independent checked
+   declaration/proposition elaboration as specified in
    [CHECKED_HOL_PROPOSITION_NORMALIZATION.md](CHECKED_HOL_PROPOSITION_NORMALIZATION.md),
    including checked `judgment`/constant/type-scheme resolution and explicit
    `HOL.Trueprop` insertion into the existing `CProp` boundary.

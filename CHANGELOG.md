@@ -26,6 +26,12 @@ All notable changes to isabelle-rs.
   owner-parameterized replay, replay-derived theorem dependencies,
   duplicate-safe immutable fact insertion, and a sealed `TrustedTheorem`.
   Ancestor facts are reusable only through the checked theorem-reference rule.
+- Clarified that replay-derived `DependencySet` entries are logical theorem
+  identities, not authority. Exact `(id, name, accepted_in)` tokens remain
+  ancestry-checked, including equal-content sibling facts.
+- Added a parser-independent source proposition AST with raw unresolved names
+  and syntax, grouping, binders, source type annotations, half-open byte spans,
+  and compile-fail barriers against trusted-context or theorem conversion.
 - Made `KernelTrustedClosed` a mutually exclusive token-owning `ProofOutcome`.
   `verify_lemma` now returns explicit accepted/legacy evidence; classification
   no longer reads ambient thread-local outcome state.
@@ -50,6 +56,10 @@ All notable changes to isabelle-rs.
 - Added the immutable context-identity attack suite to the strict kernel gate.
 - Added the trusted-acceptance attack suite and strict public-boundary
   compile-fail doctests to the strict kernel gate.
+- Audited baseline `38c5f14` and every candidate commit independently. Normal
+  locked checks and strict gates pass; `--all-targets` has the same four
+  pre-existing benchmark compile errors at every revision and is not reported
+  as green.
 - GitHub releases now require a tag matching `Cargo.toml` and the full
   repository-owned release gate before platform artifacts are built.
 

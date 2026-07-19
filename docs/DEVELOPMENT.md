@@ -178,11 +178,12 @@ documentation work. Preserve unrelated dirty work.
 
 1. Keep immutable `TheoryId` / `SignatureId` propagation and exact-context
    strict theorem construction stable.
-2. Add one context/dependency-aware, mutually exclusive `KernelTrustedClosed`
-   acceptance gate while keeping `TransitionalStrictClosed` separate.
-3. Preserve a source-aware proposition AST before legacy term lowering.
-4. Elaborate checked judgments, constants, and polymorphic type schemes,
-   including `HOL.Trueprop`, into `CProp : prop`.
+2. Keep the implemented context/dependency-aware, mutually exclusive
+   `KernelTrustedClosed` acceptance gate stable.
+3. Keep the implemented data-only source proposition AST semantically
+   unresolved and disconnected from kernel theorem authority.
+4. Next, integrate source parsing and elaborate checked judgments, constants,
+   and polymorphic type schemes, including `HOL.Trueprop`, into `CProp : prop`.
 5. Install the HOL logical basis as an immutable data-only manifest replayed by
    generic kernel code.
 6. Add a generic conservative definition extension; do not promote

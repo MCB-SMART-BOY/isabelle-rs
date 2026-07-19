@@ -27,11 +27,11 @@ KernelTrustedClosed:      0/125
 The current `HOL::TrueI` result is a bool-valued legacy migration experiment,
 not a context-bound `src/kernel::TrustedTheorem`.
 
-Immutable context identity and one exact-owner,
-dependency-aware `accept_closed_theorem` gate are implemented. The next source
-slice is the source-aware proposition AST. Do not implement `HOL::trans`,
-`hol_subst`, another theorem adapter, or new trusted HOL proof power in
-`src/core`.
+Immutable context identity, exact-owner theorem acceptance, and the data-only
+source proposition AST are implemented. The next slice is declaration-aware
+source parsing and checked judgment/constant/type-scheme elaboration into
+`CProp`. Do not implement `HOL::trans`, `hol_subst`, another theorem adapter,
+or new trusted HOL proof power in `src/core`.
 
 ## Claude-Specific Routing
 

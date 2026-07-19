@@ -42,12 +42,12 @@ KernelTrustedClosed:      0/125
 ```
 
 In particular, the current `HOL::TrueI` bridge experiment stores bool-valued
-`HOL.True` as its legacy theorem proposition. It exposed the missing
-`HOL.Trueprop`, conservative definition, HOL axiom-basis, and immutable theory
-context boundaries; it is not a completed Isabelle/Pure trusted theorem loop.
-The new `src/kernel` already represents theorem conclusions as `CProp` and
-rejects non-`prop` certification. The gap is that no current HOL theorem slice
-reaches that new-kernel boundary.
+`HOL.True` as its legacy theorem proposition. It exposed missing checked
+`HOL.Trueprop` elaboration, an authorized HOL axiom basis, and a conservative
+definition boundary; it is not a completed Isabelle/Pure trusted theorem loop.
+The new `src/kernel` already supplies immutable theory context, represents
+theorem conclusions as `CProp`, and rejects non-`prop` certification. The gap is
+that no current HOL theorem slice reaches that new-kernel boundary.
 
 ## Historical Baseline And Current Gate
 
@@ -63,6 +63,16 @@ eef6d80 docs: reposition project as trusted Rust LCF kernel prototype
 
 The baseline gate is `scripts/dev-check.sh strict`; the implementation is
 [check-strict-kernel.sh](../scripts/check-strict-kernel.sh).
+
+A post-commit audit also ran normal and all-target compilation at baseline
+`38c5f14` (then `origin/dev`) and each
+immutable-context/acceptance/outcome/source-AST candidate commit. Normal
+`cargo +stable check --locked` and the strict gate pass independently.
+`cargo +stable check --locked --all-targets` fails identically at every point
+with four pre-existing `benches/kernel_benchmarks.rs` errors: two private
+`proofterm::check_proof` calls and two `Result<Thm>` argument mismatches. This
+is not a regression from the trusted-boundary commits, but the all-targets gate
+must not be reported as passing.
 
 The baseline originally carried two ignored `alpha_eq` tests:
 
@@ -158,10 +168,11 @@ The following areas have a coherent implementation and regression coverage:
 | Strict alpha equality | Trusted kernel equality uses `kernel_alpha_eq`; legacy broad matching is isolated as `compat_alpha_eq`. |
 | Checked CTerm certification | `CTerm::certify_checked` exists, CTerms carry checked/compat status, and strict `assume`/`reflexive` reject compat terms. |
 | Source proposition fail-closed guard | The loader records typed consumption status and a narrow source-shape classification. The registered explicit-proof `TrueI` adapter requires `FullyConsumed + StandaloneHolTrueAlias`; recovered, contextual, incomplete, or unavailable source becomes `admitted:strict_adapter_source_prop_unverified` without parser-gap or legacy fallback. This is transitional metadata, not a name-resolved AST. |
+| Source proposition AST | `src/isar/source_ast.rs` now preserves unresolved names, raw syntax tokens, applications, grouping, binders, source type annotations, and half-open byte spans in a data-only model. `SourceId` and spans are forgeable diagnostics only; no `ContextStamp`, kernel proposition, theorem, or conversion path appears. Parser integration, name resolution, and checked elaboration remain missing. |
 | Proof-state strict entry points | `ProofState::assume`, `Goal::init`, and checked subgoal scaffolding construct Strict open theorem obligations from explicit proof-context certification. |
 | Strict kernel nucleus | `src/kernel` contains an isolated TCB nucleus with no dummy type or compat certification, separate proof obligations, proof-erased search facts, primitive Pure rules, strict matching, conservative resolution/rewriting wrappers, immutable owner/fact ancestry, and one trusted acceptance gate. |
 | Immutable strict context identity | Canonical, domain-separated `SignatureId` and ancestry-sensitive `TheoryId` values propagate through `ProofContext`, certified terms/propositions, strict theorems, every current rule, and replay. Signature/theory extension is immutable; duplicates, stale objects, sibling ancestry, wrong signatures, mixed rules, and wire digest mismatches fail closed. |
-| Strict trusted acceptance | `accept_closed_theorem` recursively recertifies/replays one `ClosedThm` under the exact immutable owner, reconstructs ancestor-theorem dependencies, rejects duplicates and owner/store mismatches, and atomically returns a child `TrustedTheory` plus non-forgeable `TrustedTheorem`. |
+| Strict trusted acceptance | `accept_closed_theorem` recursively recertifies/replays one `ClosedThm` under the exact immutable owner, reconstructs ancestor-theorem dependencies, rejects duplicates and owner/store mismatches, and atomically returns a child `TrustedTheory` plus non-forgeable `TrustedTheorem`. Canonical dependency sets record logical `TheoremId`s only after exact `(id, name, accepted_in)` token authorization; they do not grant authority. |
 | Strict theorem invariants | `check_kernel_invariants(Strict)` remains a legacy audit. New-kernel acceptance uses owner-parameterized replay across every current `Derivation` payload and compares the exact reconstructed result. |
 | Proof outcome classifier | `KernelTrustedClosed` owns an accepted token and is mutually exclusive with transitional, compat, open, admitted, and failed outcomes. The accepted token has precedence if a legacy result is also present; the production HOL path currently produces none. |
 | Targeted strict slice | Synthetic Pure `A ==> A` exercises accepted-theorem construction, immutable insertion, theorem-reference dependencies, and exclusive classification. It is intentionally excluded from the 125-theorem HOL benchmark. |
@@ -331,19 +342,24 @@ Follow-up diagnostics after hardening `RewriteRule::from_thm` showed the
 `exec_proof` fallback chain. That remains admitted-path debt; it does not
 preempt immutable context identity or justify conditional rewrite proof power.
 
-The just-completed trusted-boundary milestone is Pure-only immutable acceptance,
-not broad HOL/Isar coverage:
+The just-completed trusted-boundary milestones are Pure-only immutable
+acceptance plus a deliberately untrusted source-syntax data boundary, not broad
+HOL/Isar coverage:
 
 ```text
 TransitionalStrictClosed: 1/125
 KernelTrustedClosed:      0/125
 ```
 
-Synthetic `A ==> A` now reaches a real `TrustedTheorem`, can be reused only by
-an ancestry-checked theorem reference, and enters one exclusive
-`KernelTrustedClosed` outcome in focused tests. It is not part of the sampled
-HOL denominator. The legacy `HOL::TrueI` bridge remains transitional and
-bool-valued, so the benchmark does not move.
+Synthetic `A ==> A` reaches a real `TrustedTheorem`, can be reused only by an
+ancestry-checked exact token, and enters one exclusive `KernelTrustedClosed`
+outcome in focused tests. Tokens for equal logical theorem content may share a
+`TheoremId`, but distinct `accepted_in` branches are not interchangeable and
+dependent theorem IDs commit to their branch context. The source AST now
+preserves raw syntax and half-open diagnostic spans without carrying trusted
+context or converting into a theorem. It is not connected to the parser or
+elaborator. The legacy `HOL::TrueI` bridge remains transitional and bool-valued,
+so the benchmark does not move.
 
 ## Relative Completion Estimates
 
@@ -370,7 +386,7 @@ These are trusted-boundary issues that T4 replay does not automatically solve:
 |---|---|---|
 | `compat_alpha_eq` Free/Const suffix matching | Still available for legacy parser/loader compatibility, but no longer used by trusted kernel equality. | Fix parser/loader/type annotation, then remove/narrow compat usage. |
 | `compat_alpha_eq` Var/Free matching | Still available for schematic-variable parser gaps, but no longer used by trusted kernel equality. | Align theorem DB/parser representation of schematic variables. |
-| Transitional source status/shape metadata | `parse_term` may return a prefix or recover malformed syntax, and surface names may be shadowed by local context. The current guard catches known unsafe shapes but is not name resolution. | Keep compatibility behavior isolated, require the narrow fail-closed guard for current adapters, and build a name-resolved source AST for future checked elaboration. |
+| Transitional source status/shape metadata | `parse_term` may return a prefix or recover malformed syntax, and surface names may be shadowed by local context. The current guard catches known unsafe shapes but is not name resolution. | Keep compatibility behavior isolated. The separate data-only source AST now preserves raw structure, but still needs parser integration plus declaration-aware resolution and checked elaboration before it can feed `CProp`. |
 | `Typ::dummy()` at kernel boundaries | Lets ill-typed terms remain too long. | Make parser/type inference/CTerm certification produce well-typed certified terms. |
 | Best-effort `CTerm::certify` call sites | Legacy paths can still wrap dummy-tainted terms. | Migrate explicit `_compat` theorem-construction call sites to `certify_checked`, real derivations, or `admit`. |
 | Compatibility theorem taint | `_compat` constructors still exist for many old call sites. | Keep them searchable only; use `is_strict_closed_proved()` solely for transitional filtering and require `KernelTrustedClosed` for final trust. |
@@ -414,12 +430,12 @@ Sledgehammer, SMT, or Code Generator work. The route is:
 2. **Implemented:** keep the unique context/dependency-aware,
    conflict-safe, mutually exclusive `KernelTrustedClosed` acceptance gate
    stable; synthetic Pure tests remain outside the HOL benchmark.
-3. Preserve a source-aware proposition AST that distinguishes meta/HOL
-   connectives, scopes, term identities, types/sorts, spans, and implicit
-   judgment positions before legacy lowering.
-4. Elaborate checked `judgment`, constant, and polymorphic type-scheme
-   declarations, including `HOL.Trueprop`, into the existing `CProp : prop`
-   boundary.
+3. **Implemented data boundary:** keep `src/isar/source_ast.rs` unresolved,
+   parser-independent, and unable to carry trusted context or create kernel
+   propositions/theorems.
+4. **Next:** integrate source parsing and elaborate checked `judgment`,
+   constant, and polymorphic type-scheme declarations, including
+   `HOL.Trueprop`, into the existing `CProp : prop` boundary.
 5. Install the explicit HOL logical basis as an immutable data-only manifest
    and replay generic axiom-schema instances through Pure kernel rules; add no
    theorem-specific Rust constructors.
