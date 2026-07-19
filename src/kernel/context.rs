@@ -1,21 +1,31 @@
 use std::collections::HashMap;
 
-use super::{CProp, CTerm, KernelError, Name, RawTerm, Signature, Term, Ty};
+use super::{
+    CProp, CTerm, ContextStamp, KernelError, Name, RawTerm, Signature, Term, TheorySnapshot, Ty,
+};
 
 /// Proof context for strict term certification.
 #[derive(Clone, Debug)]
 pub struct ProofContext {
-    signature: Signature,
+    theory: TheorySnapshot,
     frees: HashMap<Name, Ty>,
 }
 
 impl ProofContext {
-    pub fn new(signature: Signature) -> Self {
-        ProofContext { signature, frees: HashMap::new() }
+    pub fn new(theory: TheorySnapshot) -> Self {
+        ProofContext { theory, frees: HashMap::new() }
     }
 
     pub fn signature(&self) -> &Signature {
-        &self.signature
+        self.theory.signature()
+    }
+
+    pub fn theory(&self) -> &TheorySnapshot {
+        &self.theory
+    }
+
+    pub fn stamp(&self) -> ContextStamp {
+        self.theory.stamp()
     }
 
     pub fn declare_free(&mut self, name: impl Into<Name>, ty: Ty) {
@@ -28,19 +38,19 @@ impl ProofContext {
 
     pub fn certify_term(&self, raw: RawTerm) -> Result<CTerm, KernelError> {
         let term = self.certify_raw(raw, &[])?;
-        Ok(CTerm::new(term))
+        Ok(CTerm::new(term, self.stamp()))
     }
 
     pub fn certify_prop(&self, raw: RawTerm) -> Result<CProp, KernelError> {
         let term = self.certify_raw(raw, &[])?;
-        CProp::new(term)
+        CProp::new(term, self.stamp())
     }
 
     fn certify_raw(&self, raw: RawTerm, bounds: &[Ty]) -> Result<Term, KernelError> {
         match raw {
             RawTerm::Const { name, ty } => {
                 let declared = self
-                    .signature
+                    .signature()
                     .const_type(&name)
                     .ok_or_else(|| KernelError::UndeclaredConst(name.clone()))?;
                 if declared != &ty {

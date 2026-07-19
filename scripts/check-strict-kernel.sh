@@ -10,9 +10,9 @@
 #   1. Formatting (cargo +stable fmt --check)
 #   2. Compilation  (cargo +stable check --locked)
 #   3. Kernel firewall (no legacy deps, no forbidden patterns)
-#   4. Integration attack tests (kernel_rewrite_soundness)
+#   4. Integration attack tests (rewrite soundness and context identity)
 #   5. Kernel soundness tests (kernel_soundness)
-#   6. Inline kernel unit tests (thm, unify, rules)
+#   6. Inline kernel unit tests (thm, unify, rules, theory)
 #   7. Legacy core compatibility tests (core::)
 # ============================================================================
 # Design: uses run_step with temp-file log capture so the real exit code
@@ -74,8 +74,11 @@ banner "3. Kernel dependency firewall"
 run_step "Firewall" bash scripts/check-kernel-firewall.sh || true
 
 # ── 4. Integration attack tests ──
-banner "4. Kernel rewrite soundness (integration attack tests)"
+banner "4a. Kernel rewrite soundness (integration attack tests)"
 run_step "kernel_rewrite_soundness" cargo +stable test --locked --test kernel_rewrite_soundness || true
+
+banner "4b. Kernel context identity (integration attack tests)"
+run_step "kernel_context_identity" cargo +stable test --locked --test kernel_context_identity || true
 
 # ── 5. Kernel soundness tests ──
 banner "5. Kernel soundness (trusted boundary tests)"
@@ -90,6 +93,9 @@ run_step "kernel::unify" cargo +stable test --locked --lib kernel::unify::tests:
 
 banner "6c. Kernel inline unit tests (rules)"
 run_step "kernel::rules" cargo +stable test --locked --lib kernel::rules::tests:: || true
+
+banner "6d. Kernel inline unit tests (theory identity)"
+run_step "kernel::theory" cargo +stable test --locked --lib kernel::theory:: || true
 
 # ── 7. Legacy core tests ──
 banner "7. Legacy core:: tests"

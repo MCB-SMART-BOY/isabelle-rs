@@ -1,9 +1,10 @@
-use super::{KernelError, Name, Term, Ty};
+use super::{ContextStamp, KernelError, Name, Term, Ty};
 
 /// Strict certified term.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CTerm {
     term: Term,
+    context: ContextStamp,
 }
 
 /// An entry in a schematic instantiation substitution.
@@ -69,8 +70,8 @@ impl CTerm {
     /// This is deliberately scoped to `crate::kernel`, not the whole crate:
     /// legacy `core`/Isar/HOL/tooling code must enter through strict
     /// certification instead of wrapping typed terms directly.
-    pub(in crate::kernel) fn new(term: Term) -> Self {
-        CTerm { term }
+    pub(in crate::kernel) fn new(term: Term, context: ContextStamp) -> Self {
+        CTerm { term, context }
     }
 
     /// Wrap a term that originates from an already-certified `CProp` or
@@ -88,8 +89,8 @@ impl CTerm {
     /// This constructor is `pub(in crate::kernel)` — only `src/kernel/` modules
     /// can call it. External code and upper-layer modules MUST use
     /// `ProofContext::certify_term` instead.
-    pub(in crate::kernel) fn from_certified_subterm(term: Term) -> Self {
-        CTerm { term }
+    pub(in crate::kernel) fn from_certified_subterm(term: Term, context: ContextStamp) -> Self {
+        CTerm { term, context }
     }
 
     pub fn term(&self) -> &Term {
@@ -99,28 +100,37 @@ impl CTerm {
     pub fn ty(&self) -> Ty {
         self.term.ty()
     }
+
+    pub fn context(&self) -> ContextStamp {
+        self.context
+    }
 }
 
 /// Strict certified proposition.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CProp {
     term: Term,
+    context: ContextStamp,
 }
 
 impl CProp {
-    pub(in crate::kernel) fn new(term: Term) -> Result<Self, KernelError> {
+    pub(in crate::kernel) fn new(term: Term, context: ContextStamp) -> Result<Self, KernelError> {
         if !term.ty().is_prop() {
             return Err(KernelError::NotProposition(term.ty().clone()));
         }
-        Ok(CProp { term })
+        Ok(CProp { term, context })
     }
 
-    pub(in crate::kernel) fn from_checked_term(term: Term) -> Self {
+    pub(in crate::kernel) fn from_checked_term(term: Term, context: ContextStamp) -> Self {
         debug_assert!(term.ty().is_prop());
-        CProp { term }
+        CProp { term, context }
     }
 
     pub fn term(&self) -> &Term {
         &self.term
+    }
+
+    pub fn context(&self) -> ContextStamp {
+        self.context
     }
 }

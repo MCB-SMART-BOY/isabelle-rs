@@ -1,6 +1,6 @@
 use std::fmt;
 
-use super::{KernelError, Name};
+use super::{KernelError, Name, identity::CanonicalEncoder};
 
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 enum TyKind {
@@ -47,6 +47,18 @@ impl Ty {
 
     pub fn is_prop(&self) -> bool {
         self == &Ty::prop()
+    }
+    pub(in crate::kernel) fn write_canonical(&self, encoder: &mut CanonicalEncoder) {
+        match &self.0 {
+            TyKind::Type { name, args } => {
+                encoder.write_u8(0); // type application, type schema v1
+                encoder.write_name(name);
+                encoder.write_u64(args.len() as u64);
+                for arg in args {
+                    arg.write_canonical(encoder);
+                }
+            },
+        }
     }
 }
 

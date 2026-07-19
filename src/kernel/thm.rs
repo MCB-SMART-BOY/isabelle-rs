@@ -1,7 +1,8 @@
-use super::{CProp, Derivation, KernelError, Term};
+use super::{CProp, ContextStamp, Derivation, KernelError, Term, TheoryId};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KernelThm {
+    context: ContextStamp,
     hyps: Vec<CProp>,
     prop: CProp,
     derivation: Derivation,
@@ -13,12 +14,23 @@ pub struct OpenThm(KernelThm);
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClosedThm(KernelThm);
 
+/// Invariant-replayed theorem value. Construction remains inside the strict
+/// kernel until the context-owning acceptance API exists.
+///
+/// ```compile_fail
+/// use isabelle_rs::kernel::ClosedThm;
+///
+/// fn bypass_acceptance(closed: ClosedThm) {
+///     let _ = closed.trust();
+/// }
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TrustedTheorem(ClosedThm);
 
 impl KernelThm {
     pub(in crate::kernel) fn new(hyps: Vec<CProp>, prop: CProp, derivation: Derivation) -> Self {
-        KernelThm { hyps, prop, derivation }
+        let context = prop.context();
+        KernelThm { context, hyps, prop, derivation }
     }
 
     pub fn hyps(&self) -> &[CProp] {
@@ -31,6 +43,15 @@ impl KernelThm {
 
     pub fn derivation(&self) -> &Derivation {
         &self.derivation
+    }
+
+    pub fn context(&self) -> ContextStamp {
+        self.context
+    }
+
+    /// Theory snapshot in which this theorem was proved.
+    pub fn proved_in(&self) -> TheoryId {
+        self.context.theory()
     }
 
     pub fn is_open(&self) -> bool {
@@ -67,6 +88,10 @@ impl OpenThm {
         &self.0
     }
 
+    pub fn context(&self) -> ContextStamp {
+        self.0.context()
+    }
+
     pub fn into_kernel(self) -> KernelThm {
         self.0
     }
@@ -82,11 +107,15 @@ impl ClosedThm {
         &self.0
     }
 
+    pub fn context(&self) -> ContextStamp {
+        self.0.context()
+    }
+
     pub fn into_kernel(self) -> KernelThm {
         self.0
     }
 
-    pub fn trust(self) -> Result<TrustedTheorem, KernelError> {
+    pub(in crate::kernel) fn trust(self) -> Result<TrustedTheorem, KernelError> {
         super::invariant::check_kernel_thm(self.as_kernel())?;
         Ok(TrustedTheorem(self))
     }
@@ -99,6 +128,14 @@ impl TrustedTheorem {
 
     pub fn prop(&self) -> &CProp {
         self.0.as_kernel().prop()
+    }
+
+    pub fn context(&self) -> ContextStamp {
+        self.0.as_kernel().context()
+    }
+
+    pub fn proved_in(&self) -> TheoryId {
+        self.0.as_kernel().proved_in()
     }
 }
 
@@ -125,33 +162,23 @@ pub(in crate::kernel) fn remove_hyp(hyps: &[CProp], assumption: &CProp) -> Optio
     removed.then_some(out)
 }
 
-pub(in crate::kernel) fn prop_from_term(term: Term) -> CProp {
-    CProp::from_checked_term(term)
+pub(in crate::kernel) fn prop_from_term(term: Term, context: ContextStamp) -> CProp {
+    CProp::from_checked_term(term, context)
 }
 
 #[cfg(test)]
 mod tests {
     use crate::kernel::{
-        CProp, CTerm, Derivation, InstEntry, KernelError, KernelRules, KernelThm, ProofContext,
-        RawTerm, Signature, Term, Ty, invariant::check_kernel_thm,
+        CProp, Derivation, InstEntry, KernelError, KernelRules, KernelThm, Name, ProofContext,
+        RawTerm, Signature, Term, TheorySnapshot, Ty, invariant::check_kernel_thm,
     };
 
     #[test]
     fn tampered_theorem_fails_invariant() {
-        let prop = Ty::prop();
-        let bad = KernelThm::new(
-            vec![],
-            crate::kernel::CProp::from_checked_term(crate::kernel::Term::Const {
-                name: "A".into(),
-                ty: prop.clone(),
-            }),
-            Derivation::Assume {
-                prop: crate::kernel::CProp::from_checked_term(crate::kernel::Term::Const {
-                    name: "B".into(),
-                    ty: prop,
-                }),
-            },
-        );
+        let ctx = ctx_with_props(&["A", "B"]);
+        let a = ctx.certify_prop(RawTerm::const_("A", Ty::prop())).unwrap();
+        let b = ctx.certify_prop(RawTerm::const_("B", Ty::prop())).unwrap();
+        let bad = KernelThm::new(vec![], a, Derivation::Assume { prop: b });
 
         assert!(matches!(check_kernel_thm(&bad), Err(KernelError::Invariant(_))));
     }
@@ -163,17 +190,17 @@ mod tests {
     fn ctx_with_nat_consts(names: &[&str]) -> ProofContext {
         let mut sig = Signature::new();
         for name in names {
-            sig.declare_const(*name, ty("nat"));
+            sig = sig.extend_const(*name, ty("nat")).unwrap();
         }
-        ProofContext::new(sig)
+        ProofContext::new(TheorySnapshot::root("Test", sig))
     }
 
     fn ctx_with_props(names: &[&str]) -> ProofContext {
         let mut sig = Signature::new();
         for name in names {
-            sig.declare_const(*name, Ty::prop());
+            sig = sig.extend_const(*name, Ty::prop()).unwrap();
         }
-        ProofContext::new(sig)
+        ProofContext::new(TheorySnapshot::root("Test", sig))
     }
 
     #[test]
@@ -229,8 +256,8 @@ mod tests {
     fn forall_elim_tampered_prop_fails_invariant() {
         // Tamper: valid forall_elim derivation but wrong (non-instantiated) proposition.
         let mut sig = Signature::new();
-        sig.declare_const("a", ty("nat"));
-        let mut ctx = ProofContext::new(sig);
+        sig = sig.extend_const("a", ty("nat")).unwrap();
+        let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
         ctx.declare_free("x", ty("nat"));
 
         let eq_prop = ctx
@@ -262,11 +289,11 @@ mod tests {
         // (g a == f b instead of f a == g b).
         let fn_ty = Ty::arrow(ty("nat"), ty("nat"));
         let mut sig = Signature::new();
-        sig.declare_const("f", fn_ty.clone());
-        sig.declare_const("g", fn_ty.clone());
-        sig.declare_const("a", ty("nat"));
-        sig.declare_const("b", ty("nat"));
-        let ctx = ProofContext::new(sig);
+        sig = sig.extend_const("f", fn_ty.clone()).unwrap();
+        sig = sig.extend_const("g", fn_ty.clone()).unwrap();
+        sig = sig.extend_const("a", ty("nat")).unwrap();
+        sig = sig.extend_const("b", ty("nat")).unwrap();
+        let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
         let f_eq_g = ctx
             .certify_prop(RawTerm::eq(
@@ -303,6 +330,7 @@ mod tests {
                 },
             )
             .unwrap(),
+            valid.context(),
         );
 
         let bad = KernelThm::new(valid.hyps().to_vec(), bad_prop, valid.derivation().clone());
@@ -313,8 +341,8 @@ mod tests {
     fn abstraction_tampered_prop_fails_invariant() {
         // Tamper: change the binder name in the result from x to y.
         let mut sig = Signature::new();
-        sig.declare_const("a", ty("nat"));
-        let mut ctx = ProofContext::new(sig);
+        sig = sig.extend_const("a", ty("nat")).unwrap();
+        let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
         ctx.declare_free("x", ty("nat"));
 
         let a_term = ctx.certify_term(RawTerm::const_("a", ty("nat"))).unwrap();
@@ -338,6 +366,7 @@ mod tests {
         };
         let bad_prop = crate::kernel::CProp::from_checked_term(
             crate::kernel::Term::mk_eq(bad_lhs, bad_rhs).unwrap(),
+            valid.context(),
         );
         let bad = KernelThm::new(valid.hyps().to_vec(), bad_prop, valid.derivation().clone());
         assert!(matches!(check_kernel_thm(&bad), Err(KernelError::Invariant(_))));
@@ -347,9 +376,9 @@ mod tests {
     fn equal_intr_tampered_prop_fails_invariant() {
         // Tamper: valid equal_intr but swapped result (B == A instead of A == B).
         let mut sig = Signature::new();
-        sig.declare_const("A", Ty::prop());
-        sig.declare_const("B", Ty::prop());
-        let ctx = ProofContext::new(sig);
+        sig = sig.extend_const("A", Ty::prop()).unwrap();
+        sig = sig.extend_const("B", Ty::prop()).unwrap();
+        let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
         let a_imp_b = ctx
             .certify_prop(RawTerm::imp(
@@ -375,6 +404,7 @@ mod tests {
                 crate::kernel::Term::Const { name: "A".into(), ty: Ty::prop() },
             )
             .unwrap(),
+            valid.context(),
         );
         let bad = KernelThm::new(valid.hyps().to_vec(), bad_prop, valid.derivation().clone());
         assert!(matches!(check_kernel_thm(&bad), Err(KernelError::Invariant(_))));
@@ -384,9 +414,9 @@ mod tests {
     fn equal_elim_tampered_prop_fails_invariant() {
         // Tamper: valid equal_elim but wrong result (A instead of B).
         let mut sig = Signature::new();
-        sig.declare_const("A", Ty::prop());
-        sig.declare_const("B", Ty::prop());
-        let ctx = ProofContext::new(sig);
+        sig = sig.extend_const("A", Ty::prop()).unwrap();
+        sig = sig.extend_const("B", Ty::prop()).unwrap();
+        let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
         let a_eq_b = ctx
             .certify_prop(RawTerm::eq(
@@ -401,10 +431,10 @@ mod tests {
         let valid = KernelRules::equal_elim(&eq_thm, &minor).unwrap();
 
         // Tamper: return A instead of B.
-        let bad_prop = crate::kernel::CProp::from_checked_term(crate::kernel::Term::Const {
-            name: "A".into(),
-            ty: Ty::prop(),
-        });
+        let bad_prop = crate::kernel::CProp::from_checked_term(
+            crate::kernel::Term::Const { name: "A".into(), ty: Ty::prop() },
+            valid.context(),
+        );
         let bad = KernelThm::new(valid.hyps().to_vec(), bad_prop, valid.derivation().clone());
         assert!(matches!(check_kernel_thm(&bad), Err(KernelError::Invariant(_))));
     }
@@ -413,8 +443,8 @@ mod tests {
     fn generalize_tampered_prop_fails_invariant() {
         // Tamper: valid generalize but wrong Var index in result.
         let mut sig = Signature::new();
-        sig.declare_const("a", Ty::base("nat").unwrap());
-        let mut ctx = ProofContext::new(sig);
+        sig = sig.extend_const("a", Ty::base("nat").unwrap()).unwrap();
+        let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
         ctx.declare_free("x", Ty::base("nat").unwrap());
 
         let x_eq_x = ctx
@@ -445,6 +475,7 @@ mod tests {
                 },
             )
             .unwrap(),
+            valid.context(),
         );
         let bad = KernelThm::new(valid.hyps().to_vec(), bad_prop, valid.derivation().clone());
         assert!(matches!(check_kernel_thm(&bad), Err(KernelError::Invariant(_))));
@@ -456,8 +487,8 @@ mod tests {
         // with Bound, but KernelRules::instantiate must still reject it via
         // contains_bound check.
         let mut sig = Signature::new();
-        sig.declare_const("a", ty("nat"));
-        let ctx = ProofContext::new(sig);
+        sig = sig.extend_const("a", ty("nat")).unwrap();
+        let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
         let raw_prop =
             RawTerm::eq(RawTerm::var("x", 0, ty("nat")), RawTerm::const_("a", ty("nat")));
@@ -467,8 +498,10 @@ mod tests {
         // Construct a CTerm containing Bound(0) — not possible through public
         // certification (ctx.certify_term rejects Bound), but an internal
         // kernel mistake could still produce one.
-        let bad_cterm =
-            crate::kernel::CTerm::new(crate::kernel::Term::Bound { index: 0, ty: ty("nat") });
+        let bad_cterm = crate::kernel::CTerm::new(
+            crate::kernel::Term::Bound { index: 0, ty: ty("nat") },
+            ctx.stamp(),
+        );
         let entry = InstEntry::new("x", 0, ty("nat"), bad_cterm);
         let err = KernelRules::instantiate(&thm, &[entry]).unwrap_err();
         assert!(matches!(err, KernelError::BoundInSubstitution));
@@ -478,9 +511,9 @@ mod tests {
     fn instantiate_tampered_prop_fails_invariant() {
         // Tamper: valid instantiate but wrong replacement in result.
         let mut sig = Signature::new();
-        sig.declare_const("a", ty("nat"));
-        sig.declare_const("b", ty("nat"));
-        let ctx = ProofContext::new(sig);
+        sig = sig.extend_const("a", ty("nat")).unwrap();
+        sig = sig.extend_const("b", ty("nat")).unwrap();
+        let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
         // Build: Var("x", 0, nat) == a |- Var("x", 0, nat) == a
         let raw_prop =
@@ -501,8 +534,107 @@ mod tests {
                 Term::Const { name: "a".into(), ty: ty("nat") },
             )
             .unwrap(),
+            valid.context(),
         );
         let bad = KernelThm::new(valid.hyps().to_vec(), bad_prop, valid.derivation().clone());
         assert!(matches!(check_kernel_thm(&bad), Err(KernelError::Invariant(_))));
+    }
+
+    #[test]
+    fn resolution_replay_rejects_mixed_context_before_subgoal_matching() {
+        let left_ctx = ctx_with_props(&["A"]);
+        let right_ctx = ctx_with_props(&["A", "B"]);
+        let left_a = left_ctx.certify_prop(RawTerm::const_("A", Ty::prop())).unwrap();
+        let right_a = right_ctx.certify_prop(RawTerm::const_("A", Ty::prop())).unwrap();
+        let rule = KernelRules::assume(left_a.clone()).into_kernel();
+        let goal_state = KernelRules::assume(right_a).into_kernel();
+        let tampered = KernelThm::new(
+            vec![],
+            left_a,
+            Derivation::Resolve1Match {
+                rule: Box::new(rule),
+                goal_state: Box::new(goal_state),
+                selected_subgoal_index: 0,
+                subst: vec![],
+            },
+        );
+
+        let error = check_kernel_thm(&tampered).unwrap_err();
+        assert!(matches!(error, KernelError::MixedContext { .. }));
+    }
+
+    #[test]
+    fn resolution_replay_rejects_mixed_substitution_context_before_shape_matching() {
+        let parent = TheorySnapshot::root("Root", {
+            let mut sig = Signature::new();
+            sig = sig.extend_const("A", Ty::prop()).unwrap();
+            sig
+        });
+        let left_ctx = ProofContext::new(parent.begin_child("Left"));
+        let right_ctx = ProofContext::new(parent.begin_child("Right"));
+        let left_a = left_ctx.certify_prop(RawTerm::const_("A", Ty::prop())).unwrap();
+        let rule = KernelRules::assume(left_a.clone()).into_kernel();
+        let goal_state = KernelRules::assume(left_a.clone()).into_kernel();
+        let wrong_context_replacement =
+            right_ctx.certify_term(RawTerm::const_("A", Ty::prop())).unwrap();
+        let tampered = KernelThm::new(
+            vec![],
+            left_a,
+            Derivation::Resolve1Match {
+                rule: Box::new(rule),
+                goal_state: Box::new(goal_state),
+                selected_subgoal_index: 0,
+                subst: vec![InstEntry::new("P", 0, Ty::prop(), wrong_context_replacement)],
+            },
+        );
+
+        let error = check_kernel_thm(&tampered).unwrap_err();
+        assert!(matches!(error, KernelError::MixedContext { .. }));
+    }
+
+    #[test]
+    fn replay_rejects_mixed_premises_before_recursive_validation() {
+        let left_ctx = ctx_with_props(&["A"]);
+        let right_ctx = ctx_with_props(&["A", "B"]);
+        let left_a = left_ctx.certify_prop(RawTerm::const_("A", Ty::prop())).unwrap();
+        let right_a = right_ctx.certify_prop(RawTerm::const_("A", Ty::prop())).unwrap();
+        let invalid_left =
+            KernelThm::new(vec![], left_a.clone(), Derivation::Assume { prop: left_a.clone() });
+        let valid_right = KernelRules::assume(right_a).into_kernel();
+        let tampered = KernelThm::new(
+            vec![],
+            left_a,
+            Derivation::Transitive { left: Box::new(invalid_left), right: Box::new(valid_right) },
+        );
+
+        let error = check_kernel_thm(&tampered).unwrap_err();
+        assert!(matches!(error, KernelError::MixedContext { .. }));
+    }
+
+    #[test]
+    fn replay_rejects_mixed_instantiate_context_before_premise_validation() {
+        let parent = TheorySnapshot::root("Root", {
+            let mut sig = Signature::new();
+            sig = sig.extend_const("A", Ty::prop()).unwrap();
+            sig
+        });
+        let left_ctx = ProofContext::new(parent.begin_child("Left"));
+        let right_ctx = ProofContext::new(parent.begin_child("Right"));
+        let left_a = left_ctx.certify_prop(RawTerm::const_("A", Ty::prop())).unwrap();
+        let invalid_premise =
+            KernelThm::new(vec![], left_a.clone(), Derivation::Assume { prop: left_a.clone() });
+        let wrong_context_replacement =
+            right_ctx.certify_term(RawTerm::const_("A", Ty::prop())).unwrap();
+        let tampered = KernelThm::new(
+            vec![],
+            left_a,
+            Derivation::Instantiate {
+                subst: vec![InstEntry::new("P", 0, Ty::prop(), wrong_context_replacement)],
+                premise: Box::new(invalid_premise),
+            },
+        );
+
+        let error = check_kernel_thm(&tampered).unwrap_err();
+        assert!(matches!(error, KernelError::MixedContext { .. }));
     }
 }

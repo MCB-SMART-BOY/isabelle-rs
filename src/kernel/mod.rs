@@ -7,6 +7,7 @@
 pub mod context;
 pub mod cterm;
 pub mod derivation;
+pub mod identity;
 pub mod invariant;
 pub mod name;
 pub mod rules;
@@ -21,12 +22,13 @@ pub mod unify;
 pub use context::{ProofContext, ProofObligation};
 pub use cterm::{CProp, CTerm, InstEntry};
 pub use derivation::Derivation;
+pub use identity::{ContextStamp, SignatureId, TheoryId};
 pub use name::Name;
 pub use rules::KernelRules;
 pub use search_fact::{SearchFact, SearchFactDb};
 pub use signature::Signature;
 pub use term::{RawTerm, Term};
-pub use theory::TrustedTheory;
+pub use theory::{TheorySnapshot, TrustedTheory};
 pub use thm::{ClosedThm, KernelThm, OpenThm, TrustedTheorem};
 pub use typ::Ty;
 
@@ -43,6 +45,14 @@ pub enum KernelError {
 
     #[error("undeclared local free `{0}`")]
     UndeclaredFree(Name),
+    #[error("strict signature declaration `{name}` already exists")]
+    DuplicateDeclaration { name: Name },
+
+    #[error("untrusted signature snapshot digest does not match its declarations")]
+    SignatureDigestMismatch,
+
+    #[error("mixed strict-kernel contexts: expected `{expected:?}`, got `{actual:?}`")]
+    MixedContext { expected: ContextStamp, actual: ContextStamp },
 
     #[error("unbound de Bruijn index `{0}`")]
     UnboundBound(usize),

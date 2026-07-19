@@ -1,11 +1,18 @@
 use std::collections::HashSet;
 
 use super::{
-    CProp, CTerm, ClosedThm, Derivation, InstEntry, KernelError, KernelThm, Name, OpenThm, Term,
-    Ty,
+    CProp, CTerm, ClosedThm, ContextStamp, Derivation, InstEntry, KernelError, KernelThm, Name,
+    OpenThm, Term, Ty,
     thm::{prop_from_term, remove_hyp, union_hyps},
     unify,
 };
+
+fn require_same_context(expected: ContextStamp, actual: ContextStamp) -> Result<(), KernelError> {
+    if expected != actual {
+        return Err(KernelError::MixedContext { expected, actual });
+    }
+    Ok(())
+}
 
 /// Primitive inference rules of the strict kernel nucleus.
 pub struct KernelRules;
@@ -20,6 +27,7 @@ impl KernelRules {
         let prop = prop_from_term(
             Term::mk_eq(term.term().clone(), term.term().clone())
                 .expect("reflexive uses one typed term"),
+            term.context(),
         );
         let thm = KernelThm::new(vec![], prop, Derivation::Reflexive { term });
         ClosedThm::new(thm)
@@ -27,7 +35,7 @@ impl KernelRules {
 
     pub fn symmetric(thm: &KernelThm) -> Result<KernelThm, KernelError> {
         let (_, lhs, rhs) = thm.prop().term().dest_eq().ok_or(KernelError::NotEquality)?;
-        let prop = prop_from_term(Term::mk_eq(rhs.clone(), lhs.clone())?);
+        let prop = prop_from_term(Term::mk_eq(rhs.clone(), lhs.clone())?, thm.context());
         Ok(KernelThm::new(
             thm.hyps().to_vec(),
             prop,
@@ -36,6 +44,7 @@ impl KernelRules {
     }
 
     pub fn transitive(left: &KernelThm, right: &KernelThm) -> Result<KernelThm, KernelError> {
+        require_same_context(left.context(), right.context())?;
         let (left_ty, lhs, left_mid) =
             left.prop().term().dest_eq().ok_or(KernelError::NotEquality)?;
         let (right_ty, right_mid, rhs) =
@@ -49,7 +58,7 @@ impl KernelRules {
         if !left_mid.alpha_eq(right_mid) {
             return Err(KernelError::MiddleMismatch);
         }
-        let prop = prop_from_term(Term::mk_eq(lhs.clone(), rhs.clone())?);
+        let prop = prop_from_term(Term::mk_eq(lhs.clone(), rhs.clone())?, left.context());
         Ok(KernelThm::new(
             union_hyps(left.hyps(), right.hyps()),
             prop,
@@ -70,18 +79,28 @@ impl KernelRules {
 
         let reduced = Term::instantiate_bound0(body, arg);
 
-        let prop = prop_from_term(Term::mk_eq(
-            Term::App { func: Box::new(abs.clone()), arg: Box::new(arg.clone()), ty: body.ty() },
-            reduced,
-        )?);
+        let prop = prop_from_term(
+            Term::mk_eq(
+                Term::App {
+                    func: Box::new(abs.clone()),
+                    arg: Box::new(arg.clone()),
+                    ty: body.ty(),
+                },
+                reduced,
+            )?,
+            redex.context(),
+        );
         let thm = KernelThm::new(vec![], prop, Derivation::BetaConversion { redex: redex.clone() });
         Ok(ClosedThm::new(thm))
     }
 
     pub fn implies_intr(assumption: &CProp, thm: &KernelThm) -> Result<KernelThm, KernelError> {
+        require_same_context(thm.context(), assumption.context())?;
         let hyps = remove_hyp(thm.hyps(), assumption).ok_or(KernelError::HypothesisNotFound)?;
-        let prop =
-            prop_from_term(Term::mk_imp(assumption.term().clone(), thm.prop().term().clone())?);
+        let prop = prop_from_term(
+            Term::mk_imp(assumption.term().clone(), thm.prop().term().clone())?,
+            thm.context(),
+        );
         Ok(KernelThm::new(
             hyps,
             prop,
@@ -93,6 +112,7 @@ impl KernelRules {
     }
 
     pub fn implies_elim(major: &KernelThm, minor: &KernelThm) -> Result<KernelThm, KernelError> {
+        require_same_context(major.context(), minor.context())?;
         let (antecedent, consequent) =
             major.prop().term().dest_imp().ok_or(KernelError::NotImplication)?;
         if !antecedent.alpha_eq(minor.prop().term()) {
@@ -100,7 +120,7 @@ impl KernelRules {
         }
         Ok(KernelThm::new(
             union_hyps(major.hyps(), minor.hyps()),
-            prop_from_term(consequent.clone()),
+            prop_from_term(consequent.clone(), major.context()),
             Derivation::ImpliesElim {
                 major: Box::new(major.clone()),
                 minor: Box::new(minor.clone()),
@@ -121,6 +141,7 @@ impl KernelRules {
     /// `Bound(0)` inside the new `Forall` binder. Free-variable-in-hypotheses
     /// is enforced: `x` must not appear in any hypothesis of the input theorem.
     pub fn forall_intr(variable: &CTerm, thm: &KernelThm) -> Result<KernelThm, KernelError> {
+        require_same_context(thm.context(), variable.context())?;
         // 1. Extract the free variable to abstract.
         let (free_name, free_ty) = match variable.term() {
             Term::Free { name, ty } => (name.clone(), ty.clone()),
@@ -146,7 +167,7 @@ impl KernelRules {
         // 4. Preserve hypotheses; wrap result.
         Ok(KernelThm::new(
             thm.hyps().to_vec(),
-            prop_from_term(forall_prop),
+            prop_from_term(forall_prop, thm.context()),
             Derivation::ForallIntr { variable: variable.clone(), premise: Box::new(thm.clone()) },
         ))
     }
@@ -168,6 +189,7 @@ impl KernelRules {
     /// Propagation:
     /// - Hypotheses are unioned modulo strict alpha-equivalence.
     pub fn combination(th_f: &KernelThm, th_x: &KernelThm) -> Result<KernelThm, KernelError> {
+        require_same_context(th_f.context(), th_x.context())?;
         // 1. Destructure both premises as equality.
         let (fn_ty, f, g) = th_f.prop().term().dest_eq().ok_or(KernelError::NotEquality)?;
         let (arg_ty, x, y) = th_x.prop().term().dest_eq().ok_or(KernelError::NotEquality)?;
@@ -189,7 +211,7 @@ impl KernelRules {
             Term::App { func: Box::new(f.clone()), arg: Box::new(x.clone()), ty: codomain.clone() };
         let gy =
             Term::App { func: Box::new(g.clone()), arg: Box::new(y.clone()), ty: codomain.clone() };
-        let prop = prop_from_term(Term::mk_eq(fx, gy)?);
+        let prop = prop_from_term(Term::mk_eq(fx, gy)?, th_f.context());
 
         // 5. Union hypotheses; wrap result.
         Ok(KernelThm::new(
@@ -218,6 +240,7 @@ impl KernelRules {
     /// - The theorem proposition must be a `Forall`.
     /// - The argument type must match the binder parameter type.
     pub fn forall_elim(thm: &KernelThm, arg: &CTerm) -> Result<KernelThm, KernelError> {
+        require_same_context(thm.context(), arg.context())?;
         // 1. Destructure the forall proposition.
         let (_, param_ty, body) = thm.prop().term().dest_forall().ok_or(KernelError::NotForall)?;
 
@@ -235,7 +258,7 @@ impl KernelRules {
         // 4. Preserve hypotheses; wrap result.
         Ok(KernelThm::new(
             thm.hyps().to_vec(),
-            prop_from_term(instantiated),
+            prop_from_term(instantiated, thm.context()),
             Derivation::ForallElim { forall: Box::new(thm.clone()), arg: arg.clone() },
         ))
     }
@@ -288,7 +311,7 @@ impl KernelRules {
             body: Box::new(rhs_body),
             ty: fn_ty.clone(),
         };
-        let prop = prop_from_term(Term::mk_eq(lhs, rhs)?);
+        let prop = prop_from_term(Term::mk_eq(lhs, rhs)?, thm.context());
 
         Ok(KernelThm::new(
             thm.hyps().to_vec(),
@@ -317,6 +340,7 @@ impl KernelRules {
     /// Propagation:
     /// - Hypotheses are unioned modulo strict alpha-equivalence.
     pub fn equal_intr(left: &KernelThm, right: &KernelThm) -> Result<KernelThm, KernelError> {
+        require_same_context(left.context(), right.context())?;
         let (a1, b1) = left.prop().term().dest_imp().ok_or(KernelError::NotImplication)?;
         let (b2, a2) = right.prop().term().dest_imp().ok_or(KernelError::NotImplication)?;
 
@@ -327,7 +351,7 @@ impl KernelRules {
             return Err(KernelError::AntecedentMismatch);
         }
 
-        let prop = prop_from_term(Term::mk_eq(a1.clone(), b1.clone())?);
+        let prop = prop_from_term(Term::mk_eq(a1.clone(), b1.clone())?, left.context());
         Ok(KernelThm::new(
             union_hyps(left.hyps(), right.hyps()),
             prop,
@@ -351,6 +375,7 @@ impl KernelRules {
     /// Propagation:
     /// - Hypotheses are unioned modulo strict alpha-equivalence.
     pub fn equal_elim(equality: &KernelThm, minor: &KernelThm) -> Result<KernelThm, KernelError> {
+        require_same_context(equality.context(), minor.context())?;
         let (object_ty, a, b) = equality.prop().term().dest_eq().ok_or(KernelError::NotEquality)?;
 
         // equal_elim requires propositional equality (A == B where A,B : prop),
@@ -365,7 +390,7 @@ impl KernelRules {
 
         Ok(KernelThm::new(
             union_hyps(equality.hyps(), minor.hyps()),
-            prop_from_term(b.clone()),
+            prop_from_term(b.clone(), equality.context()),
             Derivation::EqualElim {
                 equality: Box::new(equality.clone()),
                 minor: Box::new(minor.clone()),
@@ -392,6 +417,7 @@ impl KernelRules {
         goal_state: &KernelThm,
         selected_subgoal_index: usize,
     ) -> Result<KernelThm, KernelError> {
+        require_same_context(equality.context(), goal_state.context())?;
         let (object_ty, lhs, rhs) =
             equality.prop().term().dest_eq().ok_or(KernelError::NotEquality)?;
 
@@ -424,6 +450,7 @@ impl KernelRules {
                 .prop()
                 .term()
                 .replace_subgoal_with_premises(selected_subgoal_index, &[rhs.clone()])?,
+            goal_state.context(),
         );
 
         Ok(KernelThm::new(
@@ -458,11 +485,14 @@ impl KernelRules {
     pub fn generalize(thm: &KernelThm, frees: &[(Name, Ty)]) -> Result<KernelThm, KernelError> {
         let start = thm.max_var_index().map_or(0, |m| m + 1);
 
-        let new_prop = prop_from_term(thm.prop().term().generalize_to_vars(frees, start));
+        let new_prop =
+            prop_from_term(thm.prop().term().generalize_to_vars(frees, start), thm.context());
         let new_hyps: Vec<CProp> = thm
             .hyps()
             .iter()
-            .map(|h| CProp::from_checked_term(h.term().generalize_to_vars(frees, start)))
+            .map(|h| {
+                CProp::from_checked_term(h.term().generalize_to_vars(frees, start), thm.context())
+            })
             .collect();
 
         Ok(KernelThm::new(
@@ -512,6 +542,10 @@ impl KernelRules {
     /// - Hypotheses are transformed in-place (same count).
     /// - The theorem remains open/closed as before.
     pub fn instantiate(thm: &KernelThm, subst: &[InstEntry]) -> Result<KernelThm, KernelError> {
+        for entry in subst {
+            require_same_context(thm.context(), entry.replacement().context())?;
+        }
+
         // 1. Check for duplicate (name, idx) entries.
         for i in 0..subst.len() {
             for j in (i + 1)..subst.len() {
@@ -542,11 +576,11 @@ impl KernelRules {
         }
 
         // 4. Apply substitution to proposition and hypotheses.
-        let new_prop = prop_from_term(thm.prop().term().instantiate_vars(subst));
+        let new_prop = prop_from_term(thm.prop().term().instantiate_vars(subst), thm.context());
         let new_hyps: Vec<CProp> = thm
             .hyps()
             .iter()
-            .map(|h| CProp::from_checked_term(h.term().instantiate_vars(subst)))
+            .map(|h| CProp::from_checked_term(h.term().instantiate_vars(subst), thm.context()))
             .collect();
 
         Ok(KernelThm::new(
@@ -586,11 +620,12 @@ impl KernelRules {
     pub(in crate::kernel) fn match_terms_certified(
         pattern: &Term,
         target: &Term,
+        context: ContextStamp,
     ) -> Result<Vec<InstEntry>, KernelError> {
         let bindings = unify::match_terms(pattern, target)?;
         let mut entries = Vec::with_capacity(bindings.len());
         for b in bindings {
-            let cterm = CTerm::from_certified_subterm(b.replacement);
+            let cterm = CTerm::from_certified_subterm(b.replacement, context);
             if cterm.ty() != b.var_ty {
                 return Err(KernelError::TypeMismatch { expected: b.var_ty, actual: cterm.ty() });
             }
@@ -635,6 +670,7 @@ impl KernelRules {
         goal_state: &KernelThm,
         selected_subgoal_index: usize,
     ) -> Result<KernelThm, KernelError> {
+        require_same_context(rule.context(), goal_state.context())?;
         // 1. Decompose rule into premises and conclusion.
         let (rule_prems, rule_concl) = rule.prop().term().dest_imp_chain();
         let rule_concl = rule_concl.clone();
@@ -653,7 +689,7 @@ impl KernelRules {
             })?;
 
         // 4. Match rule conclusion against the selected subgoal.
-        let subst = Self::match_terms_certified(&rule_concl, &selected_subgoal)?;
+        let subst = Self::match_terms_certified(&rule_concl, &selected_subgoal, rule.context())?;
 
         // 5. Detect variable collision between rule and goal.
         Self::detect_collision(rule, goal_state)?;
@@ -670,18 +706,21 @@ impl KernelRules {
         let result_prop = prop_from_term(
             goal_prop_sigma
                 .replace_subgoal_with_premises(selected_subgoal_index, &rule_prems_sigma)?,
+            goal_state.context(),
         );
 
         // 8. Apply substitution to hypotheses and union.
         let rule_hyps_sigma: Vec<CProp> = rule
             .hyps()
             .iter()
-            .map(|h| CProp::from_checked_term(h.term().instantiate_vars(&subst)))
+            .map(|h| CProp::from_checked_term(h.term().instantiate_vars(&subst), rule.context()))
             .collect();
         let goal_hyps_sigma: Vec<CProp> = goal_state
             .hyps()
             .iter()
-            .map(|h| CProp::from_checked_term(h.term().instantiate_vars(&subst)))
+            .map(|h| {
+                CProp::from_checked_term(h.term().instantiate_vars(&subst), goal_state.context())
+            })
             .collect();
         let all_hyps = union_hyps(&rule_hyps_sigma, &goal_hyps_sigma);
 
@@ -818,7 +857,7 @@ fn collect_var_keys(term: &Term, vars: &mut HashSet<(Name, usize)>) {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{KernelError, Name, ProofContext, Signature, Term, Ty};
+    use super::super::{KernelError, Name, ProofContext, Signature, Term, TheorySnapshot, Ty};
     use super::*;
 
     fn ty(name: &str) -> Ty {
@@ -828,9 +867,9 @@ mod tests {
     fn ctx_with_props(names: &[&str]) -> ProofContext {
         let mut sig = Signature::new();
         for name in names {
-            sig.declare_const(*name, Ty::prop());
+            sig = sig.extend_const(*name, Ty::prop()).unwrap();
         }
-        ProofContext::new(sig)
+        ProofContext::new(TheorySnapshot::root("Test", sig))
     }
 
     fn prop_term(ctx: &ProofContext, name: &str) -> Term {
@@ -843,7 +882,7 @@ mod tests {
         let ctx = ctx_with_props(&["A"]);
         let a_term = prop_term(&ctx, "A");
         let pattern = Term::Var { name: Name::from("P"), index: 0, ty: Ty::prop() };
-        let entries = KernelRules::match_terms_certified(&pattern, &a_term).unwrap();
+        let entries = KernelRules::match_terms_certified(&pattern, &a_term, ctx.stamp()).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name().as_str(), "P");
         assert_eq!(entries[0].index(), 0);
@@ -857,7 +896,7 @@ mod tests {
         let var_p = Term::Var { name: Name::from("P"), index: 0, ty: Ty::prop() };
         let pattern = Term::Imp { premise: Box::new(var_p.clone()), conclusion: Box::new(var_p) };
         let target = Term::Imp { premise: Box::new(a.clone()), conclusion: Box::new(a.clone()) };
-        let entries = KernelRules::match_terms_certified(&pattern, &target).unwrap();
+        let entries = KernelRules::match_terms_certified(&pattern, &target, ctx.stamp()).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].replacement().term(), &a);
     }
@@ -870,18 +909,19 @@ mod tests {
         let var_p = Term::Var { name: Name::from("P"), index: 0, ty: Ty::prop() };
         let pattern = Term::Imp { premise: Box::new(var_p.clone()), conclusion: Box::new(var_p) };
         let target = Term::Imp { premise: Box::new(a), conclusion: Box::new(b) };
-        let err = KernelRules::match_terms_certified(&pattern, &target).unwrap_err();
+        let err = KernelRules::match_terms_certified(&pattern, &target, ctx.stamp()).unwrap_err();
         assert!(format!("{err}").contains("inconsistent"));
     }
 
     #[test]
     fn match_terms_certified_type_mismatch() {
         let mut sig = Signature::new();
-        sig.declare_const("a", ty("nat"));
-        let ctx = ProofContext::new(sig);
+        sig = sig.extend_const("a", ty("nat")).unwrap();
+        let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
         let a_nat = ctx.certify_term(super::super::RawTerm::const_("a", ty("nat"))).unwrap();
         let pattern = Term::Var { name: Name::from("P"), index: 0, ty: Ty::prop() };
-        let err = KernelRules::match_terms_certified(&pattern, a_nat.term()).unwrap_err();
+        let err =
+            KernelRules::match_terms_certified(&pattern, a_nat.term(), ctx.stamp()).unwrap_err();
         assert!(format!("{err}").contains("type mismatch"));
     }
 
@@ -890,16 +930,16 @@ mod tests {
         let ctx = ctx_with_props(&["A", "B"]);
         let a = prop_term(&ctx, "A");
         let b = prop_term(&ctx, "B");
-        let err = KernelRules::match_terms_certified(&a, &b).unwrap_err();
+        let err = KernelRules::match_terms_certified(&a, &b, ctx.stamp()).unwrap_err();
         assert!(format!("{err}").contains("Const mismatch"));
     }
 
     #[test]
     fn match_terms_certified_nested_app() {
         let mut sig = Signature::new();
-        sig.declare_const("f", Ty::arrow(ty("nat"), Ty::prop()));
-        sig.declare_const("a", ty("nat"));
-        let ctx = ProofContext::new(sig);
+        sig = sig.extend_const("f", Ty::arrow(ty("nat"), Ty::prop())).unwrap();
+        sig = sig.extend_const("a", ty("nat")).unwrap();
+        let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
         let f_cterm = ctx
             .certify_term(super::super::RawTerm::const_("f", Ty::arrow(ty("nat"), Ty::prop())))
             .unwrap();
@@ -913,7 +953,7 @@ mod tests {
             Term::Var { name: Name::from("P"), index: 0, ty: Ty::arrow(ty("nat"), Ty::prop()) };
         let x_var = Term::Var { name: Name::from("x"), index: 0, ty: ty("nat") };
         let pattern = Term::App { func: Box::new(p_var), arg: Box::new(x_var), ty: Ty::prop() };
-        let entries = KernelRules::match_terms_certified(&pattern, &target).unwrap();
+        let entries = KernelRules::match_terms_certified(&pattern, &target, ctx.stamp()).unwrap();
         assert_eq!(entries.len(), 2);
         let p_entry = entries.iter().find(|e| e.name().as_str() == "P").unwrap();
         assert_eq!(p_entry.replacement().term(), f_cterm.term());
@@ -923,9 +963,10 @@ mod tests {
 
     #[test]
     fn match_terms_certified_rejects_bound() {
+        let ctx = ctx_with_props(&[]);
         let pattern = Term::Var { name: Name::from("P"), index: 0, ty: Ty::prop() };
         let target = Term::Bound { index: 0, ty: Ty::prop() };
-        let err = KernelRules::match_terms_certified(&pattern, &target).unwrap_err();
+        let err = KernelRules::match_terms_certified(&pattern, &target, ctx.stamp()).unwrap_err();
         assert!(format!("{err}").contains("Bound"));
     }
 
@@ -933,7 +974,7 @@ mod tests {
     fn match_terms_certified_no_vars_empty() {
         let ctx = ctx_with_props(&["A"]);
         let a = prop_term(&ctx, "A");
-        let entries = KernelRules::match_terms_certified(&a, &a).unwrap();
+        let entries = KernelRules::match_terms_certified(&a, &a, ctx.stamp()).unwrap();
         assert!(entries.is_empty());
     }
 
@@ -946,7 +987,7 @@ mod tests {
         let q_var = Term::Var { name: Name::from("Q"), index: 1, ty: Ty::prop() };
         let pattern = Term::Imp { premise: Box::new(p_var), conclusion: Box::new(q_var) };
         let target = Term::Imp { premise: Box::new(a.clone()), conclusion: Box::new(b.clone()) };
-        let entries = KernelRules::match_terms_certified(&pattern, &target).unwrap();
+        let entries = KernelRules::match_terms_certified(&pattern, &target, ctx.stamp()).unwrap();
         assert_eq!(entries.len(), 2);
         let pb = entries.iter().find(|e| e.name().as_str() == "P").unwrap();
         assert_eq!(pb.replacement().term(), &a);
@@ -964,7 +1005,7 @@ mod tests {
         let pattern = Term::Imp { premise: Box::new(q_var), conclusion: Box::new(p_var) };
         let target = Term::Imp { premise: Box::new(b), conclusion: Box::new(a) };
 
-        let entries = KernelRules::match_terms_certified(&pattern, &target).unwrap();
+        let entries = KernelRules::match_terms_certified(&pattern, &target, ctx.stamp()).unwrap();
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].name().as_str(), "P");
         assert_eq!(entries[0].index(), 0);
@@ -993,7 +1034,7 @@ mod tests {
     }
 
     fn certify_prop_term(ctx: &ProofContext, term: &Term) -> CProp {
-        CProp::from_checked_term(term.clone())
+        CProp::from_checked_term(term.clone(), ctx.stamp())
     }
 
     /// Create a theorem `[P] |- P` via assume. The conclusion is P (no imp chain).
@@ -1028,11 +1069,11 @@ mod tests {
     #[test]
     fn subst_premise_rejects_object_equality() {
         let mut sig = Signature::new();
-        sig.declare_const("x", ty("nat"));
-        sig.declare_const("y", ty("nat"));
-        sig.declare_const("A", Ty::prop());
-        sig.declare_const("R", Ty::prop());
-        let ctx = ProofContext::new(sig);
+        sig = sig.extend_const("x", ty("nat")).unwrap();
+        sig = sig.extend_const("y", ty("nat")).unwrap();
+        sig = sig.extend_const("A", Ty::prop()).unwrap();
+        sig = sig.extend_const("R", Ty::prop()).unwrap();
+        let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
         let x =
             ctx.certify_term(super::super::RawTerm::const_("x", ty("nat"))).unwrap().term().clone();
@@ -1135,7 +1176,7 @@ mod tests {
         let goal = assumed_goal(&ctx, &["A", "R"]);
         let result = KernelRules::subst_premise(&eq, &goal, 0).unwrap();
 
-        let tampered_prop = prop_from_term(imp_chain(&ctx, &["B", "WRONG"]));
+        let tampered_prop = prop_from_term(imp_chain(&ctx, &["B", "WRONG"]), ctx.stamp());
         let tampered =
             KernelThm::new(result.hyps().to_vec(), tampered_prop, result.derivation().clone());
 
@@ -1222,7 +1263,7 @@ mod tests {
 
         let tampered = KernelThm::new(
             result.hyps().to_vec(),
-            prop_from_term(goal_imp),
+            prop_from_term(goal_imp, ctx.stamp()),
             result.derivation().clone(),
         );
         let check = super::super::invariant::check_kernel_thm(&tampered);
@@ -1393,8 +1434,8 @@ mod tests {
     #[test]
     fn resolve1_rejects_variable_collision_without_lifting() {
         let mut sig = Signature::new();
-        sig.declare_const("R", Ty::prop());
-        let mut ctx = ProofContext::new(sig);
+        sig = sig.extend_const("R", Ty::prop()).unwrap();
+        let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
         ctx.declare_free("x", ty("nat"));
 
         let x_cterm = ctx.certify_term(super::super::RawTerm::free("x", ty("nat"))).unwrap();
@@ -1473,7 +1514,7 @@ mod tests {
         let result = KernelRules::resolve1_match(&rule, &goal, 1).unwrap();
 
         // Tamper with the proposition and re-wrap.
-        let tampered_prop = prop_from_term(imp_chain(&ctx, &["A", "B", "WRONG"]));
+        let tampered_prop = prop_from_term(imp_chain(&ctx, &["A", "B", "WRONG"]), ctx.stamp());
         let tampered =
             KernelThm::new(result.hyps().to_vec(), tampered_prop, result.derivation().clone());
         let check = super::super::invariant::check_kernel_thm(&tampered);
@@ -1565,7 +1606,7 @@ mod tests {
 
         let result = KernelRules::resolve1_match(&rule, &goal, 1).unwrap();
 
-        let subst = KernelRules::match_terms_certified(&rule_concl, &b_eq_c).unwrap();
+        let subst = KernelRules::match_terms_certified(&rule_concl, &b_eq_c, ctx.stamp()).unwrap();
         let rule_prems_sigma: Vec<Term> =
             [p_var, q_var].iter().map(|prem| prem.instantiate_vars(&subst)).collect();
         let expected = goal
@@ -1712,8 +1753,8 @@ mod tests {
     #[test]
     fn bicompose_rejects_free_collision_without_lifting() {
         let mut sig = Signature::new();
-        sig.declare_const("R", Ty::prop());
-        let mut ctx = ProofContext::new(sig);
+        sig = sig.extend_const("R", Ty::prop()).unwrap();
+        let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
         ctx.declare_free("x", ty("nat"));
 
         let x_cterm = ctx.certify_term(super::super::RawTerm::free("x", ty("nat"))).unwrap();

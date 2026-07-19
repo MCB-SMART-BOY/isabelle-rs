@@ -2,7 +2,7 @@ use std::convert::TryInto;
 
 use isabelle_rs::kernel::{
     Derivation, InstEntry, KernelError, KernelRules, Name, ProofContext, ProofObligation, RawTerm,
-    SearchFact, SearchFactDb, Signature, Term, TrustedTheorem, TrustedTheory, Ty,
+    SearchFact, SearchFactDb, Signature, Term, TheorySnapshot, TrustedTheorem, Ty,
     invariant::check_kernel_thm,
 };
 
@@ -17,17 +17,17 @@ fn prop(name: &str) -> RawTerm {
 fn ctx_with_props(names: &[&str]) -> ProofContext {
     let mut sig = Signature::new();
     for name in names {
-        sig.declare_const(*name, Ty::prop());
+        sig = sig.extend_const(*name, Ty::prop()).unwrap();
     }
-    ProofContext::new(sig)
+    ProofContext::new(TheorySnapshot::root("Test", sig))
 }
 
 fn ctx_with_nat_consts(names: &[&str]) -> ProofContext {
     let mut sig = Signature::new();
     for name in names {
-        sig.declare_const(*name, ty("nat"));
+        sig = sig.extend_const(*name, ty("nat")).unwrap();
     }
-    ProofContext::new(sig)
+    ProofContext::new(TheorySnapshot::root("Test", sig))
 }
 
 #[test]
@@ -38,22 +38,23 @@ fn strict_kernel_pure_imp_identity_closes() {
     let identity = KernelRules::implies_intr(&a, &assumed).unwrap();
 
     assert!(identity.hyps().is_empty());
-    let trusted = identity.try_close().unwrap().trust().unwrap();
+    let closed = identity.try_close().unwrap();
+    assert!(check_kernel_thm(closed.as_kernel()).is_ok());
     let expected =
         ctx.certify_prop(RawTerm::imp(prop("A"), prop("A"))).expect("A ==> A should certify");
-    assert_eq!(trusted.prop(), &expected);
+    assert_eq!(closed.as_kernel().prop(), &expected);
 }
 
 #[test]
 fn undeclared_const_is_rejected() {
-    let ctx = ProofContext::new(Signature::new());
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", Signature::new()));
     let err = ctx.certify_prop(prop("A")).unwrap_err();
     assert!(matches!(err, KernelError::UndeclaredConst(_)));
 }
 
 #[test]
 fn undeclared_free_is_rejected() {
-    let ctx = ProofContext::new(Signature::new());
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", Signature::new()));
     let err = ctx.certify_prop(RawTerm::free("x", Ty::prop())).unwrap_err();
     assert!(matches!(err, KernelError::UndeclaredFree(_)));
 }
@@ -61,8 +62,8 @@ fn undeclared_free_is_rejected() {
 #[test]
 fn reject_bool_as_theorem_proposition() {
     let mut sig = Signature::new();
-    sig.declare_const("b", ty("bool"));
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("b", ty("bool")).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
     let err = ctx.certify_prop(RawTerm::const_("b", ty("bool"))).unwrap_err();
 
@@ -72,8 +73,8 @@ fn reject_bool_as_theorem_proposition() {
 #[test]
 fn reject_hol_true_bool_without_trueprop() {
     let mut sig = Signature::new();
-    sig.declare_const("HOL.True", ty("bool"));
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("HOL.True", ty("bool")).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
     let err = ctx.certify_prop(RawTerm::const_("HOL.True", ty("bool"))).unwrap_err();
 
@@ -86,10 +87,10 @@ fn reject_hol_eq_bool_without_trueprop() {
     let bool_ty = ty("bool");
     let eq_ty = Ty::arrow(nat.clone(), Ty::arrow(nat.clone(), bool_ty.clone()));
     let mut sig = Signature::new();
-    sig.declare_const("HOL.eq", eq_ty.clone());
-    sig.declare_const("a", nat.clone());
-    sig.declare_const("b", nat.clone());
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("HOL.eq", eq_ty.clone()).unwrap();
+    sig = sig.extend_const("a", nat.clone()).unwrap();
+    sig = sig.extend_const("b", nat.clone()).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     let object_eq = RawTerm::app(
         RawTerm::app(RawTerm::const_("HOL.eq", eq_ty), RawTerm::const_("a", nat.clone())),
         RawTerm::const_("b", nat),
@@ -105,9 +106,9 @@ fn declared_trueprop_wraps_hol_true_as_cprop() {
     let bool_ty = ty("bool");
     let trueprop_ty = Ty::arrow(bool_ty.clone(), Ty::prop());
     let mut sig = Signature::new();
-    sig.declare_const("HOL.True", bool_ty.clone());
-    sig.declare_const("HOL.Trueprop", trueprop_ty.clone());
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("HOL.True", bool_ty.clone()).unwrap();
+    sig = sig.extend_const("HOL.Trueprop", trueprop_ty.clone()).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     let proposition = RawTerm::app(
         RawTerm::const_("HOL.Trueprop", trueprop_ty),
         RawTerm::const_("HOL.True", bool_ty),
@@ -126,9 +127,9 @@ fn dummy_type_is_not_constructible() {
 #[test]
 fn ill_typed_application_is_rejected() {
     let mut sig = Signature::new();
-    sig.declare_const("f", Ty::arrow(ty("nat"), ty("nat")));
-    sig.declare_const("P", Ty::prop());
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("f", Ty::arrow(ty("nat"), ty("nat"))).unwrap();
+    sig = sig.extend_const("P", Ty::prop()).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     let err = ctx
         .certify_term(RawTerm::app(
             RawTerm::const_("f", Ty::arrow(ty("nat"), ty("nat"))),
@@ -141,8 +142,8 @@ fn ill_typed_application_is_rejected() {
 #[test]
 fn declared_const_and_free_are_certified() {
     let mut sig = Signature::new();
-    sig.declare_const("A", Ty::prop());
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("A", Ty::prop()).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
 
     assert!(ctx.certify_prop(prop("A")).is_ok());
@@ -153,9 +154,9 @@ fn declared_const_and_free_are_certified() {
 fn free_const_middle_mismatch_is_rejected() {
     let mut sig = Signature::new();
     for name in ["a", "b", "Groups.zero"] {
-        sig.declare_const(name, ty("nat"));
+        sig = sig.extend_const(name, ty("nat")).unwrap();
     }
-    let mut ctx = ProofContext::new(sig);
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("zero", ty("nat"));
 
     let left_eq = ctx
@@ -206,15 +207,12 @@ fn assume_yields_strict_open_theorem() {
 }
 
 #[test]
-fn reflexive_yields_closed_trusted_theorem() {
+fn reflexive_yields_closed_replayable_theorem() {
     let ctx = ctx_with_nat_consts(&["a"]);
     let a = ctx.certify_term(RawTerm::const_("a", ty("nat"))).unwrap();
     let refl = KernelRules::reflexive(a);
-    let trusted = refl.trust().unwrap();
 
-    let mut theory = TrustedTheory::new();
-    theory.add("a_refl", trusted);
-    assert_eq!(theory.len(), 1);
+    assert!(check_kernel_thm(refl.as_kernel()).is_ok());
 }
 
 #[test]
@@ -226,7 +224,8 @@ fn implies_intr_discharges_hypothesis() {
 
     assert!(identity.hyps().is_empty());
     assert!(check_kernel_thm(&identity).is_ok());
-    assert!(identity.try_close().unwrap().trust().is_ok());
+    let closed = identity.try_close().unwrap();
+    assert!(check_kernel_thm(closed.as_kernel()).is_ok());
 }
 
 #[test]
@@ -299,8 +298,8 @@ fn search_fact_cannot_enter_trusted_theory() {
 #[test]
 fn beta_conversion_reduces_identity() {
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     // (λx:nat. x) a  ≡  a
     let redex = ctx
         .certify_term(RawTerm::app(
@@ -320,8 +319,8 @@ fn beta_conversion_reduces_identity() {
 #[test]
 fn beta_conversion_rejects_non_application() {
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     let a = ctx.certify_term(RawTerm::const_("a", ty("nat"))).unwrap();
     assert!(matches!(KernelRules::beta_conversion(a), Err(KernelError::BetaRedexExpected(_))));
 }
@@ -329,9 +328,9 @@ fn beta_conversion_rejects_non_application() {
 #[test]
 fn beta_conversion_rejects_non_lambda() {
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    sig.declare_const("f", Ty::arrow(ty("nat"), ty("nat")));
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    sig = sig.extend_const("f", Ty::arrow(ty("nat"), ty("nat"))).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     // f a  (App where func is a Const, not an Abs)
     let redex = ctx
         .certify_term(RawTerm::app(
@@ -343,7 +342,7 @@ fn beta_conversion_rejects_non_lambda() {
 }
 
 #[test]
-fn beta_conversion_produces_closed_trusted_theorem() {
+fn beta_conversion_produces_closed_replayable_theorem() {
     let ctx = ctx_with_nat_consts(&["a"]);
     let redex = ctx
         .certify_term(RawTerm::app(
@@ -352,19 +351,16 @@ fn beta_conversion_produces_closed_trusted_theorem() {
         ))
         .unwrap();
     let thm = KernelRules::beta_conversion(redex).unwrap();
-    let trusted = thm.trust().unwrap();
 
-    let mut theory = TrustedTheory::new();
-    theory.add("beta_identity", trusted);
-    assert_eq!(theory.len(), 1);
+    assert!(check_kernel_thm(thm.as_kernel()).is_ok());
 }
 
 #[test]
 fn beta_conversion_substitution_is_correct() {
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    sig.declare_const("f", Ty::arrow(ty("nat"), ty("nat")));
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    sig = sig.extend_const("f", Ty::arrow(ty("nat"), ty("nat"))).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     // (λx:nat. f x) a  ≡  f a
     let redex = ctx
         .certify_term(RawTerm::app(
@@ -394,8 +390,8 @@ fn beta_conversion_substitution_is_correct() {
 #[test]
 fn beta_conversion_inner_bound_preserved() {
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     // (λx:nat. (λy:nat. y) x) a  ≡  (λy:nat. y) a
     // body of outer λ: (λy:nat. y) x  = App(Abs(Bound(0)), Bound(0))
     // After substitution: Bound(0) → a, inner Bound(0) → stays
@@ -438,8 +434,8 @@ fn beta_conversion_nested_lambda_preserves_outer() {
     // de Bruijn: outer Abs body = Abs("y", nat, Bound(1)).
     // instantiate_bound0 replaces Bound(0) → a, inner bound shift means Bound(1) → a.
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     let redex = ctx
         .certify_term(RawTerm::app(
             RawTerm::abs("x", ty("nat"), RawTerm::abs("y", ty("nat"), RawTerm::bound(1))),
@@ -465,8 +461,8 @@ fn beta_conversion_arg_with_bound_lifts_correctly() {
     // When substituted into the body, lift must correctly shift the bound index
     // so it doesn't become captured by any inner binder.
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     let redex = ctx
         .certify_term(RawTerm::app(
             RawTerm::abs(
@@ -494,8 +490,8 @@ fn beta_conversion_triple_nested() {
     // (λx:nat. (λy:nat. (λz:nat. x))) a  ≡  (λy:nat. (λz:nat. a))
     // Triple nesting stresses the lift/subst interaction across multiple binder layers.
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     let redex = ctx
         .certify_term(RawTerm::app(
             RawTerm::abs(
@@ -524,8 +520,8 @@ fn beta_conversion_triple_nested() {
 
 fn ctx_with_nat_free(name: &str) -> ProofContext {
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free(name, ty("nat"));
     ctx
 }
@@ -535,8 +531,8 @@ fn forall_intr_generalises_free_variable() {
     // x == a |- x == a  →  implies_intr discharges hyps  →  |- (x == a) ⇒ (x == a)
     // Then forall_intr(x)  →  |- ⋀x. ((x == a) ⇒ (x == a))
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
 
     let eq_prop = ctx
@@ -651,8 +647,8 @@ fn forall_intr_preserves_hypotheses() {
 fn forall_elim_instantiates_bound_variable() {
     // |- ⋀x: nat. (x == a) ⇒ (x == a)  →  forall_elim(a)  →  |- (a == a) ⇒ (a == a)
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
 
     let eq_prop = ctx
@@ -692,10 +688,10 @@ fn forall_elim_rejects_non_forall_input() {
 fn forall_elim_rejects_binder_type_mismatch() {
     // ⋀x: nat. P(x)  with  arg: bool  →  type mismatch rejected.
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    sig.declare_const("T", Ty::prop());
-    sig.declare_const("F", Ty::prop());
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    sig = sig.extend_const("T", Ty::prop()).unwrap();
+    sig = sig.extend_const("F", Ty::prop()).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
 
     let eq_prop = ctx
@@ -719,8 +715,8 @@ fn forall_elim_preserves_hypotheses() {
     // Hypotheses should be preserved through forall_elim.
     // Build ⋀x:nat. ..., then assume it, then forall_elim — hyps stay.
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
 
     let eq_prop = ctx
@@ -748,8 +744,8 @@ fn forall_elim_preserves_hypotheses() {
 #[test]
 fn forall_elim_invariant_check_passes() {
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
 
     let eq_prop = ctx
@@ -769,8 +765,8 @@ fn forall_elim_invariant_check_passes() {
 fn forall_elim_nested_forall_instantiate_outer() {
     // ⋀x:nat. ⋀y:nat. (x == y)  →  forall_elim(a)  →  ⋀y:nat. (a == y)
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
     ctx.declare_free("y", ty("nat"));
 
@@ -816,8 +812,8 @@ fn forall_elim_nested_forall_instantiate_outer() {
 fn forall_intr_elim_roundtrip() {
     // forall_intr(x) then forall_elim(x) should return the original proposition.
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
 
     let eq_prop = ctx
@@ -848,8 +844,8 @@ fn forall_elim_does_not_replace_bound1() {
     // Eliminating the outer y with a gives:
     //   ⋀x. ((a == Bound(0)) ⇒ (a == Bound(0)))
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
     ctx.declare_free("y", ty("nat"));
 
@@ -890,8 +886,8 @@ fn forall_elim_replaces_all_bound0_occurrences() {
     // ⋀x:nat. (x == x)  →  forall_elim(x, a)  →  (a == a)
     // Both Bound(0) occurrences must be replaced.
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
 
     // Build: |- (x == x) ⇒ (x == x) then forall_intr(x)
@@ -922,9 +918,9 @@ fn forall_elim_consecutive_nested() {
     // ⋀x:nat. ⋀y:nat. (x == y)  →  forall_elim(a)  →  ⋀y:nat. (a == y)
     // →  forall_elim(b)  →  (a == b)
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    sig.declare_const("b", ty("nat"));
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    sig = sig.extend_const("b", ty("nat")).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
     ctx.declare_free("y", ty("nat"));
 
@@ -962,8 +958,8 @@ fn forall_elim_with_abs_argument() {
     // Teast that an Abs term as argument substitutes correctly.
     let nat_to_nat = Ty::arrow(ty("nat"), ty("nat"));
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("f", nat_to_nat.clone());
 
     // Build: |- (f a == a) ⇒ (f a == a) then forall_intr(f)
@@ -1002,8 +998,8 @@ fn beta_conversion_then_forall_elim() {
     //   5. forall_elim(x, a) → |- ((λz. z) a) == a
     // Verify substitution and beta don't interfere.
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
 
     // Step 1: beta_conversion on redex (λz:nat. z) x
@@ -1050,11 +1046,11 @@ fn combination_basic_application() {
     // combination → {f==g, a==b} |- f a == g b
     let fn_ty = Ty::arrow(ty("nat"), ty("nat"));
     let mut sig = Signature::new();
-    sig.declare_const("f", fn_ty.clone());
-    sig.declare_const("g", fn_ty.clone());
-    sig.declare_const("a", ty("nat"));
-    sig.declare_const("b", ty("nat"));
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("f", fn_ty.clone()).unwrap();
+    sig = sig.extend_const("g", fn_ty.clone()).unwrap();
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    sig = sig.extend_const("b", ty("nat")).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
     let f_eq_g = ctx
         .certify_prop(RawTerm::eq(
@@ -1090,10 +1086,10 @@ fn combination_basic_application() {
 fn combination_rejects_non_equality_function_premise() {
     // First premise is an implication, not equality.
     let mut sig = Signature::new();
-    sig.declare_const("P", Ty::prop());
-    sig.declare_const("Q", Ty::prop());
-    sig.declare_const("a", ty("nat"));
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("P", Ty::prop()).unwrap();
+    sig = sig.extend_const("Q", Ty::prop()).unwrap();
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
     let p_imp_q = ctx
         .certify_prop(RawTerm::imp(
@@ -1117,10 +1113,10 @@ fn combination_rejects_non_equality_argument_premise() {
     // Second premise is an implication, not equality.
     let fn_ty = Ty::arrow(ty("nat"), ty("nat"));
     let mut sig = Signature::new();
-    sig.declare_const("f", fn_ty.clone());
-    sig.declare_const("P", Ty::prop());
-    sig.declare_const("Q", Ty::prop());
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("f", fn_ty.clone()).unwrap();
+    sig = sig.extend_const("P", Ty::prop()).unwrap();
+    sig = sig.extend_const("Q", Ty::prop()).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
     let f_eq_f = ctx
         .certify_prop(RawTerm::eq(
@@ -1146,10 +1142,10 @@ fn combination_rejects_non_equality_argument_premise() {
 fn combination_rejects_non_function_lhs_rhs() {
     // f, g have type nat (not function).
     let mut sig = Signature::new();
-    sig.declare_const("f", ty("nat"));
-    sig.declare_const("g", ty("nat"));
-    sig.declare_const("a", ty("nat"));
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("f", ty("nat")).unwrap();
+    sig = sig.extend_const("g", ty("nat")).unwrap();
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
     let f_eq_g = ctx
         .certify_prop(RawTerm::eq(RawTerm::const_("f", ty("nat")), RawTerm::const_("g", ty("nat"))))
@@ -1170,11 +1166,11 @@ fn combination_rejects_argument_domain_mismatch() {
     // f: nat → nat, but argument equality is bool == bool.
     let fn_ty = Ty::arrow(ty("nat"), ty("nat"));
     let mut sig = Signature::new();
-    sig.declare_const("f", fn_ty.clone());
-    sig.declare_const("g", fn_ty.clone());
-    sig.declare_const("x", ty("bool"));
-    sig.declare_const("y", ty("bool"));
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("f", fn_ty.clone()).unwrap();
+    sig = sig.extend_const("g", fn_ty.clone()).unwrap();
+    sig = sig.extend_const("x", ty("bool")).unwrap();
+    sig = sig.extend_const("y", ty("bool")).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
     let f_eq_g = ctx
         .certify_prop(RawTerm::eq(
@@ -1202,10 +1198,10 @@ fn combination_preserves_hypotheses() {
     // Result hyps = {f == g}.
     let fn_ty = Ty::arrow(ty("nat"), ty("nat"));
     let mut sig = Signature::new();
-    sig.declare_const("f", fn_ty.clone());
-    sig.declare_const("g", fn_ty.clone());
-    sig.declare_const("a", ty("nat"));
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("f", fn_ty.clone()).unwrap();
+    sig = sig.extend_const("g", fn_ty.clone()).unwrap();
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
     let f_eq_g = ctx
         .certify_prop(RawTerm::eq(
@@ -1230,9 +1226,9 @@ fn combination_invariant_check_passes() {
     // Build valid combination, verify invariant replay succeeds.
     let fn_ty = Ty::arrow(ty("nat"), ty("nat"));
     let mut sig = Signature::new();
-    sig.declare_const("f", fn_ty.clone());
-    sig.declare_const("a", ty("nat"));
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("f", fn_ty.clone()).unwrap();
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
     let f_term = ctx.certify_term(RawTerm::const_("f", fn_ty)).unwrap();
     let a_term = ctx.certify_term(RawTerm::const_("a", ty("nat"))).unwrap();
@@ -1255,9 +1251,9 @@ fn combination_composes_with_reflexive_closed() {
     // combination: |- f a == f a (closed, trusted)
     let fn_ty = Ty::arrow(ty("nat"), ty("nat"));
     let mut sig = Signature::new();
-    sig.declare_const("f", fn_ty.clone());
-    sig.declare_const("a", ty("nat"));
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("f", fn_ty.clone()).unwrap();
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
     let f_term = ctx.certify_term(RawTerm::const_("f", fn_ty.clone())).unwrap();
     let a_term = ctx.certify_term(RawTerm::const_("a", ty("nat"))).unwrap();
@@ -1288,9 +1284,9 @@ fn combination_with_forall_elim_result() {
     //   5. combination(f==f, a==a) → |- f a == f a (forall_elim result as function premise)
     let nat_to_nat = Ty::arrow(ty("nat"), ty("nat"));
     let mut sig = Signature::new();
-    sig.declare_const("f", nat_to_nat.clone());
-    sig.declare_const("a", ty("nat"));
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("f", nat_to_nat.clone()).unwrap();
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("F", nat_to_nat.clone());
 
     // Step 1: reflexive on F gives |- F == F
@@ -1331,11 +1327,11 @@ fn combination_codomain_not_nat() {
     // The result f a and g b should have type bool (not nat).
     let nat_to_bool = Ty::arrow(ty("nat"), ty("bool"));
     let mut sig = Signature::new();
-    sig.declare_const("f", nat_to_bool.clone());
-    sig.declare_const("g", nat_to_bool.clone());
-    sig.declare_const("a", ty("nat"));
-    sig.declare_const("b", ty("nat"));
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("f", nat_to_bool.clone()).unwrap();
+    sig = sig.extend_const("g", nat_to_bool.clone()).unwrap();
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    sig = sig.extend_const("b", ty("nat")).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
     let f_eq_g = ctx
         .certify_prop(RawTerm::eq(
@@ -1375,11 +1371,11 @@ fn combination_function_domain() {
     let nat_to_nat = Ty::arrow(ty("nat"), ty("nat"));
     let fn_fn_ty = Ty::arrow(nat_to_nat.clone(), ty("nat"));
     let mut sig = Signature::new();
-    sig.declare_const("f", fn_fn_ty.clone());
-    sig.declare_const("g", fn_fn_ty.clone());
-    sig.declare_const("h", nat_to_nat.clone());
-    sig.declare_const("k", nat_to_nat.clone());
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("f", fn_fn_ty.clone()).unwrap();
+    sig = sig.extend_const("g", fn_fn_ty.clone()).unwrap();
+    sig = sig.extend_const("h", nat_to_nat.clone()).unwrap();
+    sig = sig.extend_const("k", nat_to_nat.clone()).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
     let f_eq_g = ctx
         .certify_prop(RawTerm::eq(
@@ -1424,9 +1420,9 @@ fn combination_argument_from_beta_conversion() {
     // 3. combination(f==f, ((λx. x) a)==a) → |- f ((λx. x) a) == f a
     let fn_ty = Ty::arrow(ty("nat"), ty("nat"));
     let mut sig = Signature::new();
-    sig.declare_const("f", fn_ty.clone());
-    sig.declare_const("a", ty("nat"));
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("f", fn_ty.clone()).unwrap();
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
     // Build ((λx:nat. x) a) as a CTerm
     let lambda = RawTerm::abs("x", ty("nat"), RawTerm::bound(0));
@@ -1470,12 +1466,12 @@ fn combination_nested_app() {
     //   3. combination(h==h, f a == g b) → |- h (f a) == h (g b)
     let fn_ty = Ty::arrow(ty("nat"), ty("nat"));
     let mut sig = Signature::new();
-    sig.declare_const("f", fn_ty.clone());
-    sig.declare_const("g", fn_ty.clone());
-    sig.declare_const("h", fn_ty.clone());
-    sig.declare_const("a", ty("nat"));
-    sig.declare_const("b", ty("nat"));
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("f", fn_ty.clone()).unwrap();
+    sig = sig.extend_const("g", fn_ty.clone()).unwrap();
+    sig = sig.extend_const("h", fn_ty.clone()).unwrap();
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    sig = sig.extend_const("b", ty("nat")).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
     // f == g and a == b as assumptions
     let f_eq_g = ctx
@@ -1531,9 +1527,9 @@ fn combination_nested_app() {
 fn abstraction_basic() {
     // x not free in Γ → Γ |- (λx. t) == (λx. u) from Γ |- t == u
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    sig.declare_const("b", ty("nat"));
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    sig = sig.extend_const("b", ty("nat")).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
 
     // Build: {a == b} |- a == b
@@ -1567,8 +1563,8 @@ fn abstraction_basic() {
 fn abstraction_rejects_free_in_hypotheses() {
     // x is free in a hypothesis → rejected.
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
 
     // Build: {x == a} |- x == a
@@ -1586,11 +1582,11 @@ fn abstraction_rejects_free_in_hypotheses() {
 fn abstraction_preserves_hypotheses() {
     // Γ = {A, B}, abstract x:nat (x not free in A or B)
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    sig.declare_const("b", ty("nat"));
-    sig.declare_const("A", Ty::prop());
-    sig.declare_const("B", Ty::prop());
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    sig = sig.extend_const("b", ty("nat")).unwrap();
+    sig = sig.extend_const("A", Ty::prop()).unwrap();
+    sig = sig.extend_const("B", Ty::prop()).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
 
     // Build: {A, B, a == b} |- a == b
@@ -1627,8 +1623,8 @@ fn abstraction_rejects_non_equality() {
 fn abstraction_invariant_check_passes() {
     // Build a valid abstraction and verify invariant replay succeeds.
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
 
     let a_term = ctx.certify_term(RawTerm::const_("a", ty("nat"))).unwrap();
@@ -1646,8 +1642,8 @@ fn abstraction_invariant_check_passes() {
 fn abstraction_closed_from_closed() {
     // Closed input → closed output.
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("y", ty("nat"));
 
     let a_term = ctx.certify_term(RawTerm::const_("a", ty("nat"))).unwrap();
@@ -1664,8 +1660,8 @@ fn abstraction_closed_from_closed() {
 fn abstraction_nested() {
     // Abstract x:nat, then y:nat — two binders in sequence.
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
     ctx.declare_free("y", ty("nat"));
 
@@ -1699,9 +1695,9 @@ fn abstraction_with_forall_elim_and_combination() {
     //   4. abstraction on x:nat: |- (λx:nat. f x) == (λx:nat. f x)
     let fn_ty = Ty::arrow(ty("nat"), ty("nat"));
     let mut sig = Signature::new();
-    sig.declare_const("f", fn_ty.clone());
-    sig.declare_const("a", ty("nat"));
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("f", fn_ty.clone()).unwrap();
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("F", fn_ty.clone());
     ctx.declare_free("x", ty("nat"));
 
@@ -1743,7 +1739,7 @@ fn abstraction_replaces_free_with_bound0() {
     // |- (λx:nat. Bound(0)) == (λx:nat. Bound(0))
     // NOT |- (λx:nat. Free("x")) == (λx:nat. Free("x"))
     let sig = Signature::new();
-    let mut ctx = ProofContext::new(sig);
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
 
     let x_term = ctx.certify_term(RawTerm::free("x", ty("nat"))).unwrap();
@@ -1781,8 +1777,8 @@ fn abstraction_only_replaces_target_free() {
     // Result: (λx. pair Bound(0) y) == (λx. pair Bound(0) y)
     let pair_ty = Ty::arrow(ty("nat"), Ty::arrow(ty("nat"), ty("nat")));
     let mut sig = Signature::new();
-    sig.declare_const("pair", pair_ty.clone());
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("pair", pair_ty.clone()).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
     ctx.declare_free("y", ty("nat"));
 
@@ -1844,8 +1840,8 @@ fn abstraction_over_application() {
     // |- (λx:nat. f Bound(0)) == (λx:nat. f Bound(0))
     let fn_ty = Ty::arrow(ty("nat"), ty("nat"));
     let mut sig = Signature::new();
-    sig.declare_const("f", fn_ty.clone());
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("f", fn_ty.clone()).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
 
     // Build certified term: f x
@@ -1895,8 +1891,8 @@ fn abstraction_replaces_multiple_occurrences() {
     // pair x x == pair x x, abstraction on x must replace BOTH x→Bound(0).
     let pair_ty = Ty::arrow(ty("nat"), Ty::arrow(ty("nat"), ty("nat")));
     let mut sig = Signature::new();
-    sig.declare_const("pair", pair_ty.clone());
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("pair", pair_ty.clone()).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
 
     let pair_xx = ctx
@@ -1932,7 +1928,7 @@ fn abstraction_under_existing_abs_does_not_capture() {
     // Body already has (λy:nat. x). Abstract x → Bound(1) under existing λy.
     // Result: λx:nat. λy:nat. Bound(1)
     let sig = Signature::new();
-    let mut ctx = ProofContext::new(sig);
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
 
     let abs_y_x =
@@ -1964,8 +1960,8 @@ fn abstraction_type_sensitive() {
     // Proves abstract_over checks both name AND type, not just name.
     let pair_ty = Ty::arrow(ty("nat"), Ty::arrow(ty("bool"), ty("nat")));
     let mut sig = Signature::new();
-    sig.declare_const("pair", pair_ty.clone());
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("pair", pair_ty.clone()).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
     ctx.declare_free("z", ty("bool"));
 
@@ -2126,7 +2122,14 @@ fn equal_elim_rejects_object_equality() {
     // equal_elim requires propositional equality (A == B where A,B: prop).
     // Object equality (x == y where x,y: nat) must be rejected even if
     // the minor premise happens to match the LHS term.
-    let mut ctx = ctx_with_nat_consts(&["a", "b"]);
+    let sig = Signature::new()
+        .extend_const("a", ty("nat"))
+        .unwrap()
+        .extend_const("b", ty("nat"))
+        .unwrap()
+        .extend_const("A", Ty::prop())
+        .unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
 
     // Object equality: x == x : prop (object_ty = nat)
@@ -2135,10 +2138,9 @@ fn equal_elim_rejects_object_equality() {
         .unwrap();
     let eq_thm = KernelRules::assume(obj_eq).into_kernel();
 
-    // A propositional theorem as minor (will fail alpha_eq anyway,
-    // but the explicit prop-equality check must fire first)
-    let prop_ctx = ctx_with_props(&["A"]);
-    let a = prop_ctx.certify_prop(prop("A")).unwrap();
+    // A propositional theorem in the same checked context (will fail alpha_eq
+    // anyway, but the explicit prop-equality check must fire first).
+    let a = ctx.certify_prop(prop("A")).unwrap();
     let minor = KernelRules::assume(a).into_kernel();
 
     let err = KernelRules::equal_elim(&eq_thm, &minor).unwrap_err();
@@ -2212,11 +2214,11 @@ fn subst_premise_basic() {
 #[test]
 fn subst_premise_rejects_object_equality() {
     let mut sig = Signature::new();
-    sig.declare_const("x", ty("nat"));
-    sig.declare_const("y", ty("nat"));
-    sig.declare_const("A", Ty::prop());
-    sig.declare_const("R", Ty::prop());
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("x", ty("nat")).unwrap();
+    sig = sig.extend_const("y", ty("nat")).unwrap();
+    sig = sig.extend_const("A", Ty::prop()).unwrap();
+    sig = sig.extend_const("R", Ty::prop()).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
     let eq = KernelRules::assume(
         ctx.certify_prop(RawTerm::eq(
@@ -2349,8 +2351,8 @@ fn bicompose_wrapper_rejects_match_failure() {
 #[test]
 fn generalize_basic() {
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
 
     let x_term = ctx.certify_term(RawTerm::free("x", ty("nat"))).unwrap();
@@ -2401,8 +2403,8 @@ fn generalize_preserves_hypotheses() {
 #[test]
 fn generalize_multiple_frees() {
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
     ctx.declare_free("y", ty("nat"));
 
@@ -2429,8 +2431,8 @@ fn generalize_multiple_frees() {
 #[test]
 fn generalize_non_free_unchanged() {
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
 
     // Use a Const in the theorem — it must not be touched
@@ -2453,8 +2455,8 @@ fn generalize_non_free_unchanged() {
 #[test]
 fn generalize_only_target_free() {
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
     ctx.declare_free("z", ty("nat"));
 
@@ -2479,8 +2481,8 @@ fn generalize_only_target_free() {
 #[test]
 fn generalize_closed_remains_closed() {
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
 
     let x_term = ctx.certify_term(RawTerm::free("x", ty("nat"))).unwrap();
@@ -2509,8 +2511,8 @@ fn generalize_open_remains_open() {
 #[test]
 fn generalize_invariant_check_passes() {
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
 
     let x_term = ctx.certify_term(RawTerm::free("x", ty("nat"))).unwrap();
@@ -2523,8 +2525,8 @@ fn generalize_invariant_check_passes() {
 #[test]
 fn generalize_empty_frees_noop() {
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
 
     let x_term = ctx.certify_term(RawTerm::free("x", ty("nat"))).unwrap();
@@ -2541,8 +2543,8 @@ fn generalize_empty_frees_noop() {
 #[test]
 fn generalize_ignores_unmatched_free() {
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
 
     let x_term = ctx.certify_term(RawTerm::free("x", ty("nat"))).unwrap();
@@ -2561,8 +2563,8 @@ fn generalize_avoids_existing_var_index() {
     // generalize Free("x") must use start = max_var_index + 1 = 1,
     // producing Var("x", 1, nat) to avoid collision.
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
 
     // Build: Var("v", 0, nat) == Free("x", nat)
@@ -2593,8 +2595,8 @@ fn generalize_uses_global_max_var_index() {
     // generalize Free("z", nat) must use start = global_max + 1 = 4,
     // producing Var("z", 4, nat) — not Var("z", 1) or any per-name local count.
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("z", ty("nat"));
 
     // Build: (Var("x",0) == Var("y",3)) ==> (Free("z") == Free("z"))
@@ -2638,9 +2640,9 @@ fn generalize_uses_global_max_var_index() {
 #[test]
 fn generalize_type_sensitive_same_name() {
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    sig.declare_const("P", Ty::prop());
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    sig = sig.extend_const("P", Ty::prop()).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
     // Can't declare Free("x", bool) — ProofContext rejects same-name different-type
     // So we test that only Free("x", nat) is generalized, not Free("x", bool)
@@ -2673,8 +2675,8 @@ fn generalize_roundtrip_with_instantiate() {
     // For now it just verifies generalize is reversible in principle:
     // the derivation records the start_index, which instantiate can use.
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
 
     let x_term = ctx.certify_term(RawTerm::free("x", ty("nat"))).unwrap();
@@ -2698,8 +2700,8 @@ fn generalize_roundtrip_with_instantiate() {
 fn instantiate_basic() {
     // Var("x", 0, nat) := Const("a", nat) — basic single replacement.
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
     // Build: Var("x", 0, nat) == a |- Var("x", 0, nat) == a
     let raw_prop = RawTerm::eq(RawTerm::var("x", 0, ty("nat")), RawTerm::const_("a", ty("nat")));
@@ -2721,9 +2723,9 @@ fn instantiate_basic() {
 fn instantiate_rejects_type_mismatch() {
     // Var(x,0,nat) := Const(P,prop) — type mismatch.
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    sig.declare_const("P", Ty::prop());
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    sig = sig.extend_const("P", Ty::prop()).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
     // Theorem: Var("x", 0, nat) == a |- Var("x", 0, nat) == a  (both sides nat-typed)
     let raw_prop = RawTerm::eq(RawTerm::var("x", 0, ty("nat")), RawTerm::const_("a", ty("nat")));
@@ -2743,8 +2745,8 @@ fn instantiate_respects_index() {
     // Var("x", 0, nat) and Var("x", 1, nat) are distinct.
     // Replace Var("x", 0) only — Var("x", 1) must remain.
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
     let raw_prop = RawTerm::eq(RawTerm::var("x", 0, ty("nat")), RawTerm::var("x", 1, ty("nat")));
     let cprop = ctx.certify_prop(raw_prop).unwrap();
@@ -2766,9 +2768,9 @@ fn instantiate_respects_index() {
 fn instantiate_type_sensitive_same_name_index() {
     // Var("x", 0, nat) is NOT matched by a substitution entry for Var("x", 0, bool).
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    sig.declare_const("P", Ty::prop());
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    sig = sig.extend_const("P", Ty::prop()).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
     let raw_prop = RawTerm::eq(RawTerm::var("x", 0, ty("nat")), RawTerm::const_("a", ty("nat")));
     let cprop = ctx.certify_prop(raw_prop).unwrap();
@@ -2787,9 +2789,9 @@ fn instantiate_type_sensitive_same_name_index() {
 fn instantiate_rejects_duplicate_substitution() {
     // Same (name, idx) pair appears twice.
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    sig.declare_const("b", ty("nat"));
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    sig = sig.extend_const("b", ty("nat")).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
     let raw_prop = RawTerm::eq(RawTerm::var("x", 0, ty("nat")), RawTerm::const_("a", ty("nat")));
     let cprop = ctx.certify_prop(raw_prop).unwrap();
@@ -2814,8 +2816,8 @@ fn instantiate_rejects_bound_in_replacement() {
     //
     // Here we verify a normal certified replacement (without Bound) succeeds.
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
     let raw_prop = RawTerm::eq(RawTerm::var("x", 0, ty("nat")), RawTerm::const_("a", ty("nat")));
     let cprop = ctx.certify_prop(raw_prop).unwrap();
@@ -2831,8 +2833,8 @@ fn instantiate_rejects_bound_in_replacement() {
 fn instantiate_partial_substitution_keeps_unmatched_var() {
     // Theorem has Var("x",0) and Var("y",1). Replace only Var("x",0).
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
     let raw_prop = RawTerm::eq(RawTerm::var("x", 0, ty("nat")), RawTerm::var("y", 1, ty("nat")));
     let cprop = ctx.certify_prop(raw_prop).unwrap();
@@ -2854,9 +2856,9 @@ fn instantiate_partial_substitution_keeps_unmatched_var() {
 fn instantiate_preserves_hypotheses() {
     // Hypotheses transformed alongside prop.
     let mut sig = Signature::new();
-    sig.declare_const("A", Ty::prop());
-    sig.declare_const("B", Ty::prop());
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("A", Ty::prop()).unwrap();
+    sig = sig.extend_const("B", Ty::prop()).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
     // Build a theorem with Var in both hyps and prop.
     // assume(Var("x",0,prop) ==> B) yields: (x ==> B) |- (x ==> B)
@@ -2880,8 +2882,8 @@ fn instantiate_preserves_hypotheses() {
 #[test]
 fn instantiate_invariant_check_passes() {
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
     let raw_prop = RawTerm::eq(RawTerm::var("x", 0, ty("nat")), RawTerm::const_("a", ty("nat")));
     let cprop = ctx.certify_prop(raw_prop).unwrap();
@@ -2897,8 +2899,8 @@ fn instantiate_invariant_check_passes() {
 fn instantiate_closed_remains_closed() {
     // Closed theorem stays closed after instantiation.
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
     let a_cterm = ctx.certify_term(RawTerm::const_("a", ty("nat"))).unwrap();
     let refl = KernelRules::reflexive(a_cterm.clone()).into_kernel();
@@ -2915,8 +2917,8 @@ fn instantiate_closed_remains_closed() {
 fn instantiate_does_not_affect_const_or_free() {
     // Only Vars replaced; Const and Free nodes unchanged.
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("y", ty("nat"));
 
     let raw_prop = RawTerm::eq(RawTerm::var("x", 0, ty("nat")), RawTerm::free("y", ty("nat")));
@@ -2939,8 +2941,8 @@ fn instantiate_does_not_affect_const_or_free() {
 fn instantiate_empty_subst_noop() {
     // Empty substitution list = identity.
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
     let raw_prop = RawTerm::eq(RawTerm::var("x", 0, ty("nat")), RawTerm::const_("a", ty("nat")));
     let cprop = ctx.certify_prop(raw_prop).unwrap();
@@ -2955,9 +2957,9 @@ fn instantiate_empty_subst_noop() {
 fn instantiate_multiple_vars() {
     // Replace two different Vars with different terms.
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    sig.declare_const("b", ty("nat"));
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    sig = sig.extend_const("b", ty("nat")).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
     let raw_prop = RawTerm::eq(RawTerm::var("x", 0, ty("nat")), RawTerm::var("y", 1, ty("nat")));
     let cprop = ctx.certify_prop(raw_prop).unwrap();
@@ -2980,8 +2982,8 @@ fn instantiate_multiple_vars() {
 fn instantiate_same_var_all_occurrences() {
     // All occurrences of the same Var are replaced.
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
     // (Var("x",0) == Var("x",0))
     let raw_prop = RawTerm::eq(RawTerm::var("x", 0, ty("nat")), RawTerm::var("x", 0, ty("nat")));
@@ -3000,8 +3002,8 @@ fn instantiate_same_var_all_occurrences() {
 fn instantiate_roundtrip_with_generalize() {
     // generalize then instantiate = original (modulo hyps α-equivalence).
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let mut ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
 
     let x_cterm = ctx.certify_term(RawTerm::free("x", ty("nat"))).unwrap();
@@ -3033,8 +3035,8 @@ fn instantiate_invariant_catches_tampered_result() {
     // since KernelThm::new is pub(crate) and inaccessible here.
     // This integration test verifies the happy-path invariant instead.
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
     let raw_prop = RawTerm::eq(RawTerm::var("x", 0, ty("nat")), RawTerm::const_("a", ty("nat")));
     let cprop = ctx.certify_prop(raw_prop).unwrap();
@@ -3053,9 +3055,9 @@ fn instantiate_rejects_duplicate_same_name_index_different_type() {
     // Duplicate detection is keyed by (name, index) regardless of type.
     // Two entries with same (name, idx) but different var_ty are rejected.
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    sig.declare_const("P", Ty::prop());
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    sig = sig.extend_const("P", Ty::prop()).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
     let raw_prop = RawTerm::eq(RawTerm::var("x", 0, ty("nat")), RawTerm::const_("a", ty("nat")));
     let cprop = ctx.certify_prop(raw_prop).unwrap();
@@ -3097,9 +3099,9 @@ fn instantiate_is_simultaneous_not_sequential() {
     // single call produces the same result regardless of order.
 
     let mut sig = Signature::new();
-    sig.declare_const("a", ty("nat"));
-    sig.declare_const("b", ty("nat"));
-    let ctx = ProofContext::new(sig);
+    sig = sig.extend_const("a", ty("nat")).unwrap();
+    sig = sig.extend_const("b", ty("nat")).unwrap();
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
     // Theorem: Var("x",0,nat) == Var("y",1,nat) |- ...
     let raw_prop = RawTerm::eq(RawTerm::var("x", 0, ty("nat")), RawTerm::var("y", 1, ty("nat")));
