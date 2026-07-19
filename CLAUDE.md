@@ -27,8 +27,9 @@ KernelTrustedClosed:      0/125
 The current `HOL::TrueI` result is a bool-valued legacy migration experiment,
 not a context-bound `src/kernel::TrustedTheorem`.
 
-The next source slice is immutable `SignatureId` / `TheoryId` propagation,
-followed by one context-bound acceptance API. Do not implement `HOL::trans`,
+Immutable context identity and one exact-owner,
+dependency-aware `accept_closed_theorem` gate are implemented. The next source
+slice is the source-aware proposition AST. Do not implement `HOL::trans`,
 `hol_subst`, another theorem adapter, or new trusted HOL proof power in
 `src/core`.
 

@@ -17,7 +17,8 @@ diagnostics, and migration adapters; do not add theorem-specific HOL proof
 power. Preserve hypotheses, `tpairs`, `shyps`, oracles, types, theory provenance,
 and replay data through every inference.
 
-Legacy strict shape counts only as `TransitionalStrictClosed`. Final
-`KernelTrustedClosed` requires `CProp : prop`, new-kernel trust, immutable
-theory/logic identity, and the required replay gate. Run
-`scripts/dev-check.sh strict` and update the trust/attack ledgers.
+Legacy strict shape counts only as `TransitionalStrictClosed`.
+`KernelTrustedClosed` requires the token returned by exact-owner
+`accept_closed_theorem`; object-logic results additionally require the missing
+authorized basis/axiom/definition layers. Run `scripts/dev-check.sh strict` and
+update the trust/attack ledgers.

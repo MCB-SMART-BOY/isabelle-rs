@@ -6,7 +6,7 @@ full Isabelle compatibility.
 
 This is a historical checkpoint. The completed strict-kernel work below is not
 the current next phase; use [ROADMAP.md](ROADMAP.md) for the active
-`SignatureId` / `TheoryId` and acceptance sequence.
+source-elaboration and authorized HOL-basis sequence.
 
 ## Baseline Commits
 
@@ -32,9 +32,10 @@ These commits separate:
 The current strict-kernel gate is `scripts/dev-check.sh strict`, backed by
 [check-strict-kernel.sh](../scripts/check-strict-kernel.sh).
 
-This unified gate runs 7 steps: `cargo +stable fmt --check`, `cargo +stable check --locked`,
-`bash scripts/check-kernel-firewall.sh`, and test suites covering kernel rewrite
-soundness, kernel soundness, inline kernel unit tests, and legacy core compatibility.
+This unified gate runs 7 numbered stages: `cargo +stable fmt --check`,
+`cargo +stable check --locked`, `bash scripts/check-kernel-firewall.sh`, and
+test suites covering kernel rewrite soundness, immutable context identity,
+kernel soundness, inline kernel units, and legacy core compatibility.
 
 Recorded baseline result (historical snapshot; use `scripts/dev-check.sh strict`
 for current counts):
@@ -146,7 +147,48 @@ Thm invariant checker
 strict kernel mode
 ```
 
-Those boundaries are now implemented. The current next entry is immutable
-`SignatureId` / `TheoryId` propagation followed by one context-bound theorem
-acceptance API. Do not broaden HOL/Isar coverage or extend legacy replay instead
-of closing that context boundary.
+Those boundaries, immutable context identity, and the exact-owner acceptance
+gate are now implemented. The current next entry is a source-aware proposition
+AST followed by checked declaration/type-scheme elaboration. Do not broaden
+HOL/Isar coverage or extend legacy replay instead of closing that source
+boundary.
+
+## Broad-Suite Failure Baseline
+
+These 14 tests fail identically on `origin/dev` (`38c5f14`), the pre-Change-B
+working tree, and the post-Change-B working tree. They are pre-existing
+limitations of the legacy parser, type environment, and proof-engine adapters,
+not regressions introduced by the kernel acceptance or outcome work.
+
+### Differential-regression policy
+
+Do not fix these failures inline with kernel or source-AST changes. Record new
+failures as:
+
+```text
+new failures = (current failure set) − (this baseline inventory)
+```
+
+A non-empty new-failure set on a change that does not intentionally modify
+legacy parsing or proof dispatch is a regression. Report it before proceeding.
+
+### Inventory
+
+```text
+hol::simpdata::tests::test_hol_basic_simp_rules_nonempty
+hol::simpdata::tests::test_init_hol_simpset_works
+isar::toplevel::tests::test_equality_sym
+isar::toplevel::tests::test_equality_trans
+isar::toplevel::tests::test_mp_modus_ponens
+isar::toplevel::tests::test_toplevel_lifecycle
+theory::loader::tests::test_accept_all_is_admitted_not_closed_verified
+theory::loader::tests::test_full_theory
+theory::loader::tests::test_induct_cases
+theory::loader::tests::test_multiple_lemmas
+theory::loader::tests::test_nested_show
+theory::loader::tests::test_set_thy_style_lemma
+theory::loader::tests::test_simple_lemma
+theory::loader::tests::test_structured_proof
+```
+
+Verified 2026-07-19 against `HEAD` of local `dev`.

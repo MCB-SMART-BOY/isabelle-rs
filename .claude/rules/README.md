@@ -16,10 +16,10 @@ add Claude-specific routing and must not override it.
 
 | Area | Status |
 |---|---|
-| Candidate target TCB | `src/kernel/`: checked `CProp`, private theorem construction, primitive rules, conservative resolution prototypes. |
+| Candidate target TCB | `src/kernel/`: checked `CProp`, private theorem construction, immutable context/fact ancestry, recursive accepting replay, theorem dependencies, and sealed trusted tokens. |
 | Legacy quarantine | `src/core/` plus current HOL/Isar verification remain transitional proof authority. |
 | Sampled results | `TransitionalStrictClosed: 1/125`; `KernelTrustedClosed: 0/125`. |
-| Missing trusted loop | Immutable signature/theory identity → unique context-bound acceptance → source-aware checked `HOL.Trueprop` → data-only HOL basis → conservative definitions. |
+| Missing trusted loop | Source-aware checked `HOL.Trueprop` → declaration/type-scheme elaboration → data-only HOL basis → conservative definitions → accepted HOL theorem. |
 | Verification | `scripts/dev-check.sh` is authoritative; `scripts/README.md` indexes modes/templates. |
 
 ## Iron Laws

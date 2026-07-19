@@ -100,13 +100,15 @@ certificate. Strict open theorems may pass it while failing
 replay rules are structurally audited but still fail `check_proof()` until their
 replay rule is implemented.
 
-A separate architectural reset now exists in `src/kernel/`. This is a new strict
-kernel nucleus, not another compatibility patch over the legacy `src/core`
-types. Its current version is independent from old Isar/HOL/tactic paths and
-introduces separate `RawTerm -> CTerm/CProp -> KernelThm -> ClosedThm ->
-TrustedTheorem` stages, a `ProofObligation` type that is not a theorem, and
-separate `TrustedTheory` / `SearchFactDb` storage. It deliberately has no dummy
-type constructor and no compatibility certification API. The strict nucleus now
+A separate architectural reset exists in `src/kernel/`. This is a new strict
+kernel nucleus, not another compatibility patch over legacy `src/core` types.
+It is independent from old Isar/HOL/tactic paths and implements:
+`RawTerm -> CTerm/CProp -> KernelThm -> ClosedThm ->
+accept_closed_theorem -> (TrustedTheory, TrustedTheorem)`, plus a
+`ProofObligation` type that is not a theorem and proof-erased `SearchFactDb`
+storage.
+It deliberately has no dummy type constructor or compatibility certification
+API. The strict nucleus now
 implements the base primitive rule set plus conservative `resolve1_match`,
 `subst_premise`, and `bicompose` wrapper rules with invariant replay and attack
 tests. `resolve1_match` / `bicompose` use strict matching and deterministic
@@ -118,14 +120,15 @@ See
 [ADR-0001-kernel-core-rewrite.md](ADR-0001-kernel-core-rewrite.md) and
 [KERNEL_PRIMITIVES.md](KERNEL_PRIMITIVES.md).
 
-As of 2026-07-18, the correct maturity statement is: the Pure kernel research
-nucleus is meaningful and substantially hardened, but the minimum
-Isabelle/Pure trusted loop is not closed. In particular, no sampled HOL theorem
-yet combines source-faithful elaboration, `CProp : prop`, immutable theory/logic
-identity, conservative definitions, an explicit HOL basis, and new-kernel
-acceptance.
-The current implementation inventory and the minimal context-bound acceptance
-API are audited in
+As of 2026-07-19, the correct maturity statement is: the Pure kernel research
+nucleus is meaningful and substantially hardened. Immutable strict
+signature/theory ancestry propagates through certification, theorem
+construction, and replay, and one non-forgeable acceptance API now binds
+closed Pure theorems and replay-derived theorem dependencies to immutable fact
+ancestry. The minimum Isabelle/Pure/HOL trusted loop is still not closed. No
+sampled HOL theorem yet combines source-faithful elaboration, `CProp : prop`,
+an authorized logic basis, axiom provenance, and conservative definitions.
+The implemented boundary and remaining gaps are audited in
 [KERNEL_TRUSTED_ACCEPTANCE_GAPS.md](KERNEL_TRUSTED_ACCEPTANCE_GAPS.md).
 
 ## Repository And Agent Policy
@@ -156,21 +159,23 @@ The following areas have a coherent implementation and regression coverage:
 | Checked CTerm certification | `CTerm::certify_checked` exists, CTerms carry checked/compat status, and strict `assume`/`reflexive` reject compat terms. |
 | Source proposition fail-closed guard | The loader records typed consumption status and a narrow source-shape classification. The registered explicit-proof `TrueI` adapter requires `FullyConsumed + StandaloneHolTrueAlias`; recovered, contextual, incomplete, or unavailable source becomes `admitted:strict_adapter_source_prop_unverified` without parser-gap or legacy fallback. This is transitional metadata, not a name-resolved AST. |
 | Proof-state strict entry points | `ProofState::assume`, `Goal::init`, and checked subgoal scaffolding construct Strict open theorem obligations from explicit proof-context certification. |
-| Strict kernel nucleus | `src/kernel` contains an isolated TCB nucleus with no dummy type, no compat certification, separate proof obligations, trusted/searchable fact separation, primitive rules, strict matching, `resolve1_match`, conservative `subst_premise`, and conservative `bicompose` wrapper. |
-| Strict theorem invariants | `check_kernel_invariants(Strict)` rejects compat/admitted provenance, dummy-tainted burdens, `maxidx` drift, oracle-tainted strict theorems, and supported replay burden mismatches. |
-| Proof outcome summary classifier | `src/isar/method.rs` classifies existing `verify_lemma` results as transitional strict closed, compat closed oracle-free, open oracle-free, admitted, or failed without changing theorem construction. |
-| Targeted migration slice | A Pure implication identity smoke slice exercises the strict kernel nucleus (`KernelRules::assume` + `implies_intr`), while the current ProofOutcome adapter reports a legacy result as `TransitionalStrictClosed`. The summary label itself is not a new-kernel theorem handle. |
+| Strict kernel nucleus | `src/kernel` contains an isolated TCB nucleus with no dummy type or compat certification, separate proof obligations, proof-erased search facts, primitive Pure rules, strict matching, conservative resolution/rewriting wrappers, immutable owner/fact ancestry, and one trusted acceptance gate. |
+| Immutable strict context identity | Canonical, domain-separated `SignatureId` and ancestry-sensitive `TheoryId` values propagate through `ProofContext`, certified terms/propositions, strict theorems, every current rule, and replay. Signature/theory extension is immutable; duplicates, stale objects, sibling ancestry, wrong signatures, mixed rules, and wire digest mismatches fail closed. |
+| Strict trusted acceptance | `accept_closed_theorem` recursively recertifies/replays one `ClosedThm` under the exact immutable owner, reconstructs ancestor-theorem dependencies, rejects duplicates and owner/store mismatches, and atomically returns a child `TrustedTheory` plus non-forgeable `TrustedTheorem`. |
+| Strict theorem invariants | `check_kernel_invariants(Strict)` remains a legacy audit. New-kernel acceptance uses owner-parameterized replay across every current `Derivation` payload and compares the exact reconstructed result. |
+| Proof outcome classifier | `KernelTrustedClosed` owns an accepted token and is mutually exclusive with transitional, compat, open, admitted, and failed outcomes. The accepted token has precedence if a legacy result is also present; the production HOL path currently produces none. |
+| Targeted strict slice | Synthetic Pure `A ==> A` exercises accepted-theorem construction, immutable insertion, theorem-reference dependencies, and exclusive classification. It is intentionally excluded from the 125-theorem HOL benchmark. |
 | Core/kernel migration framing | `src/core` is still a legacy proof engine today; the target is to shrink it into compatibility, automation, diagnostics, and migration adapters while `src/kernel` becomes the only TCB. |
 | Checked definition sources | `HolTheoremDb` has a separate `checked_definitions` table for non-theorem definition inputs. The first entry is `True_def`, checked against the explicit `TypeEnv`; it is not inserted into searchable facts and is not counted as `TransitionalStrictClosed` or `KernelTrustedClosed`. |
 | Oracle/admit tracking | `ThmKernel::admit(ct, reason)` marks unproved accepted propositions and propagates oracle footprints. |
-| Closed theorem acceptance | The legacy filter requires strict construction, no oracles, no hypotheses, no unresolved `tpairs`, and no dummy types. Final trust additionally requires a context-bound `src/kernel::TrustedTheorem` over `CProp : prop`; no sampled HOL theorem has reached that gate. |
+| Closed theorem acceptance | The legacy filter remains transitional. Final trust requires successful new-kernel `accept_closed_theorem` over an exact-owner `ClosedThm` and returns a sealed token; no sampled HOL theorem has reached that gate. |
 | Isar goal export boundary | `verify_lemma` no longer returns oracle-free open proof-method results as accepted lemmas. Results are exported by legal `implies_intr` discharge of known context assumptions, or admitted with `admitted:goal_export_*` / `admitted:proof_engine_failed`. |
 | Simplifier rewrite-rule admission | `RewriteRule::from_thm` rejects open, admitted, unresolved, or conditional rewrite theorems instead of treating them as unconditional simp rules. Unproved HOL built-in rewrite templates are disabled until backed by closed theorem sources. |
-| Searchable vs trusted facts | `HolTheoremDb` is a proof-search and migration index. Its legacy strict filter is not the final trusted-theory gate; final acceptance requires a context-bound `src/kernel::TrustedTheorem` and is recorded as `KernelTrustedClosed`. |
+| Searchable vs trusted facts | `HolTheoremDb` and `SearchFactDb` are search/migration indexes. Search facts contain no extractable kernel proof and cannot convert to `TrustedTheorem`; final acceptance is token-backed and reported as `KernelTrustedClosed`. |
 | Attribute fallback honesty | Non-derivational theorem transformations are admitted as `admitted:attribute_transformation`. |
 | T4 minimal replay | `assume`, `reflexive`, `symmetric`, `transitive`, `implies_intr`, `implies_elim` replay with burden checks. |
 | HPC symbolic compute | Design-only parallel track for untrusted candidate generation, fingerprinting, and prefiltering; no Burn/CubeCL dependency and no kernel dependency. |
-| Attack tests | `tests/kernel_soundness.rs`, `src/core/thm.rs`, and `src/core/proofterm.rs` encode regression attacks. |
+| Attack tests | `tests/kernel_context_identity.rs`, `tests/kernel_trusted_acceptance.rs`, `tests/kernel_rewrite_soundness.rs`, strict-kernel unit tests, and legacy core/proofterm tests encode identity, owner, replay, dependency, canonical-ID, type, burden, and compatibility regressions. |
 
 Important distinction:
 
@@ -326,17 +331,19 @@ Follow-up diagnostics after hardening `RewriteRule::from_thm` showed the
 `exec_proof` fallback chain. That remains admitted-path debt; it does not
 preempt immutable context identity or justify conditional rewrite proof power.
 
-The just-completed milestone is not broad HOL/Isar coverage or new-kernel
-acceptance. It is the first existing core-file legacy adapter slice:
+The just-completed trusted-boundary milestone is Pure-only immutable acceptance,
+not broad HOL/Isar coverage:
 
 ```text
-TransitionalStrictClosed: 0/125 -> 1/125
+TransitionalStrictClosed: 1/125
 KernelTrustedClosed:      0/125
 ```
 
-The adapter still usefully rejects admitted, compat, and open fallback, but its
-bool-valued legacy theorem is not evidence of an Isabelle/Pure trusted proof
-loop.
+Synthetic `A ==> A` now reaches a real `TrustedTheorem`, can be reused only by
+an ancestry-checked theorem reference, and enters one exclusive
+`KernelTrustedClosed` outcome in focused tests. It is not part of the sampled
+HOL denominator. The legacy `HOL::TrueI` bridge remains transitional and
+bool-valued, so the benchmark does not move.
 
 ## Relative Completion Estimates
 
@@ -400,15 +407,13 @@ primitive rule coverage are still open.
 ## Next Priority Order
 
 Do not spend the next phase on more HOL/Isar surface features, LSP, WASM,
-Sledgehammer, SMT, or Code Generator work. The immediate source slice is
-immutable context identity; the route is:
+Sledgehammer, SMT, or Code Generator work. The route is:
 
-1. Introduce immutable `TheoryId` / `SignatureId` values and propagate exact
-   context identity through `ProofContext`, certified terms, and strict
-   theorems.
-2. Implement one context-bound, mutually exclusive `KernelTrustedClosed`
-   acceptance gate while retaining the separate `TransitionalStrictClosed`
-   migration report.
+1. **Implemented:** keep exact `TheoryId` / `SignatureId` propagation and
+   mixed-context rejection stable.
+2. **Implemented:** keep the unique context/dependency-aware,
+   conflict-safe, mutually exclusive `KernelTrustedClosed` acceptance gate
+   stable; synthetic Pure tests remain outside the HOL benchmark.
 3. Preserve a source-aware proposition AST that distinguishes meta/HOL
    connectives, scopes, term identities, types/sorts, spans, and implicit
    judgment positions before legacy lowering.
@@ -419,18 +424,16 @@ immutable context identity; the route is:
    and replay generic axiom-schema instances through Pure kernel rules; add no
    theorem-specific Rust constructors.
 6. Implement a generic conservative definition extension before treating
-   `True_def` as trusted input; the legacy `true_def_transport` bridge is not a
+   `True_def` as trusted input; legacy `true_def_transport` is not a
    certificate.
-7. Re-derive `HOL::TrueI` as the first real `KernelTrustedClosed` HOL theorem
-   before resuming `HOL::trans` or any `2/125` coverage work.
-8. Continue core hardening only as migration support: diagnostics, boundary
-   checks, and adapters, not new trusted proof power in `src/core`.
-9. Split and reduce admitted/compat paths by cause, especially method fallback
-   and proof export reasons.
-10. Extend T4 proofterm replay rule coverage after strict kernel semantics are
-    stable.
-11. Split into Cargo workspace (`isabelle-kernel` crate first).
-12. Design session incremental engine (snapshot/rollback/content-addressed cache).
+7. Re-derive `HOL::TrueI` as the first real sampled `KernelTrustedClosed`
+   theorem before resuming `HOL::trans` or any `2/125` work.
+8. Continue core hardening only as migration support, not new trusted proof
+   power in `src/core`.
+9. Split and reduce admitted/compat paths by cause.
+10. Extend legacy T4 proofterm replay only for focused soundness work.
+11. Split into a Cargo workspace (`isabelle-kernel` crate first).
+12. Design the session incremental engine.
 13. Build `isabelle.toml` project system (Lake-style).
 14. Design Agent Proof Protocol (APP).
 15. Expand HOL/Isar/tool coverage only after the trusted boundary remains stable.

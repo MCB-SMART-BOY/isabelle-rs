@@ -162,17 +162,16 @@ outcome counts or existing ProofOutcome categories.
 Final theorem acceptance must flow through the new-kernel gate, not through the
 legacy summary label:
 
-```text
-checked elaboration / kernel derivation / replay
-  -> src/kernel::TrustedTheorem bound to SignatureId + TheoryId
-     + Option<LogicBasisId>
-  -> KernelTrustedClosed
-  -> TrustedTheory / final trusted theorem tables
+checked elaboration / kernel derivation
+  -> accept_closed_theorem(exact immutable owner)
+  -> immutable child TrustedTheory
+     + sealed src/kernel::TrustedTheorem
+     + replay-derived dependencies
+  -> ProofOutcome::KernelTrustedClosed
 
 legacy verification
   -> ProofOutcome::TransitionalStrictClosed
   -> TransitionalStrictClosed report only
-```
 
 `LogicBasisId` is the sole object-logic identity vocabulary. `None` means
 Pure-only ancestry; every HOL or other object-logic theorem must carry the exact
@@ -192,17 +191,18 @@ Rules:
 Verification reports should become stable outputs over `ProofOutcome`:
 
 ```text
-KernelTrustedClosed: M  # temporary overlay; excluded from total()
+KernelTrustedClosed: M
 TransitionalStrictClosed: N
 CompatClosedOracleFree: N
 OpenOracleFree(reason): N
 Admitted(reason): N
 Failed(reason): N
 ```
-Until trusted Roadmap Phase 2 (the reporting table's Phase 3),
-`KernelTrustedClosed` is an overlay excluded from `ProofOutcomeStats::total()`.
-Once context-bound acceptance exists, it becomes a mutually exclusive
-`ProofOutcome` variant and the overlay is removed.
+
+`KernelTrustedClosed` now owns the accepted token and is mutually exclusive
+with every legacy outcome. `ProofOutcomeStats::total()` includes it. The
+production HOL verifier supplies no token yet, so the sampled value remains
+zero.
 
 This replaces one-off diagnostic runners and avoids conflating static call-site
 counts with runtime theorem outcomes.
@@ -232,7 +232,7 @@ reorder these trust gates or authorize skipping one.
 | Phase 0: design | Implemented; status docs point to this model. |
 | Phase 1: summary classifier | Implemented. Existing `verify_lemma` results are summarized without changing theorem construction. |
 | Phase 2: report integration | Implemented. Core reports and the 125-theorem snapshot use the explicit buckets. |
-| Phase 3: context-bound acceptance | Next after immutable `SignatureId` / `TheoryId`: add the unique context-bound, mutually exclusive `KernelTrustedClosed` value carrying a new-kernel theorem, then remove the overlay. |
+| Phase 3: context-bound acceptance | Implemented: exact-owner replay, dependency reconstruction, duplicate-safe immutable insertion, sealed token, and exclusive `KernelTrustedClosed`; synthetic Pure tests stay outside the HOL benchmark. |
 | Phase 4a: targeted transitional slice | Implemented. Direct `A ==> A` smoke and adapter tests exercise the migration classifier. |
 | Phase 4b: first core-file transitional slice | Implemented by legacy `HOL::TrueI`; no second transitional adapter is planned. |
 
@@ -240,8 +240,8 @@ reorder these trust gates or authorize skipping one.
 
 | Candidate | Required strict rules | Advantages | Risks |
 |---|---|---|---|
-| Pure reflexivity `t == t` | `KernelRules::reflexive`, checked term certification, `ClosedThm::trust` | Small strict-nucleus smoke test. | Context-free trust is insufficient; reuse only after ID-bound acceptance exists. |
-| Implication identity `A ==> A` | `KernelRules::assume`, `KernelRules::implies_intr`, checked proposition certification | Existing synthetic smoke for legal hypothesis discharge. | Use next for wrong-context acceptance tests, not as a sampled HOL result. |
+| Pure reflexivity `t == t` | `KernelRules::reflexive`, checked term certification, exact-owner acceptance | Small accepted-nucleus smoke test. | Synthetic Pure result only; it does not establish an authorized HOL basis. |
+| Implication identity `A ==> A` | `KernelRules::assume`, `KernelRules::implies_intr`, checked proposition certification, acceptance | Exercises legal discharge, wrong-context attacks, immutable insertion, dependencies, and exclusive classification. | Deliberately excluded from sampled HOL results. |
 | Simple equality theorem | Reflexivity plus an equality encoding | Potential later HOL-facing reuse. | Not a next slice; requires the common elaboration and HOL-basis boundary. |
 | `HOL::TrueI` | Checked legacy `True_def` payload, legacy HOL object-equality/reflexivity bridge, theorem-specific transport, narrow adapter | First existing core-file `TransitionalStrictClosed` theorem. | Historical migration experiment only; re-derive through the new kernel instead of adding another adapter. |
 

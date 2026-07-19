@@ -55,13 +55,13 @@ The new flow is:
 
 ```text
 RawTerm
-  -> Signature / ProofContext certification
+  -> immutable Signature / TheorySnapshot / ProofContext
   -> CTerm / CProp
   -> KernelRules
   -> KernelThm
   -> ClosedThm
-  -> TrustedTheorem
-  -> TrustedTheory
+  -> accept_closed_theorem(owner, name, candidate)
+  -> immutable child TrustedTheory + TrustedTheorem
 ```
 
 The non-TCB flow is:
@@ -80,11 +80,15 @@ Current strict nucleus constraints:
 - theorem fields are private;
 - internal certification/theorem-construction helpers are scoped to
   `pub(in crate::kernel)` or narrower, not crate-wide `pub(crate)`;
-- primitive rules are the only constructors;
-- `TrustedTheory` accepts only `TrustedTheorem`;
-- target final object-logic acceptance will additionally bind the theorem to
-  immutable theory/signature/logic-extension identity; this binding is not yet
-  implemented;
+- primitive rules are the only raw theorem constructors;
+- `accept_closed_theorem` is the only `TrustedTheorem` constructor;
+- acceptance recursively recertifies and replays the candidate under the exact
+  immutable owner, reconstructs dependencies, rejects duplicate names, and
+  atomically returns the child theory plus accepted token;
+- accepted theorem references require an ancestor token and record its
+  `TheoremId` dependency;
+- object-logic acceptance still requires the missing authorized
+  logic-basis/axiom/definition layer;
 - `SearchFactDb` cannot promote facts to trusted theorems.
 
 Current strict nucleus implementation includes the base primitive rule set,
@@ -238,9 +242,9 @@ oracle-tainted strict theorems, and burden mismatches for the currently
 replay-supported derivation subset.
 
 It is not a closed-lemma predicate. Open strict theorems are legal theorem
-values. Final new-kernel acceptance is a separate decision: the value must be a
-context-bound `TrustedTheorem` over `CProp : prop` and pass the selected replay
-policy before it becomes `KernelTrustedClosed`.
+values. New-kernel acceptance separately requires a `ClosedThm` over
+`CProp : prop`; only successful owner-parameterized replay can seal the
+`TrustedTheorem` later classified as `KernelTrustedClosed`.
 
 Current architecture:
 
@@ -259,20 +263,20 @@ legacy Theory theorem table
   = currently filters with is_strict_closed_proved()
 
 new-kernel TrustedTheory
-  = current theorem table, type-gated to TrustedTheorem
-  = does not yet enforce immutable context identity or name conflicts
-
-target final trusted table
-  = accepts only context-bound TrustedTheorem values
+  = immutable, ancestry-sensitive owner and accepted-fact chain
+  = accepts only through context-bound replay and dependency validation
+  = rejects duplicate theorem names without overwriting
+  = returns a non-forgeable TrustedTheorem token
   = reported as KernelTrustedClosed
 ```
 
-`SessionBuilder` and verification statistics must report
+`SessionBuilder` and verification statistics report
 `TransitionalStrictClosed` separately from `KernelTrustedClosed`, rather than
 conflating either with raw indexed entries or compatibility closed shapes.
-Until that context-bound outcome exists, `kernel_trusted_closed` is a reporting
-overlay and is deliberately excluded from `ProofOutcomeStats::total()`; the
-legacy outcome buckets alone partition attempted theorems.
+`ProofOutcome::KernelTrustedClosed` owns the accepted token and is mutually
+exclusive with every legacy outcome. `ProofOutcomeStats::total()` includes the
+kernel bucket; the production HOL verifier currently supplies no accepted
+token, so the sampled count remains zero.
 
 ## T2 Kernel Status
 
@@ -301,6 +305,23 @@ Implemented hardening includes:
 - legacy tables, `SessionBuilder`, and `HolTheoremDb::closed_proved_count`
   currently use `is_strict_closed_proved()` for transitional filtering; this is
   not the future `TrustedTheory` authorization gate;
+- the strict kernel derives deterministic, domain-separated `SignatureId` and
+  ancestry-sensitive `TheoryId` values from canonical validated data;
+- `ProofContext`, `CTerm`, `CProp`, `KernelThm`, and `TrustedTheorem` retain the
+  exact context stamp, and every current multi-input rule rejects mismatch
+  before logical matching;
+- strict signature/theory extension is immutable, duplicate declarations fail,
+  and untrusted signature snapshots must match a recomputed digest;
+- `TrustedTheory` is an immutable owner/fact ancestry; public table mutation and
+  table-agnostic `ClosedThm::trust` are removed;
+- `accept_closed_theorem` revalidates every checked theorem/derivation payload,
+  replays every current Pure derivation under the exact owner, reconstructs
+  theorem-reference dependencies, and seals one canonical `TrustedTheorem`;
+- theorem identity uses a versioned fixed-width canonical encoding, omits proof
+  structure and binder display names, and includes exact context, proposition
+  constructors/types, and sorted dependency kinds;
+- `ProofOutcome::KernelTrustedClosed` is token-backed and mutually exclusive;
+  the synthetic Pure acceptance tests are not connected to the HOL benchmark;
 - `HolTheoremDb::checked_definitions` keeps checked definition sources, starting
   with `True_def`, separate from searchable facts and trusted theorem tables;
 - `ThmKernel::hol_object_refl` / `try_strict_hol_refl` is a narrow transitional
@@ -361,10 +382,11 @@ The proposed target separation between the Pure kernel, a trusted HOL
 object-logic extension, Isar adapters, and legacy core is recorded in
 [ADR-0003-hol-logic-trusted-extension.md](ADR-0003-hol-logic-trusted-extension.md).
 The current `TransitionalStrictClosed: 1/125` migration result uses legacy
-`core::Thm` with strict trust metadata. `KernelTrustedClosed` is `0/125`: no
-current HOL slice has a checked
-`CProp : prop`, immutable theory/logic context, explicit HOL axiom-basis
-provenance, and fully supported new-kernel replay.
+`core::Thm` with strict trust metadata. `KernelTrustedClosed` remains `0/125`.
+The new kernel can now accept synthetic Pure closed theorems under exact
+immutable contexts, but no current HOL slice has source-aware elaboration,
+authorized HOL basis/axiom provenance, conservative definitions, and a
+new-kernel proof reaching that gate.
 
 Trusted kernel rules use `Hyps::kernel_alpha_eq`. The old broad matching is
 isolated as `Hyps::compat_alpha_eq` and must remain explicitly marked as
@@ -410,8 +432,9 @@ instantiate_checked / generalize
 legacy resolution-family coverage
 ```
 
-This is not the current dependency chain. Resume it after immutable context
-identity and acceptance are stable, or for a focused soundness fix.
+This legacy replay backlog is separate from the now-implemented strict-kernel
+acceptance gate. Resume it only for a focused legacy soundness fix; the trusted
+main line proceeds to source elaboration and authorized HOL basis data.
 
 ## Verification Commands
 

@@ -27,10 +27,10 @@ This unified gate runs:
 1. `cargo +stable fmt --check`
 2. `cargo +stable check --locked`
 3. `bash scripts/check-kernel-firewall.sh` (no legacy deps or forbidden patterns in `src/kernel/`)
-4. The current `kernel_rewrite_soundness` attack suite.
+4. The `kernel_rewrite_soundness` and `kernel_context_identity` attack suites.
 5. The current `kernel_soundness` boundary suite.
-6. The strict `kernel::thm::`, `kernel::unify::tests::`, and
-   `kernel::rules::tests::` inline suites.
+6. The strict `kernel::thm::`, `kernel::unify::tests::`,
+   `kernel::rules::tests::`, and `kernel::theory::` inline suites.
 7. The legacy `core::` compatibility suite.
 
 Theory verification:
@@ -128,7 +128,8 @@ implies_elim
 
 The separate `src/kernel::Derivation` inventory is listed in
 [KERNEL_TRUSTED_ACCEPTANCE_GAPS.md](KERNEL_TRUSTED_ACCEPTANCE_GAPS.md); every
-current variant has a replay arm, but replay is still context-free.
+current variant has an exact-context replay arm. Logic-basis and dependency
+resolution remain absent.
 
 When adding a new replay rule:
 
@@ -175,10 +176,10 @@ documentation work. Preserve unrelated dirty work.
 
 ## Current Engineering Priorities
 
-1. Introduce immutable `TheoryId` / `SignatureId` values and propagate context
-   identity through strict certification and theorem construction.
-2. Add one context-bound, mutually exclusive `KernelTrustedClosed` acceptance
-   gate while keeping `TransitionalStrictClosed` separate.
+1. Keep immutable `TheoryId` / `SignatureId` propagation and exact-context
+   strict theorem construction stable.
+2. Add one context/dependency-aware, mutually exclusive `KernelTrustedClosed`
+   acceptance gate while keeping `TransitionalStrictClosed` separate.
 3. Preserve a source-aware proposition AST before legacy term lowering.
 4. Elaborate checked judgments, constants, and polymorphic type schemes,
    including `HOL.Trueprop`, into `CProp : prop`.

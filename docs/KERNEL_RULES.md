@@ -139,10 +139,10 @@ the rule-level ledger, not a claim of full Isabelle `thm.ML` equivalence.
 - `is_strict_closed_proved()` is a cheap transitional-classification predicate.
   `check_kernel_invariants(Strict)` is the stronger audit predicate and should
   be used in strict-kernel tests and future CI gates.
-- Passing `check_kernel_invariants(Strict)` means strict theorem internal
-  consistency, not final closed theorem acceptance. The final target
-  `TrustedTheory` accepts only a `src/kernel::TrustedTheorem` bound to immutable
-  theory/logic context and replayed in that context; the current type does not.
+- Passing legacy `check_kernel_invariants(Strict)` means strict theorem internal
+  consistency, not final acceptance. The new-kernel path instead submits a
+  `ClosedThm` to exact-owner `accept_closed_theorem`; only successful recursive
+  recertification/replay and immutable insertion produce `TrustedTheorem`.
 - Unsupported replay rules may pass structural strict invariants but still fail
   `check_proof()` with an explicit unsupported-rule error.
 - `ThmKernel::assume_checked` and `ThmKernel::reflexive_checked` remain

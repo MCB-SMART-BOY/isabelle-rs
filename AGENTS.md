@@ -36,10 +36,10 @@ KernelTrustedClosed:      0/125
 Its stored proposition is bool-valued `HOL.True`, not
 `HOL.Trueprop HOL.True : prop`; it is not a new-kernel trusted HOL theorem.
 
-Until context-bound acceptance exists, `kernel_trusted_closed` is a reporting
-overlay excluded from `ProofOutcomeStats::total()`. Once implemented, it must
-become a mutually exclusive `ProofOutcome` variant so one theorem cannot enter
-both kernel-trusted and transitional buckets.
+`KernelTrustedClosed` is now a mutually exclusive `ProofOutcome` backed by a
+real accepted token, and `ProofOutcomeStats::total()` includes it. The
+production HOL verifier cannot produce that token yet, so the sampled count
+remains zero.
 
 ## Two-Kernel Boundary
 
@@ -59,6 +59,11 @@ For `src/kernel/`:
 - unchecked certified-term and theorem constructors remain
   `pub(in crate::kernel)` or narrower;
 - every trusted rule requires explicit side conditions, replay, and attack tests.
+- `accept_closed_theorem` is the only trusted-token constructor; it owns exact
+  owner replay, recursive recertification, dependency reconstruction, duplicate
+  rejection, and immutable accepted-fact insertion;
+- ancestor theorem reuse requires `KernelRules::theorem_ref` and records a
+  replay-derived `TheoremId` dependency;
 
 For `src/core/`:
 
@@ -76,10 +81,10 @@ compatibility, and transitional facts. They are not trusted theorem tables.
 
 The implementation order is strict:
 
-1. introduce immutable `SignatureId` and `TheoryId` values and propagate context
-   identity through strict certification and theorem construction;
-2. implement one context-bound acceptance API and a mutually exclusive
-   `KernelTrustedClosed` outcome;
+1. keep the implemented immutable `SignatureId` / `TheoryId` propagation and
+   exact mixed-context rejection stable;
+2. keep the implemented context/dependency-aware acceptance API and mutually
+   exclusive `KernelTrustedClosed` outcome stable;
 3. preserve a source-aware proposition AST before legacy term lowering;
 4. elaborate checked judgments, constants, and polymorphic type schemes,
    including `HOL.Trueprop`, into `CProp : prop`;
@@ -89,11 +94,11 @@ The implementation order is strict:
 7. re-derive `HOL::TrueI` as `HOL.Trueprop HOL.True` through the new kernel;
 8. only then consider `HOL::trans` as a reuse consumer.
 
-The immediate next implementation change is item 1 only: immutable identity,
-propagation, and mixed-context rejection, with no acceptance or outcome change.
-Item 2 follows as a separately reviewed change using synthetic Pure `A ==> A`
-for correct/wrong-context acceptance tests; neither change may count that unit
-in the 125-theorem HOL benchmark.
+The immediate next implementation change is item 3 only: source-aware
+proposition syntax that preserves meta/HOL connective identity, scopes, term
+namespaces, checked type/sort annotations, spans, and judgment positions before
+legacy lowering. Do not connect it to a theorem adapter until item 4 is also
+checked.
 
 Read `docs/KERNEL_TRUSTED_ACCEPTANCE_GAPS.md` before changing this chain.
 

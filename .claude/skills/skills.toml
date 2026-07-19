@@ -23,7 +23,7 @@ updated = "2026-07-18"
 #
 # Every skill is subordinate to root AGENTS.md. Active registration means a
 # workflow is available when explicitly scoped; it does not override the
-# immutable-context/acceptance priority order.
+# trusted main-line priority order.
 
 # =============================================================================
 # Skill Definitions
@@ -71,7 +71,7 @@ lifecycle = { created = "2026-06-03", last_reviewed = "2026-07-18", review_inter
 [[skills]]
 id = "add-method"
 name = "Add Proof Method"
-description = "Add a proof method only when explicitly scoped; broad method coverage is deferred behind context-bound acceptance."
+description = "Add a proof method only when explicitly scoped; broad method coverage is deferred behind source-aware HOL elaboration and basis installation."
 category = "development"
 status = "active"
 version = "3.0.0"

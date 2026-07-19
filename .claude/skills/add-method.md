@@ -1,6 +1,6 @@
 ---
 name: Add Proof Method
-description: Add a proof method only when explicitly scoped; broad method coverage is deferred behind context-bound acceptance.
+description: Add a proof method only when explicitly scoped; broad method coverage is deferred behind source-aware HOL elaboration and basis installation.
 category: development
 version: 3.0.0
 triggers: [add proof method, new search strategy, port method from Isabelle, add tactic]

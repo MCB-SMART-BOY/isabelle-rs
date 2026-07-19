@@ -131,27 +131,47 @@ legacy parser/loader paths can be isolated and audited explicitly.
 | `Var("x", i)` vs `Free("x")` matching | `kernel_alpha_eq` rejects it | `compat_alpha_eq` still accepts it |
 | Dummy-vs-known binder type matching | `kernel_alpha_eq` rejects it | `compat_alpha_eq` still accepts it |
 
+## Immutable Context Identity Attacks
+
+`tests/kernel_context_identity.rs` now covers:
+
+- deterministic, order-independent signature IDs and ancestry-sensitive theory
+  IDs with domain separation;
+- conflicting/duplicate declarations and immutable parent/sibling extension;
+- same text under the wrong signature or sibling ancestry;
+- mixed two-premise rules and mixed-context substitution before shape checks;
+- stale parent-certified objects used in a child context;
+- exact `TrustedTheorem::proved_in()` identity;
+- private ID constructors through compile-fail doctests;
+- untrusted signature payload digest mismatch and duplicate declarations.
+
+## Trusted Acceptance Attacks
+
+`tests/kernel_trusted_acceptance.rs`, `src/kernel/theory.rs`, and
+`src/kernel/invariant.rs` now cover:
+
+- wrong theory, wrong signature, stale parent, and sibling-token rejection;
+- forged closed candidates with hypotheses;
+- tampered conclusion and derivation replay mismatch;
+- duplicate theorem names without overwrite;
+- immutable parent retention and sibling fact isolation;
+- forged owner/snapshot/store/token inconsistencies;
+- recursive recertification of same-stamp local frees and every substitution or
+  quantifier payload;
+- malformed cached application, abstraction, equality, and bound types;
+- ancestry-authorized theorem references and replay-derived dependencies;
+- proof-erased search facts and private accepted-token construction;
+- alpha-canonical, proof-irrelevant theorem identity;
+- changed term namespace/index/type/node and dependency-kind identity;
+- dependency insertion-order independence;
+- an independent fixed theorem-ID golden vector;
+- accepted-token precedence over legacy output and one exclusive statistics
+  bucket;
+- preservation of `KernelTrustedClosed: 0/125` in the sampled HOL run.
+
 ## Next Attack Tests To Add
 
-The next batch belongs to immutable context identity and acceptance:
-
-- deterministic IDs are stable for canonical equal inputs and distinct for
-  validated different inputs;
-- conflicting declarations fail instead of silently replacing map entries or
-  preserving an old `SignatureId`;
-- extending a signature/theory creates a child without mutating the parent;
-- a `CTerm`/`CProp` certified under one signature is rejected by another;
-- every multi-premise rule rejects mixed theory or signature identities before
-  term comparison or burden combination;
-- `accept_closed_theorem` rejects wrong-theory, wrong-signature,
-  context-parameterized replay mismatch, open theorem, and unresolved
-  dependency input;
-- trusted storage rejects duplicate/conflicting theorem names rather than
-  overwriting;
-- the accepted synthetic Pure `A ==> A` unit remains outside the sampled HOL
-  metric.
-
-The following batches come later, in dependency order:
+The next batches follow the remaining dependency order:
 
 - source-aware proposition preservation: missing provenance, Pure/HOL equality
   confusion, false constant aliases, binder/variable identity changes,
@@ -159,12 +179,12 @@ The following batches come later, in dependency order:
 - checked elaboration: inconsistent polymorphic constraints, bad sorts,
   missing/double `HOL.Trueprop`, and changed proposition skeletons;
 - HOL basis/definitions: uninstalled or mismatched manifests, forged basis IDs,
-  invalid schema instances, signature conflicts, dependency tampering,
-  definition self-reference, and replay in the wrong ancestry;
-- legacy replay and resolution debt:
+  invalid schema instances, signature conflicts, axiom/definition dependency
+  tampering, definition self-reference, and replay in the wrong ancestry;
+- legacy replay and resolution debt only for focused soundness fixes:
   `combination`/`abstraction`/`beta_conversion`/`forall_*`/`instantiate`,
   `bicompose*`, burden propagation, and compatibility-equality attacks.
 
 Other known debts remain typed rejection for trusted-boundary `Option<Thm>`
 paths and real derivation-producing attribute conversions. Neither should
-preempt the identity/acceptance batch or add trusted power to legacy core.
+preempt source elaboration or add trusted power to legacy core.

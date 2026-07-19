@@ -13,9 +13,10 @@ KernelTrustedClosed:      0/125
 ```
 
 The strict `src/kernel` nucleus has checked `CProp : prop`, private theorem
-construction, the base Pure rule set, conservative resolution prototypes, and
-derivation replay. It does not yet have immutable theory/signature identity or
-a context-bound final acceptance operation.
+construction, the base Pure rule set, conservative resolution prototypes,
+immutable content-addressed signature/theory and accepted-fact ancestry,
+owner-parameterized recursive recertification/replay, theorem-reference
+dependency reconstruction, and one non-forgeable accepted token.
 
 The existing `HOL::TrueI` path is a bool-valued legacy migration experiment.
 It is not the first new-kernel HOL theorem.
@@ -23,9 +24,9 @@ It is not the first new-kernel HOL theorem.
 ## Trusted Main Line
 
 ```text
-immutable SignatureId / TheoryId
-  -> unique context-bound acceptance
-  -> source-aware proposition AST
+immutable SignatureId / TheoryId [implemented]
+  -> unique context-bound acceptance [implemented]
+  -> source-aware proposition AST [next]
   -> checked judgment / constant / type-scheme elaboration
   -> data-only HOL logic-basis manifest
   -> generic conservative definition extension
@@ -36,13 +37,11 @@ immutable SignatureId / TheoryId
 The order is mandatory. A later phase may be designed in parallel, but it may
 not enter trusted production paths before its prerequisites.
 
-Phases 1 and 2 form the first bounded implementation sequence, but they land as
-separate reviewable changes. The immediate next change is Phase 1 only:
-immutable context identity, propagation, and mixed-context rejection, with no
-new acceptance API or `ProofOutcome` change. Phase 2 starts only after those
-context invariants pass review. Do not start Phase 3 in parallel.
+Phases 1 and 2 landed as separately reviewed changes. Their synthetic Pure
+tests do not enter the HOL benchmark. Phase 3 is now the first unfinished
+dependency; later trusted phases must not bypass it.
 
-## Phase 1: Immutable Context Identity — Slice Foundation
+## Phase 1: Immutable Context Identity — Implemented
 
 ### Goal
 
@@ -82,36 +81,40 @@ separate rationale.
 Focused identity tests and the existing strict gate pass. No proof outcome or
 sampled HOL count changes.
 
-## Phase 2: Unique Context-Bound Acceptance — Slice Completion
+Implemented with the repository's existing `sha2` dependency; `Cargo.lock` did
+not change.
 
-Implement one operation conceptually equivalent to:
+## Phase 2: Unique Context-Bound Acceptance — Implemented
+
+The implemented operation is:
 
 ```rust
 pub fn accept_closed_theorem(
     theory: &TrustedTheory,
+    name: impl Into<Name>,
     theorem: ClosedThm,
-) -> Result<TrustedTheorem, KernelError>;
+) -> Result<(TrustedTheory, TrustedTheorem), KernelError>;
 ```
 
-The exact ownership shape may change during implementation, but the operation
-must:
+It:
 
-- check exact theory/signature identity;
-- require `CProp : prop` and no open hypotheses or unresolved obligations;
-- replay in the supplied immutable context;
-- recompute and validate all axiom, definition, and theorem dependencies;
-- reject compat, admitted, search-fact, and legacy inputs;
-- leave trusted-table storage to a typed operation that rejects context mismatch
-  and duplicate/conflicting names without silent overwrite.
+- checks exact theory/signature identity and immutable owner-chain integrity;
+- recursively recertifies every checked theorem and derivation payload under
+  the supplied owner;
+- requires a proposition-valued, replay-equal, closed result;
+- reconstructs and authorizes ancestor-theorem dependencies;
+- rejects currently unsupported axiom/definition dependency categories;
+- rejects duplicate theorem names without mutation or overwrite;
+- atomically returns the immutable fact child and sealed token;
+- accepts no compat, admitted, search-fact, or legacy input.
 
-After this exists:
+`ClosedThm::trust` is removed, `SearchFact` carries no extractable proof,
+and `KernelTrustedClosed` is a mutually exclusive token-owning
+`ProofOutcome`. `ProofOutcomeStats::total()` includes that bucket.
 
-- `ClosedThm::trust` becomes internal or is removed;
-- `KernelTrustedClosed` becomes a mutually exclusive `ProofOutcome` variant
-  that owns the returned `TrustedTheorem`;
-- the temporary reporting overlay is removed;
-- synthetic Pure `A ==> A` tests correct and wrong-context acceptance without
-  changing the 125-theorem HOL benchmark.
+Synthetic Pure `A ==> A` tests exercise correct/wrong context, dependency,
+duplicate, tampering, malformed-term, owner/store, canonical-ID, and classifier
+attacks without changing the 125-theorem HOL benchmark.
 
 Detailed audit:
 [KERNEL_TRUSTED_ACCEPTANCE_GAPS.md](KERNEL_TRUSTED_ACCEPTANCE_GAPS.md).

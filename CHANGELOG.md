@@ -14,6 +14,21 @@ All notable changes to isabelle-rs.
   fallback.
 - Added attack coverage for the existing new-kernel `CProp : prop` boundary;
   HOL `bool` terms are not valid theorem propositions without `HOL.Trueprop`.
+- Added deterministic, domain-separated `SignatureId` and ancestry-sensitive
+  `TheoryId` values. Immutable context stamps now propagate through strict
+  certification, theorem construction, every current kernel rule, and replay;
+  mixed signatures/theories and stale certified objects fail before logical
+  matching.
+- Replaced mutable strict signature declaration with checked immutable
+  extension, including duplicate/conflict rejection, parent/sibling isolation,
+  and digest verification for untrusted signature snapshots.
+- Added one context-bound `accept_closed_theorem` gate with recursive
+  owner-parameterized replay, replay-derived theorem dependencies,
+  duplicate-safe immutable fact insertion, and a sealed `TrustedTheorem`.
+  Ancestor facts are reusable only through the checked theorem-reference rule.
+- Made `KernelTrustedClosed` a mutually exclusive token-owning `ProofOutcome`.
+  `verify_lemma` now returns explicit accepted/legacy evidence; classification
+  no longer reads ambient thread-local outcome state.
 - Routed theory-scan diagnostics through `ProofOutcome`, so admitted or
   axiom-accepted theorem-shaped values no longer display as transitional
   successes.
@@ -32,6 +47,9 @@ All notable changes to isabelle-rs.
   under classified `scripts/templates/`.
 - Kept all build/check/install paths on the committed lockfile. Local installer
   runs now use the current checkout without pulling another branch.
+- Added the immutable context-identity attack suite to the strict kernel gate.
+- Added the trusted-acceptance attack suite and strict public-boundary
+  compile-fail doctests to the strict kernel gate.
 - GitHub releases now require a tag matching `Cargo.toml` and the full
   repository-owned release gate before platform artifacts are built.
 
@@ -43,10 +61,11 @@ All notable changes to isabelle-rs.
 - Rewrote README, architecture, trust, gap-analysis, development, roadmap, and
   session-transfer docs to distinguish full Isabelle parity from the narrower
   trusted-kernel research slice.
-- Corrected the completion assessment: the Pure kernel research nucleus is
-  meaningful, but the minimal Isabelle/Pure trusted loop, source-aware
-  `Trueprop` elaboration, conservative definitions, immutable theory context,
-  and explicit HOL basis remain incomplete.
+- Corrected the completion assessment: the Pure kernel research nucleus and its
+  immutable signature/theory identity boundary are meaningful, but the minimal
+  Isabelle/Pure trusted loop, source-aware `Trueprop` elaboration, conservative
+  definitions, authorized logic basis, dependency provenance, and unique
+  acceptance remain incomplete.
 - Added root `AGENTS.md` as the harness-neutral authority and
   `docs/KERNEL_TRUSTED_ACCEPTANCE_GAPS.md` as the source-audited context identity
   and minimal acceptance plan.

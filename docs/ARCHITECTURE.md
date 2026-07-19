@@ -15,10 +15,10 @@ Isabelle-rs is organized around a small trusted theorem-construction boundary:
 Strict TCB (src/kernel/):
   ProofContext::certify_term / certify_prop
     -> CTerm / CProp
-    -> KernelRules (15 primitives + resolve1_match + subst_premise + bicompose wrapper)
+    -> KernelRules (Pure primitives + conservative wrappers)
     -> KernelThm / ClosedThm / OpenThm
-    -> TrustedTheorem (current context-free invariant-replay wrapper)
-    -> TrustedTheory
+    -> accept_closed_theorem(exact immutable owner)
+    -> child TrustedTheory + sealed TrustedTheorem
 
 Legacy quarantine (src/core/):
   source / generated facts
@@ -31,24 +31,23 @@ Legacy quarantine (src/core/):
     -> proof-search indexes or transitional legacy theory tables
 ```
 
-The current `TrustedTheory` type accepts only `src/kernel::TrustedTheorem`
-values, but it does not yet bind them to immutable theory/signature/logic
-identity or reject conflicting theorem identities. The target final arrow adds
-those checks before recording `KernelTrustedClosed`. No sampled HOL theorem has
-reached that target boundary; `KernelTrustedClosed` is `0/125`.
+`TrustedTheory` is now immutable owner/fact ancestry.
+`accept_closed_theorem` recursively recertifies and replays one closed
+candidate, reconstructs ancestor-theorem dependencies, rejects duplicate names
+and owner/store inconsistencies, and atomically returns the accepted child and
+token. No sampled HOL theorem has the prerequisite source/basis/definition
+chain, so `KernelTrustedClosed` remains `0/125`.
 
 The project currently prioritizes, in dependency order:
 
-1. Immutable `SignatureId` / `TheoryId` propagation and mixed-context
-   rejection.
-2. One context-bound acceptance API and mutually exclusive
-   `KernelTrustedClosed` outcome.
-3. A source-aware proposition AST before legacy lowering.
-4. Checked judgment/constant/polymorphic-scheme elaboration into `CProp : prop`.
-5. A data-only HOL basis replayed by generic kernel code.
-6. Generic conservative definitions.
-7. A real new-kernel `HOL::TrueI`.
-8. Ongoing private construction, oracle/admit accounting, invariant replay,
+1. Keep completed immutable context identity and exact-owner acceptance stable.
+2. Preserve a source-aware proposition AST before legacy lowering.
+3. Elaborate checked judgments, constants, and polymorphic schemes into
+   `CProp : prop`.
+4. A data-only HOL basis replayed by generic kernel code.
+5. Generic conservative definitions.
+6. A real new-kernel `HOL::TrueI`.
+7. Ongoing private construction, oracle/admit accounting, invariant replay,
    firewall enforcement, and trusted-boundary attack tests.
 
 Design-only high-performance symbolic compute remains an untrusted parallel
@@ -134,11 +133,11 @@ and goal initialization. It must not be used as a proof-failure fallback.
      -> LocalTheory::finalize()
   -> legacy Theory transitional table
 
-checked source + immutable theory/logic context
-  -> src/kernel::TrustedTheorem over CProp : prop
-  -> required replay in the same context
-  -> KernelTrustedClosed
-  -> final TrustedTheory
+checked source + authorized immutable theory/logic context
+  -> ClosedThm over CProp : prop
+  -> accept_closed_theorem with recursive replay/dependency validation
+  -> child TrustedTheory + sealed TrustedTheorem
+  -> ProofOutcome::KernelTrustedClosed
 ```
 
 Important split:
@@ -153,11 +152,10 @@ core::theory::Theory
   = filters with `is_strict_closed_proved()`
 
 src::kernel::TrustedTheory
-  = current new-kernel theorem table, type-gated to `TrustedTheorem`
-  = still lacks the target immutable context and conflict checks
-
-target final trusted table
-  = accepts only context-bound `src/kernel::TrustedTheorem` values
+  = immutable owner and accepted-fact ancestry
+  = exact-context recursive replay and dependency validation
+  = duplicate-safe, non-forgeable token insertion
+  = the final trusted table for current Pure derivations
 ```
 
 `SessionBuilder` reports legacy `TransitionalStrictClosed` counts. It must not

@@ -51,7 +51,7 @@ TransitionalStrictClosed =
   legacy strict construction + no oracles + no hypotheses + no unresolved tpairs + no dummy types
 
 KernelTrustedClosed =
-  src/kernel::TrustedTheorem + CProp : prop + immutable theory/logic context + required replay
+  exact-owner accept_closed_theorem + replayed closed CProp : prop + authorized dependencies
 ```
 
 Important API distinction:
@@ -75,14 +75,14 @@ See [docs/TRUST.md](docs/TRUST.md).
 | Area | Status |
 |---|---|
 | LCF-style `Thm` kernel | Research prototype with private theorem fields and hardened construction routes. |
-| Strict kernel nucleus | `src/kernel` is the candidate target TCB nucleus: no dummy type, no compat certification, separate `ProofObligation`, `TrustedTheory`, and `SearchFactDb`; includes primitive rules, `resolve1_match`, conservative `subst_premise`, and conservative `bicompose` wrapper. It has not yet replaced legacy `src/core`. |
-| Kernel primitive rules | Core subset implemented; several rounds of side-condition, type, burden, and oracle propagation audits done. |
+| Strict kernel nucleus | `src/kernel` is the candidate target TCB nucleus: no dummy type or compat certification; immutable signature, theory, and accepted-fact ancestry; exact context stamps; proof obligations and search facts separated from theorem authority; primitive Pure rules plus conservative wrappers. It has not yet replaced legacy `src/core`. |
+| Kernel primitive rules | Current strict derivations recursively recertify and replay under the acceptance owner; theorem-reference reuse records exact ancestor dependencies. |
 | Checked instantiation | Production proof-search paths use `instantiate_checked`; legacy infallible instantiation is not a production API. |
 | Oracle/admit tracking | Explicit `admitted:*` footprint tracking and propagation. |
-| Closed theorem acceptance | Legacy session statistics classify `is_strict_closed_proved()` results as `TransitionalStrictClosed`; final acceptance requires a context-bound `src/kernel::TrustedTheorem` and records it as `KernelTrustedClosed`. |
-| Searchable facts vs trusted table | `HolTheoremDb` is a proof-search/migration index; only context-bound `src/kernel::TrustedTheorem` values may enter final `TrustedTheory`. |
-| Sampled HOL trust metrics | `TransitionalStrictClosed: 1/125`; `KernelTrustedClosed: 0/125`. Current `HOL::TrueI` stores a bool-valued legacy conclusion and is not a complete Isabelle/Pure proof loop. |
-| Proofterm replay | Minimal burden-aware replay for `assume`, `reflexive`, `symmetric`, `transitive`, `implies_intr`, `implies_elim`. |
+| Closed theorem acceptance | `accept_closed_theorem` is the sole sealed-token constructor. It validates exact owner identity, recursive replay, closedness, dependencies, immutable owner/store consistency, and duplicate names before returning a child `TrustedTheory` plus `TrustedTheorem`. |
+| Searchable facts vs trusted table | `HolTheoremDb` and `SearchFactDb` are proof-search/migration indexes with no conversion into the sealed token. |
+| Sampled HOL trust metrics | `TransitionalStrictClosed: 1/125`; `KernelTrustedClosed: 0/125`. Synthetic Pure acceptance is excluded; current `HOL::TrueI` remains bool-valued legacy output. |
+| Proofterm replay | Every current strict `Derivation` variant replays with exact `TheoryId` / `SignatureId` propagation. Ancestor theorem dependencies are supported; object-logic axiom/basis and conservative-definition replay remain absent. |
 | Isar/HOL/tools | Partial implementation; useful for experiments, not feature-compatible with Isabelle. |
 | LSP/WASM/PIDE | Skeletons only; not current priority. |
 
@@ -113,15 +113,22 @@ Relative completion estimates:
 
 Current priority order (aligned with ADR-0002 layered platform vision):
 
-1. Introduce immutable `TheoryId` / `SignatureId` values and propagate context identity through strict certification and theorem construction.
-2. Add one context-bound, mutually exclusive `KernelTrustedClosed` acceptance gate; keep the legacy transitional metric separate.
-3. Preserve a source-aware proposition AST before lowering to legacy terms.
-4. Elaborate checked judgments, constants, and polymorphic type schemes, including explicit `HOL.Trueprop`, into the existing `CProp : prop` boundary.
-5. Install the HOL logical basis as an immutable data-only manifest replayed by generic kernel code.
-6. Add a generic conservative definition extension; do not promote `true_def_transport`.
-7. Re-derive `HOL::TrueI` through the new kernel before implementing `HOL::trans` or another theorem adapter.
-8. Continue strict-kernel stabilization and replay coverage without adding HOL primitives to legacy `src/core`.
-9. Defer workspace, session, APP, LSP, and broad HOL coverage until these trust boundaries close.
+1. Keep the completed immutable context identity and exact-owner acceptance
+   boundary stable.
+2. Preserve a source-aware proposition AST before lowering to legacy terms.
+3. Elaborate checked judgments, constants, and polymorphic type schemes,
+   including explicit `HOL.Trueprop`, into the existing `CProp : prop`
+   boundary.
+4. Install the HOL logical basis as an immutable data-only manifest replayed by
+   generic kernel code.
+5. Add a generic conservative definition extension; do not promote
+   `true_def_transport`.
+6. Re-derive `HOL::TrueI` through the new kernel before implementing
+   `HOL::trans` or another theorem adapter.
+7. Continue strict-kernel stabilization and replay coverage without adding HOL
+   primitives to legacy `src/core`.
+8. Defer workspace, session, APP, LSP, and broad HOL coverage until these trust
+   boundaries close.
 
 Parallel non-blocking design track: HPC symbolic compute may define packed IR,
 a deterministic CPU baseline, and future optional Burn/CubeCL backends, but it

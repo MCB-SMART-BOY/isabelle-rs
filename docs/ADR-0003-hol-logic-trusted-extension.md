@@ -301,8 +301,10 @@ Retain the hardened parser/dispatcher status-and-shape guard as transitional
 fail-closed infrastructure. It is not a name-resolved AST and is not a trusted
 acceptance input. Future implementation proceeds in this order:
 
-1. Introduce immutable `SignatureId` / `TheoryId` values and propagate them
-   through strict certification and theorem construction.
+1. [Implemented] Introduce immutable `SignatureId` / `TheoryId` values and
+   propagate exact context stamps through strict certification, theorem
+   construction, current rules, and replay. This does not authorize a HOL basis
+   or accept a theorem.
 2. Implement the unique context-bound, mutually exclusive
    `KernelTrustedClosed` acceptance gate. Exercise it first with the existing
    synthetic Pure `A ==> A` unit; do not count that unit in the 125-theorem HOL
@@ -363,9 +365,9 @@ boundary. The module and rule contracts must stabilize first.
   separately.
 - The current `HOL::TrueI` bridges remain transitional debt; they are not a
   template for expanding `src/core`.
-- `HOL::trans` remains blocked until checked proposition elaboration, immutable
-  theory context, conservative definitions, the replayable HOL basis, and a
-  real new-kernel `HOL::TrueI` loop all exist.
+- `HOL::trans` remains blocked until checked proposition elaboration, an
+  authorized immutable HOL context, conservative definitions, the replayable
+  HOL basis, and a real new-kernel `HOL::TrueI` loop all exist.
 - Transitional coverage may remain `1/125` and kernel-trusted coverage `0/125`
   while these boundaries are built. That is preferable to increasing either
   count through unverifiable trusted shortcuts.

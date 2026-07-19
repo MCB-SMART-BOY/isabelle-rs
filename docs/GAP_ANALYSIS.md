@@ -107,11 +107,11 @@ Admitted(parser_gap): 3
 Admitted(datatype_stub): 2
 ```
 
-The next trust-critical sequence is immutable theory/signature identity, one
-context-bound `KernelTrustedClosed` acceptance operation, a source-aware
-proposition AST, checked HOL basis elaboration, and generic conservative
-definitions. Admitted-reason reduction remains useful but must not reclassify
-transitional or compatibility results as trusted proofs.
+Immutable theory/signature identity is now implemented. The next trust-critical
+sequence is one context/dependency-aware `KernelTrustedClosed` acceptance
+operation, a source-aware proposition AST, checked HOL basis elaboration, and
+generic conservative definitions. Admitted-reason reduction remains useful but
+must not reclassify transitional or compatibility results as trusted proofs.
 
 `RewriteRule::from_thm` now rejects theorem hyps, oracle/admitted footprints,
 unresolved `tpairs`, and Pure-premise conditional rewrites. This prevents open
@@ -161,16 +161,21 @@ Isabelle/ML + Scala:
 
 ## Major Remaining Gaps
 
-### Theory Identity And Acceptance
+### Theory Identity, Acceptance, And HOL Authorization
 
-The largest immediate kernel gap is not another primitive rule. Current
-`CTerm`, `CProp`, `TrustedTheorem`, and `TrustedTheory` values do not carry an
-immutable `SignatureId` / `TheoryId`; `TrustedTheory::add` does not validate
-context identity, ancestry, dependencies, replay context, or name conflicts.
+Immutable identity and Pure-only acceptance are implemented for the current
+strict monomorphic kernel. `CTerm`, `CProp`, `KernelThm`, and
+`TrustedTheorem` carry exact `TheoryId` / `SignatureId` stamps; rules reject
+mixed contexts before logical matching; and `accept_closed_theorem` owns
+recursive recertification/replay, replay-derived theorem dependencies,
+duplicate-safe immutable insertion, and token sealing.
 
-The next source slice must establish immutable context identity and
-mixed-context rejection. Only then can one unique acceptance API safely produce
-the mutually exclusive `KernelTrustedClosed` outcome.
+The largest immediate gap is now source-aware elaboration into an authorized
+object-logic theory. The current root/signature can express synthetic Pure
+contexts, but it has no checked polymorphic declaration pipeline,
+`LogicBasisId`, installed HOL axiom schemas, or conservative definition
+certificates. Those layers must exist before any sampled HOL theorem can use the
+implemented acceptance gate.
 
 See
 [KERNEL_TRUSTED_ACCEPTANCE_GAPS.md](KERNEL_TRUSTED_ACCEPTANCE_GAPS.md).
@@ -297,10 +302,9 @@ Drop-in replacement for Isabelle
 
 ## Next Work With Highest Research Value
 
-1. Introduce immutable `SignatureId` / `TheoryId` and reject mixed-context
-   certification and rule inputs.
-2. Add one context-bound theorem acceptance operation and mutually exclusive
-   `KernelTrustedClosed` outcome.
+1. Keep immutable `SignatureId` / `TheoryId` and mixed-context rejection stable.
+2. Add one context/dependency-aware theorem acceptance operation and mutually
+   exclusive `KernelTrustedClosed` outcome.
 3. Preserve a source-aware proposition AST before legacy lowering.
 4. Elaborate checked `HOL.Trueprop` and polymorphic declarations into
    `CProp : prop`.

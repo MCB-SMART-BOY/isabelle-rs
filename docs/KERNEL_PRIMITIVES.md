@@ -9,18 +9,37 @@ for the new TCB, not a description of the legacy `src/core` implementation.
 - Constants must be declared in `Signature`.
 - Local frees must be declared in `ProofContext`.
 - `CTerm` and `CProp` are produced only by strict certification.
+- `CTerm`, `CProp`, and theorem values carry one exact
+  `ContextStamp { TheoryId, SignatureId }`; multi-input rules reject mismatch
+  before logical matching.
 - Theorem fields are private.
 - Theorem values are produced only by `KernelRules`.
 - `ProofObligation` is not a theorem.
 - `ClosedThm` is a wrapper for theorems with no hypotheses.
-- The current `TrustedTheorem` is a context-free invariant-replayed
-  `ClosedThm`; the name does not yet imply theory identity.
-- The current `TrustedTheory` accepts only that nominal Rust type, but its
-  `add` operation does not check context/ancestry or reject replacement.
-- Final object-logic acceptance requires immutable
-  theory/signature/logic-extension provenance and replay in that same context;
-  the current sampled `KernelTrustedClosed` count is `0/125`.
-- `SearchFactDb` facts are not trusted theorem-table entries.
+- `TrustedTheorem` is a private accepted seal over a replayed `ClosedThm`,
+  canonical `TheoremId`, exact proof/acceptance theory identities, and
+  replay-derived dependencies.
+- `TrustedTheory` is immutable owner/fact ancestry. `accept_closed_theorem` is
+  the only token constructor and atomically returns the fact child plus token;
+  duplicate names and owner/store mismatches fail closed.
+- Every accepting replay recursively recertifies theorem fields and all checked
+  derivation payloads under the exact owner.
+- Ancestor theorem reuse records an exact theorem dependency. Object-logic
+  acceptance additionally requires the still-missing installed
+  logic-basis/axiom/definition provenance.
+- `SearchFactDb` facts are proof-erased and not trusted theorem-table entries.
+
+## Accepted theorem reference
+
+```text
+input:  owner : TrustedTheory, theorem : TrustedTheorem in owner ancestry
+output: ClosedThm in the owner's current context
+```
+
+This is fact reuse, not a new logical axiom. Construction and replay both check
+the non-forgeable token against theory ancestry, recertify the proposition in
+the descendant signature, and record the referenced `TheoremId`. A sibling or
+stale token is rejected.
 
 ## `assume`
 
@@ -54,8 +73,8 @@ Side conditions:
 Result:
 
 - no hypotheses;
-- can pass current context-free invariant replay; final trust still requires the
-  context-bound acceptance gate.
+- exact-context invariant replay succeeds; the result becomes trusted only
+  after `accept_closed_theorem`.
 
 ## `symmetric`
 
@@ -139,8 +158,8 @@ Side conditions:
 Result:
 
 - no hypotheses;
-- can pass current context-free invariant replay; final trust still requires the
-  context-bound acceptance gate.
+- exact-context invariant replay succeeds; the result becomes trusted only
+  after `accept_closed_theorem`.
 
 Attack tests cover:
 
