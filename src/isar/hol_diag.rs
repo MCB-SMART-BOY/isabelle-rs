@@ -17,7 +17,7 @@ mod hol_diag {
         for (idx, lem) in with_proof.iter().enumerate() {
             eprintln!("  [{}/{}] verifying: {}...", idx + 1, with_proof.len(), lem.name);
             let result = verify_lemma(lem);
-            let outcome = classify_verify_result(&lem.name, result.as_ref());
+            let outcome = classify_verify_result(&lem.name, &result);
             if outcome.is_transitional_strict_closed() {
                 ok += 1;
             } else {

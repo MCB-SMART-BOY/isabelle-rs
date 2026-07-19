@@ -43,7 +43,7 @@ mod diag_tests {
             for (i, lem) in structured.iter().take(sample).enumerate() {
                 eprintln!("    [{}/{}] {} ...", i + 1, sample, lem.name);
                 let result = verify_lemma(lem);
-                let outcome = classify_verify_result(&lem.name, result.as_ref());
+                let outcome = classify_verify_result(&lem.name, &result);
                 if outcome.is_transitional_strict_closed() {
                     ok += 1;
                     eprintln!("      TransitionalStrictClosed");

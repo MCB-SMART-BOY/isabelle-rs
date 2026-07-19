@@ -27,6 +27,7 @@ use crate::{
         StrictTrueIError, normalize_checked_hol_true_prop, try_strict_hol_true_i,
     },
     isar::args::Args,
+    kernel::TrustedTheorem,
     tools::simp::HolSimplifier,
 };
 thread_local! {
@@ -42,10 +43,6 @@ thread_local! {
     pub(crate) static PROOF_SEARCH_BUDGET: Cell<usize> = const { Cell::new(200) };
     /// Cached base simplifier (all simp rules from DB) — avoids rebuilding on every fallback.
     static CACHED_BASE_SIMPLIFIER: std::cell::RefCell<Option<Simplifier>> = const { std::cell::RefCell::new(None) };
-    /// Outcome classifier: how the *most recent* `verify_lemma` call produced its result.
-    /// Set to `Proved` at entry, downgraded to `AxiomAccepted` at non-proving exit sites.
-    /// Read by `verify_lemmas_batch` to maintain the honest proved-vs-accepted tally.
-    static LAST_OUTCOME: Cell<VerifyOutcome> = const { Cell::new(VerifyOutcome::Proved) };
     /// Running tally of verify outcomes since the last `reset_verify_stats()`.
     /// `(proved, axiom_accepted)`. Accumulated across all files in a Tier2 run.
     static VERIFY_STATS: Cell<(usize, usize)> = const { Cell::new((0, 0)) };
@@ -53,12 +50,12 @@ thread_local! {
     static VERIFY_OUTCOME_STATS: RefCell<ProofOutcomeStats> = RefCell::new(ProofOutcomeStats::default());
 }
 
-/// How a `verify_lemma` call arrived at its `Some(Thm)` result.
+/// How a `verify_lemma` call produced its legacy theorem evidence.
 ///
 /// This distinguishes genuine proofs (the kernel closed every subgoal) from
 /// lemmas that were *accepted as axioms* because the proof engine could not
-/// replay their script. Both return `Some`, so without this tag the headline
-/// "verified" count cannot tell the two apart.
+/// replay their script. Both retain a legacy `Thm`, so this explicit tag keeps
+/// the reporting buckets honest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VerifyOutcome {
     /// A real proof path closed the goal (safe rules, exec_proof, Isar replay,
@@ -68,6 +65,38 @@ pub enum VerifyOutcome {
     /// trust-mode shortcut, an anonymous-datatype passthrough, or the final
     /// `generalize_thm` fallback.
     AxiomAccepted,
+}
+
+/// Value-driven result of one lemma verification attempt.
+///
+/// The accepted token and legacy evidence travel with the result; callers do
+/// not consult ambient state to classify the theorem.
+#[derive(Debug, Clone)]
+pub struct LemmaVerification {
+    accepted: Option<TrustedTheorem>,
+    legacy: Option<(Thm, VerifyOutcome)>,
+}
+
+impl LemmaVerification {
+    fn from_legacy(theorem: Option<Thm>, exit: VerifyOutcome) -> Self {
+        Self { accepted: None, legacy: theorem.map(|theorem| (theorem, exit)) }
+    }
+
+    pub fn accepted(&self) -> Option<&TrustedTheorem> {
+        self.accepted.as_ref()
+    }
+
+    pub fn legacy(&self) -> Option<(&Thm, VerifyOutcome)> {
+        self.legacy.as_ref().map(|(theorem, exit)| (theorem, *exit))
+    }
+
+    pub fn legacy_theorem(&self) -> Option<&Thm> {
+        self.legacy.as_ref().map(|(theorem, _)| theorem)
+    }
+
+    pub fn into_legacy_theorem(self) -> Option<Thm> {
+        self.legacy.map(|(theorem, _)| theorem)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -203,6 +232,7 @@ impl ProofFailure {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProofOutcome {
+    KernelTrustedClosed { theorem: TrustedTheorem },
     TransitionalStrictClosed { summary: TheoremSummary },
     CompatClosedOracleFree { summary: TheoremSummary },
     OpenOracleFree { reason: OpenReason, summary: TheoremSummary },
@@ -215,8 +245,13 @@ impl ProofOutcome {
         matches!(self, ProofOutcome::TransitionalStrictClosed { .. })
     }
 
+    pub fn is_kernel_trusted_closed(&self) -> bool {
+        matches!(self, ProofOutcome::KernelTrustedClosed { .. })
+    }
+
     pub fn label(&self) -> String {
         match self {
+            ProofOutcome::KernelTrustedClosed { .. } => "KernelTrustedClosed".to_string(),
             ProofOutcome::TransitionalStrictClosed { .. } => "TransitionalStrictClosed".to_string(),
             ProofOutcome::CompatClosedOracleFree { .. } => "CompatClosedOracleFree".to_string(),
             ProofOutcome::OpenOracleFree { reason, .. } => {
@@ -232,20 +267,22 @@ impl ProofOutcome {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProofOutcomeStats {
-    /// Overlay reserved for future theory-context-bound
-    /// `crate::kernel::TrustedTheorem` acceptance. The legacy verifier cannot
-    /// increment it, and `total()` deliberately excludes it.
-    pub kernel_trusted_closed: usize,
-    pub transitional_strict_closed: usize,
-    pub compat_closed_oracle_free: usize,
-    pub open_oracle_free: BTreeMap<OpenReason, usize>,
-    pub admitted: BTreeMap<AdmitReason, usize>,
-    pub failed: BTreeMap<ProofFailure, usize>,
+    /// Count populated only by a mutually exclusive
+    /// `ProofOutcome::KernelTrustedClosed` value.
+    kernel_trusted_closed: usize,
+    transitional_strict_closed: usize,
+    compat_closed_oracle_free: usize,
+    open_oracle_free: BTreeMap<OpenReason, usize>,
+    admitted: BTreeMap<AdmitReason, usize>,
+    failed: BTreeMap<ProofFailure, usize>,
 }
 
 impl ProofOutcomeStats {
-    fn record(&mut self, outcome: &ProofOutcome) {
+    pub fn record(&mut self, outcome: &ProofOutcome) {
         match outcome {
+            ProofOutcome::KernelTrustedClosed { .. } => {
+                self.kernel_trusted_closed += 1;
+            },
             ProofOutcome::TransitionalStrictClosed { .. } => {
                 self.transitional_strict_closed += 1;
             },
@@ -262,12 +299,18 @@ impl ProofOutcomeStats {
         }
     }
 
-    /// Number of mutually exclusive legacy-verifier outcomes.
-    ///
-    /// `kernel_trusted_closed` is an overlay until a context-bound acceptance
-    /// outcome exists, so including it here would allow `total > attempted`.
-    pub fn total(&self) -> usize {
+    pub fn kernel_trusted_closed(&self) -> usize {
+        self.kernel_trusted_closed
+    }
+
+    pub fn transitional_strict_closed(&self) -> usize {
         self.transitional_strict_closed
+    }
+
+    /// Number of mutually exclusive proof outcomes.
+    pub fn total(&self) -> usize {
+        self.kernel_trusted_closed
+            + self.transitional_strict_closed
             + self.compat_closed_oracle_free
             + self.open_oracle_free.values().copied().sum::<usize>()
             + self.admitted.values().copied().sum::<usize>()
@@ -372,18 +415,26 @@ fn classify_thm_with_exit(name: &str, thm: &Thm, exit: VerifyOutcome) -> ProofOu
     ProofOutcome::OpenOracleFree { reason: open_reason_from_thm(thm), summary }
 }
 
-pub fn classify_verify_result(name: &str, result: Option<&Thm>) -> ProofOutcome {
-    match result {
-        Some(thm) => {
-            let exit = LAST_OUTCOME.with(|c| c.get());
-            classify_thm_with_exit(name, thm, exit)
-        },
+pub fn classify_proof_outcome(
+    name: &str,
+    accepted: Option<TrustedTheorem>,
+    legacy: Option<(&Thm, VerifyOutcome)>,
+) -> ProofOutcome {
+    if let Some(theorem) = accepted {
+        return ProofOutcome::KernelTrustedClosed { theorem };
+    }
+    match legacy {
+        Some((theorem, exit)) => classify_thm_with_exit(name, theorem, exit),
         None => ProofOutcome::Failed { reason: ProofFailure::MethodNone, name: name.to_string() },
     }
 }
 
-fn is_transitional_strict_closed_outcome(thm: &Thm) -> bool {
-    classify_verify_result("", Some(thm)).is_transitional_strict_closed()
+pub fn classify_verify_result(name: &str, result: &LemmaVerification) -> ProofOutcome {
+    classify_proof_outcome(name, result.accepted.clone(), result.legacy())
+}
+
+fn is_transitional_strict_closed_outcome(thm: &Thm, exit: VerifyOutcome) -> bool {
+    classify_proof_outcome("", None, Some((thm, exit))).is_transitional_strict_closed()
 }
 
 fn export_proved_goal(
@@ -424,22 +475,28 @@ fn export_proved_goal(
     Ok(exported)
 }
 
-fn export_or_admit_goal(original_goal: &CTerm, result: Thm, context_assumptions: &[CTerm]) -> Thm {
+fn export_or_admit_goal(
+    original_goal: &CTerm,
+    result: Thm,
+    context_assumptions: &[CTerm],
+    exit: &mut VerifyOutcome,
+) -> Thm {
     match export_proved_goal(original_goal, &result, context_assumptions) {
         Ok(exported) => exported,
-        Err(GoalExportError::OracleOrAdmitted) => result,
+        Err(GoalExportError::OracleOrAdmitted) => {
+            *exit = VerifyOutcome::AxiomAccepted;
+            result
+        },
         Err(err) => {
-            LAST_OUTCOME.with(|c| c.set(VerifyOutcome::AxiomAccepted));
+            *exit = VerifyOutcome::AxiomAccepted;
             ThmKernel::admit(original_goal.clone(), err.admitted_reason())
         },
     }
 }
 
 fn init_verify_goal(goal_ct: &CTerm) -> Result<Thm, Thm> {
-    ThmKernel::trivial(goal_ct.clone()).map_err(|_| {
-        LAST_OUTCOME.with(|c| c.set(VerifyOutcome::AxiomAccepted));
-        ThmKernel::admit(goal_ct.clone(), "admitted:goal_initialization_failed")
-    })
+    ThmKernel::trivial(goal_ct.clone())
+        .map_err(|_| ThmKernel::admit(goal_ct.clone(), "admitted:goal_initialization_failed"))
 }
 
 fn proof_allows_strict_imp_identity(proof: &str) -> bool {
@@ -3927,7 +3984,7 @@ pub fn verify_file_diagnostic(source: &str) -> Vec<(String, String, bool)> {
             }
             let script = lem.proof_script.clone().unwrap_or_default();
             let result = verify_lemma(lem);
-            let outcome = classify_verify_result(&lem.name, result.as_ref());
+            let outcome = classify_verify_result(&lem.name, &result);
             let proved = outcome.is_transitional_strict_closed();
             out.push((lem.name.clone(), script, proved));
         }
@@ -3964,7 +4021,7 @@ pub fn verify_lemmas_batch(lemmas: &[ParsedLemma]) -> (usize, usize) {
         if lem.proof_script.is_some() {
             attempted += 1;
             let result = verify_lemma(lem);
-            let outcome = classify_verify_result(&lem.name, result.as_ref());
+            let outcome = classify_verify_result(&lem.name, &result);
             let proved = outcome.is_transitional_strict_closed();
             if proved {
                 verified += 1;
@@ -4100,300 +4157,335 @@ pub fn try_strict_adapter(lem: &ParsedLemma, db: &HolTheoremDb) -> StrictAdapter
     }
 }
 
-pub fn verify_lemma(lem: &ParsedLemma) -> Option<Thm> {
+pub fn verify_lemma(lem: &ParsedLemma) -> LemmaVerification {
     AUTO_DEPTH.with(|c| c.set(0));
-    // Optimistically assume a real proof; non-proving exit sites downgrade this.
-    LAST_OUTCOME.with(|c| c.set(VerifyOutcome::Proved));
-
-    let db = HolTheoremDb::get();
-    match try_strict_adapter(lem, db) {
-        StrictAdapterResult::Proved(thm) => return Some(thm),
-        StrictAdapterResult::Rejected(reason) => {
-            LAST_OUTCOME.with(|c| c.set(VerifyOutcome::AxiomAccepted));
-            return Some(ThmKernel::admit(
-                CTerm::certify(lem.theorem.prop().term().clone()),
-                strict_adapter_reject_admit_reason(&reason),
-            ));
-        },
-        StrictAdapterResult::NotApplicable => {},
-    }
-
-    // If a built-in Var-override exists, use it directly (skip proof replay).
-    // This covers lemmas whose proofs use complex patterns (multi-method chains,
-    // [THEN] composition, named iprover premises) that aren't fully supported yet.
-    if let Some(builtin) = db.by_name.get(&lem.name) {
-        let builtin_term = builtin.prop().term();
-        let has_vars = has_schematic_vars(builtin_term);
-        let parsed_term = lem.theorem.prop().term();
-        let parsed_has_no_vars = !has_schematic_vars(parsed_term);
-        // Accept if built-in has Var and parsed version uses Free (intentional override)
-        if has_vars && parsed_has_no_vars {
-            LAST_OUTCOME.with(|c| c.set(VerifyOutcome::AxiomAccepted));
-            return Some(ThmKernel::admit(
-                CTerm::certify(builtin_term.clone()),
-                "admitted:parser_gap",
-            ));
+    let mut exit = VerifyOutcome::Proved;
+    let theorem = (|| -> Option<Thm> {
+        let db = HolTheoremDb::get();
+        match try_strict_adapter(lem, db) {
+            StrictAdapterResult::Proved(thm) => return Some(thm),
+            StrictAdapterResult::Rejected(reason) => {
+                exit = VerifyOutcome::AxiomAccepted;
+                return Some(ThmKernel::admit(
+                    CTerm::certify(lem.theorem.prop().term().clone()),
+                    strict_adapter_reject_admit_reason(&reason),
+                ));
+            },
+            StrictAdapterResult::NotApplicable => {},
         }
-    }
 
-    // Trust mode: if proof_script is missing or empty, use the built-in DB.
-    if lem.proof_script.is_none()
-        || lem.proof_script.as_deref().is_some_and(|s| s.trim().is_empty())
-    {
-        LAST_OUTCOME.with(|c| c.set(VerifyOutcome::AxiomAccepted));
+        // If a built-in Var-override exists, use it directly (skip proof replay).
+        // This covers lemmas whose proofs use complex patterns (multi-method chains,
+        // [THEN] composition, named iprover premises) that aren't fully supported yet.
         if let Some(builtin) = db.by_name.get(&lem.name) {
-            return Some(builtin.as_ref().clone());
+            let builtin_term = builtin.prop().term();
+            let has_vars = has_schematic_vars(builtin_term);
+            let parsed_term = lem.theorem.prop().term();
+            let parsed_has_no_vars = !has_schematic_vars(parsed_term);
+            // Accept if built-in has Var and parsed version uses Free (intentional override)
+            if has_vars && parsed_has_no_vars {
+                exit = VerifyOutcome::AxiomAccepted;
+                return Some(ThmKernel::admit(
+                    CTerm::certify(builtin_term.clone()),
+                    "admitted:parser_gap",
+                ));
+            }
         }
-        return Some(ThmKernel::admit(
-            CTerm::certify(lem.theorem.prop().term().clone()),
-            "admitted:unsupported_method",
-        ));
-    }
 
-    let proof = lem.proof_script.as_ref()?;
-    if proof_allows_strict_imp_identity(proof)
-        && let Some(strict_identity) =
-            try_strict_pure_imp_identity(lem.theorem.prop().term(), &db.type_env)
-    {
-        return Some(strict_identity);
-    }
-
-    let goal_ct = CTerm::certify(lem.theorem.prop().term().clone());
-    let (prems, concl) = Pure::strip_imp_prems(goal_ct.term());
-    let premise_cterms: Vec<CTerm> = prems.iter().map(|p| CTerm::certify((*p).clone())).collect();
-    let premises: Vec<Arc<Thm>> =
-        premise_cterms.iter().map(|p| Arc::new(ThmKernel::assume_compat(p.clone()))).collect();
-    let goal = match init_verify_goal(&goal_ct) {
-        Ok(goal) => goal,
-        Err(admitted) => return Some(admitted),
-    };
-
-    // Fast path: single-method proofs that are trivially dispatchable
-    if (proof == "by simp"
-        || proof == "by auto"
-        || proof == "by blast"
-        || proof == "by fast"
-        || proof == "by iprover"
-        || proof == "by force")
-        && let Some(results) = exec_proof(&goal, proof, &premises)
-    {
-        return Some(export_or_admit_goal(&goal_ct, results, &premise_cterms));
-    }
-
-    // Special handling for anonymous/auto-named datatype lemmas
-    let is_anon = lem.name.is_empty() || lem.name.starts_with("[anon:");
-    if is_anon {
-        let proof_trimmed = proof.trim();
-        if proof_trimmed.contains("rule list.induct")
-            || proof_trimmed.contains("rule list.exhaust")
-            || proof_trimmed.contains("rule list.case")
+        // Trust mode: if proof_script is missing or empty, use the built-in DB.
+        if lem.proof_script.is_none()
+            || lem.proof_script.as_deref().is_some_and(|s| s.trim().is_empty())
         {
-            LAST_OUTCOME.with(|c| c.set(VerifyOutcome::AxiomAccepted));
+            exit = VerifyOutcome::AxiomAccepted;
+            if let Some(builtin) = db.by_name.get(&lem.name) {
+                return Some(builtin.as_ref().clone());
+            }
             return Some(ThmKernel::admit(
                 CTerm::certify(lem.theorem.prop().term().clone()),
-                "admitted:datatype_stub",
+                "admitted:unsupported_method",
             ));
         }
-    }
 
-    // Try structured Isar proof first
-    if proof.contains("\n")
-        && (proof.contains("have ")
-            || proof.contains("show ")
-            || proof.contains("case ")
-            || proof.contains("fix ")
-            || proof.contains("assume "))
-    {
-        let mut state = crate::isar::proof_state::ProofState::new(goal.clone());
-        if let Some(result) =
-            crate::isar::proof_state::interpret_proof_script(&mut state, proof, &premises)
+        let proof = lem.proof_script.as_ref()?;
+        if proof_allows_strict_imp_identity(proof)
+            && let Some(strict_identity) =
+                try_strict_pure_imp_identity(lem.theorem.prop().term(), &db.type_env)
         {
-            return Some(export_or_admit_goal(&goal_ct, result, &premise_cterms));
+            return Some(strict_identity);
         }
-    }
 
-    // Simple "by (rule X)" pattern — look up and resolve
-    if proof.starts_with("by (rule ") || proof.starts_with("by(rule ") {
-        let rule_name = proof
-            .strip_prefix("by (rule ")
-            .or_else(|| proof.strip_prefix("by(rule "))
-            .map(|r| r.trim_end_matches(')').trim());
-        if let Some(rule_name) = rule_name {
-            let db = HolTheoremDb::get();
-            if let Some(rule_thm) = resolve_theorem_name(rule_name, db) {
-                let resolved = crate::core::tactic::resolve_tac(&[(*rule_thm).clone()], 0)(&goal);
-                if let Some(thm) = resolved.into_iter().next() {
-                    // Resolution may leave open subgoals; only a closed goal is a real proof.
-                    if thm.nprems() != 0 {
-                        LAST_OUTCOME.with(|c| c.set(VerifyOutcome::AxiomAccepted));
-                    }
-                    return Some(export_or_admit_goal(&goal_ct, thm, &premise_cterms));
-                }
-            }
-        }
-    }
+        let goal_ct = CTerm::certify(lem.theorem.prop().term().clone());
+        let (prems, concl) = Pure::strip_imp_prems(goal_ct.term());
+        let premise_cterms: Vec<CTerm> =
+            prems.iter().map(|p| CTerm::certify((*p).clone())).collect();
+        let premises: Vec<Arc<Thm>> =
+            premise_cterms.iter().map(|p| Arc::new(ThmKernel::assume_compat(p.clone()))).collect();
+        let goal = match init_verify_goal(&goal_ct) {
+            Ok(goal) => goal,
+            Err(admitted) => {
+                exit = VerifyOutcome::AxiomAccepted;
+                return Some(admitted);
+            },
+        };
 
-    // "unfolding X by method" — apply unfolding then method
-    if proof.contains("unfolding ") {
-        // Split: "unfolding X1 X2 by method"
-        if let Some(rest) = proof.strip_prefix("unfolding ")
-            && let Some(by_pos) = rest.find(" by ")
+        // Fast path: single-method proofs that are trivially dispatchable
+        if (proof == "by simp"
+            || proof == "by auto"
+            || proof == "by blast"
+            || proof == "by fast"
+            || proof == "by iprover"
+            || proof == "by force")
+            && let Some(results) = exec_proof(&goal, proof, &premises)
         {
-            let unfold_names = &rest[..by_pos];
-            let method = rest[by_pos + 4..].trim();
-            // Look up the unfolding definitions
-            let db = HolTheoremDb::get();
-            let mut current = goal.clone();
-            for name in unfold_names.split_whitespace() {
-                if let Some(thm) = resolve_theorem_name(name, db) {
-                    current = ThmKernel::bicompose(false, &(*thm).clone(), &current, 0)
-                        .unwrap_or(current);
-                }
-            }
-            // Apply the remaining method
-            if let Some(results) = exec_proof(&current, method, &premises) {
-                return Some(export_or_admit_goal(&goal_ct, results, &premise_cterms));
-            }
+            return Some(export_or_admit_goal(&goal_ct, results, &premise_cterms, &mut exit));
         }
-    }
 
-    // "by (simp add: X1 X2)" — simplification with specific rules
-    if proof.starts_with("by (simp add:") || proof.starts_with("by(simp add:") {
-        let add_rules = proof
-            .strip_prefix("by (simp add:")
-            .or_else(|| proof.strip_prefix("by(simp add:"))
-            .map(|r| r.trim_end_matches(')').trim());
-        if let Some(rules_str) = add_rules {
-            let db = HolTheoremDb::get();
-            let mut current = goal.clone();
-            let rule_names: Vec<&str> = rules_str.split_whitespace().collect();
-            // Apply each simp rule via bicompose
-            for name in &rule_names {
-                if let Some(thm) = resolve_theorem_name(name, db) {
-                    // Apply as rewrite: use the theorem as an equality
-                    if let Some(new_state) =
-                        ThmKernel::bicompose(false, &(*thm).clone(), &current, 0)
-                    {
-                        current = new_state;
-                    }
-                }
-            }
-            if current.nprems() < goal.nprems() || current != goal {
-                // Only a closed goal (no remaining subgoals) counts as a real proof;
-                // a merely-rewritten-but-open goal is a weak acceptance.
-                if current.nprems() != 0 {
-                    LAST_OUTCOME.with(|c| c.set(VerifyOutcome::AxiomAccepted));
-                }
-                return Some(export_or_admit_goal(&goal_ct, current, &premise_cterms));
+        // Special handling for anonymous/auto-named datatype lemmas
+        let is_anon = lem.name.is_empty() || lem.name.starts_with("[anon:");
+        if is_anon {
+            let proof_trimmed = proof.trim();
+            if proof_trimmed.contains("rule list.induct")
+                || proof_trimmed.contains("rule list.exhaust")
+                || proof_trimmed.contains("rule list.case")
+            {
+                exit = VerifyOutcome::AxiomAccepted;
+                return Some(ThmKernel::admit(
+                    CTerm::certify(lem.theorem.prop().term().clone()),
+                    "admitted:datatype_stub",
+                ));
             }
         }
-    }
 
-    // "by (auto intro: X)" — auto with specific introduction rules
-    if proof.starts_with("by (auto intro:") || proof.starts_with("by(auto intro:") {
-        let intro_rule = proof
-            .strip_prefix("by (auto intro:")
-            .or_else(|| proof.strip_prefix("by(auto intro:"))
-            .map(|r| r.trim_end_matches(')').trim());
-        if let Some(rule_name) = intro_rule {
-            let db = HolTheoremDb::get();
-            // Try resolving with the specific intro rule first
-            if let Some(rule_thm) = resolve_theorem_name(rule_name, db) {
-                let resolved = crate::core::tactic::resolve_tac(&[(*rule_thm).clone()], 0)(&goal);
-                if let Some(thm) = resolved.into_iter().next() {
-                    // Resolution may leave open subgoals; only a closed goal is a real proof.
-                    if thm.nprems() != 0 {
-                        LAST_OUTCOME.with(|c| c.set(VerifyOutcome::AxiomAccepted));
-                    }
-                    return Some(export_or_admit_goal(&goal_ct, thm, &premise_cterms));
-                }
-            }
-            // Fall back to auto
-            if let Some(results) = exec_proof(&goal, "auto", &premises) {
-                return Some(export_or_admit_goal(&goal_ct, results, &premise_cterms));
+        // Try structured Isar proof first
+        if proof.contains("\n")
+            && (proof.contains("have ")
+                || proof.contains("show ")
+                || proof.contains("case ")
+                || proof.contains("fix ")
+                || proof.contains("assume "))
+        {
+            let mut state = crate::isar::proof_state::ProofState::new(goal.clone());
+            if let Some(result) =
+                crate::isar::proof_state::interpret_proof_script(&mut state, proof, &premises)
+            {
+                return Some(export_or_admit_goal(&goal_ct, result, &premise_cterms, &mut exit));
             }
         }
-    }
 
-    // For lemmas with premises, try Goal.init-style FIRST (bare conclusion)
-    // This allows rules like subst/nat_induct to match the conclusion directly.
-    if !prems.is_empty() {
-        let alt_goal = ThmKernel::trivial(CTerm::certify(concl.clone())).unwrap();
-        if let Some(r) = exec_proof(&alt_goal, proof, &premises) {
-            let mut final_thm = r;
-            for p in prems.iter().rev() {
-                let cterm = CTerm::certify((*p).clone());
-                if let Ok(thm) = ThmKernel::implies_intr(&cterm, &final_thm) {
-                    final_thm = thm;
-                }
-            }
-            return Some(export_or_admit_goal(&goal_ct, final_thm, &premise_cterms));
-        }
-        // Direct resolution for "using assms by (rule X)"
-        if proof.contains("using assms") {
+        // Simple "by (rule X)" pattern — look up and resolve
+        if proof.starts_with("by (rule ") || proof.starts_with("by(rule ") {
             let rule_name = proof
-                .strip_prefix("using assms by (rule ")
-                .or_else(|| proof.strip_prefix("by (rule "))
-                .map(|r| r.trim_end_matches(')'));
+                .strip_prefix("by (rule ")
+                .or_else(|| proof.strip_prefix("by(rule "))
+                .map(|r| r.trim_end_matches(')').trim());
             if let Some(rule_name) = rule_name {
                 let db = HolTheoremDb::get();
                 if let Some(rule_thm) = resolve_theorem_name(rule_name, db) {
                     let resolved =
-                        crate::core::tactic::resolve_tac(&[(*rule_thm).clone()], 0)(&alt_goal);
-                    if let Some(mut current) = resolved.into_iter().next() {
-                        for _ in 0..20 {
-                            if current.nprems() == 0 {
-                                break;
-                            }
-                            let mut closed = false;
-                            for prem in &premises {
-                                if let Some(ns) = ThmKernel::bicompose(false, prem, &current, 0)
-                                    && ns.nprems() < current.nprems()
-                                {
-                                    current = ns;
-                                    closed = true;
+                        crate::core::tactic::resolve_tac(&[(*rule_thm).clone()], 0)(&goal);
+                    if let Some(thm) = resolved.into_iter().next() {
+                        // Resolution may leave open subgoals; only a closed goal is a real proof.
+                        if thm.nprems() != 0 {
+                            exit = VerifyOutcome::AxiomAccepted;
+                        }
+                        return Some(export_or_admit_goal(
+                            &goal_ct,
+                            thm,
+                            &premise_cterms,
+                            &mut exit,
+                        ));
+                    }
+                }
+            }
+        }
+
+        // "unfolding X by method" — apply unfolding then method
+        if proof.contains("unfolding ") {
+            // Split: "unfolding X1 X2 by method"
+            if let Some(rest) = proof.strip_prefix("unfolding ")
+                && let Some(by_pos) = rest.find(" by ")
+            {
+                let unfold_names = &rest[..by_pos];
+                let method = rest[by_pos + 4..].trim();
+                // Look up the unfolding definitions
+                let db = HolTheoremDb::get();
+                let mut current = goal.clone();
+                for name in unfold_names.split_whitespace() {
+                    if let Some(thm) = resolve_theorem_name(name, db) {
+                        current = ThmKernel::bicompose(false, &(*thm).clone(), &current, 0)
+                            .unwrap_or(current);
+                    }
+                }
+                // Apply the remaining method
+                if let Some(results) = exec_proof(&current, method, &premises) {
+                    return Some(export_or_admit_goal(
+                        &goal_ct,
+                        results,
+                        &premise_cterms,
+                        &mut exit,
+                    ));
+                }
+            }
+        }
+
+        // "by (simp add: X1 X2)" — simplification with specific rules
+        if proof.starts_with("by (simp add:") || proof.starts_with("by(simp add:") {
+            let add_rules = proof
+                .strip_prefix("by (simp add:")
+                .or_else(|| proof.strip_prefix("by(simp add:"))
+                .map(|r| r.trim_end_matches(')').trim());
+            if let Some(rules_str) = add_rules {
+                let db = HolTheoremDb::get();
+                let mut current = goal.clone();
+                let rule_names: Vec<&str> = rules_str.split_whitespace().collect();
+                // Apply each simp rule via bicompose
+                for name in &rule_names {
+                    if let Some(thm) = resolve_theorem_name(name, db) {
+                        // Apply as rewrite: use the theorem as an equality
+                        if let Some(new_state) =
+                            ThmKernel::bicompose(false, &(*thm).clone(), &current, 0)
+                        {
+                            current = new_state;
+                        }
+                    }
+                }
+                if current.nprems() < goal.nprems() || current != goal {
+                    // Only a closed goal (no remaining subgoals) counts as a real proof;
+                    // a merely-rewritten-but-open goal is a weak acceptance.
+                    if current.nprems() != 0 {
+                        exit = VerifyOutcome::AxiomAccepted;
+                    }
+                    return Some(export_or_admit_goal(
+                        &goal_ct,
+                        current,
+                        &premise_cterms,
+                        &mut exit,
+                    ));
+                }
+            }
+        }
+
+        // "by (auto intro: X)" — auto with specific introduction rules
+        if proof.starts_with("by (auto intro:") || proof.starts_with("by(auto intro:") {
+            let intro_rule = proof
+                .strip_prefix("by (auto intro:")
+                .or_else(|| proof.strip_prefix("by(auto intro:"))
+                .map(|r| r.trim_end_matches(')').trim());
+            if let Some(rule_name) = intro_rule {
+                let db = HolTheoremDb::get();
+                // Try resolving with the specific intro rule first
+                if let Some(rule_thm) = resolve_theorem_name(rule_name, db) {
+                    let resolved =
+                        crate::core::tactic::resolve_tac(&[(*rule_thm).clone()], 0)(&goal);
+                    if let Some(thm) = resolved.into_iter().next() {
+                        // Resolution may leave open subgoals; only a closed goal is a real proof.
+                        if thm.nprems() != 0 {
+                            exit = VerifyOutcome::AxiomAccepted;
+                        }
+                        return Some(export_or_admit_goal(
+                            &goal_ct,
+                            thm,
+                            &premise_cterms,
+                            &mut exit,
+                        ));
+                    }
+                }
+                // Fall back to auto
+                if let Some(results) = exec_proof(&goal, "auto", &premises) {
+                    return Some(export_or_admit_goal(
+                        &goal_ct,
+                        results,
+                        &premise_cterms,
+                        &mut exit,
+                    ));
+                }
+            }
+        }
+
+        // For lemmas with premises, try Goal.init-style FIRST (bare conclusion)
+        // This allows rules like subst/nat_induct to match the conclusion directly.
+        if !prems.is_empty() {
+            let alt_goal = ThmKernel::trivial(CTerm::certify(concl.clone())).unwrap();
+            if let Some(r) = exec_proof(&alt_goal, proof, &premises) {
+                let mut final_thm = r;
+                for p in prems.iter().rev() {
+                    let cterm = CTerm::certify((*p).clone());
+                    if let Ok(thm) = ThmKernel::implies_intr(&cterm, &final_thm) {
+                        final_thm = thm;
+                    }
+                }
+                return Some(export_or_admit_goal(&goal_ct, final_thm, &premise_cterms, &mut exit));
+            }
+            // Direct resolution for "using assms by (rule X)"
+            if proof.contains("using assms") {
+                let rule_name = proof
+                    .strip_prefix("using assms by (rule ")
+                    .or_else(|| proof.strip_prefix("by (rule "))
+                    .map(|r| r.trim_end_matches(')'));
+                if let Some(rule_name) = rule_name {
+                    let db = HolTheoremDb::get();
+                    if let Some(rule_thm) = resolve_theorem_name(rule_name, db) {
+                        let resolved =
+                            crate::core::tactic::resolve_tac(&[(*rule_thm).clone()], 0)(&alt_goal);
+                        if let Some(mut current) = resolved.into_iter().next() {
+                            for _ in 0..20 {
+                                if current.nprems() == 0 {
+                                    break;
+                                }
+                                let mut closed = false;
+                                for prem in &premises {
+                                    if let Some(ns) = ThmKernel::bicompose(false, prem, &current, 0)
+                                        && ns.nprems() < current.nprems()
+                                    {
+                                        current = ns;
+                                        closed = true;
+                                        break;
+                                    }
+                                }
+                                if !closed {
                                     break;
                                 }
                             }
-                            if !closed {
-                                break;
-                            }
-                        }
-                        if current.nprems() == 0 {
-                            let mut final_thm = current;
-                            for p in prems.iter().rev() {
-                                let cterm = CTerm::certify((*p).clone());
-                                if let Ok(thm) = ThmKernel::implies_intr(&cterm, &final_thm) {
-                                    final_thm = thm;
+                            if current.nprems() == 0 {
+                                let mut final_thm = current;
+                                for p in prems.iter().rev() {
+                                    let cterm = CTerm::certify((*p).clone());
+                                    if let Ok(thm) = ThmKernel::implies_intr(&cterm, &final_thm) {
+                                        final_thm = thm;
+                                    }
                                 }
+                                return Some(export_or_admit_goal(
+                                    &goal_ct,
+                                    final_thm,
+                                    &premise_cterms,
+                                    &mut exit,
+                                ));
                             }
-                            return Some(export_or_admit_goal(
-                                &goal_ct,
-                                final_thm,
-                                &premise_cterms,
-                            ));
                         }
                     }
                 }
             }
         }
-    }
 
-    // Fall back to standard approach — wrapped in catch_unwind to survive panics
-    let proof_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        exec_proof(&goal, proof, &premises)
-    }));
-    match proof_result {
-        Ok(Some(result)) => return Some(export_or_admit_goal(&goal_ct, result, &premise_cterms)),
-        Ok(None) => {},
-        Err(_panic) => {
-            // Proof engine panicked on this lemma's proof script.
-            // This is expected for complex Isar patterns not yet supported.
-        },
-    }
-    // Last resort: generalize and accept as axiom
-    LAST_OUTCOME.with(|c| c.set(VerifyOutcome::AxiomAccepted));
-    Some(generalize_thm(&lem.theorem))
+        // Fall back to standard approach — wrapped in catch_unwind to survive panics
+        let proof_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            exec_proof(&goal, proof, &premises)
+        }));
+        match proof_result {
+            Ok(Some(result)) => {
+                return Some(export_or_admit_goal(&goal_ct, result, &premise_cterms, &mut exit));
+            },
+            Ok(None) => {},
+            Err(_panic) => {
+                // Proof engine panicked on this lemma's proof script.
+                // This is expected for complex Isar patterns not yet supported.
+            },
+        }
+        // Last resort: generalize and accept as axiom
+        exit = VerifyOutcome::AxiomAccepted;
+        Some(generalize_thm(&lem.theorem))
+    })();
+    LemmaVerification::from_legacy(theorem, exit)
 }
 
 // =========================================================================
@@ -4529,7 +4621,7 @@ mod tests {
         HolTheoremDb::add_builtins(&mut db);
         HolTheoremDb::with_override(&db, || {
             let lem = lemmas.iter().find(|l| l.name == name).expect("lemma should parse");
-            verify_lemma(lem).expect("lemma should return a theorem")
+            verify_lemma(lem).into_legacy_theorem().expect("lemma should return a theorem")
         })
     }
 
@@ -4907,14 +4999,13 @@ mod tests {
 
     #[test]
     fn test_open_oracle_free_theorem_is_not_closed_proved_outcome() {
-        LAST_OUTCOME.with(|c| c.set(VerifyOutcome::Proved));
         let a = CTerm::certify(Term::const_("A", Typ::base("prop")));
         let thm = ThmKernel::assume_compat(a);
 
         assert!(thm.is_fully_proved(), "assume has no oracle footprint");
         assert!(!thm.is_closed(), "assume leaves an ambient hypothesis");
         assert!(!thm.is_closed_proved());
-        assert!(!super::is_transitional_strict_closed_outcome(&thm));
+        assert!(!super::is_transitional_strict_closed_outcome(&thm, VerifyOutcome::Proved));
     }
 
     fn checked_prop_ct(name: &str) -> CTerm {
@@ -5047,12 +5138,15 @@ lemma TrueI:
 
     #[test]
     fn proof_outcome_does_not_count_compat_identity_as_transitional_strict_closed() {
-        LAST_OUTCOME.with(|c| c.set(VerifyOutcome::Proved));
         let a = prop_ct("A");
         let assumed = ThmKernel::assume_compat(a.clone());
         let compat_identity = ThmKernel::implies_intr(&a, &assumed).unwrap();
 
-        let outcome = classify_verify_result("compat_imp_identity", Some(&compat_identity));
+        let outcome = classify_proof_outcome(
+            "compat_imp_identity",
+            None,
+            Some((&compat_identity, VerifyOutcome::Proved)),
+        );
 
         assert!(matches!(outcome, ProofOutcome::CompatClosedOracleFree { .. }));
         assert!(!outcome.is_transitional_strict_closed());
@@ -5130,10 +5224,12 @@ lemma GeneralTrue: "True"
         assert_eq!(split.proof_script.as_deref(), Some("unfolding True_def by (rule refl)"));
 
         let db = hol_true_i_db();
-        let inline_thm =
-            HolTheoremDb::with_override(&db, || verify_lemma(&inline)).expect("inline result");
-        let split_thm =
-            HolTheoremDb::with_override(&db, || verify_lemma(&split)).expect("split result");
+        let inline_thm = HolTheoremDb::with_override(&db, || verify_lemma(&inline))
+            .into_legacy_theorem()
+            .expect("inline result");
+        let split_thm = HolTheoremDb::with_override(&db, || verify_lemma(&split))
+            .into_legacy_theorem()
+            .expect("split result");
         assert_eq!(split_thm.prop(), inline_thm.prop());
         assert_eq!(split_thm.trust_status(), inline_thm.trust_status());
         assert_eq!(split_thm.hyps(), inline_thm.hyps());
@@ -5176,6 +5272,7 @@ lemma GeneralTrue: "True"
             let db = hol_true_i_db_with_schematic_builtin();
 
             let thm = HolTheoremDb::with_override(&db, || verify_lemma(&lem))
+                .into_legacy_theorem()
                 .expect("missing proof should retain compatibility behavior");
 
             assert!(thm.oracles().iter().any(|oracle| oracle.as_ref() == "admitted:parser_gap"));
@@ -5222,6 +5319,7 @@ lemma TrueI:
         ));
 
         let thm = with_hol_true_i_db(|| verify_lemma(&lem))
+            .into_legacy_theorem()
             .expect("explicit adapter rejection must remain an admitted result");
         assert!(!thm.is_strict_closed_proved());
         assert!(
@@ -5264,6 +5362,7 @@ lemma TrueI:
             ));
 
             let thm = HolTheoremDb::with_override(&db, || verify_lemma(&lem))
+                .into_legacy_theorem()
                 .expect("formal-comment payload must remain an admitted rejection");
             assert!(!thm.is_strict_closed_proved());
             assert!(thm.oracles().iter().any(|oracle| {
@@ -5297,7 +5396,9 @@ unfolding True_def by (rule refl)
         let db = hol_true_i_db();
         let result = HolTheoremDb::with_override(&db, || try_strict_adapter(lemma, &db));
         assert!(!matches!(result, StrictAdapterResult::Proved(_)));
-        let thm = HolTheoremDb::with_override(&db, || verify_lemma(lemma)).expect("compat result");
+        let thm = HolTheoremDb::with_override(&db, || verify_lemma(lemma))
+            .into_legacy_theorem()
+            .expect("compat result");
         assert!(!thm.is_strict_closed_proved());
     }
 
@@ -5350,6 +5451,7 @@ proof -
         assert_eq!(lemma.proof_script.as_deref(), Some("proof -\nsorry"));
 
         let thm = with_hol_true_i_db(|| verify_lemma(&lemma))
+            .into_legacy_theorem()
             .expect("active sorry must produce an admitted theorem");
         assert!(!thm.is_strict_closed_proved());
         assert!(
@@ -5647,7 +5749,9 @@ lemma TrueI:
     fn verify_lemma_uses_strict_adapter_for_true_i() {
         let lem = parsed_hol_true_i();
 
-        let thm = with_hol_true_i_db(|| verify_lemma(&lem)).expect("TrueI verifies");
+        let thm = with_hol_true_i_db(|| verify_lemma(&lem))
+            .into_legacy_theorem()
+            .expect("TrueI verifies");
 
         assert!(thm.is_strict_closed_proved());
         assert_eq!(thm.prop().term(), &crate::hol::hologic::true_const());
@@ -5660,6 +5764,7 @@ lemma TrueI:
         let db = hol_true_i_db_with_schematic_builtin();
 
         let thm = HolTheoremDb::with_override(&db, || verify_lemma(&lem))
+            .into_legacy_theorem()
             .expect("strict adapter rejection should become explicit admission");
 
         assert!(!thm.is_strict_closed_proved());
@@ -5677,6 +5782,7 @@ lemma TrueI:
         let db = hol_true_i_db_with_schematic_builtin();
 
         let thm = HolTheoremDb::with_override(&db, || verify_lemma(&lem))
+            .into_legacy_theorem()
             .expect("incomplete source proposition should become explicit admission");
 
         assert!(!thm.is_strict_closed_proved());
@@ -5720,6 +5826,7 @@ lemma TrueI:
             let lem = parsed_true_i_from_source(source);
             let db = hol_true_i_db_with_schematic_builtin();
             let thm = HolTheoremDb::with_override(&db, || verify_lemma(&lem))
+                .into_legacy_theorem()
                 .expect("unverified source proposition should become explicit admission");
 
             assert!(!thm.is_strict_closed_proved());
@@ -5735,6 +5842,7 @@ lemma TrueI:
         let lem = hol_true_i_with_prop(Term::free("True", Typ::base("bool")));
 
         let thm = with_hol_true_i_db(|| verify_lemma(&lem))
+            .into_legacy_theorem()
             .expect("Free True rejection should become explicit admission");
 
         assert!(!thm.is_strict_closed_proved());
@@ -5755,6 +5863,7 @@ lemma TrueI:
         let lem = hol_true_i_with_prop(Term::const_("True", Typ::dummy()));
 
         let thm = with_hol_true_i_db(|| verify_lemma(&lem))
+            .into_legacy_theorem()
             .expect("dummy True rejection should become explicit admission");
 
         assert!(!thm.is_strict_closed_proved());
@@ -5774,6 +5883,7 @@ lemma TrueI:
         ));
 
         let thm = with_hol_true_i_db(|| verify_lemma(&lem))
+            .into_legacy_theorem()
             .expect("mistyped True rejection should become explicit admission");
 
         assert!(!thm.is_strict_closed_proved());
@@ -5790,6 +5900,7 @@ lemma TrueI:
         let db = hol_true_i_db_with_schematic_builtin();
 
         let thm = HolTheoremDb::with_override(&db, || verify_lemma(&lem))
+            .into_legacy_theorem()
             .expect("registered adapter should run before parser-gap override");
 
         assert!(thm.is_strict_closed_proved());
@@ -5813,26 +5924,64 @@ lemma TrueI:
     }
 
     #[test]
-    fn proof_outcome_total_excludes_kernel_trusted_overlay() {
-        let stats = ProofOutcomeStats {
-            kernel_trusted_closed: 1,
-            transitional_strict_closed: 1,
-            ..ProofOutcomeStats::default()
-        };
+    fn accepted_token_precedes_legacy_and_counts_exactly_once() {
+        let signature =
+            crate::kernel::Signature::new().extend_const("A", crate::kernel::Ty::prop()).unwrap();
+        let theory = crate::kernel::TrustedTheory::root("Pure", signature);
+        let context = crate::kernel::ProofContext::new(theory.snapshot().clone());
+        let proposition = context
+            .certify_prop(crate::kernel::RawTerm::const_("A", crate::kernel::Ty::prop()))
+            .unwrap();
+        let assumed = crate::kernel::KernelRules::assume(proposition.clone()).into_kernel();
+        let closed = crate::kernel::KernelRules::implies_intr(&proposition, &assumed)
+            .unwrap()
+            .try_close()
+            .unwrap();
+        let (_, accepted) =
+            crate::kernel::accept_closed_theorem(&theory, "imp_identity", closed).unwrap();
+        let legacy = ThmKernel::reflexive(checked_prop_ct("A")).unwrap();
 
+        let outcome = classify_proof_outcome(
+            "imp_identity",
+            Some(accepted),
+            Some((&legacy, VerifyOutcome::Proved)),
+        );
+        let mut stats = ProofOutcomeStats::default();
+        stats.record(&outcome);
+
+        assert!(outcome.is_kernel_trusted_closed());
+        assert!(!outcome.is_transitional_strict_closed());
+        assert_eq!(stats.kernel_trusted_closed, 1);
+        assert_eq!(stats.transitional_strict_closed, 0);
         assert_eq!(stats.total(), 1);
         assert_eq!(
             stats.report_lines()[..2],
-            ["KernelTrustedClosed: 1", "TransitionalStrictClosed: 1"]
+            ["KernelTrustedClosed: 1", "TransitionalStrictClosed: 0"]
         );
     }
 
     #[test]
+    fn verification_results_keep_independent_legacy_exits() {
+        let theorem = ThmKernel::reflexive(checked_prop_ct("A")).unwrap();
+        let proved = LemmaVerification::from_legacy(Some(theorem.clone()), VerifyOutcome::Proved);
+        let axiom = LemmaVerification::from_legacy(Some(theorem), VerifyOutcome::AxiomAccepted);
+
+        let axiom_outcome = classify_verify_result("axiom", &axiom);
+        let proved_outcome = classify_verify_result("proved", &proved);
+
+        assert!(matches!(
+            axiom_outcome,
+            ProofOutcome::Admitted { reason: AdmitReason::AxiomAcceptedWithoutOracle, .. }
+        ));
+        assert!(matches!(proved_outcome, ProofOutcome::TransitionalStrictClosed { .. }));
+    }
+
+    #[test]
     fn proof_outcome_classifies_transitional_strict_closed() {
-        LAST_OUTCOME.with(|c| c.set(VerifyOutcome::Proved));
         let thm = ThmKernel::reflexive(checked_prop_ct("A")).unwrap();
 
-        let outcome = classify_verify_result("strict_refl", Some(&thm));
+        let outcome =
+            classify_proof_outcome("strict_refl", None, Some((&thm, VerifyOutcome::Proved)));
 
         assert!(matches!(outcome, ProofOutcome::TransitionalStrictClosed { .. }));
         assert!(outcome.is_transitional_strict_closed());
@@ -5840,10 +5989,13 @@ lemma TrueI:
 
     #[test]
     fn proof_outcome_does_not_count_axiom_accepted_strict_result() {
-        LAST_OUTCOME.with(|c| c.set(VerifyOutcome::AxiomAccepted));
         let thm = ThmKernel::reflexive(checked_prop_ct("A")).unwrap();
 
-        let outcome = classify_verify_result("accepted_strict", Some(&thm));
+        let outcome = classify_proof_outcome(
+            "accepted_strict",
+            None,
+            Some((&thm, VerifyOutcome::AxiomAccepted)),
+        );
 
         assert!(matches!(
             outcome,
@@ -5854,10 +6006,10 @@ lemma TrueI:
 
     #[test]
     fn proof_outcome_classifies_compat_closed_oracle_free() {
-        LAST_OUTCOME.with(|c| c.set(VerifyOutcome::Proved));
         let thm = ThmKernel::reflexive_compat(CTerm::certify(Term::const_("a", Typ::base("nat"))));
 
-        let outcome = classify_verify_result("compat_refl", Some(&thm));
+        let outcome =
+            classify_proof_outcome("compat_refl", None, Some((&thm, VerifyOutcome::Proved)));
 
         assert!(matches!(outcome, ProofOutcome::CompatClosedOracleFree { .. }));
         assert!(!outcome.is_transitional_strict_closed());
@@ -5865,10 +6017,10 @@ lemma TrueI:
 
     #[test]
     fn proof_outcome_classifies_open_oracle_free() {
-        LAST_OUTCOME.with(|c| c.set(VerifyOutcome::Proved));
         let thm = ThmKernel::assume_compat(prop_ct("A"));
 
-        let outcome = classify_verify_result("open_assume", Some(&thm));
+        let outcome =
+            classify_proof_outcome("open_assume", None, Some((&thm, VerifyOutcome::Proved)));
 
         assert!(matches!(
             outcome,
@@ -5879,10 +6031,10 @@ lemma TrueI:
 
     #[test]
     fn proof_outcome_classifies_admitted_reason() {
-        LAST_OUTCOME.with(|c| c.set(VerifyOutcome::AxiomAccepted));
         let thm = ThmKernel::admit(prop_ct("A"), "admitted:proof_engine_failed");
 
-        let outcome = classify_verify_result("admitted", Some(&thm));
+        let outcome =
+            classify_proof_outcome("admitted", None, Some((&thm, VerifyOutcome::AxiomAccepted)));
 
         assert!(matches!(
             outcome,
@@ -6148,8 +6300,11 @@ lemma TrueI:
         let lem = &lemmas[0];
         assert!(lem.proof_script.is_some(), "should capture proof script");
         let result = verify_lemma(lem);
-        assert!(result.is_some(), "verify_lemma should succeed for A ==> A by assumption");
-        let result = result.unwrap();
+        assert!(
+            result.legacy_theorem().is_some(),
+            "verify_lemma should succeed for A ==> A by assumption"
+        );
+        let result = result.into_legacy_theorem().unwrap();
         assert!(
             result.hyps().is_empty(),
             "roundtrip result should close ambient hyps: prop={:?}, hyps={:?}, oracles={:?}, trust={:?}",
@@ -6242,7 +6397,7 @@ lemma TrueI:
                     continue;
                 }
                 let result = verify_lemma(lem);
-                let outcome = classify_verify_result(&lem.name, result.as_ref());
+                let outcome = classify_verify_result(&lem.name, &result);
                 if outcome.is_transitional_strict_closed() {
                     continue;
                 }
@@ -6309,11 +6464,13 @@ mod integration_tests {
         if let Some(lem) = target {
             eprintln!("Found lemma: {} with proof: {:?}", lem.name, lem.proof_script);
             let result = verify_lemma(lem);
-            match result {
-                Some(thm) if is_transitional_strict_closed_outcome(&thm) => {
+            match result.legacy() {
+                Some((thm, exit)) if is_transitional_strict_closed_outcome(thm, exit) => {
                     eprintln!("TRANSITIONAL STRICT CLOSED: {} -> {:?}", lem.name, thm.prop().term())
                 },
-                Some(thm) => eprintln!("ACCEPTED/OPEN: {} -> {:?}", lem.name, thm.prop().term()),
+                Some((thm, _)) => {
+                    eprintln!("ACCEPTED/OPEN: {} -> {:?}", lem.name, thm.prop().term())
+                },
                 None => eprintln!("FAILED to verify: {}", lem.name),
             }
         }
@@ -6327,8 +6484,8 @@ mod integration_tests {
                     lem.proof_script.as_ref().map(|s| &s[..s.len().min(80)])
                 );
                 let result = verify_lemma(lem);
-                let status = match result {
-                    Some(ref thm) if is_transitional_strict_closed_outcome(thm) => {
+                let status = match result.legacy() {
+                    Some((thm, exit)) if is_transitional_strict_closed_outcome(thm, exit) => {
                         "TRANSITIONAL STRICT CLOSED"
                     },
                     Some(_) => "ACCEPTED/OPEN",
@@ -6371,7 +6528,7 @@ mod benchmark_tests {
             let start = std::time::Instant::now();
             for lem in with_proofs.iter().take(sample) {
                 let result = verify_lemma(lem);
-                let outcome = classify_verify_result(&lem.name, result.as_ref());
+                let outcome = classify_verify_result(&lem.name, &result);
                 if outcome.is_transitional_strict_closed() {
                     verified += 1;
                 }
@@ -6407,7 +6564,7 @@ mod benchmark_tests {
             let t0 = Instant::now();
             let result = verify_lemma(lem);
             let dt = t0.elapsed().as_secs_f64();
-            let outcome = classify_verify_result(&lem.name, result.as_ref());
+            let outcome = classify_verify_result(&lem.name, &result);
             let proved = outcome.is_transitional_strict_closed();
             if proved {
                 verified += 1;

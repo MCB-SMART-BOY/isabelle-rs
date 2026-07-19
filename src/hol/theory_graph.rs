@@ -327,7 +327,7 @@ mod scale_tests {
 
     fn is_transitional_strict_closed(lemma: &ParsedLemma) -> bool {
         let result = crate::isar::method::verify_lemma(lemma);
-        crate::isar::method::classify_verify_result(&lemma.name, result.as_ref())
+        crate::isar::method::classify_verify_result(&lemma.name, &result)
             .is_transitional_strict_closed()
     }
 

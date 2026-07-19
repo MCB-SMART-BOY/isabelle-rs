@@ -35,6 +35,7 @@ mod server;
 
 mod hol;
 mod isar;
+mod kernel;
 mod tools;
 
 use core::{CTerm, Sort, Term, ThmKernel, Typ};
