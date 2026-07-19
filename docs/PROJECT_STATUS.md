@@ -67,12 +67,9 @@ The baseline gate is `scripts/dev-check.sh strict`; the implementation is
 A post-commit audit also ran normal and all-target compilation at baseline
 `38c5f14` (then `origin/dev`) and each
 immutable-context/acceptance/outcome/source-AST candidate commit. Normal
-`cargo +stable check --locked` and the strict gate pass independently.
-`cargo +stable check --locked --all-targets` fails identically at every point
-with four pre-existing `benches/kernel_benchmarks.rs` errors: two private
-`proofterm::check_proof` calls and two `Result<Thm>` argument mismatches. This
-is not a regression from the trusted-boundary commits, but the all-targets gate
-must not be reported as passing.
+`cargo +stable check --locked` and the strict gate pass independently. After
+a targeted `benches/kernel_benchmarks.rs` fix (commit `878d8ae`),
+`cargo +stable check --locked --all-targets` also passes.
 
 The baseline originally carried two ignored `alpha_eq` tests:
 

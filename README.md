@@ -42,11 +42,11 @@ Do not claim full `cargo test --lib` success unless the known
 verified as fixed in the current checkout; the explicit wrapper mode is
 `scripts/dev-check.sh lib`.
 
-`cargo +stable check --locked --all-targets` currently fails in the pre-existing
-`benches/kernel_benchmarks.rs` target: two calls use the private
-`proofterm::check_proof`, and two implication benchmarks pass `Result<Thm>`
-instead of `Thm`. The same four errors occur at `origin/dev`; do not report the
-all-targets gate as green until that separate benchmark debt is fixed.
+`cargo +stable check --locked --all-targets` now passes after a targeted
+`benches/kernel_benchmarks.rs` fix: `ThmKernel::assume` was unwrapped and
+`pub(crate)` `proofterm::check_proof` calls were replaced with the public
+`proofterm::replay_proof`.
+
 
 ## Trust Model
 

@@ -366,10 +366,8 @@ candidate commits independently pass `cargo +stable check --locked` and
 `scripts/check-strict-kernel.sh` when built with isolated Cargo targets.
 `cargo +stable check --locked --all-targets` fails at that baseline and every
 candidate with the same four pre-existing benchmark errors: two private
-`proofterm::check_proof` calls and two `Result<Thm>` argument mismatches in
-`benches/kernel_benchmarks.rs`. No
-candidate introduced an all-targets regression; the gate is nevertheless not
-green.
+`Result<Thm>` argument mismatches in `benches/kernel_benchmarks.rs`. The
+issues are now fixed (commit `878d8ae`); `--all-targets` passes.
 
 ## Required Implementation Order
 

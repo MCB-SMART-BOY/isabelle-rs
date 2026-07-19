@@ -210,4 +210,8 @@ E0308: implies_intr/implies_elim receive &Result<Thm> (two calls)
 
 This proves the benchmark failure predates the candidate series; it does not
 make the all-targets gate pass. Keep this debt separate from kernel acceptance,
-outcome classification, and source-AST changes.
+
+As of 2026-07-19 (commit `878d8ae`), the two issues were fixed:
+`ThmKernel::assume` now unwraps before `implies_intr`/`implies_elim`, and
+`pub(crate)` `proofterm::check_proof` calls were replaced with the public
+`replay_proof`. `--all-targets` now passes.

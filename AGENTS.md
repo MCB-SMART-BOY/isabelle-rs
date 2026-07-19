@@ -197,6 +197,7 @@ identity tests introduced by the slice. Report exact observed outputs. Do not
 claim full `cargo test --lib` success unless the stack-sensitive theory-loader
 batch is proven fixed in the current checkout.
 
-`cargo +stable check --locked --all-targets` has four known pre-existing
-benchmark compile errors on `origin/dev`; see `docs/BASELINE.md`. Report that
-gate separately rather than claiming it passed.
+`cargo +stable check --locked --all-targets` now passes after a targeted
+`benches/kernel_benchmarks.rs` fix; see `docs/BASELINE.md` for the historical
+pre-existing failure audit.
+

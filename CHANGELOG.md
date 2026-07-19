@@ -57,9 +57,10 @@ All notable changes to isabelle-rs.
 - Added the trusted-acceptance attack suite and strict public-boundary
   compile-fail doctests to the strict kernel gate.
 - Audited baseline `38c5f14` and every candidate commit independently. Normal
-  locked checks and strict gates pass; `--all-targets` has the same four
-  pre-existing benchmark compile errors at every revision and is not reported
-  as green.
+  locked checks and strict gates pass; `--all-targets` had four pre-existing
+  benchmark compile errors at every revision. Those are now fixed
+  (`ThmKernel::assume` unwrap, `pub(crate)` `check_proof` → public
+  `replay_proof`); the gate is green.
 - GitHub releases now require a tag matching `Cargo.toml` and the full
   repository-owned release gate before platform artifacts are built.
 

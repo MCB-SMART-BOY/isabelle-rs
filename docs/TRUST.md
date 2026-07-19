@@ -463,9 +463,9 @@ Run `scripts/dev-check.sh core`, `tier2`, or `tier3`.
 Do not claim broad `cargo test --lib` success unless the known theory-loader
 stack overflow has been verified fixed.
 
-`cargo +stable check --locked --all-targets` is not currently a green gate:
-four benchmark compile errors reproduce unchanged on `origin/dev`. This is
-separate pre-existing benchmark debt, not evidence against the strict gate.
+`cargo +stable check --locked --all-targets` now passes after fixing two
+pre-existing benchmark compile errors (`ThmKernel::assume` unwrap and
+`pub(crate)` `check_proof` → public `replay_proof`).
 
 ## Reporting Rules
 
