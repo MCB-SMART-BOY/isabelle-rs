@@ -357,12 +357,20 @@ and an independent golden theorem-ID vector.
   HOL benchmark;
 - `KernelTrustedClosed` is a real exclusive outcome, still `0/125`.
 
-### 3. Source-aware proposition AST
+### 3. Source-aware proposition AST — in progress
 
-Preserve meta/HOL connective identity, source spans, binder scopes,
-Const/Free/Var/Bound identity, explicit types and sorts, notation provenance,
-and parser-recorded `HOL.Trueprop` positions before legacy `CTerm` lowering.
-Current source-shape metadata remains transitional only.
+- `src/isar/source_ast.rs` provides `SourceProposition`, `SourceExpr`, and
+  `SourceType` as unresolved source-level syntax with preserved spans;
+- every name is an unresolved `SourceName` (no `Const`/`Free`/`Var`
+  distinction at the AST level);
+- no `ContextStamp`, `SignatureId`, `TheoryId`, `CProp`, `ClosedThm`, or
+  `TrustedTheorem` appears in the module or its public API;
+- compile-fail doc-tests enforce the absence of `From` conversions into
+  `Term`, `CProp`, `ClosedThm`, `TrustedTheorem`, and `DependencySet`;
+- `SourceSpan` and `SourceId` are for diagnostics only; they do not enter
+  `TheoremId` or any kernel identity digest;
+- an explicit elaborator (`SourceProposition → CProp`) is deferred to
+  Change C2 (checked judgment / constant / type-scheme elaboration).
 
 ### 4. Checked judgment / constant / type-scheme elaboration
 
