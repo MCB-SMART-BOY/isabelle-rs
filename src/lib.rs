@@ -13,13 +13,6 @@
 //! - `syntax` — Rowan CST-based incremental parser + Pretty Printer
 //! - `wasm` — WASM plugin system
 
-// Allow dead code and unused variables/imports for API surface not yet integrated
-#![allow(dead_code)]
-#![allow(unused_variables)]
-#![allow(unused_imports)]
-#![allow(unreachable_patterns)]
-#![allow(unused_comparisons)]
-
 pub mod core;
 pub mod document;
 pub mod fleche;

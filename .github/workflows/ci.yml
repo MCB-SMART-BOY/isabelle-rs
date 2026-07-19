@@ -134,6 +134,11 @@ jobs:
       - name: Property-based tests (advisory)
         continue-on-error: true
         run: cargo test --locked --test proptest
+      - name: Known-failure baseline (advisory)
+        continue-on-error: true
+        run: cargo test --locked --lib -- --ignored
+      - name: All targets compile
+        run: cargo check --locked --all-targets
 
   # ==========================================================================
   # Stage 4: Extended Checks

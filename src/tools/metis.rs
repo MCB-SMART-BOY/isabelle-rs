@@ -50,9 +50,11 @@
 //! - **Paramodulation**: Substitute equals using `subst_premise`. From `s = t` and `P[s]`, derive
 //!   `P[t]`.
 
+#![allow(dead_code)]
+
 use std::{
     cmp::Ordering,
-    collections::{BinaryHeap, HashMap, HashSet, VecDeque},
+    collections::{BinaryHeap, HashMap, HashSet},
     sync::Arc,
 };
 
@@ -61,7 +63,6 @@ use crate::core::{
     logic::Pure,
     term::Term,
     thm::{CTerm, Thm, ThmKernel},
-    types::Typ,
     unify,
 };
 use crate::hol::hologic;
@@ -254,10 +255,7 @@ impl ClauseSignature {
 
 /// Simple structural hash for a term (not cryptographically secure).
 fn hash_term(term: &Term) -> u64 {
-    use std::{
-        collections::hash_map::DefaultHasher,
-        hash::{Hash, Hasher},
-    };
+    use std::{collections::hash_map::DefaultHasher, hash::Hasher};
     let mut hasher = DefaultHasher::new();
     hash_term_into(term, &mut hasher);
     hasher.finish()
@@ -634,7 +632,7 @@ impl MetisProver {
         let target_entry = &self.clauses[target_cl_id].clone();
 
         // Check if eq_entry contains an equality premise
-        for (eq_idx, eq_prem) in eq_entry.premises.iter().enumerate() {
+        for (_eq_idx, eq_prem) in eq_entry.premises.iter().enumerate() {
             self.steps += 1;
             if self.steps > self.max_steps {
                 return;
@@ -646,7 +644,7 @@ impl MetisProver {
             if eq_pair.is_none() {
                 continue;
             }
-            let (lhs, rhs) = eq_pair.unwrap();
+            let (lhs, _rhs) = eq_pair.unwrap();
 
             // For each premise of the target clause, try to substitute
             for (tgt_idx, tgt_prem) in target_entry.premises.iter().enumerate() {
@@ -1551,7 +1549,7 @@ pub fn reconstruct_atp_proof(
     premises: &[Arc<Thm>],
     goal: &Thm,
 ) -> Option<Arc<Thm>> {
-    use crate::tools::reconstruct::{ProofReconstructor, ProofStep};
+    use crate::tools::reconstruct::ProofReconstructor;
 
     // 1. Parse TSTP steps
     let steps = ProofReconstructor::parse_tstp(atp_output);
@@ -1778,18 +1776,18 @@ impl MetisReplay {
     /// From `A ==> B` and `C ==> D` where `B` unifies with `C`,
     /// derive `(A ∪ C\{C_unified}) ==> D[subst]`.
     fn resolution(&self, clause1: &Arc<Thm>, clause2: &Arc<Thm>) -> Option<Arc<Thm>> {
-        let (prems1, concl1) = Pure::strip_imp_prems(clause1.prop().term());
+        let (prems1, _concl1) = Pure::strip_imp_prems(clause1.prop().term());
         let (prems2, _concl2) = Pure::strip_imp_prems(clause2.prop().term());
 
         // Try to resolve concl1 with each premise of clause2
-        for (i, prem2) in prems2.iter().enumerate() {
+        for (i, _prem2) in prems2.iter().enumerate() {
             if let Some(resolvent) = ThmKernel::bicompose(true, clause1, clause2, i) {
                 return Some(Arc::new(resolvent));
             }
         }
 
         // Try the other direction: concl2 with premise of clause1
-        for (i, prem1) in prems1.iter().enumerate() {
+        for (i, _prem1) in prems1.iter().enumerate() {
             if let Some(resolvent) = ThmKernel::bicompose(true, clause2, clause1, i) {
                 return Some(Arc::new(resolvent));
             }

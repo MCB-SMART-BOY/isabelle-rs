@@ -10,10 +10,9 @@
 //! Goal + Premises → Clausification → Model Elimination → Proof
 //! ```
 
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+#![allow(dead_code)]
+
+use std::sync::Arc;
 
 use crate::core::{
     logic::Pure,

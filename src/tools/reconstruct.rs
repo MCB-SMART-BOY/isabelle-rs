@@ -76,9 +76,12 @@ use std::{collections::HashMap, sync::Arc};
 use crate::core::{
     logic::Pure,
     term::Term,
-    thm::{CTerm, Thm, ThmKernel},
+    thm::{Thm, ThmKernel},
     types::Typ,
 };
+
+#[cfg(test)]
+use crate::core::thm::CTerm;
 
 // =========================================================================
 // Proof step
@@ -260,7 +263,7 @@ impl ProofReconstructor {
 
         if let Some(result) = recon.reconstruct(steps) {
             // Check if the reconstructed theorem proves the goal
-            let (_, concl) = crate::core::logic::Pure::strip_imp_prems(result.prop().term());
+            let (_, concl) = Pure::strip_imp_prems(result.prop().term());
             concl == goal || result.prop().term() == goal
         } else {
             false
@@ -327,8 +330,7 @@ impl ProofReconstructor {
             if reduced.len() < needed.len() {
                 let mut recon = ProofReconstructor::new(reduced);
                 if let Some(result) = recon.reconstruct(steps) {
-                    let (_, concl) =
-                        crate::core::logic::Pure::strip_imp_prems(result.prop().term());
+                    let (_, concl) = Pure::strip_imp_prems(result.prop().term());
                     if concl == goal {
                         needed.retain(|n| n != name);
                     }

@@ -14,6 +14,8 @@
 //! `ThmKernel::admit` (oracle tag `"hol_consts:STUB"`) so the result is not
 //! `is_fully_proved()`, and are `pub(crate)` so they cannot leak.
 
+#![allow(dead_code)]
+
 use crate::core::{
     term::Term,
     thm::{CTerm, Thm, ThmKernel},

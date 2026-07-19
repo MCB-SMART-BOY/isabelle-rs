@@ -26,6 +26,8 @@
 //! | ∀ (all)   | `all_intr` | `all_elim` |
 //! | ∃ (ex)    | `ex_intr` | `ex_elim` |
 
+#![allow(dead_code)]
+
 use crate::core::{
     error::KernelError,
     logic::Pure,

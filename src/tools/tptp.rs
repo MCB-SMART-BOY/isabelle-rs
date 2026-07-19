@@ -6,10 +6,10 @@
 //!
 //! This is the first step towards Sledgehammer integration.
 
-use crate::{
-    core::{logic::Pure, term::Term, thm::Thm},
-    hol::hologic,
-};
+use crate::core::{logic::Pure, term::Term, thm::Thm};
+
+#[cfg(test)]
+use crate::hol::hologic;
 
 /// Export a goal to TPTP FOF format.
 pub fn goal_to_tptp_fof(thm: &Thm, name: &str) -> String {

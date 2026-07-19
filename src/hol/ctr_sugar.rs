@@ -42,6 +42,8 @@
 //!
 //! All other theorems are properly derived from these using LCF kernel operations.
 
+#![allow(dead_code)]
+
 use std::sync::Arc;
 
 use crate::{
@@ -355,12 +357,12 @@ impl CtrSugar {
     ///
     /// Derived from discriminator definitions and case equations using
     /// [`ThmKernel::transitive`].
-    fn derive_disc_thms(&self, disc_defs: &[Thm], case_thms: &[Thm]) -> Vec<Thm> {
+    fn derive_disc_thms(&self, disc_defs: &[Thm], _case_thms: &[Thm]) -> Vec<Thm> {
         let mut thms = Vec::new();
         let dt_typ = self.datatype_typ();
 
         for (i, _) in self.datatype.constructors.iter().enumerate() {
-            let disc_def = &disc_defs[i];
+            let _disc_def = &disc_defs[i];
 
             for (j, (_ctor_name, args)) in self.datatype.constructors.iter().enumerate() {
                 let arg_vars: Vec<String> =
@@ -421,7 +423,7 @@ impl CtrSugar {
             case_typ = Typ::arrow(branch_typ, case_typ);
         }
 
-        for (i, (_ctor_name, args)) in self.datatype.constructors.iter().enumerate() {
+        for (i, (_ctor_name, _args)) in self.datatype.constructors.iter().enumerate() {
             let sel_names = &self.sels[i];
 
             for (j, sel_name) in sel_names.iter().enumerate() {
@@ -440,7 +442,7 @@ impl CtrSugar {
                         } else {
                             // λa1...an. a_j
                             let arg_var = Term::bound(args_k.len() - 1 - j);
-                            let lam = arg_var;
+                            let _lam = arg_var;
                             for (_l, (_sel, _arg_typ)) in args_k.iter().enumerate().rev() {
                                 if args_k.len() - 1 - _l == j {
                                     // Already placed the arg_var, just wrap in lambda
@@ -452,7 +454,7 @@ impl CtrSugar {
                             // Build from the outside in: λa1...an. a_j
                             let mut body_fixed = Term::bound(args_k.len() - 1 - j);
                             for m in (0..args_k.len()).rev() {
-                                let arg_name = format!("a{}", m + 1);
+                                let _arg_name = format!("a{}", m + 1);
                                 let inner_body = if m == args_k.len() - 1 - j {
                                     body_fixed.clone()
                                 } else {
@@ -604,7 +606,7 @@ impl CtrSugar {
     ///    ⟹ case_T M f1...fn = case_T M' g1...gn
     ///
     /// This is derived from the case equations using equational reasoning.
-    fn derive_case_cong(&self, case_thms: &[Thm]) -> Thm {
+    fn derive_case_cong(&self, _case_thms: &[Thm]) -> Thm {
         let dt_typ = self.datatype_typ();
         let case_name = format!("case_{}", self.datatype.name);
         let result_typ = Typ::free("'b", crate::core::types::Sort::singleton("type"));
@@ -890,7 +892,7 @@ impl CtrSugar {
         let mut axioms = Vec::new();
         let dt_typ = Typ::base(def.name.as_str());
 
-        for (ctor_idx, (ctor_name, args)) in def.constructors.iter().enumerate() {
+        for (_ctor_idx, (ctor_name, args)) in def.constructors.iter().enumerate() {
             if args.is_empty() {
                 let lhs = Term::const_(ctor_name.as_str(), dt_typ.clone());
                 let eq = Pure::mk_equals(dt_typ.clone(), lhs.clone(), lhs);
@@ -1149,7 +1151,7 @@ impl CtrSugar {
     fn generate_split_lemma(&self) -> ParsedLemma {
         let split_name = format!("{}.split", self.datatype.name);
         let dt_typ = self.datatype_typ();
-        let case_name = format!("case_{}", self.datatype.name);
+        let _case_name = format!("case_{}", self.datatype.name);
         let prop_typ = Typ::base("prop");
         let x = Term::free("x", dt_typ.clone());
 

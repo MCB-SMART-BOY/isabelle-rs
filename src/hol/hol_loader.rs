@@ -7,6 +7,8 @@
 //!
 //! This avoids manually rewriting HOL — we reuse Isabelle's own source.
 
+#![allow(dead_code)]
+
 use std::sync::{Arc, LazyLock};
 
 use crate::{
@@ -1425,7 +1427,7 @@ pub fn generate_datatype_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
         } else {
             "x"
         };
-        let induct_stmt = format!("[| {} |] ==> P ({})", induct_premises.join("; "), var_name);
+        let _induct_stmt = format!("[| {} |] ==> P ({})", induct_premises.join("; "), var_name);
         let induct_term = Term::const_("True", Typ::base("prop"));
         lemmas.push(ParsedLemma {
             name: format!("{}.induct", def.name),
@@ -1455,7 +1457,7 @@ pub fn generate_datatype_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
             .zip(arg_names2.iter())
             .map(|(a, b)| format!("{} = {}", a, b))
             .collect();
-        let inject_stmt = format!("({} = {}) = ({})", call1, call2, eqs.join(" & "));
+        let _inject_stmt = format!("({} = {}) = ({})", call1, call2, eqs.join(" & "));
         let inject_term = Term::const_("True", Typ::base("prop"));
         lemmas.push(ParsedLemma {
             name: format!("{}.inject", def.name),
@@ -1480,7 +1482,7 @@ pub fn generate_datatype_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
             }
         }
         if !distinct_pairs.is_empty() {
-            let distinct_stmt = distinct_pairs.join(" & ");
+            let _distinct_stmt = distinct_pairs.join(" & ");
             let distinct_term = Term::const_("True", Typ::base("prop"));
             lemmas.push(ParsedLemma {
                 name: format!("{}.distinct", def.name),
@@ -1522,7 +1524,7 @@ pub fn generate_datatype_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
             ));
         }
     }
-    let exhaust_stmt = format!("[| {} |] ==> P", exhaust_cases.join("; "));
+    let _exhaust_stmt = format!("[| {} |] ==> P", exhaust_cases.join("; "));
     let exhaust_term = Term::const_("True", Typ::base("prop"));
     lemmas.push(ParsedLemma {
         name: format!("{}.exhaust", def.name),
@@ -1662,7 +1664,7 @@ pub fn generate_bnf_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
             let set_rhs =
                 if set_args.is_empty() { "empty".to_string() } else { set_args.join(" ∪ ") };
 
-            let set_eq = format!("{} ({}) = {}", set_name, ctor_call, set_rhs);
+            let _set_eq = format!("{} ({}) = {}", set_name, ctor_call, set_rhs);
             let set_term = Term::const_("True", Typ::base("prop"));
 
             lemmas.push(ParsedLemma {
@@ -1681,7 +1683,7 @@ pub fn generate_bnf_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
     if !def.constructors.is_empty() {
         let rel_vars: Vec<String> =
             def.type_params.iter().map(|p| format!("R_{}", p.trim_start_matches('\''))).collect();
-        let rel_eq = format!("{} {} x y = (x = y)", rel_name, rel_vars.join(" "));
+        let _rel_eq = format!("{} {} x y = (x = y)", rel_name, rel_vars.join(" "));
         let rel_term = Term::const_("True", Typ::base("prop"));
 
         lemmas.push(ParsedLemma {
@@ -1696,7 +1698,7 @@ pub fn generate_bnf_lemmas(def: &DatatypeDef) -> Vec<ParsedLemma> {
 
     // 4. Predicator: pred_T P1 P2 x = ...
     let pred_name = format!("pred_{}", def.name);
-    let pred_eq = format!("{} P x = True", pred_name);
+    let _pred_eq = format!("{} P x = True", pred_name);
     let pred_term = Term::const_("True", Typ::base("prop"));
 
     lemmas.push(ParsedLemma {

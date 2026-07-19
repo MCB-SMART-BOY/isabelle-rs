@@ -818,8 +818,8 @@ impl BnfLfp {
         let eq = Pure::mk_equals(dt_type.clone(), lhs, rhs);
 
         // Wrap with universal quantifiers
-        let s = Term::var("s", 0, Typ::dummy());
-        let f = Term::var("f", 1, Typ::dummy());
+        let _s = Term::var("s", 0, Typ::dummy());
+        let _f = Term::var("f", 1, Typ::dummy());
         let mut result = eq;
         result = Pure::mk_all("s", Typ::dummy(), result);
         result = Pure::mk_all("f", Typ::dummy(), result);
@@ -879,8 +879,8 @@ impl BnfLfp {
 
     /// Build map equation for a single constructor.
     fn prove_map_ctor(&self, ctor_name: &str, args: &[(Option<String>, String)]) -> Option<Thm> {
-        let dt_type = datatype_type(&self.datatype);
-        let dt_type2 = datatype_type(&self.datatype);
+        let _dt_type = datatype_type(&self.datatype);
+        let _dt_type2 = datatype_type(&self.datatype);
 
         // Build: map_T f (C a1 ... an) = C (f a1) ... (map_T f rec_arg) ...
         // Create type params for map_T
@@ -889,7 +889,7 @@ impl BnfLfp {
             .type_params
             .iter()
             .enumerate()
-            .map(|(i, p)| {
+            .map(|(_i, p)| {
                 let s = format!("'{}", p.trim_start_matches('\''));
                 Typ::free(s.as_str(), Sort::top())
             })
@@ -1008,7 +1008,7 @@ impl BnfLfp {
         let id_type = Typ::arrow(dt_type.clone(), dt_type.clone());
 
         // map_T id :: dt_type => dt_type
-        let map_id_type = Typ::arrow(dt_type.clone(), dt_type.clone());
+        let _map_id_type = Typ::arrow(dt_type.clone(), dt_type.clone());
         let map_const = Term::const_(format!("map_{}", self.datatype.name).as_str(), Typ::dummy());
 
         // Build: map_T (%x. x) = (%x. x)
@@ -1032,7 +1032,7 @@ impl BnfLfp {
 
         // map_T (g o f) :: dt_type => dt_type
         let dt_type = datatype_type(&self.datatype);
-        let comp_type = Typ::arrow(
+        let _comp_type = Typ::arrow(
             Typ::arrow(dt_type.clone(), dt_type.clone()),
             Typ::arrow(
                 Typ::arrow(dt_type.clone(), dt_type.clone()),

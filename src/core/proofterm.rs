@@ -32,8 +32,11 @@ use super::{
     logic::Pure,
     term::Term,
     thm::{CTerm, Derivation, Hyps},
-    types::{Typ, TypeEnv},
+    types::Typ,
 };
+
+#[cfg(test)]
+use super::types::TypeEnv;
 
 // =========================================================================
 // Proof term

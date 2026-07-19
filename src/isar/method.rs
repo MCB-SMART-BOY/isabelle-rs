@@ -748,6 +748,7 @@ impl Method {
                 }
                 vec![current]
             },
+            #[allow(unreachable_patterns)]
             _ => vec![state.clone()],
         }
     }
@@ -2847,7 +2848,8 @@ fn exec_induct(method_str: &str, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm>
 
     let args = Args::parse_modifiers(rest);
     let mut var_name = "";
-    let arbitrary_vars: Vec<&str> = args.arbitrary.iter().map(|s| s.as_str()).collect();
+    // TODO: induct with arbitrary variables (args.arbitrary) not yet implemented.
+    // When complete, use arbitrary_vars to generalize the induction scheme.
     let explicit_rule: Option<String> = args.rule_name.clone();
 
     let mut parts = rest.split_whitespace();

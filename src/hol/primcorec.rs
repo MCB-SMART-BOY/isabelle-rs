@@ -15,6 +15,8 @@
 //! - Defining equations as [simp] theorems
 //! - Corecursive call well-formedness check
 
+#![allow(dead_code)]
+
 use std::sync::Arc;
 
 use crate::core::{
@@ -235,13 +237,13 @@ impl PrimcorecDef {
         // Simplified coinduction: "f = g" where f and g satisfy the same equations
         let f_name = &self.name;
         let g_name = format!("{}'", f_name);
-        let eq_term = format!("{} = {}", f_name, g_name);
+        let _eq_term = format!("{} = {}", f_name, g_name);
 
         // If there's exactly one equation, build a proper coinduction formula
         if self.equations.len() == 1 {
             let (_label, _lhs, rhs) = &self.equations[0];
             if let Some((ctor, _args)) = parse_constructor_app(rhs) {
-                let term_str = format!(
+                let _term_str = format!(
                     "!!R. (!!x. R x x) ==> (!!x y. R x y ==> {} ({} x) = {} ({} y)) ==> {} = {}",
                     ctor, f_name, ctor, g_name, f_name, g_name
                 );
@@ -253,7 +255,7 @@ impl PrimcorecDef {
     }
 
     fn build_equation_term(&self, lhs: &str, rhs: &str) -> Term {
-        let eq_stmt = format!("{} = {}", lhs, rhs);
+        let _eq_stmt = format!("{} = {}", lhs, rhs);
         Term::const_("True", Typ::base("prop"))
     }
 }

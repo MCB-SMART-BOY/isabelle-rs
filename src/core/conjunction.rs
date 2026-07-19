@@ -6,6 +6,8 @@
 //! multiple subgoals. Unlike `A /\ B` (HOL conjunction), `&&&` is
 //! at the Pure level and uses the same hypotheses.
 
+#![allow(dead_code)]
+
 use super::{
     logic::Pure,
     term::Term,

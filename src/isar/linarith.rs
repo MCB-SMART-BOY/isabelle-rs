@@ -17,16 +17,17 @@ use std::{
 
 use crate::{
     core::{
-        logic::Pure,
         simplifier::RewriteRule,
         term::Term,
         thm::{CTerm, Thm, ThmKernel},
         types::Typ,
     },
-    hol::{hol_loader::HolTheoremDb, hologic},
+    hol::hol_loader::HolTheoremDb,
     isar::method::Method,
-    tools::simp::HolSimplifier,
 };
+
+#[cfg(test)]
+use crate::{core::logic::Pure, hol::hologic, tools::simp::HolSimplifier};
 
 // =========================================================================
 // Arithmetic type
