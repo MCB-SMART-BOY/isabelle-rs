@@ -51,7 +51,7 @@ fn bench_kernel_implies_roundtrip(c: &mut Criterion) {
     group.bench_function("intr_then_elim", |b| {
         let a = term::Term::const_("A", types::Typ::base("prop"));
         let ct_a = thm::CTerm::certify(a);
-        let assume_a = thm::ThmKernel::assume(ct_a.clone());
+        let assume_a = thm::ThmKernel::assume(ct_a.clone()).unwrap();
 
         b.iter(|| {
             let imp = thm::ThmKernel::implies_intr(&ct_a, &assume_a).unwrap();
@@ -149,7 +149,7 @@ fn bench_proof_checking(c: &mut Criterion) {
         let prop = term::Term::const_("A", types::Typ::base("prop"));
         let proof = proofterm::ProofTerm::PAxm { name: "test".into(), prop: prop.clone() };
         b.iter(|| {
-            let _ = proofterm::check_proof(black_box(&proof), black_box(&prop));
+            let _ = proofterm::replay_proof(black_box(&proof));
         });
     });
 
@@ -163,7 +163,7 @@ fn bench_proof_checking(c: &mut Criterion) {
         let app =
             proofterm::ProofTerm::PAppP { proof1: Box::new(proof_imp), proof2: Box::new(proof_a) };
         bench.iter(|| {
-            let _ = proofterm::check_proof(black_box(&app), black_box(&b_term));
+            let _ = proofterm::replay_proof(black_box(&app));
         });
     });
     group.finish();
