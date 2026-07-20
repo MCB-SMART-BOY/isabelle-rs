@@ -1,4 +1,4 @@
-use super::{InstEntry, KernelError, Name, Ty, identity::CanonicalEncoder};
+use super::{CTerm, InstEntry, KernelError, Name, Ty, identity::CanonicalEncoder};
 
 /// Raw term accepted at the edge of the strict kernel.
 ///
@@ -53,9 +53,361 @@ impl RawTerm {
     pub fn imp(premise: RawTerm, conclusion: RawTerm) -> Self {
         RawTerm::Imp { premise: Box::new(premise), conclusion: Box::new(conclusion) }
     }
+
+    /// Check if this term contains any free variables (`RawTerm::Free`).
+    pub fn has_free_vars(&self) -> bool {
+        let mut stack = vec![self];
+        while let Some(t) = stack.pop() {
+            match t {
+                RawTerm::Free { .. } | RawTerm::Var { .. } => return true,
+                RawTerm::Abs { body, .. } | RawTerm::Forall { body, .. } => stack.push(body),
+                RawTerm::App { func, arg } => { stack.push(arg); stack.push(func); }
+                RawTerm::Eq { lhs, rhs } | RawTerm::Imp { premise: lhs, conclusion: rhs } => {
+                    stack.push(rhs); stack.push(lhs);
+                }
+                RawTerm::Const { .. } | RawTerm::Bound(_) => {}
+            }
+        }
+        false
+    }
+
+    pub(crate) fn write_canonical(&self, encoder: &mut CanonicalEncoder) {
+        match self {
+            RawTerm::Const { name, ty } => {
+                encoder.write_u8(0);
+                encoder.write_name(name);
+                ty.write_canonical(encoder);
+            }
+            RawTerm::Free { name, ty } => {
+                encoder.write_u8(1);
+                encoder.write_name(name);
+                ty.write_canonical(encoder);
+            }
+            RawTerm::Var { name, index, ty } => {
+                encoder.write_u8(2);
+                encoder.write_name(name);
+                encoder.write_u64(*index as u64);
+                ty.write_canonical(encoder);
+            }
+            RawTerm::Bound(i) => {
+                encoder.write_u8(3);
+                encoder.write_u64(*i as u64);
+            }
+            RawTerm::Abs { name, ty, body } => {
+                encoder.write_u8(4);
+                encoder.write_name(name);
+                ty.write_canonical(encoder);
+                body.write_canonical(encoder);
+            }
+            RawTerm::Forall { name, param_ty, body } => {
+                encoder.write_u8(5);
+                encoder.write_name(name);
+                param_ty.write_canonical(encoder);
+                body.write_canonical(encoder);
+            }
+            RawTerm::App { func, arg } => {
+                encoder.write_u8(6);
+                func.write_canonical(encoder);
+                arg.write_canonical(encoder);
+            }
+            RawTerm::Eq { lhs, rhs } => {
+                encoder.write_u8(7);
+                lhs.write_canonical(encoder);
+                rhs.write_canonical(encoder);
+            }
+            RawTerm::Imp { premise, conclusion } => {
+                encoder.write_u8(8);
+                premise.write_canonical(encoder);
+                conclusion.write_canonical(encoder);
+            }
+        }
+    }
 }
 
-/// Certified typed term used by the strict kernel.
+/// Apply type substitution to a RawTerm with validation.
+/// Rejects missing, extra, and duplicate inst entries.
+pub fn subst_types(raw: &RawTerm, type_inst: &[(Name, Ty)]) -> Result<RawTerm, KernelError> {
+    // Collect all distinct type variables (name, index) in the term
+    let mut type_vars: Vec<(Name, usize)> = Vec::new();
+    collect_type_vars(raw, &mut type_vars);
+    // Detect same-name-different-index: ambiguous schema
+    let mut seen_names: std::collections::HashMap<Name, usize> = std::collections::HashMap::new();
+    for (name, index) in &type_vars {
+        if let Some(prev_idx) = seen_names.get(name) {
+            if prev_idx != index {
+                return Err(KernelError::Invariant(
+                    format!("ambiguous type variable `{name}` with indices {prev_idx} and {index}").into(),
+                ));
+            }
+        }
+        seen_names.insert(name.clone(), *index);
+    }
+    // Validate: every inst entry must match a type variable present in the term
+    for (name, _) in type_inst {
+        if !type_vars.iter().any(|(n, _)| n == name) {
+            return Err(KernelError::Invariant(
+                format!("type instantiation `{name}` not present in schema").into(),
+            ));
+        }
+    }
+    // Validate: no duplicate entries
+    let mut seen = std::collections::HashSet::new();
+    for (name, _) in type_inst {
+        if !seen.insert(name.clone()) {
+            return Err(KernelError::Invariant(
+                format!("duplicate type instantiation `{name}`").into(),
+            ));
+        }
+    }
+    // Validate: every type variable in the term must be resolved
+    for (name, _) in &type_vars {
+        if !type_inst.iter().any(|(n, _)| n == name) {
+            return Err(KernelError::Invariant(
+                format!("unresolved type variable `{name}` in schema").into(),
+            ));
+        }
+    }
+    apply_type_subst(raw, type_inst)
+}
+
+fn collect_type_vars(raw: &RawTerm, out: &mut Vec<(Name, usize)>) {
+    let mut push = |ty: &Ty, out: &mut Vec<(Name, usize)>| {
+        ty.for_each_type_var(&mut |name, index| {
+            let key = (name.clone(), index);
+            if !out.iter().any(|(n, i)| n == name && *i == index) {
+                out.push(key);
+            }
+        });
+    };
+    match raw {
+        RawTerm::Const { ty, .. } | RawTerm::Free { ty, .. } | RawTerm::Var { ty, .. } => {
+            push(ty, out);
+        }
+        RawTerm::Abs { ty, body, .. } => {
+            push(ty, out);
+            collect_type_vars(body, out);
+        }
+        RawTerm::Forall { param_ty, body, .. } => {
+            push(param_ty, out);
+            collect_type_vars(body, out);
+        }
+        RawTerm::App { func, arg } => {
+            collect_type_vars(func, out);
+            collect_type_vars(arg, out);
+        }
+        RawTerm::Eq { lhs, rhs } | RawTerm::Imp { premise: lhs, conclusion: rhs } => {
+            collect_type_vars(lhs, out);
+            collect_type_vars(rhs, out);
+        }
+        RawTerm::Bound(_) => {}
+    }
+}
+
+fn apply_type_subst(raw: &RawTerm, inst: &[(Name, Ty)]) -> Result<RawTerm, KernelError> {
+    let subst = |ty: &Ty| ty.subst_type_vars(inst);
+    Ok(match raw {
+        RawTerm::Const { name, ty } => RawTerm::Const { name: name.clone(), ty: subst(ty)? },
+        RawTerm::Free { name, ty } => RawTerm::Free { name: name.clone(), ty: subst(ty)? },
+        RawTerm::Var { name, index, ty } => RawTerm::Var { name: name.clone(), index: *index, ty: subst(ty)? },
+        RawTerm::Bound(i) => RawTerm::Bound(*i),
+        RawTerm::Abs { name, ty, body } => RawTerm::Abs {
+            name: name.clone(), ty: subst(ty)?,
+            body: Box::new(apply_type_subst(body, inst)?),
+        },
+        RawTerm::Forall { name, param_ty, body } => RawTerm::Forall {
+            name: name.clone(), param_ty: subst(param_ty)?,
+            body: Box::new(apply_type_subst(body, inst)?),
+        },
+        RawTerm::App { func, arg } => RawTerm::App {
+            func: Box::new(apply_type_subst(func, inst)?),
+            arg: Box::new(apply_type_subst(arg, inst)?),
+        },
+        RawTerm::Eq { lhs, rhs } => RawTerm::Eq {
+            lhs: Box::new(apply_type_subst(lhs, inst)?),
+            rhs: Box::new(apply_type_subst(rhs, inst)?),
+        },
+        RawTerm::Imp { premise, conclusion } => RawTerm::Imp {
+            premise: Box::new(apply_type_subst(premise, inst)?),
+            conclusion: Box::new(apply_type_subst(conclusion, inst)?),
+        },
+    })
+}
+
+pub(crate) fn strip_schema_foralls(raw: &RawTerm) -> RawTerm {
+    match raw {
+        RawTerm::Forall { body, .. } => strip_schema_foralls(body),
+        other => other.clone(),
+    }
+ }
+
+/// Apply term substitution to a RawTerm with de Bruijn-aware capture avoidance.
+///
+/// Each `(name, index, replacement)` entry replaces `Var { name, index, .. }`.
+/// Bound variable indices are lifted when crossing `Abs`/`Forall` binders.
+pub fn subst_terms(raw: &RawTerm, term_inst: &[(Name, CTerm)]) -> Result<RawTerm, KernelError> {
+    subst_terms_depth(raw, term_inst, 0)
+}
+
+fn subst_terms_depth(
+    raw: &RawTerm, inst: &[(Name, CTerm)], depth: usize,
+) -> Result<RawTerm, KernelError> {
+    match raw {
+        RawTerm::Var { name, index, .. } => {
+            for (inst_name, replacement) in inst {
+                if name == inst_name {
+                    return Ok(lift_raw(replacement.term(), depth));
+                }
+            }
+            Ok(raw.clone())
+        }
+        RawTerm::Abs { name, ty, body } => {
+            let body = subst_terms_depth(body, inst, depth + 1)?;
+            Ok(RawTerm::Abs { name: name.clone(), ty: ty.clone(), body: Box::new(body) })
+        }
+        RawTerm::Forall { name, param_ty, body } => {
+            let body = subst_terms_depth(body, inst, depth + 1)?;
+            Ok(RawTerm::Forall { name: name.clone(), param_ty: param_ty.clone(), body: Box::new(body) })
+        }
+        RawTerm::Bound(i) => Ok(RawTerm::Bound(*i)),
+        RawTerm::Const { .. } | RawTerm::Free { .. } => Ok(raw.clone()),
+        RawTerm::App { func, arg } => {
+            Ok(RawTerm::App {
+                func: Box::new(subst_terms_depth(func, inst, depth)?),
+                arg: Box::new(subst_terms_depth(arg, inst, depth)?),
+            })
+        }
+        RawTerm::Eq { lhs, rhs } => Ok(RawTerm::Eq {
+            lhs: Box::new(subst_terms_depth(lhs, inst, depth)?),
+            rhs: Box::new(subst_terms_depth(rhs, inst, depth)?),
+        }),
+        RawTerm::Imp { premise, conclusion } => Ok(RawTerm::Imp {
+            premise: Box::new(subst_terms_depth(premise, inst, depth)?),
+            conclusion: Box::new(subst_terms_depth(conclusion, inst, depth)?),
+        }),
+    }
+}
+
+/// Lift a certified Term by `n` levels — increase all free de Bruijn indices by `n`.
+fn lift_raw(term: &Term, n: usize) -> RawTerm {
+    lift_raw_depth(term, n, 0)
+}
+
+fn lift_raw_depth(term: &Term, n: usize, depth: usize) -> RawTerm {
+    match term {
+        Term::Const { name, ty } => RawTerm::Const { name: name.clone(), ty: ty.clone() },
+        Term::Free { name, ty } => RawTerm::Free { name: name.clone(), ty: ty.clone() },
+        Term::Var { name, index, ty } => RawTerm::Var { name: name.clone(), index: *index, ty: ty.clone() },
+        Term::Bound { index, ty: _ } => {
+            if *index >= depth { RawTerm::Bound(index + n) }
+            else { RawTerm::Bound(*index) }
+        }
+        Term::Abs { name, param_ty, body, ty: _ } => RawTerm::Abs {
+            name: name.clone(), ty: param_ty.clone(),
+            body: Box::new(lift_raw_depth(body, n, depth + 1)),
+        },
+        Term::Forall { name, param_ty, body } => RawTerm::Forall {
+            name: name.clone(), param_ty: param_ty.clone(),
+            body: Box::new(lift_raw_depth(body, n, depth + 1)),
+        },
+        Term::App { func, arg, ty: _ } => RawTerm::App {
+            func: Box::new(lift_raw_depth(func, n, depth)),
+            arg: Box::new(lift_raw_depth(arg, n, depth)),
+        },
+        Term::Eq { object_ty, lhs, rhs } => {
+            let _ = object_ty;
+            RawTerm::Eq {
+                lhs: Box::new(lift_raw_depth(lhs, n, depth)),
+                rhs: Box::new(lift_raw_depth(rhs, n, depth)),
+            }
+        }
+        Term::Imp { premise, conclusion } => RawTerm::Imp {
+            premise: Box::new(lift_raw_depth(premise, n, depth)),
+            conclusion: Box::new(lift_raw_depth(conclusion, n, depth)),
+        },
+    }
+}
+
+/// Instantiate the outermost Forall binders of an axiom schema in order.
+///
+/// Each Forall binder declares one schematic variable (used as Bound(0) in the
+/// body). `term_inst` provides replacements in the order the binders appear.
+/// For each entry, the outermost Forall is consumed, Bound(0) is
+/// substituted with the replacement, and all other Bound indices are lowered.
+pub fn instantiate_schema_binders(
+    schema: &RawTerm,
+    term_inst: &[CTerm],
+) -> Result<RawTerm, KernelError> {
+    let mut body = schema.clone();
+    for replacement in term_inst {
+        body = consume_forall(&body, replacement)?;
+    }
+    // Verify no remaining Forall binders
+    if matches!(&body, RawTerm::Forall { .. }) {
+        return Err(KernelError::Invariant(
+            "uninstantiated Forall binders remain in schema".into(),
+        ));
+    }
+    Ok(body)
+}
+
+/// Consume the outermost Forall binder, substituting Bound(0).
+fn consume_forall(
+    raw: &RawTerm, replacement: &CTerm,
+) -> Result<RawTerm, KernelError> {
+    match raw {
+        RawTerm::Forall { param_ty, body, .. } => {
+            if &replacement.ty() != param_ty {
+                return Err(KernelError::TypeMismatch {
+                    expected: param_ty.clone(),
+                    actual: replacement.ty(),
+                });
+            }
+            subst_bound0_and_lower(body, replacement, 0)
+        }
+        _ => {
+            Err(KernelError::Invariant(
+                "expected Forall binder for term instantiation".into(),
+            ))
+        }
+    }
+}
+
+/// Substitute Bound(0) with `replacement`, lowering all other Bound indices.
+fn subst_bound0_and_lower(
+    raw: &RawTerm, replacement: &CTerm, depth: usize,
+) -> Result<RawTerm, KernelError> {
+    match raw {
+        RawTerm::Bound(i) if *i == depth => {
+            Ok(lift_raw(replacement.term(), depth))
+        }
+        RawTerm::Bound(i) if *i > depth => {
+            Ok(RawTerm::Bound(i - 1))
+        }
+        RawTerm::Bound(_) => Ok(raw.clone()),
+        RawTerm::Abs { name, ty, body } => {
+            let body = subst_bound0_and_lower(body, replacement, depth + 1)?;
+            Ok(RawTerm::Abs { name: name.clone(), ty: ty.clone(), body: Box::new(body) })
+        }
+        RawTerm::Forall { name, param_ty, body } => {
+            let body = subst_bound0_and_lower(body, replacement, depth + 1)?;
+            Ok(RawTerm::Forall { name: name.clone(), param_ty: param_ty.clone(), body: Box::new(body) })
+        }
+        RawTerm::App { func, arg } => Ok(RawTerm::App {
+            func: Box::new(subst_bound0_and_lower(func, replacement, depth)?),
+            arg: Box::new(subst_bound0_and_lower(arg, replacement, depth)?),
+        }),
+        RawTerm::Eq { lhs, rhs } => Ok(RawTerm::Eq {
+            lhs: Box::new(subst_bound0_and_lower(lhs, replacement, depth)?),
+            rhs: Box::new(subst_bound0_and_lower(rhs, replacement, depth)?),
+        }),
+        RawTerm::Imp { premise, conclusion } => Ok(RawTerm::Imp {
+            premise: Box::new(subst_bound0_and_lower(premise, replacement, depth)?),
+            conclusion: Box::new(subst_bound0_and_lower(conclusion, replacement, depth)?),
+        }),
+        _ => Ok(raw.clone()),
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Term {
     Const { name: Name, ty: Ty },
