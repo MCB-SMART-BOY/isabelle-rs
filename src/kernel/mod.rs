@@ -3,6 +3,8 @@
 //! The kernel is now a separate crate with zero dependencies on core, isar,
 //! hol, theory, tools, lsp, server, session, syntax, or wasm.
 
+pub mod convert;
+
 pub use isabelle_kernel::KernelError;
 pub use isabelle_kernel::context::{ProofContext, ProofObligation};
 pub use isabelle_kernel::cterm::{CProp, CTerm, InstEntry};
@@ -24,4 +26,4 @@ pub use isabelle_kernel::theory::{
     accept_closed_theorem,
 };
 pub use isabelle_kernel::thm::{ClosedThm, KernelThm, OpenThm};
-pub use isabelle_kernel::typ::Ty;
+pub use isabelle_kernel::typ::{Sort, Ty};
