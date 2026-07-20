@@ -85,6 +85,28 @@ pub struct Goal {
     pub refines: Option<Term>,
 }
 
+fn free_vars_of(term: &Term) -> Vec<(String, Typ)> {
+    let mut out = Vec::new();
+    let mut stack = vec![term];
+    while let Some(t) = stack.pop() {
+        match t {
+            Term::Free { name, typ } => {
+                let s = name.as_ref().to_string();
+                if !out.iter().any(|(n, _)| n == &s) {
+                    out.push((s, typ.clone()));
+                }
+            },
+            Term::Abs { body, .. } => stack.push(body),
+            Term::App { func, arg } => {
+                stack.push(arg);
+                stack.push(func);
+            },
+            _ => {},
+        }
+    }
+    out
+}
+
 impl Goal {
     /// Initialize a proof goal from a checked proposition.
     ///
@@ -123,7 +145,10 @@ impl Goal {
         stmt: Term,
         ctx: &IsarContext,
     ) -> Result<Self, KernelError> {
-        let cert_ctx = ProofCertContext::from_isar_context(ctx);
+        let mut cert_ctx = ProofCertContext::from_isar_context(ctx);
+        for (name, typ) in free_vars_of(&stmt) {
+            cert_ctx.declare_free(&name, if typ.is_dummy() { Typ::base("prop") } else { typ });
+        }
         Self::init_checked_in_context(&cert_ctx, kind, stmt)
     }
 

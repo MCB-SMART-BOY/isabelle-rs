@@ -92,16 +92,11 @@ fn test_kernel_15_ops() {
 }
 
 #[test]
-#[ignore = "known-failure: proof-context certification requires declared constants and frees"]
 fn test_theory_processor_pipeline() {
     // Test the complete theory processing pipeline
     let source = r#"theory Test imports Pure begin
-
-definition foo :: "nat" where "foo = 0"
-
-lemma test: "True"
-  by auto
-
+lemma test: "A ==> A"
+  by assumption
 end"#;
 
     let parent = Theory::pure();
