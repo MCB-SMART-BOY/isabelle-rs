@@ -1035,6 +1035,7 @@ mod tests {
 
     /// Closed theorem helper: use reflexive to make `|- A == A` (closed).
     /// NOT used as a resolution rule — only for creating ground truths.
+    #[allow(dead_code)]
     fn closed_thm(ctx: &ProofContext, name: &str) -> KernelThm {
         let cterm = ctx.certify_term(super::super::RawTerm::const_(name, Ty::prop())).unwrap();
         KernelRules::reflexive(cterm).into_kernel()

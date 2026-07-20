@@ -360,27 +360,41 @@ fn replay_derivation(
             ))
         },
 
-        Derivation::ConservativeDefinition { const_name, rhs, witness } => {
+        Derivation::ConservativeDefinition { definition: def_id } => {
             let ctx = validator.ok_or(KernelError::UnsupportedAcceptanceDerivation)?;
-            // const_name must already be in the signature (added before definition).
-            let _declared_ty = ctx
-                .signature()
-                .const_type(const_name)
-                .ok_or_else(|| KernelError::UndeclaredConst(const_name.clone()))?;
-            let _ = ctx.validate_cterm(rhs)?;
-            // Use a synthetic prop — the definition is validated by freshness check.
-            let prop = CProp::new(
-                Term::Var { name: Name::from("def"), index: 0, ty: Ty::prop() },
-                expected,
-            )?;
+            let owner = owner.ok_or(KernelError::UnsupportedAcceptanceDerivation)?;
+            let certificate = owner.find_definition_certificate(def_id)
+                .ok_or_else(|| KernelError::Invariant(
+                    format!("definition {def_id:?} not found in owner theory ancestry").into(),
+                ))?;
+            let declared_ty = ctx.signature()
+                .const_type(&certificate.name)
+                .ok_or_else(|| KernelError::UndeclaredConst(certificate.name.clone()))?;
+            if declared_ty != &certificate.declared_ty {
+                return Err(KernelError::TypeMismatch {
+                    expected: declared_ty.clone(),
+                    actual: certificate.declared_ty.clone(),
+                });
+            }
+            let rhs = ctx.certify_term(certificate.rhs_raw.clone())?;
+            if &rhs.ty() != &certificate.declared_ty {
+                return Err(KernelError::TypeMismatch {
+                    expected: certificate.declared_ty.clone(),
+                    actual: rhs.ty(),
+                });
+            }
+            let reconstructed = RawTerm::Eq {
+                lhs: Box::new(RawTerm::Const {
+                    name: certificate.name.clone(),
+                    ty: certificate.declared_ty.clone(),
+                }),
+                rhs: Box::new(certificate.rhs_raw.clone()),
+            };
+            let replayed = ctx.certify_prop(reconstructed)?;
             Ok(KernelThm::new(
                 Vec::new(),
-                prop,
-                Derivation::ConservativeDefinition {
-                    const_name: const_name.clone(),
-                    rhs: rhs.clone(),
-                    witness: witness.clone(),
-                },
+                replayed,
+                Derivation::ConservativeDefinition { definition: *def_id },
             ))
         },
     }

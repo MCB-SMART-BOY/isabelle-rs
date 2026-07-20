@@ -1,4 +1,4 @@
-use super::{CProp, CTerm, InstEntry, KernelThm, Name, RawTerm, TrustedTheorem, Ty};
+use super::{CProp, CTerm, InstEntry, KernelThm, Name, TrustedTheorem, Ty};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Derivation {
@@ -92,12 +92,9 @@ pub enum Derivation {
         /// Term substitution: ordered list of replacements for schema binders.
         term_inst: Vec<CTerm>,
     },
+    /// Replay reconstructs the definition proposition from the owner theory's
+    /// [`DefinitionCertificate`](super::DefinitionCertificate).
     ConservativeDefinition {
-        const_name: Name,
-        rhs: CTerm,
-        rhs_raw: RawTerm,
-        /// The definition proposition: `const_name == rhs`.
-        /// Verified against independent reconstruction during replay.
-        prop: RawTerm,
+        definition: super::DefinitionId,
     },
 }

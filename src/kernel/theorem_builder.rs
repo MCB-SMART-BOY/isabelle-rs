@@ -22,17 +22,22 @@ pub(crate) fn axiom_theorem(
 
 pub(crate) fn definition_theorem(
     ctx: &ProofContext,
-    const_name: Name,
-    rhs: CTerm,
-    witness: KernelThm,
+    certificate: &crate::kernel::DefinitionCertificate,
 ) -> Result<KernelThm, KernelError> {
-    // Simplified prop — the definition is validated by freshness check in replay.
-    let cprop =
-        ctx.certify_prop(RawTerm::Var { name: Name::from("def"), index: 0, ty: Ty::prop() })?;
+    let prop_term = RawTerm::Eq {
+        lhs: Box::new(RawTerm::Const {
+            name: certificate.name.clone(),
+            ty: certificate.declared_ty.clone(),
+        }),
+        rhs: Box::new(certificate.rhs_raw.clone()),
+    };
+    let prop = ctx.certify_prop(prop_term)?;
     Ok(KernelThm::new(
         Vec::new(),
-        cprop,
-        Derivation::ConservativeDefinition { const_name, rhs, witness: Box::new(witness) },
+        prop,
+        Derivation::ConservativeDefinition {
+            definition: certificate.id,
+        },
     ))
 }
 

@@ -138,7 +138,7 @@ pub(crate) fn prop_from_term(term: Term, context: ContextStamp) -> CProp {
 #[cfg(test)]
 mod tests {
     use crate::{
-        CProp, Derivation, InstEntry, KernelError, KernelRules, KernelThm, Name, ProofContext,
+        CProp, Derivation, InstEntry, KernelError, KernelRules, KernelThm, ProofContext,
         RawTerm, Signature, Term, TheorySnapshot, Ty, invariant::check_kernel_thm,
     };
 
@@ -416,7 +416,7 @@ mod tests {
         let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
         ctx.declare_free("x", Ty::base("nat").unwrap());
 
-        let x_eq_x = ctx
+        let _x_eq_x = ctx
             .certify_prop(RawTerm::eq(
                 RawTerm::free("x", Ty::base("nat").unwrap()),
                 RawTerm::free("x", Ty::base("nat").unwrap()),

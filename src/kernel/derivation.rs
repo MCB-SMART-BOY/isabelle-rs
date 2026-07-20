@@ -92,12 +92,9 @@ pub enum Derivation {
         /// Term substitution: maps schematic term variables to concrete terms.
         term_inst: Vec<(Name, CTerm)>,
     },
-    /// A conservative definition: `c == rhs` where `c` is fresh and `rhs` is closed.
+    /// A conservative definition: the derivation carries only the [`DefinitionId`].
+    /// Replay reconstructs the proposition from the owner theory's certificate.
     ConservativeDefinition {
-        const_name: Name,
-        rhs: CTerm,
-        /// Witness that the definition is conservative (e.g. existence proof).
-        /// Opaque for now — full conservativeness requires future work.
-        witness: Box<KernelThm>,
+        definition: DefinitionId,
     },
 }

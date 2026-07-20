@@ -32,8 +32,8 @@ pub use search_fact::{SearchFact, SearchFactDb};
 pub use signature::Signature;
 pub use term::{RawTerm, Term};
 pub use theory::{
-    DependencyKind, DependencySet, TheoremId, TheorySnapshot, TrustedTheorem, TrustedTheory,
-    accept_closed_theorem,
+    DefinitionId, DependencyKind, DependencySet, TheoremId,
+    TheorySnapshot, TrustedTheorem, TrustedTheory, accept_closed_theorem,
 };
 pub use thm::{ClosedThm, KernelThm, OpenThm};
 pub use typ::Ty;

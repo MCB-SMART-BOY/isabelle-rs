@@ -8,7 +8,7 @@ docs/
   kernel/        Kernel TCB documentation
   design/        Design documents
   status/        Status, trust, and roadmap
-  agent/         Agent rules, skills, and configs (mirror of .claude/)
+  .claude/       AI agent configuration (agents, rules, skills, hooks)
   guides/        Developer guides
   archive/       Historical and superseded documents
   isip/          ISIP standard specifications
@@ -57,17 +57,20 @@ docs/
 | [TRUST](status/TRUST.md) | Trust model and T1-T4 criteria |
 | [ROADMAP](status/ROADMAP.md) | Implementation roadmap |
 
-## Agent — `docs/agent/`
+## Agent Configuration — `.claude/`
 
-| Directory | Description |
-|-----------|-------------|
-| [agents/](agent/agents/) | Agent definitions |
-| [rules/](agent/rules/) | Coding rules |
-| [skills/](agent/skills/) | Skill definitions |
-| [hooks/](agent/hooks/) | Post-session hooks |
-| [commands/](agent/commands/) | Slash commands |
-| [templates/](agent/templates/) | Rule/skill templates |
-| [CLAUDE_INTEGRATION](agent/CLAUDE_INTEGRATION.md) | Claude Code integration guide |
+Agent rules, skills, and hooks live in `.claude/` (not duplicated in `docs/`).
+See [`.claude/README.md`](../.claude/README.md) for the Claude Code integration
+guide. Key subdirectories:
+
+| Directory | Purpose |
+|-----------|---------|
+| `agents/` | Agent definitions (reviewers, parsers) |
+| `rules/` | Coding rules the AI follows |
+| `skills/` | Specialized skill instructions |
+| `hooks/` | Post-session automation |
+| `commands/` | Slash command definitions |
+| `templates/` | Templates for new rules/skills |
 
 ## Guides — `docs/guides/`
 

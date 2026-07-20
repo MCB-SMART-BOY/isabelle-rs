@@ -1,8 +1,8 @@
 //! HOL definitions and theorems through the new kernel acceptance pipeline.
 
 use crate::kernel::{
-    ClosedThm, Derivation, KernelError, KernelRules, Name, ProofContext, RawTerm, Signature,
-    TrustedTheorem, TrustedTheory, Ty, accept_closed_theorem, theorem_builder,
+    KernelError, KernelRules, Name, ProofContext, RawTerm, TrustedTheorem, TrustedTheory, Ty,
+    accept_closed_theorem, theorem_builder,
 };
 
 pub fn define_true(
@@ -16,15 +16,8 @@ pub fn define_true(
         let id_abs = RawTerm::abs(Name::from("x"), bool_ty.clone(), RawTerm::bound(0));
         RawTerm::app(RawTerm::app(hol_eq, id_abs.clone()), id_abs)
     };
-    // Atomic extend_definition: freshness, closedness, DefineConst extension
-    let (theory, rhs) = theory.extend_definition(Name::from("HOL.True"), rhs_raw.clone())?;
-
-    let ctx = ProofContext::new(theory.snapshot().clone());
-    let rhs_child = ctx.certify_term(rhs_raw.clone())?;
-    let def_thm =
-        theorem_builder::definition_theorem(&ctx, Name::from("HOL.True"), rhs_child, rhs_raw)?;
-    let closed = theorem_builder::close_thm(def_thm)?;
-    accept_closed_theorem(&theory, "True_def", closed)
+    // Atomic define_const: produces certificate, extends theory, accepts theorem
+    theory.define_const(Name::from("HOL.True"), rhs_raw)
 }
 
 pub fn prove_true_i(

@@ -122,6 +122,23 @@ impl RawTerm {
             }
         }
     }
+
+    /// Check if this raw term mentions a specific constant name.
+    pub fn mentions_const(&self, name: &Name) -> bool {
+        let mut stack = vec![self];
+        while let Some(t) = stack.pop() {
+            match t {
+                RawTerm::Const { name: n, .. } if n == name => return true,
+                RawTerm::Abs { body, .. } | RawTerm::Forall { body, .. } => stack.push(body),
+                RawTerm::App { func, arg } => { stack.push(arg); stack.push(func); }
+                RawTerm::Eq { lhs, rhs } | RawTerm::Imp { premise: lhs, conclusion: rhs } => {
+                    stack.push(rhs); stack.push(lhs);
+                }
+                _ => {}
+            }
+        }
+        false
+    }
 }
 
 /// Apply type substitution to a RawTerm with validation.

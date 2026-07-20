@@ -1,7 +1,8 @@
 use super::{
-    CTerm, ClosedThm, Derivation, KernelError, KernelThm, Name, ProofContext, RawTerm,
-    Ty,
+    CTerm, ClosedThm, Derivation, KernelError, KernelThm, Name, ProofContext,
+    RawTerm, Ty,
 };
+use super::theory::DefinitionCertificate;
 
 pub fn axiom_theorem(
     ctx: &ProofContext,
@@ -35,23 +36,24 @@ pub fn axiom_theorem(
     ))
 }
 
-pub fn definition_theorem(
+pub(crate) fn definition_theorem(
     ctx: &ProofContext,
-    const_name: Name,
-    rhs: CTerm,
-    rhs_raw: RawTerm,
+    certificate: &DefinitionCertificate,
 ) -> Result<KernelThm, KernelError> {
-    let rhs_ty = rhs.ty();
+    // Independently reconstruct const == rhs from the certificate
     let prop_term = RawTerm::Eq {
-        lhs: Box::new(RawTerm::Const { name: const_name.clone(), ty: rhs_ty.clone() }),
-        rhs: Box::new(rhs_raw.clone()),
+        lhs: Box::new(RawTerm::Const {
+            name: certificate.name.clone(),
+            ty: certificate.declared_ty.clone(),
+        }),
+        rhs: Box::new(certificate.rhs_raw.clone()),
     };
-    let prop = ctx.certify_prop(prop_term.clone())?;
+    let prop = ctx.certify_prop(prop_term)?;
     Ok(KernelThm::new(
         Vec::new(),
         prop,
         Derivation::ConservativeDefinition {
-            const_name, rhs, rhs_raw, prop: prop_term,
+            definition: certificate.id,
         },
     ))
 }
