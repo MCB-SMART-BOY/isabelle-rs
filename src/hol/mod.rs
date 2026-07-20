@@ -10,6 +10,7 @@ pub mod class_system;
 pub mod ctr_sugar;
 pub mod defs;
 pub mod function;
+pub mod hol_basis;
 pub mod hol_consts;
 pub mod hol_loader;
 pub mod hol_rules;

@@ -363,6 +363,7 @@ struct TrustedTheoryNode {
     parent: Option<TrustedTheory>,
     local_fact: Option<TrustedTheorem>,
     fact_count: usize,
+    logic_basis: Option<super::LogicBasisId>,
 }
 
 impl TrustedTheory {
@@ -373,8 +374,32 @@ impl TrustedTheory {
                 parent: None,
                 local_fact: None,
                 fact_count: 0,
+                logic_basis: None,
             }),
         }
+    }
+
+    /// Create a root theory with a validated logic basis.
+    pub fn with_basis(
+        name: impl Into<Name>,
+        signature: Signature,
+        basis: &super::LogicBasis,
+    ) -> Result<Self, KernelError> {
+        basis.validate_against(&signature)?;
+        Ok(Self {
+            inner: Arc::new(TrustedTheoryNode {
+                snapshot: TheorySnapshot::root(name, signature),
+                parent: None,
+                local_fact: None,
+                fact_count: 0,
+                logic_basis: Some(basis.id),
+            }),
+        })
+    }
+
+    /// The installed logic basis, if any.
+    pub fn logic_basis(&self) -> Option<super::LogicBasisId> {
+        self.inner.logic_basis
     }
 
     pub fn begin_child(&self, name: impl Into<Name>) -> Self {
@@ -435,12 +460,14 @@ impl TrustedTheory {
     ) -> Self {
         debug_assert_eq!(snapshot.parent().map(TheorySnapshot::id), Some(parent.id()));
         let fact_count = parent.len() + usize::from(local_fact.is_some());
+        let logic_basis = parent.inner.logic_basis;
         Self {
             inner: Arc::new(TrustedTheoryNode {
                 snapshot,
                 parent: Some(parent.clone()),
                 local_fact,
                 fact_count,
+                logic_basis,
             }),
         }
     }
@@ -779,6 +806,7 @@ mod tests {
                 parent: Some(parent.clone()),
                 local_fact: None,
                 fact_count: 0,
+                logic_basis: None,
             }),
         };
         assert!(matches!(
@@ -799,6 +827,7 @@ mod tests {
                 parent: Some(parent.clone()),
                 local_fact: Some(wrong_token),
                 fact_count: 1,
+                logic_basis: None,
             }),
         };
         assert!(matches!(
