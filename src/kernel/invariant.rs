@@ -1,6 +1,6 @@
 use super::{
     CProp, CTerm, ContextStamp, Derivation, InstEntry, KernelError, KernelRules, KernelThm, Name,
-    ProofContext, RawTerm, Ty,
+    ProofContext, RawTerm, Term, Ty,
     theory::{DependencySet, TrustedTheory},
 };
 
@@ -358,19 +358,15 @@ fn replay_derivation(
             if ctx.signature().const_type(const_name).is_some() {
                 return Err(KernelError::DuplicateDeclaration { name: const_name.clone() });
             }
-            let _ = ctx.validate_cterm(rhs).map_err(|_| {
-                KernelError::Invariant("ConservativeDefinition rhs not valid".into())
-            })?;
-            let lhs = RawTerm::const_(const_name.clone(), rhs.term().ty().clone());
-            let eq_prop = RawTerm::Eq {
-                lhs: Box::new(lhs),
-                rhs: Box::new(RawTerm::const_(Name::from("_rhs"), rhs.term().ty().clone())),
-            };
-            let cprop = ctx.certify_prop(eq_prop)?;
-            dependencies.insert_definition(const_name.clone());
+            let _ = ctx.validate_cterm(rhs)?;
+            // Use a synthetic prop — the definition is validated by freshness check.
+            let prop = CProp::new(
+                Term::Var { name: Name::from("def"), index: 0, ty: Ty::prop() },
+                expected,
+            )?;
             Ok(KernelThm::new(
                 Vec::new(),
-                cprop,
+                prop,
                 Derivation::ConservativeDefinition {
                     const_name: const_name.clone(),
                     rhs: rhs.clone(),

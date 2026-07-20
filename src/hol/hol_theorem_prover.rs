@@ -60,20 +60,27 @@ pub fn prove_true_i(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernel::Signature;
     use crate::hol::hol_basis::hol_basis;
+    use crate::kernel::Signature;
 
     #[test]
     fn define_true_produces_accepted_theorem() {
         let sig = Signature::new()
-            .extend_const("HOL.Trueprop", Ty::arrow(Ty::base("bool").unwrap(), Ty::prop())).unwrap()
-            .extend_const("HOL.eq", Ty::arrow(
-                Ty::base("'a").unwrap(),
-                Ty::arrow(Ty::base("'a").unwrap(), Ty::base("bool").unwrap()),
-            )).unwrap();
+            .extend_const("HOL.Trueprop", Ty::arrow(Ty::base("bool").unwrap(), Ty::prop()))
+            .unwrap()
+            .extend_const(
+                "HOL.eq",
+                Ty::arrow(
+                    Ty::base("'a").unwrap(),
+                    Ty::arrow(Ty::base("'a").unwrap(), Ty::base("bool").unwrap()),
+                ),
+            )
+            .unwrap();
         let basis = hol_basis();
         let theory = TrustedTheory::with_basis("HOL", sig, &basis).unwrap();
-        let result = define_true(&theory);
-        assert!(result.is_ok(), "define_true: {:?}", result.err());
+        match define_true(&theory) {
+            Ok((_child, token)) => assert_eq!(token.name().as_str(), "True_def"),
+            Err(e) => panic!("define_true: {e:?}"),
+        }
     }
 }
