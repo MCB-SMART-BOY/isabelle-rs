@@ -79,6 +79,23 @@ For `src/core/`:
 `HolTheoremDb` and other search indexes may contain open, admitted, generated,
 compatibility, and transitional facts. They are not trusted theorem tables.
 
+## Feature Branch Checkpoint
+
+Branch `wip/kernel-trusted-slice` (merged 2026-07-21 at `03d28a6`) delivered:
+
+- `TypeVarId { name, index }` — index-aware type variable identity.
+- `is_monomorphic_instance_of` with `BTreeMap<TypeVarId, Ty>` plus recursive concrete check.
+- Atomic `AxiomDependencyId` = hash(basis_id, schema_id) replacing two-entry axiom dependency.
+- 10 TCB attack tests (5 polytype, 1 axiom dep, 4 definition).
+- `prove_true_i` prototype using `define_true` (accepted `True_def` theorem) + `KernelRules::theorem_ref` + `Combination + Symmetric + EqualElim`.
+
+**Not yet complete:**
+
+- `ConservativeDefinition` still uses old `const_name/rhs/rhs_raw/prop` payload — not atomic `DefinitionCertificate`.
+- `PolyType.params` do not participate in instance authorization.
+- The production source -> kernel bridge is not implemented.
+- `KernelTrustedClosed` remains `0/125`.
+
 ## Current Trusted Main Line
 
 The implementation order is strict:

@@ -91,6 +91,7 @@ Current strict nucleus constraints:
   substitute for token authority;
 - object-logic acceptance still requires the missing authorized
   logic-basis/axiom/definition layer;
+- axiom authorization is exact `AxiomDependencyId(basis_id, schema_id)`, not "some basis exists" (2026-07-21);
 - `SearchFactDb` cannot promote facts to trusted theorems.
 
 Current strict nucleus implementation includes the base primitive rule set,

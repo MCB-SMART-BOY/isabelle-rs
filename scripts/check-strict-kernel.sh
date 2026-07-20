@@ -103,6 +103,15 @@ run_step "kernel::rules" cargo +stable test --locked --lib kernel::rules::tests:
 banner "6d. Kernel inline unit tests (theory identity)"
 run_step "kernel::theory" cargo +stable test --locked --lib kernel::theory:: || true
 
+banner "6e. Kernel inline unit tests (polytype)"
+run_step "kernel::polytype" cargo +stable test --locked --lib kernel::typ::polytype_tests:: || true
+
+banner "6f. Kernel inline unit tests (axiom dep)"
+run_step "kernel::axiom_dep" cargo +stable test --locked --lib kernel::theory::axiom_dep_tests:: || true
+
+banner "6g. Kernel inline unit tests (definition)"
+run_step "kernel::definition_tests" cargo +stable test --locked --lib kernel::theory::definition_tests:: || true
+
 # ── 7. Legacy core tests ──
 banner "7. Legacy core:: tests"
 run_step "core::" cargo +stable test --locked --lib core:: || true

@@ -366,7 +366,7 @@ These are semantic/engineering estimates, not line-count percentages.
 |---|---:|
 | Full Isabelle/HOL + Isar + PIDE + AFP ecosystem | 15%-25% |
 | Isabelle/Pure-inspired Rust kernel research slice | 45%-60% |
-| Minimal end-to-end Isabelle/Pure trusted kernel | 30%-40% |
+| Minimal end-to-end Isabelle/Pure trusted kernel | 40%-50% |
 | Oracle footprints + closed theorem acceptance specialty | 65%-75% |
 | T4 proofterm replay/checker | 10%-20% |
 | HOL tools and automation | 10%-20% |
@@ -417,6 +417,26 @@ checker. Isabelle-style proof reconstruction, `PThm` expansion, proof
 compression, type abstraction/application, stored theorem graph replay, and full
 primitive rule coverage are still open.
 
+
+## Feature Branch Checkpoint (2026-07-21)
+
+Branch `wip/kernel-trusted-slice` merged `03d28a6` onto `dev`:
+
+**Delivered:**
+- Recursive `is_concrete_type` with nested TypeVar test
+- `is_monomorphic_instance_of` with `BTreeMap<TypeVarId, Ty>` + concrete check
+- Atomic `AxiomDependencyId` = hash(basis_id, schema_id) — no longer "some basis exists"
+- `prove_true_i` routes through accepted `True_def` theorem via `KernelRules::theorem_ref`
+- 10 TCB attack tests: 5 polytype, 1 axiom dep, 4 conservative definition
+- `strict` gate passes; `prove_true_i_succeeds` with dest_app-based proposition check
+
+**Deferred:**
+- `ConservativeDefinition` not yet atomic (`DefinitionCertificate`/`define_const` pending)
+- `PolyType.params` not yet used as instance authorization contract
+- `Ty::base("'a")` not yet rejected (tick-prefix guard pending)
+- Production source->kernel bridge not implemented
+- `KernelTrustedClosed` remains `0/125`
+
 ## Next Priority Order
 
 Do not spend the next phase on more HOL/Isar surface features, LSP, WASM,
@@ -433,12 +453,13 @@ Sledgehammer, SMT, or Code Generator work. The route is:
 4. **Next:** integrate source parsing and elaborate checked `judgment`,
    constant, and polymorphic type-scheme declarations, including
    `HOL.Trueprop`, into the existing `CProp : prop` boundary.
-5. Install the explicit HOL logical basis as an immutable data-only manifest
-   and replay generic axiom-schema instances through Pure kernel rules; add no
-   theorem-specific Rust constructors.
-6. Implement a generic conservative definition extension before treating
-   `True_def` as trusted input; legacy `true_def_transport` is not a
-   certificate.
+5. **Partially addressed (2026-07-21):** HOL logical basis manifest is
+   installed via `hol_basis()`; axiom-schema instances are replayed with exact
+   `AxiomDependencyId` (basis,schema) pairing. Missing: full attack-test matrix.
+6. **Partially addressed (2026-07-21):** `extend_definition` with
+   attack tests exists, but `ConservativeDefinition` still carries multi-source
+   payload instead of atomic `DefinitionCertificate`. This is the next
+   priority.
 7. Re-derive `HOL::TrueI` as the first real sampled `KernelTrustedClosed`
    theorem before resuming `HOL::trans` or any `2/125` work.
 8. Continue core hardening only as migration support, not new trusted proof

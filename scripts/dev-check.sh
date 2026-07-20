@@ -12,7 +12,8 @@ usage() {
         "" \
         "Modes:" \
         "  fast       cargo fmt/check with Cargo.lock frozen" \
-        "  strict     strict-kernel firewall and regression gate" \
+        "  strict     strict-kernel firewall and regression gate"
+        "  checkpoint strict + feature-branch focused tests" \
         "  core       sampled HOL/Orderings/Set/Nat/List 125-theorem run" \
         "  tier2      tier-2 theory verification" \
         "  tier3      tier-3 theory verification" \
@@ -61,9 +62,19 @@ run_docs() {
     run_fast
 }
 
+
+run_checkpoint() {
+    run_strict
+    cargo +stable test prove_true_i_succeeds --lib -- --nocapture
+    cargo +stable test -p isabelle-kernel --lib polytype_tests -- --nocapture
+    cargo +stable test -p isabelle-kernel --lib axiom_dep_tests -- --nocapture
+    cargo +stable test -p isabelle-kernel --lib definition_tests -- --nocapture
+}
+
 case "${1:-}" in
     fast) run_fast ;;
     strict) run_strict ;;
+    checkpoint) run_checkpoint ;;
     core) run_core ;;
     tier2) run_tier2 ;;
     tier3) run_tier3 ;;

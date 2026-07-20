@@ -22,6 +22,25 @@ KernelTrustedClosed:      0/125
 non-forgeable accepted token. The production HOL verifier has no adapter that
 can produce that token, so the sampled count remains zero.
 
+
+## Checkpoint (2026-07-21)
+
+Branch `wip/kernel-trusted-slice` merged at `03d28a6` closed two previously
+open gaps:
+
+| Gap | Status | Resolution |
+| --- | ------ | ---------- |
+| Axiom-schema instance trust (derivation trusts stored prop) | **Closed** | `AxiomInstance` replay reconstructs from basis schema; see `AxiomDependencyId` |
+| Dual-entry axiom dependency (AxiomBasis + Axiom) | **Closed** | Single atomic `AxiomDependencyId::compute(basis_id, schema_id)` |
+| Polymorphic constant instance matching (always-true) | **Closed** | `is_monomorphic_instance_of` with `BTreeMap<TypeVarId,Ty>` + concrete check |
+
+Remaining open gaps:
+- `ConservativeDefinition` not certificate-backed (multi-source payload)
+- `PolyType.params` not authoritative
+- `Ty::base("'a")` not rejected
+- No production source->kernel bridge
+- `KernelTrustedClosed` still 0/125
+
 ## Scope
 
 This audit covers the strict path:
