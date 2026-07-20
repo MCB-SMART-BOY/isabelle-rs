@@ -1,6 +1,5 @@
 use super::{
-    CProp, CTerm, ContextStamp, Derivation, InstEntry, KernelError, KernelRules, KernelThm,
-    LogicBasis, Name, ProofContext, RawTerm, Term, Ty,
+    CProp, CTerm, ContextStamp, Derivation, InstEntry, KernelError, KernelRules, KernelThm, ProofContext, RawTerm,
     theory::{DependencySet, TrustedTheory},
 };
 
@@ -349,7 +348,7 @@ fn replay_derivation(
             let body = crate::term::instantiate_schema_binders(&typed, term_inst)?;
             // Certify the independently-reconstructed proposition
             let replayed_prop = ctx.certify_prop(body)?;
-            let schema_id = schema.id();
+            let _schema_id = schema.id();
             dependencies.insert_axiom(super::AxiomDependencyId::compute(basis.id, schema.id()));
             Ok(KernelThm::new(
                 Vec::new(),

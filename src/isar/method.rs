@@ -4180,7 +4180,8 @@ pub fn verify_lemma(lem: &ParsedLemma) -> LemmaVerification {
         let proof_ctx = build_kernel_proof_context(db);
         let elaborated = try_source_elaboration(lem, &proof_ctx);
         let goal_ct = if let Ok(ref cprop) = elaborated {
-            let core_term = crate::kernel::convert::kernel_term_to_core(cprop.term());
+            let core_term = crate::kernel::convert::kernel_term_to_core(cprop.term())
+                .unwrap_or_else(|_| lem.theorem.prop().term().clone());
             CTerm::certify_checked(core_term, &db.type_env)
                 .unwrap_or_else(|_| CTerm::certify(lem.theorem.prop().term().clone()))
         } else {

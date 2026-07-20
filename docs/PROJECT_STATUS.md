@@ -366,7 +366,7 @@ These are semantic/engineering estimates, not line-count percentages.
 |---|---:|
 | Full Isabelle/HOL + Isar + PIDE + AFP ecosystem | 15%-25% |
 | Isabelle/Pure-inspired Rust kernel research slice | 45%-60% |
-| Minimal end-to-end Isabelle/Pure trusted kernel | 40%-50% |
+| Minimal end-to-end Isabelle/Pure trusted kernel | 45%-55% |
 | Oracle footprints + closed theorem acceptance specialty | 65%-75% |
 | T4 proofterm replay/checker | 10%-20% |
 | HOL tools and automation | 10%-20% |
@@ -386,6 +386,7 @@ These are trusted-boundary issues that T4 replay does not automatically solve:
 | Transitional source status/shape metadata | `parse_term` may return a prefix or recover malformed syntax, and surface names may be shadowed by local context. The current guard catches known unsafe shapes but is not name resolution. | Keep compatibility behavior isolated. The separate data-only source AST now preserves raw structure, but still needs parser integration plus declaration-aware resolution and checked elaboration before it can feed `CProp`. |
 | `Typ::dummy()` at kernel boundaries | Lets ill-typed terms remain too long. | Make parser/type inference/CTerm certification produce well-typed certified terms. |
 | Best-effort `CTerm::certify` call sites | Legacy paths can still wrap dummy-tainted terms. | Migrate explicit `_compat` theorem-construction call sites to `certify_checked`, real derivations, or `admit`. |
+| Kernel to legacy conversion (`src/kernel/convert.rs`) | Uses `Debug`/`format!` strings for type-name extraction; panics are now `Err` but Forall/Eq/Imp remain unsupported. Marked untrusted but wired into production elaboration path. | Replace debug-string logic with structural conversion; keep as migration adapter only. |
 | Compatibility theorem taint | `_compat` constructors still exist for many old call sites. | Keep them searchable only; use `is_strict_closed_proved()` solely for transitional filtering and require `KernelTrustedClosed` for final trust. |
 | `Option<Thm>` errors | Type mismatch and normal non-match can both become `None`. | Gradually move trusted boundaries toward `Result<Option<Thm>, KernelError>`. |
 
@@ -453,13 +454,8 @@ Sledgehammer, SMT, or Code Generator work. The route is:
 4. **Next:** integrate source parsing and elaborate checked `judgment`,
    constant, and polymorphic type-scheme declarations, including
    `HOL.Trueprop`, into the existing `CProp : prop` boundary.
-5. **Partially addressed (2026-07-21):** HOL logical basis manifest is
-   installed via `hol_basis()`; axiom-schema instances are replayed with exact
-   `AxiomDependencyId` (basis,schema) pairing. Missing: full attack-test matrix.
-6. **Partially addressed (2026-07-21):** `extend_definition` with
-   attack tests exists, but `ConservativeDefinition` still carries multi-source
-   payload instead of atomic `DefinitionCertificate`. This is the next
-   priority.
+5. **Partially addressed (2026-07-21):** HOL logical basis manifest is installed via `hol_basis()`; axiom-schema instances are replayed with exact `AxiomDependencyId`. Kernel warnings at zero. Missing: full axiom attack-test matrix.
+6. **Partially addressed (2026-07-21):** `extend_definition` exists with 4 attack tests, but `ConservativeDefinition` still carries multi-source payload (`const_name/rhs/rhs_raw/prop`) instead of atomic `DefinitionCertificate`. This is the next priority for TCB closure.
 7. Re-derive `HOL::TrueI` as the first real sampled `KernelTrustedClosed`
    theorem before resuming `HOL::trans` or any `2/125` work.
 8. Continue core hardening only as migration support, not new trusted proof

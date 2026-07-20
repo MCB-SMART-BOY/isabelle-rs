@@ -123,15 +123,28 @@ mod tests {
             Ok((_child, token)) => {
                 assert_eq!(token.name().as_str(), "TrueI", "theorem name must be TrueI");
                 assert!(token.prop().term().ty().is_prop(), "TrueI proposition must be prop-typed");
-                // Exact proposition: must destructure as HOL.Trueprop applied to HOL.True
-                if let Some((_head, arg)) = token.prop().term().dest_app() {
-                    assert_eq!(
-                        arg.ty(),
-                        Ty::base("bool").unwrap(),
-                        "TrueI argument must be bool-typed HOL.True"
-                    );
+                // Exact proposition: TrueI must be |- HOL.Trueprop HOL.True
+                let term = token.prop().term();
+                if let Some((head, arg)) = term.dest_app() {
+                    use crate::kernel::Term;
+                    match (head, arg) {
+                        (Term::Const { name: hn, ty: ht }, Term::Const { name: an, ty: at }) => {
+                            assert_eq!(hn.as_str(), "HOL.Trueprop", "head must be HOL.Trueprop");
+                            assert_eq!(
+                                ht,
+                                &Ty::arrow(Ty::base("bool").unwrap(), Ty::prop()),
+                                "head type must be bool -> prop"
+                            );
+                            assert_eq!(an.as_str(), "HOL.True", "arg must be HOL.True");
+                            assert_eq!(at, &Ty::base("bool").unwrap(), "arg type must be bool");
+                        },
+                        _ => panic!(
+                            "TrueI head and arg must be Const nodes, got {:?} / {:?}",
+                            head, arg
+                        ),
+                    }
                 } else {
-                    panic!("TrueI proposition must be an application");
+                    panic!("TrueI proposition must be an application, got {:?}", term);
                 }
             },
             Err(e) => panic!("prove_true_i failed: {e:?}"),

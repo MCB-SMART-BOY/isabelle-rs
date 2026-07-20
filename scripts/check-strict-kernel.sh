@@ -69,6 +69,9 @@ run_step "Formatting" cargo +stable fmt --check || true
 banner "2. Compilation (cargo +stable check --locked)"
 run_step "Compilation" cargo +stable check --locked || true
 
+banner "2b. Kernel zero-warning check"
+run_step "kernel zero warnings" bash -c 'RUSTFLAGS="-D warnings" cargo +stable check -p isabelle-kernel' || true
+
 # ── 3. Kernel firewall ──
 banner "3. Kernel dependency firewall"
 run_step "Firewall" bash scripts/check-kernel-firewall.sh || true

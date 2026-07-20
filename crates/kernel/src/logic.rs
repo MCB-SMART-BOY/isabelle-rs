@@ -161,11 +161,12 @@ impl LogicBasisId {
     pub fn to_bytes(self) -> [u8; 32] {
         self.0
     }
-
+    #[allow(dead_code)] // part of CanonicalEncoder protocol, used by other modules
     pub(crate) fn from_digest(digest: [u8; 32]) -> Self {
         Self(digest)
     }
 
+    #[allow(dead_code)] // part of CanonicalEncoder protocol
     pub(crate) fn write_canonical(self, encoder: &mut CanonicalEncoder) {
         encoder.write_fixed_bytes(&self.0);
     }

@@ -1,5 +1,5 @@
 use super::{
-    CTerm, ClosedThm, Derivation, KernelError, KernelRules, KernelThm, Name, ProofContext, RawTerm,
+    CTerm, ClosedThm, Derivation, KernelError, KernelThm, Name, ProofContext, RawTerm,
     Ty,
 };
 

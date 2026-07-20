@@ -79,21 +79,35 @@ For `src/core/`:
 `HolTheoremDb` and other search indexes may contain open, admitted, generated,
 compatibility, and transitional facts. They are not trusted theorem tables.
 
-## Feature Branch Checkpoint
+## Platform Architecture
 
-Branch `wip/kernel-trusted-slice` (merged 2026-07-21 at `03d28a6`) delivered:
+The target architecture is a layered proof engineering platform:
 
-- `TypeVarId { name, index }` — index-aware type variable identity.
-- `is_monomorphic_instance_of` with `BTreeMap<TypeVarId, Ty>` plus recursive concrete check.
-- Atomic `AxiomDependencyId` = hash(basis_id, schema_id) replacing two-entry axiom dependency.
-- 10 TCB attack tests (5 polytype, 1 axiom dep, 4 definition).
-- `prove_true_i` prototype using `define_true` (accepted `True_def` theorem) + `KernelRules::theorem_ref` + `Combination + Symmetric + EqualElim`.
+| Layer | Crate(s) | Responsibility |
+|-------|----------|---------------|
+| 0 — TCB | `isabelle-kernel` | Immutable theorem construction, acceptance, replay. Zero warnings, no async, dependencies limited to `sha2` + `thiserror`. |
+| 1 — Logic | `src/hol/`, future `src/pure/` | Declaration-aware elaboration, checked judgments, logic-basis manifests, axiom/definition replay. |
+| 2 — Runtime | Future `isabelle-session` | Headless document engine, snapshot/fork/rollback, diagnostics, proof-state transactions. |
+| 3 — Adapters | CLI, LSP, Agent | No theorem authority. Share a single document/proof runtime via versioned protocols. |
+
+Cross-cutting invariants:
+- `LogicId` in every `TheoremId`, session, and diagnostic.
+- `stable` vs `experimental` crate separation — experimental crates cannot enter the TCB dependency graph.
+- `KernelTrustedClosed` is the only final trust token; all other outcomes are transitional or diagnostics.
+
+### Checkpoint (2026-07-21)
+
+Branch `wip/kernel-trusted-slice` merged at `03d28a6` delivered:
+- `TypeVarId { name, index }`, recursive `is_concrete_type`, `is_monomorphic_instance_of` with `BTreeMap`.
+- Atomic `AxiomDependencyId` replacing dual-entry axiom dependency.
+- 10 TCB attack tests.
+- `prove_true_i` via accepted `True_def` + `theorem_ref` + `Combination + Symmetric + EqualElim` chain.
 
 **Not yet complete:**
-
-- `ConservativeDefinition` still uses old `const_name/rhs/rhs_raw/prop` payload — not atomic `DefinitionCertificate`.
-- `PolyType.params` do not participate in instance authorization.
-- The production source -> kernel bridge is not implemented.
+- `ConservativeDefinition` not atomic (`DefinitionCertificate` pending).
+- `PolyType.params` not authoritative.
+- Kernel -> legacy conversion uses Debug strings (untrusted path).
+- Production source -> kernel bridge not implemented.
 - `KernelTrustedClosed` remains `0/125`.
 
 ## Current Trusted Main Line
@@ -137,6 +151,12 @@ Do not implement any of these before the main line reaches a real
 
 Source-shape metadata is a transitional fail-closed guard only. It is not name
 resolution, checked elaboration, or trusted provenance.
+
+## Warning Policy
+
+- `isabelle-kernel` (TCB): **zero warnings** enforced by `RUSTFLAGS="-D warnings"` in the strict gate.
+- Root crate: warnings tracked as baseline; no net-new warnings per commit.
+- Never restore `#![allow(warnings)]` crate-wide. Use targeted `#[allow(dead_code)]` with reason comments.
 
 ## Agent and Review Workflow
 

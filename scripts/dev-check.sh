@@ -12,7 +12,7 @@ usage() {
         "" \
         "Modes:" \
         "  fast       cargo fmt/check with Cargo.lock frozen" \
-        "  strict     strict-kernel firewall and regression gate"
+        "  strict     strict-kernel firewall and regression gate" \
         "  checkpoint strict + feature-branch focused tests" \
         "  core       sampled HOL/Orderings/Set/Nat/List 125-theorem run" \
         "  tier2      tier-2 theory verification" \

@@ -171,7 +171,7 @@ pub fn subst_types(raw: &RawTerm, type_inst: &[(Name, Ty)]) -> Result<RawTerm, K
 }
 
 fn collect_type_vars(raw: &RawTerm, out: &mut Vec<(Name, usize)>) {
-    let mut push = |ty: &Ty, out: &mut Vec<(Name, usize)>| {
+    let push = |ty: &Ty, out: &mut Vec<(Name, usize)>| {
         ty.for_each_type_var(&mut |name, index| {
             let key = (name.clone(), index);
             if !out.iter().any(|(n, i)| n == name && *i == index) {
@@ -233,12 +233,13 @@ fn apply_type_subst(raw: &RawTerm, inst: &[(Name, Ty)]) -> Result<RawTerm, Kerne
     })
 }
 
+#[allow(dead_code)] // TODO: use in source elaboration for axiom schema
 pub(crate) fn strip_schema_foralls(raw: &RawTerm) -> RawTerm {
     match raw {
         RawTerm::Forall { body, .. } => strip_schema_foralls(body),
         other => other.clone(),
     }
- }
+}
 
 /// Apply term substitution to a RawTerm with de Bruijn-aware capture avoidance.
 ///
@@ -252,7 +253,7 @@ fn subst_terms_depth(
     raw: &RawTerm, inst: &[(Name, CTerm)], depth: usize,
 ) -> Result<RawTerm, KernelError> {
     match raw {
-        RawTerm::Var { name, index, .. } => {
+        RawTerm::Var { name, index: _, .. } => {
             for (inst_name, replacement) in inst {
                 if name == inst_name {
                     return Ok(lift_raw(replacement.term(), depth));
