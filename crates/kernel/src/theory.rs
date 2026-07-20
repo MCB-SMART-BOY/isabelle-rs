@@ -94,6 +94,43 @@ impl DefinitionCertificate {
     pub(crate) fn id(&self) -> DefinitionId {
         self.id
     }
+
+    /// Canonical computation of a DefinitionId from its constituent fields.
+    pub(crate) fn compute_id(
+        parent: &TheoryId,
+        name: &Name,
+        declared_ty: &Ty,
+        rhs_raw: &RawTerm,
+    ) -> DefinitionId {
+        let mut encoder = CanonicalEncoder::new(b"isabelle-rs/define-const/v1");
+        parent.write_canonical(&mut encoder);
+        encoder.write_name(name);
+        declared_ty.write_canonical(&mut encoder);
+        rhs_raw.write_canonical(&mut encoder);
+        DefinitionId(encoder.finish())
+    }
+
+    /// Recompute and verify the certificate's identity from its payload.
+    pub(crate) fn validate(&self, expected_parent: &TheoryId) -> Result<(), KernelError> {
+        let recomputed = Self::compute_id(expected_parent, &self.name, &self.declared_ty, &self.rhs_raw);
+        if recomputed != self.id {
+            return Err(KernelError::Invariant(
+                format!(
+                    "definition certificate id mismatch: stored {:?} != recomputed {:?}",
+                    self.id, recomputed,
+                ).into(),
+            ));
+        }
+        if &self.parent != expected_parent {
+            return Err(KernelError::Invariant(
+                format!(
+                    "definition certificate parent mismatch: stored {:?} != expected {:?}",
+                    self.parent, expected_parent,
+                ).into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// Dependency categories reserved by the accepted-theorem identity schema.
@@ -539,12 +576,9 @@ impl TrustedTheory {
         }
 
         // 4. Compute canonical DefinitionId
-        let mut encoder = CanonicalEncoder::new(b"isabelle-rs/define-const/v1");
-        self.id().write_canonical(&mut encoder);
-        encoder.write_name(&name);
-        rhs_ty.write_canonical(&mut encoder);
-        rhs_raw.write_canonical(&mut encoder);
-        let definition_id = DefinitionId(encoder.finish());
+        let definition_id = DefinitionCertificate::compute_id(
+            &self.id(), &name, &rhs_ty, &rhs_raw,
+        );
 
         // 5. Create certificate
         let certificate = DefinitionCertificate {
@@ -676,6 +710,8 @@ impl TrustedTheory {
                             "trusted definition owner does not match its snapshot parent".into(),
                         ));
                     }
+                    // Validate certificate identity
+                    certificate.validate(&parent.id())?;
                 },
                 (
                     Some(parent),
@@ -765,13 +801,19 @@ impl TrustedTheory {
         false
     }
 
-    /// Walk ancestor chain to find the [`DefinitionCertificate`] for a given id.
-    pub(crate) fn find_definition_certificate(&self, id: &DefinitionId) -> Option<DefinitionCertificate> {
+    /// Walk ancestor chain to find the [`DefinitionCertificate`] for a given id,
+    /// along with the parent [`TheoryId`] of the theory node that contains it.
+    pub(crate) fn find_definition_certificate(
+        &self, id: &DefinitionId,
+    ) -> Option<(DefinitionCertificate, TheoryId)> {
         let mut current = Some(self);
         while let Some(theory) = current {
             if let TheoryExtension::DefineConst { certificate } = theory.snapshot().extension() {
                 if &certificate.id == id {
-                    return Some(certificate.clone());
+                    let parent_id = theory.parent()
+                        .map(|p| p.id())
+                        .unwrap_or_else(|| theory.id());
+                    return Some((certificate.clone(), parent_id));
                 }
             }
             current = theory.parent();
@@ -1326,6 +1368,7 @@ mod tests {
 mod definition_tests {
     use super::*;
     use crate::Term;
+    use crate::Derivation;
 
     fn hol_sig() -> Signature {
         Signature::new()
@@ -1500,9 +1543,65 @@ mod definition_tests {
             other => panic!("definition theorem must be an equality, got {:?}", other),
         }
     }
+
+    // ── Real attack tests: tampered theorems through accept_closed_theorem ──
+
+    /// Forge a definition theorem with a bogus DefinitionId — replay cannot find cert.
+    #[test]
+    fn definition_rejects_forged_certificate_tampered_id() {
+        let sig = hol_sig().extend_const("HOL.eq", Ty::arrow(
+            Ty::tvar("'a", 0, crate::Sort::typ()),
+            Ty::arrow(Ty::tvar("'a", 0, crate::Sort::typ()), Ty::base("bool").unwrap()),
+        )).unwrap();
+        let parent = TrustedTheory::root("Test", sig);
+        let rhs = RawTerm::const_("HOL.Trueprop", Ty::arrow(Ty::base("bool").unwrap(), Ty::prop()));
+        let (child, token) = parent.define_const("HOL.True", rhs.clone()).unwrap();
+
+        let def_id = match token.as_kernel().derivation() {
+            Derivation::ConservativeDefinition { definition } => *definition,
+            _ => panic!("expected ConservativeDefinition derivation"),
+        };
+        let (real_cert, _real_parent) = child.find_definition_certificate(&def_id)
+            .expect("certificate must be findable");
+        let mut forged_cert = real_cert.clone();
+        forged_cert.id = DefinitionId([0xFF; 32]);
+
+        let ctx = ProofContext::new(child.snapshot().clone());
+        let thm = theorem_builder::definition_theorem(&ctx, &forged_cert).unwrap();
+        let closed = theorem_builder::close_thm(thm).unwrap();
+
+        let result = accept_closed_theorem(&child, "Test_def", closed);
+        assert!(result.is_err(), "must reject definition with tampered id");
+    }
+
+    /// Build a definition theorem in one theory's context, try to accept in another.
+    #[test]
+    fn definition_rejects_cross_theory_acceptance() {
+        let sig = hol_sig().extend_const("HOL.eq", Ty::arrow(
+            Ty::tvar("'a", 0, crate::Sort::typ()),
+            Ty::arrow(Ty::tvar("'a", 0, crate::Sort::typ()), Ty::base("bool").unwrap()),
+        )).unwrap();
+        let parent = TrustedTheory::root("Test", sig.clone());
+        let rhs = RawTerm::const_("HOL.Trueprop", Ty::arrow(Ty::base("bool").unwrap(), Ty::prop()));
+        let (child_a, token) = parent.define_const("HOL.True", rhs.clone()).unwrap();
+
+        let def_id = match token.as_kernel().derivation() {
+            Derivation::ConservativeDefinition { definition } => *definition,
+            _ => panic!("expected ConservativeDefinition derivation"),
+        };
+        let (real_cert, _) = child_a.find_definition_certificate(&def_id).unwrap();
+
+        let ctx_a = ProofContext::new(child_a.snapshot().clone());
+        let thm = theorem_builder::definition_theorem(&ctx_a, &real_cert).unwrap();
+        let closed = theorem_builder::close_thm(thm).unwrap();
+
+        let sibling = TrustedTheory::root("Sibling", sig);
+        let result = accept_closed_theorem(&sibling, "Test_def", closed);
+        assert!(result.is_err(), "must reject cross-theory definition acceptance");
+    }
+
 }
 
-#[cfg(test)]
 #[cfg(test)]
 mod axiom_dep_tests {
     use super::*;

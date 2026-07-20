@@ -369,10 +369,12 @@ fn replay_derivation(
 
             // 1. Walk the owner's extension chain to find the matching certificate
             let owner = owner.ok_or(KernelError::UnsupportedAcceptanceDerivation)?;
-            let certificate = owner.find_definition_certificate(def_id)
+            let (certificate, parent_id) = owner.find_definition_certificate(def_id)
                 .ok_or_else(|| KernelError::Invariant(
                     format!("definition {def_id:?} not found in owner theory ancestry").into(),
                 ))?;
+            // Validate certificate identity: recompute ID from payload and check parent
+            certificate.validate(&parent_id)?;
 
             // 2. Verify constant is declared in owner signature with declared type
             let declared_ty = ctx.signature()

@@ -50,6 +50,11 @@ impl Ty {
         if name.as_str() == "dummy" {
             return Err(KernelError::ReservedDummyType);
         }
+        if name.as_str().starts_with('\'') {
+            return Err(KernelError::Invariant(
+                format!("tick-prefixed names are reserved for type variables, got '{name}'").into(),
+            ));
+        }
         Ok(Ty(TyKind::Type { name, args }))
     }
 
