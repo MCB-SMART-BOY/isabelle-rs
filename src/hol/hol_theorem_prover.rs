@@ -9,6 +9,8 @@ pub fn define_true(
     theory: &TrustedTheory,
 ) -> Result<(TrustedTheory, TrustedTheorem), crate::kernel::KernelError> {
     let bool_ty = Ty::base("bool").unwrap();
+    // Extend signature with the new constant first
+    let theory = theory.extend_const("HOL.True", bool_ty.clone())?;
     let ctx = ProofContext::new(theory.snapshot().clone());
 
     let rhs_term = RawTerm::Eq {
@@ -28,7 +30,7 @@ pub fn define_true(
     let def_thm =
         theorem_builder::definition_theorem(&ctx, Name::from("HOL.True"), rhs_cterm, refl_thm)?;
     let closed = theorem_builder::close_thm(def_thm)?;
-    accept_closed_theorem(theory, "True_def", closed)
+    accept_closed_theorem(&theory, "True_def", closed)
 }
 
 pub fn prove_true_i(
@@ -81,6 +83,27 @@ mod tests {
         match define_true(&theory) {
             Ok((_child, token)) => assert_eq!(token.name().as_str(), "True_def"),
             Err(e) => panic!("define_true: {e:?}"),
+        }
+    }
+
+    #[test]
+    fn prove_true_i_succeeds() {
+        let sig = Signature::new()
+            .extend_const("HOL.Trueprop", Ty::arrow(Ty::base("bool").unwrap(), Ty::prop()))
+            .unwrap()
+            .extend_const(
+                "HOL.eq",
+                Ty::arrow(
+                    Ty::base("'a").unwrap(),
+                    Ty::arrow(Ty::base("'a").unwrap(), Ty::base("bool").unwrap()),
+                ),
+            )
+            .unwrap();
+        let basis = hol_basis();
+        let theory = TrustedTheory::with_basis("HOL", sig, &basis).unwrap();
+        match prove_true_i(&theory) {
+            Ok((_child, token)) => assert_eq!(token.name().as_str(), "TrueI"),
+            Err(e) => panic!("prove_true_i: {e:?}"),
         }
     }
 }
