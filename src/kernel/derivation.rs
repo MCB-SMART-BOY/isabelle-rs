@@ -84,4 +84,20 @@ pub enum Derivation {
         /// The matching substitution (rule conclusion → selected subgoal).
         subst: Vec<InstEntry>,
     },
+    /// Instantiate an axiom schema from the installed logic basis.
+    AxiomInstance {
+        axiom_name: Name,
+        /// Type substitution: maps schematic type variables to concrete types.
+        type_inst: Vec<(Name, Ty)>,
+        /// Term substitution: maps schematic term variables to concrete terms.
+        term_inst: Vec<(Name, CTerm)>,
+    },
+    /// A conservative definition: `c == rhs` where `c` is fresh and `rhs` is closed.
+    ConservativeDefinition {
+        const_name: Name,
+        rhs: CTerm,
+        /// Witness that the definition is conservative (e.g. existence proof).
+        /// Opaque for now — full conservativeness requires future work.
+        witness: Box<KernelThm>,
+    },
 }

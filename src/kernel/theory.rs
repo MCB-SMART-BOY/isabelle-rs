@@ -89,6 +89,22 @@ impl DependencySet {
             .insert(DependencyId { kind: DependencyKind::Theorem, digest: theorem.to_bytes() });
     }
 
+    pub(in crate::kernel) fn insert_axiom(&mut self, name: Name) {
+        use super::identity::CanonicalEncoder;
+        let mut encoder = CanonicalEncoder::new(b"isabelle-rs/dep-axiom/v1");
+        encoder.write_name(&name);
+        let digest = encoder.finish();
+        self.entries.insert(DependencyId { kind: DependencyKind::Axiom, digest });
+    }
+
+    pub(in crate::kernel) fn insert_definition(&mut self, name: Name) {
+        use super::identity::CanonicalEncoder;
+        let mut encoder = CanonicalEncoder::new(b"isabelle-rs/dep-defn/v1");
+        encoder.write_name(&name);
+        let digest = encoder.finish();
+        self.entries.insert(DependencyId { kind: DependencyKind::Definition, digest });
+    }
+
     fn write_canonical(&self, encoder: &mut CanonicalEncoder) {
         encoder.write_u64(self.entries.len() as u64);
         for dependency in &self.entries {

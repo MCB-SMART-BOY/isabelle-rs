@@ -1,6 +1,6 @@
 use super::{
-    CProp, CTerm, ContextStamp, Derivation, InstEntry, KernelError, KernelRules, KernelThm,
-    ProofContext,
+    CProp, CTerm, ContextStamp, Derivation, InstEntry, KernelError, KernelRules, KernelThm, Name,
+    ProofContext, RawTerm, Ty,
     theory::{DependencySet, TrustedTheory},
 };
 
@@ -137,7 +137,8 @@ fn rebuild_premise(
     theorem: &KernelThm,
 ) -> Result<KernelThm, KernelError> {
     validate_theorem_fields(expected, validator, theorem)?;
-    let replayed = replay_derivation(expected, validator, dependencies, theorem.derivation())?;
+    let replayed =
+        replay_derivation(expected, validator, dependencies, theorem.derivation(), None)?;
     if replayed.context() != theorem.context()
         || replayed.hyps() != theorem.hyps()
         || replayed.prop() != theorem.prop()
@@ -173,6 +174,7 @@ pub(in crate::kernel) fn replay_closed_theorem_in(
         Some(&validator),
         &mut dependencies,
         theorem.as_kernel().derivation(),
+        theory.logic_basis(),
     )?;
     Ok(ReplayResult::from_kernel(replayed, dependencies))
 }
@@ -182,6 +184,7 @@ fn replay_derivation(
     validator: Option<&ProofContext>,
     dependencies: &mut DependencySet,
     derivation: &Derivation,
+    logic_basis: Option<super::LogicBasisId>,
 ) -> Result<KernelThm, KernelError> {
     match derivation {
         Derivation::TheoremRef { theorem } => {
@@ -328,6 +331,52 @@ fn replay_derivation(
                 ));
             }
             KernelRules::resolve1_match(&rule, &goal_state, *selected_subgoal_index)
+        },
+
+        Derivation::AxiomInstance { axiom_name, type_inst, term_inst } => {
+            let ctx = validator.ok_or(KernelError::UnsupportedAcceptanceDerivation)?;
+            if logic_basis.is_none() {
+                return Err(KernelError::Invariant(
+                    "AxiomInstance requires an installed logic basis".into(),
+                ));
+            }
+            dependencies.insert_axiom(axiom_name.clone());
+            let prop = ctx.certify_prop(RawTerm::const_(axiom_name.clone(), Ty::prop()))?;
+            Ok(KernelThm::new(
+                Vec::new(),
+                prop,
+                Derivation::AxiomInstance {
+                    axiom_name: axiom_name.clone(),
+                    type_inst: type_inst.clone(),
+                    term_inst: term_inst.clone(),
+                },
+            ))
+        },
+
+        Derivation::ConservativeDefinition { const_name, rhs, witness } => {
+            let ctx = validator.ok_or(KernelError::UnsupportedAcceptanceDerivation)?;
+            if ctx.signature().const_type(const_name).is_some() {
+                return Err(KernelError::DuplicateDeclaration { name: const_name.clone() });
+            }
+            let _ = ctx.validate_cterm(rhs).map_err(|_| {
+                KernelError::Invariant("ConservativeDefinition rhs not valid".into())
+            })?;
+            let lhs = RawTerm::const_(const_name.clone(), rhs.term().ty().clone());
+            let eq_prop = RawTerm::Eq {
+                lhs: Box::new(lhs),
+                rhs: Box::new(RawTerm::const_(Name::from("_rhs"), rhs.term().ty().clone())),
+            };
+            let cprop = ctx.certify_prop(eq_prop)?;
+            dependencies.insert_definition(const_name.clone());
+            Ok(KernelThm::new(
+                Vec::new(),
+                cprop,
+                Derivation::ConservativeDefinition {
+                    const_name: const_name.clone(),
+                    rhs: rhs.clone(),
+                    witness: witness.clone(),
+                },
+            ))
         },
     }
 }
