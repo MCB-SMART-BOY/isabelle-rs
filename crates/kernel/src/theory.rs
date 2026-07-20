@@ -1503,9 +1503,10 @@ mod definition_tests {
 }
 
 #[cfg(test)]
+#[cfg(test)]
 mod axiom_dep_tests {
     use super::*;
-    use crate::{AxiomSchema, AxiomSchemaId, LogicBasis};
+    use crate::{AxiomSchema, LogicBasis};
 
     #[test]
     fn axiom_rejects_cross_paired_basis_schema() {
@@ -1515,7 +1516,6 @@ mod axiom_dep_tests {
                 Ty::tvar("'a", 0, crate::Sort::typ()),
                 Ty::arrow(Ty::tvar("'a", 0, crate::Sort::typ()), Ty::base("bool").unwrap()),
             )).unwrap();
-        // Two different bases with same axiom name
         let basis_a = LogicBasis::new(
             vec![],
             vec![AxiomSchema {
@@ -1540,7 +1540,6 @@ mod axiom_dep_tests {
                 },
             }],
         );
-        // Different bases produce different AxiomDependencyIds for same-named schemas
         let dep_a = crate::AxiomDependencyId::compute(basis_a.id, basis_a.get_axiom(&Name::from("test_ax")).unwrap().id());
         let dep_b = crate::AxiomDependencyId::compute(basis_b.id, basis_b.get_axiom(&Name::from("test_ax")).unwrap().id());
         assert_ne!(dep_a.to_bytes(), dep_b.to_bytes(), "different bases must produce different dependency IDs");
@@ -1548,26 +1547,19 @@ mod axiom_dep_tests {
 
     #[test]
     fn axiom_rejects_wrong_basis() {
-        let basis_a = LogicBasis::new(
+        let _basis_a = LogicBasis::new(
             vec![],
             vec![AxiomSchema {
                 name: Name::from("ax"),
                 prop: RawTerm::Forall {
-                    name: Name::from("x"),
-                    param_ty: Ty::prop(),
+                    name: Name::from("x"), param_ty: Ty::prop(),
                     body: Box::new(RawTerm::Bound(0)),
                 },
             }],
         );
         let basis_b = LogicBasis::new(vec![], vec![]);
-        // basis_b has no "ax" schema
         assert!(basis_b.get_axiom(&Name::from("ax")).is_none(),
             "wrong basis must not have the axiom schema");
-        // AxiomDependencyId with basis_b fails because schema not found
-        let schema_a = basis_a.get_axiom(&Name::from("ax")).unwrap();
-        assert!(std::panic::catch_unwind(|| {
-            crate::AxiomDependencyId::compute(basis_b.id, schema_a.id());
-        }).is_err() || true, "wrong basis/schema pairing is detectable");
     }
 
     #[test]
@@ -1591,7 +1583,6 @@ mod axiom_dep_tests {
                 },
             ],
         );
-        // Same basis, different schemas produce different dependency IDs
         let dep1 = crate::AxiomDependencyId::compute(basis.id, basis.get_axiom(&Name::from("ax1")).unwrap().id());
         let dep2 = crate::AxiomDependencyId::compute(basis.id, basis.get_axiom(&Name::from("ax2")).unwrap().id());
         assert_ne!(dep1.to_bytes(), dep2.to_bytes(),
@@ -1600,7 +1591,6 @@ mod axiom_dep_tests {
 
     #[test]
     fn axiom_rejects_same_name_changed_proposition() {
-        // Two schemas with same name but different props produce different IDs
         let s1 = AxiomSchema {
             name: Name::from("ax"),
             prop: RawTerm::Forall {
@@ -1614,11 +1604,9 @@ mod axiom_dep_tests {
         };
         assert_ne!(s1.id(), s2.id(),
             "same name with different props must produce different schema IDs");
-        // Same basis but different schema IDs produce different dependency IDs
         let basis = LogicBasis::new(vec![], vec![s1]);
         let dep1 = crate::AxiomDependencyId::compute(basis.id, basis.get_axiom(&Name::from("ax")).unwrap().id());
-        let s2_id = crate::AxiomSchemaId::compute(&Name::from("ax"), &RawTerm::Const { name: Name::from("P"), ty: Ty::prop() });
-        let dep2 = crate::AxiomDependencyId::compute(basis.id, s2_id);
+        let dep2 = crate::AxiomDependencyId::compute(basis.id, s2.id());
         assert_ne!(dep1.to_bytes(), dep2.to_bytes(),
             "tampered proposition must produce different dependency ID");
     }
@@ -1637,22 +1625,21 @@ mod axiom_dep_tests {
         );
         let dep = crate::AxiomDependencyId::compute(basis.id, basis.get_axiom(&Name::from("ax")).unwrap().id());
         let bytes = dep.to_bytes();
-        // Tamper one byte
         let mut tampered = bytes;
         tampered[0] ^= 0xFF;
         assert_ne!(tampered, bytes, "tampered bytes must differ");
-        // The tampered bytes would produce a different AxiomDependencyId
-        let dep2 = crate::AxiomDependencyId::compute(basis.id, crate::AxiomSchemaId::compute(&Name::from("ax"), &RawTerm::Forall {
-            name: Name::from("x"), param_ty: Ty::prop(),
-            body: Box::new(RawTerm::Const { name: Name::from("P"), ty: Ty::prop() }),
-        }));
+        // Different schema content produces different dependency ID
+        let tampered_schema = AxiomSchema {
+            name: Name::from("ax"),
+            prop: RawTerm::Const { name: Name::from("P"), ty: Ty::prop() },
+        };
+        let dep2 = crate::AxiomDependencyId::compute(basis.id, tampered_schema.id());
         assert_ne!(dep.to_bytes(), dep2.to_bytes(),
             "different schema content must produce different dependency IDs");
     }
 
     #[test]
     fn axiom_rejects_missing_basis() {
-        // Without a logic basis, no axiom instance can be validated
         let schema = AxiomSchema {
             name: Name::from("ax"),
             prop: RawTerm::Forall {
@@ -1660,11 +1647,10 @@ mod axiom_dep_tests {
                 body: Box::new(RawTerm::Bound(0)),
             },
         };
-        let basis = LogicBasis::new(vec![], vec![schema.clone()]);
-        // With a basis, the axiom is findable
+        let basis = LogicBasis::new(vec![], vec![schema]);
         assert!(basis.get_axiom(&Name::from("ax")).is_some());
-        // Without a basis (empty LogicBasis), no axiom exists
         let empty_basis = LogicBasis::new(vec![], vec![]);
         assert!(empty_basis.get_axiom(&Name::from("ax")).is_none());
     }
 }
+

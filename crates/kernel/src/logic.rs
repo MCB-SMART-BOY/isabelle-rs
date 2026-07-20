@@ -124,6 +124,7 @@ impl BasisDeclaration {
 ///
 /// The proposition may contain schematic type and term variables. These are
 /// instantiated when the axiom is used in a derivation (`Derivation::AxiomInstance`).
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct AxiomSchemaId(pub(crate) [u8; 32]);
 
 impl AxiomSchemaId { pub fn to_bytes(self) -> [u8; 32] { self.0 } }
