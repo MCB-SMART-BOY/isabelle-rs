@@ -147,7 +147,7 @@ impl Goal {
     ) -> Result<Self, KernelError> {
         let mut cert_ctx = ProofCertContext::from_isar_context(ctx);
         for (name, typ) in free_vars_of(&stmt) {
-            cert_ctx.declare_free(&name, if typ.is_dummy() { Typ::base("prop") } else { typ });
+            cert_ctx.declare_free(&name, typ);
         }
         Self::init_checked_in_context(&cert_ctx, kind, stmt)
     }
@@ -159,6 +159,21 @@ impl Goal {
     /// compatibility theorem construction here.
     pub fn init(kind: &str, stmt: Term) -> Self {
         Self::init_checked(kind, stmt).expect("Goal::init requires a checked proposition")
+    }
+
+    /// Initialize a goal from a new-kernel elaborated CProp.
+    ///
+    /// The CProp is already certified by `ProofContext::certify_prop`.
+    /// We convert it to a legacy CTerm and proceed through the existing
+    /// strict goal infrastructure.
+    pub fn init_from_elaborated_cprop(
+        kind: &str,
+        cprop: &crate::kernel::CProp,
+        ctx: &ProofCertContext,
+    ) -> Result<Self, KernelError> {
+        let core_term = crate::kernel::convert::kernel_term_to_core(cprop.term());
+        let stmt_ct = ctx.certify_prop(core_term)?;
+        Self::from_checked_prop(kind, stmt_ct)
     }
 
     /// Number of remaining subgoals.

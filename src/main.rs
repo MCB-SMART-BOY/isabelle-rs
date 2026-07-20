@@ -1,9 +1,4 @@
 //! Isabelle-rs: an Isabelle/Pure-inspired LCF kernel research prototype in Rust.
-
-#![allow(dead_code)]
-#![allow(unused_variables)]
-#![allow(unused_imports)]
-#![allow(unreachable_patterns)]
 //! ## Modes
 //!
 //! - **Demo mode** (default): Shows legacy kernel, term, proof-state, and LSP prototypes.
