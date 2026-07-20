@@ -10,9 +10,9 @@ trusted.
 Resolve conflicts in this order:
 
 1. source code and tests in the current checkout;
-2. `docs/PROJECT_STATUS.md` and `docs/TRUST.md`;
+2. `docs/status/PROJECT_STATUS.md` and `docs/status/TRUST.md`;
 3. accepted ADRs and trusted-boundary design documents;
-4. `docs/ROADMAP.md` and other current repository documentation;
+4. `docs/status/ROADMAP.md` and other current repository documentation;
 5. `.claude/`, `~/.codex/`, agent memory, and archived session notes.
 
 Always obtain repository state from a fresh status/log inspection. Documentation
@@ -160,7 +160,7 @@ classify dotted names, Pure/HOL binders, constants, frees, variables, or
 judgment positions at construction time; a declaration-aware parser/elaborator
 must resolve those meanings without adding a direct source-to-theorem path.
 
-Read `docs/KERNEL_TRUSTED_ACCEPTANCE_GAPS.md` before changing this chain.
+Read `docs/kernel/KERNEL_TRUSTED_ACCEPTANCE_GAPS.md` before changing this chain.
 
 ## Explicit Near-Term Exclusions
 
@@ -260,6 +260,6 @@ claim full `cargo test --lib` success unless the stack-sensitive theory-loader
 batch is proven fixed in the current checkout.
 
 `cargo +stable check --locked --all-targets` now passes after a targeted
-`benches/kernel_benchmarks.rs` fix; see `docs/BASELINE.md` for the historical
+`benches/kernel_benchmarks.rs` fix; see `docs/kernel/BASELINE.md` for the historical
 pre-existing failure audit.
 

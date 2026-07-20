@@ -17,7 +17,7 @@ proved theorem statistics, and proof-object replay. It is still far from full
 Isabelle/HOL + Isar + PIDE + AFP feature parity.
 
 Agents and contributors should read [AGENTS.md](AGENTS.md), then
-[docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md), before changing the project.
+[docs/PROJECT_STATUS.md](docs/status/PROJECT_STATUS.md), before changing the project.
 
 ## Quick Start
 
@@ -74,7 +74,7 @@ is_strict_closed_proved() == strict construction + is_closed_proved() + no dummy
 `ThmKernel::admit(ct, reason)` is the explicit accepted-without-proof entry
 point. Its oracle footprint is propagated through later kernel inferences.
 
-See [docs/TRUST.md](docs/TRUST.md).
+See [docs/TRUST.md](docs/status/TRUST.md).
 
 ## Current Status
 
@@ -143,28 +143,28 @@ a deterministic CPU baseline, and future optional Burn/CubeCL backends, but it
 must never become a trusted theorem constructor or block the strict-kernel /
 resolution / admitted-inventory main line.
 
-Detailed plan: [docs/ROADMAP.md](docs/ROADMAP.md).
+Detailed plan: [docs/ROADMAP.md](docs/status/ROADMAP.md).
 
 ## Documentation
 
 | Document | Purpose |
 |---|---|
 | [AGENTS.md](AGENTS.md) | Versioned, harness-neutral engineering and trusted-boundary rules. |
-| [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md) | Canonical current positioning and status. |
-| [docs/BASELINE.md](docs/BASELINE.md) | Trusted-kernel checkpoint, gate, and next entry point. |
-| [docs/TRUST.md](docs/TRUST.md) | Trust model, theorem acceptance, oracle/admit semantics. |
-| [docs/KERNEL_RULES.md](docs/KERNEL_RULES.md) | Kernel rule audit ledger. |
-| [docs/KERNEL_PRIMITIVES.md](docs/KERNEL_PRIMITIVES.md) | Strict-kernel base primitive rule contracts. |
-| [docs/KERNEL_TRUSTED_ACCEPTANCE_GAPS.md](docs/KERNEL_TRUSTED_ACCEPTANCE_GAPS.md) | Current strict-kernel acceptance inventory, missing context bindings, and minimal acceptance API. |
-| [docs/RESOLUTION_DESIGN.md](docs/RESOLUTION_DESIGN.md) | Resolution family design and `resolve1_match` / `subst_premise` / conservative `bicompose` status. |
-| [docs/HPC_SYMBOLIC_COMPUTE_DESIGN.md](docs/HPC_SYMBOLIC_COMPUTE_DESIGN.md) | Design-only untrusted CPU/GPU symbolic compute layer for candidate generation and prefiltering. |
-| [docs/KERNEL_ATTACK_TESTS.md](docs/KERNEL_ATTACK_TESTS.md) | Soundness regression matrix. |
-| [docs/CHECKED_HOL_PROPOSITION_NORMALIZATION.md](docs/CHECKED_HOL_PROPOSITION_NORMALIZATION.md) | Source-aware checked HOL proposition elaboration contract and `HOL::trans` diagnostic. |
-| [docs/ADR-0003-hol-logic-trusted-extension.md](docs/ADR-0003-hol-logic-trusted-extension.md) | Proposed Pure/HOL/Isar trust-layer boundary; design only. |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Current architecture and trusted-boundary data flow. |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | Concrete next phases and acceptance gates. |
-| [docs/GAP_ANALYSIS.md](docs/GAP_ANALYSIS.md) | Honest comparison against Isabelle. |
-| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Development and verification commands. |
+| [docs/PROJECT_STATUS.md](docs/status/PROJECT_STATUS.md) | Canonical current positioning and status. |
+| [docs/BASELINE.md](docs/kernel/BASELINE.md) | Trusted-kernel checkpoint, gate, and next entry point. |
+| [docs/TRUST.md](docs/status/TRUST.md) | Trust model, theorem acceptance, oracle/admit semantics. |
+| [docs/KERNEL_RULES.md](docs/kernel/KERNEL_RULES.md) | Kernel rule audit ledger. |
+| [docs/KERNEL_PRIMITIVES.md](docs/kernel/KERNEL_PRIMITIVES.md) | Strict-kernel base primitive rule contracts. |
+| [docs/KERNEL_TRUSTED_ACCEPTANCE_GAPS.md](docs/kernel/KERNEL_TRUSTED_ACCEPTANCE_GAPS.md) | Current strict-kernel acceptance inventory, missing context bindings, and minimal acceptance API. |
+| [docs/RESOLUTION_DESIGN.md](docs/design/RESOLUTION_DESIGN.md) | Resolution family design and `resolve1_match` / `subst_premise` / conservative `bicompose` status. |
+| [docs/HPC_SYMBOLIC_COMPUTE_DESIGN.md](docs/design/HPC_SYMBOLIC_COMPUTE_DESIGN.md) | Design-only untrusted CPU/GPU symbolic compute layer for candidate generation and prefiltering. |
+| [docs/KERNEL_ATTACK_TESTS.md](docs/kernel/KERNEL_ATTACK_TESTS.md) | Soundness regression matrix. |
+| [docs/CHECKED_HOL_PROPOSITION_NORMALIZATION.md](docs/design/CHECKED_HOL_PROPOSITION_NORMALIZATION.md) | Source-aware checked HOL proposition elaboration contract and `HOL::trans` diagnostic. |
+| [docs/ADR-0003-hol-logic-trusted-extension.md](docs/adr/ADR-0003-hol-logic-trusted-extension.md) | Proposed Pure/HOL/Isar trust-layer boundary; design only. |
+| [docs/ARCHITECTURE.md](docs/archive/ARCHITECTURE.md) | Current architecture and trusted-boundary data flow. |
+| [docs/ROADMAP.md](docs/status/ROADMAP.md) | Concrete next phases and acceptance gates. |
+| [docs/GAP_ANALYSIS.md](docs/archive/GAP_ANALYSIS.md) | Honest comparison against Isabelle. |
+| [docs/DEVELOPMENT.md](docs/guides/DEVELOPMENT.md) | Development and verification commands. |
 
 ## Recommended Description
 

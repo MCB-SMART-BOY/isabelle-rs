@@ -7,12 +7,12 @@ Claude-specific compatibility entry point.
 ## Canonical Reading Order
 
 1. [AGENTS.md](AGENTS.md)
-2. [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md)
-3. [docs/TRUST.md](docs/TRUST.md)
-4. [docs/KERNEL_TRUSTED_ACCEPTANCE_GAPS.md](docs/KERNEL_TRUSTED_ACCEPTANCE_GAPS.md)
-5. [docs/ROADMAP.md](docs/ROADMAP.md)
-6. [docs/KERNEL_RULES.md](docs/KERNEL_RULES.md)
-7. [docs/KERNEL_ATTACK_TESTS.md](docs/KERNEL_ATTACK_TESTS.md)
+2. [docs/PROJECT_STATUS.md](docs/status/PROJECT_STATUS.md)
+3. [docs/TRUST.md](docs/status/TRUST.md)
+4. [docs/KERNEL_TRUSTED_ACCEPTANCE_GAPS.md](docs/kernel/KERNEL_TRUSTED_ACCEPTANCE_GAPS.md)
+5. [docs/ROADMAP.md](docs/status/ROADMAP.md)
+6. [docs/KERNEL_RULES.md](docs/kernel/KERNEL_RULES.md)
+7. [docs/KERNEL_ATTACK_TESTS.md](docs/kernel/KERNEL_ATTACK_TESTS.md)
 
 Source code and tests in the current checkout override stale agent memory,
 `.claude/` notes, or user-level `~/.codex` caches.

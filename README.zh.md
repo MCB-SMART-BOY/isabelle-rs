@@ -54,10 +54,10 @@ Isar 证明引擎 (部分实现)
 |------|------|
 | [AGENTS.md](AGENTS.md) | 代理入口指南 |
 | [AGENTS.zh.md](AGENTS.zh.md) | 代理指南（中文） |
-| [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md) | 项目状态和定位 |
+| [docs/PROJECT_STATUS.md](docs/status/PROJECT_STATUS.md) | 项目状态和定位 |
 | [docs/isip/ISIP.md](docs/isip/ISIP.md) | ISIP 标准概述 |
 | [docs/isip/ISIP.zh.md](docs/isip/ISIP.zh.md) | ISIP 标准概述（中文） |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | 实施路线图 |
-| [docs/README.md](docs/README.md) | 文档索引和分类 |
+| [docs/ROADMAP.md](docs/status/ROADMAP.md) | 实施路线图 |
+| [docs/README.md](docs/guides/DOCUMENT_INDEX.md) | 文档索引和分类 |
 
 ## 许可证
