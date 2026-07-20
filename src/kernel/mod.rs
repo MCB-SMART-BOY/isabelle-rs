@@ -15,6 +15,7 @@ pub mod rules;
 pub mod search_fact;
 pub mod signature;
 pub mod term;
+pub(crate) mod theorem_builder;
 pub mod theory;
 pub mod thm;
 pub mod typ;

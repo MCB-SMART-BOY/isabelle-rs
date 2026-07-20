@@ -14,6 +14,7 @@ pub mod hol_basis;
 pub mod hol_consts;
 pub mod hol_loader;
 pub mod hol_rules;
+pub mod hol_theorem_prover;
 pub mod hol_theorems;
 pub mod hologic;
 pub mod inductive;
