@@ -206,12 +206,13 @@ impl ProofContext {
                     .const_type(&name)
                     .ok_or_else(|| KernelError::UndeclaredConst(name.clone()))?;
                 if declared != &ty {
-                    return Err(KernelError::TypeMismatch {
-                        expected: declared.clone(),
-                        actual: ty,
-                    });
+                    if !declared.is_monomorphic_instance_of(&ty) {
+                        return Err(KernelError::TypeMismatch { expected: declared.clone(), actual: ty });
+                    }
+                    Ok(Term::Const { name, ty })
+                } else {
+                    Ok(Term::Const { name, ty: declared.clone() })
                 }
-                Ok(Term::Const { name, ty: declared.clone() })
             },
             RawTerm::Free { name, ty } => {
                 let declared = self

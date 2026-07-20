@@ -3535,6 +3535,8 @@ pub struct HolTheoremDb {
     /// Reverse index: attribute name → theorems with that attribute.
     /// Used to resolve named_theorems (e.g., `field_simps` → all [field_simps] theorems).
     pub attrs_index: std::collections::HashMap<String, Vec<Arc<crate::core::thm::Thm>>>,
+    /// New-kernel proof context, built lazily from `type_env`.
+    pub kernel_ctx: std::sync::OnceLock<crate::kernel::ProofContext>,
 }
 
 impl HolTheoremDb {
@@ -3556,6 +3558,7 @@ impl HolTheoremDb {
             safe_intro_net: std::sync::OnceLock::new(),
             safe_elim_net: std::sync::OnceLock::new(),
             attrs_index: std::collections::HashMap::new(),
+            kernel_ctx: std::sync::OnceLock::new(),
         }
     }
 
@@ -3575,6 +3578,23 @@ impl HolTheoremDb {
         self.all.iter().filter(|thm| thm.is_strict_closed_proved()).count()
     }
 
+    /// Return the new-kernel proof context, building it lazily from `type_env`.
+    pub fn new_kernel_ctx(&self) -> Option<&crate::kernel::ProofContext> {
+        self.kernel_ctx.get_or_init(|| {
+            let mut sig = crate::kernel::Signature::new();
+            for (name, typ) in &self.type_env.consts {
+                let ty_str = format!("{typ}");
+                if let Ok(ty) = crate::kernel::Ty::base(ty_str.as_str()) {
+                    if let Ok(s) = sig.extend_const(name.as_ref(), ty) {
+                        sig = s;
+                    }
+                }
+            }
+            let snapshot = crate::kernel::TheorySnapshot::root("hol_db", sig);
+            crate::kernel::ProofContext::new(snapshot)
+        });
+        self.kernel_ctx.get()
+    }
     /// Look up a checked definition source by conventional name, e.g.
     /// `True_def`. The returned value is definition input, not a theorem.
     pub fn checked_definition_source(&self, name: &str) -> Option<&CheckedDefinitionSource> {
@@ -3993,6 +4013,7 @@ impl HolTheoremDb {
             elim_net: std::sync::OnceLock::new(),
             safe_intro_net: std::sync::OnceLock::new(),
             safe_elim_net: std::sync::OnceLock::new(),
+            kernel_ctx: std::sync::OnceLock::new(),
             attrs_index,
         }
     }
@@ -4055,6 +4076,25 @@ impl HolTheoremDb {
                 let full_name =
                     if name.contains('.') { name.to_string() } else { format!("HOL.{}", name) };
                 env.declare_const(&full_name, typ);
+            }
+        }
+        // Parse judgment declarations (e.g., HOL.Trueprop :: bool => prop)
+        for block in find_top_level_blocks(source, "judgment") {
+            for line in block.lines() {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                if let Some((name, typ_str)) = parse_const_decl(line) {
+                    if let Some(typ) = parse_hol_type_with_env(typ_str, &env) {
+                        let full_name = if name.contains('.') {
+                            name.to_string()
+                        } else {
+                            format!("HOL.{}", name)
+                        };
+                        env.declare_const(&full_name, typ);
+                    }
+                }
             }
         }
         env

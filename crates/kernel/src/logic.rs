@@ -36,10 +36,8 @@ impl PolyType {
     /// Check whether a monomorphic type is a valid instance of this scheme.
     /// Currently accepts any type — full polymorphic checking requires a
     /// substitution engine (deferred to Phase 4).
-    pub fn monomorphic_instance_matches(&self, _instance: &Ty) -> bool {
-        // TODO: implement proper polymorphic instance checking with
-        //       type variable substitution when Phase 4 lands.
-        true
+    pub fn monomorphic_instance_matches(&self, instance: &Ty) -> bool {
+        self.body.is_monomorphic_instance_of(instance)
     }
 
     pub(crate) fn write_canonical(&self, encoder: &mut CanonicalEncoder) {
@@ -92,6 +90,16 @@ impl BasisDeclaration {
 ///
 /// The proposition may contain schematic type and term variables. These are
 /// instantiated when the axiom is used in a derivation (`Derivation::AxiomInstance`).
+pub struct AxiomSchemaId(pub(crate) [u8; 32]);
+
+impl AxiomSchemaId { pub fn to_bytes(self) -> [u8; 32] { self.0 } }
+
+impl fmt::Debug for AxiomSchemaId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "AxiomSchemaId({:x?})", &self.0[..4])
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AxiomSchema {
     pub name: Name,
@@ -100,8 +108,38 @@ pub struct AxiomSchema {
 }
 
 impl AxiomSchema {
+    pub fn id(&self) -> AxiomSchemaId {
+        let mut encoder = CanonicalEncoder::new(b"isabelle-rs/axiom-schema/v1");
+        encoder.write_name(&self.name);
+        self.write_canonical(&mut encoder);
+        AxiomSchemaId(encoder.finish())
+    }
+
     pub(crate) fn write_canonical(&self, encoder: &mut CanonicalEncoder) {
         encoder.write_name(&self.name);
+        // prop canonical encoding: serialize the RawTerm structure
+        self.prop.write_canonical(encoder);
+    }
+}
+
+
+/// Content-addressed pairing of a specific logic basis with a specific axiom schema.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AxiomDependencyId([u8; 32]);
+
+impl AxiomDependencyId {
+    pub fn compute(basis_id: LogicBasisId, schema_id: AxiomSchemaId) -> Self {
+        let mut encoder = CanonicalEncoder::new(b"isabelle-rs/dep-axiom-pair/v1");
+        encoder.write_fixed_bytes(&basis_id.to_bytes());
+        encoder.write_fixed_bytes(&schema_id.to_bytes());
+        Self(encoder.finish())
+    }
+    pub fn to_bytes(self) -> [u8; 32] { self.0 }
+}
+
+impl fmt::Debug for AxiomDependencyId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "AxiomDependencyId({:x?})", &self.0[..8])
     }
 }
 
@@ -212,6 +250,11 @@ impl LogicBasis {
         }
         // Axiom schemas are validated at instantiation time (Phase 4).
         Ok(())
+    }
+
+    /// Look up an axiom schema by name.
+    pub fn get_axiom(&self, name: &Name) -> Option<&AxiomSchema> {
+        self.axioms.iter().find(|a| &a.name == name)
     }
 }
 

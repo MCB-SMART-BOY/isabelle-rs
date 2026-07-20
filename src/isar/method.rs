@@ -4176,11 +4176,16 @@ pub fn verify_lemma(lem: &ParsedLemma) -> LemmaVerification {
             StrictAdapterResult::NotApplicable => {},
         }
 
-        // ── Source-aware elaboration (Phase 2 hook) ────────────────────
-        // TODO: When the elaborator and proof context are fully wired,
-        //       use the elaborated CProp for verification instead of the
-        //       legacy Term path. Currently only logs success/failure.
-        let _ = try_source_elaboration(lem);
+        // ── Source-aware elaboration (Phase 4) ─────────────────────────
+        let proof_ctx = build_kernel_proof_context(db);
+        let elaborated = try_source_elaboration(lem, &proof_ctx);
+        let goal_ct = if let Ok(ref cprop) = elaborated {
+            let core_term = crate::kernel::convert::kernel_term_to_core(cprop.term());
+            CTerm::certify_checked(core_term, &db.type_env)
+                .unwrap_or_else(|_| CTerm::certify(lem.theorem.prop().term().clone()))
+        } else {
+            CTerm::certify(lem.theorem.prop().term().clone())
+        };
 
         // If a built-in Var-override exists, use it directly (skip proof replay).
         // This covers lemmas whose proofs use complex patterns (multi-method chains,
@@ -4222,7 +4227,6 @@ pub fn verify_lemma(lem: &ParsedLemma) -> LemmaVerification {
             return Some(strict_identity);
         }
 
-        let goal_ct = CTerm::certify(lem.theorem.prop().term().clone());
         let (prems, concl) = Pure::strip_imp_prems(goal_ct.term());
         let premise_cterms: Vec<CTerm> =
             prems.iter().map(|p| CTerm::certify((*p).clone())).collect();
@@ -4603,27 +4607,39 @@ impl Method {
 // Tests
 // =========================================================================
 
-/// Try source-aware elaboration as a Phase 2 observation hook.
-/// Returns the elaborated `CProp` on success, `None` if any step fails.
-/// This is currently advisory only — it does not change the proof flow.
-fn try_source_elaboration(lem: &ParsedLemma) -> Option<crate::kernel::CProp> {
+/// Build a new-kernel `ProofContext` from the legacy `HolTheoremDb`'s type environment.
+fn build_kernel_proof_context(db: &HolTheoremDb) -> crate::kernel::ProofContext {
+    let mut sig = crate::kernel::Signature::new();
+    for (name, typ) in &db.type_env.consts {
+        let ty_str = format!("{typ}");
+        if let Ok(ty) = crate::kernel::Ty::base(ty_str.as_str()) {
+            if let Ok(s) = sig.extend_const(name.as_ref(), ty) {
+                sig = s;
+            }
+        }
+    }
+    let snapshot = crate::kernel::TheorySnapshot::root("legacy", sig);
+    crate::kernel::ProofContext::new(snapshot)
+}
+/// Try source-aware elaboration using the provided kernel proof context.
+/// Returns the elaborated `CProp` on success, or an `ElaborationError` on failure.
+fn try_source_elaboration(
+    lem: &ParsedLemma,
+    proof_ctx: &crate::kernel::ProofContext,
+) -> Result<crate::kernel::CProp, crate::isar::elaborator::ElaborationError> {
     use crate::isar::elaborator::elaborate_proposition;
     use crate::isar::source_ast::SourceId;
     use crate::isar::term_parser::parse_source_proposition;
 
     let source_text = lem.theorem.prop().term().to_string();
     let source_id = SourceId::new(lem.name.as_str());
-    let source_prop = parse_source_proposition(&source_text, source_id)?;
+    let source_prop = parse_source_proposition(&source_text, source_id).ok_or_else(|| {
+        crate::isar::elaborator::ElaborationError::ElaborationInternal(
+            "failed to parse source proposition".into(),
+        )
+    })?;
 
-    // Build a temporary proof context from the current theory.
-    // TODO: use the actual proof context when Phase 2 is fully integrated.
-    let _ctx = crate::kernel::ProofContext::new(crate::kernel::TheorySnapshot::root(
-        "elab",
-        crate::kernel::Signature::new(),
-    ));
-
-    let _cprop = elaborate_proposition(&source_prop, &_ctx).ok()?;
-    Some(_cprop)
+    elaborate_proposition(&source_prop, proof_ctx)
 }
 #[cfg(test)]
 mod tests {

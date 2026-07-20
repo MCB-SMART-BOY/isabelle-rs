@@ -1,10 +1,39 @@
-use std::fmt;
+use std::{collections::BTreeMap, fmt};
 
 use super::{KernelError, Name, identity::CanonicalEncoder};
+
+/// A type-class sort for type variables.
+///
+/// For the initial implementation, a sort is a single class name (e.g., `type`).
+/// Isabelle's full sort system (intersection/normalization of classes) can be
+/// added later without changing the `TyKind` variant structure.
+#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Sort(Name);
+
+impl Sort {
+    pub fn typ() -> Self {
+        Sort(Name::from("type"))
+    }
+
+    pub fn name(&self) -> &Name {
+        &self.0
+    }
+}
+
+impl fmt::Debug for Sort {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct TypeVarId { pub name: Name, pub index: usize }
+impl TypeVarId { pub fn new(name: impl Into<Name>, index: usize) -> Self { TypeVarId { name: name.into(), index } } }
 
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 enum TyKind {
     Type { name: Name, args: Vec<Ty> },
+    TypeVar { name: Name, index: usize, sort: Sort },
 }
 
 /// Strict kernel type.
@@ -28,6 +57,85 @@ impl Ty {
         Ok(Ty(TyKind::Type { name, args }))
     }
 
+    pub fn tvar(name: impl Into<Name>, index: usize, sort: Sort) -> Self {
+        Ty(TyKind::TypeVar { name: name.into(), index, sort })
+    }
+
+    pub fn is_tvar(&self) -> bool {
+        matches!(&self.0, TyKind::TypeVar { .. })
+    }
+
+    pub fn is_concrete_type(&self) -> bool {
+        match &self.0 {
+            TyKind::TypeVar { .. } => false,
+            TyKind::Type { args, .. } => args.iter().all(Self::is_concrete_type),
+        }
+    }
+
+    pub fn tvar_name(&self) -> Option<&Name> {
+        match &self.0 {
+            TyKind::TypeVar { name, .. } => Some(name),
+            _ => None,
+        }
+    }
+
+    /// Call `f` for every type variable leaf in this type.
+    pub fn for_each_type_var(&self, f: &mut impl FnMut(&Name, usize)) {
+        match &self.0 {
+            TyKind::TypeVar { name, index, .. } => f(name, *index),
+            TyKind::Type { args, .. } => {
+                for arg in args {
+                    arg.for_each_type_var(f);
+                }
+            }
+        }
+    }
+
+    /// Apply a type-variable substitution. Only TypeVar leaves are replaced.
+    pub(crate) fn subst_type_vars(&self, inst: &[(Name, Ty)]) -> Result<Ty, KernelError> {
+        match &self.0 {
+            TyKind::TypeVar { name, index: _, sort } => {
+                if sort != &Sort::typ() {
+                    return Err(KernelError::Invariant(
+                        format!("unsupported sort `{sort:?}` in type variable `{name}`").into(),
+                    ));
+                }
+                for (inst_name, replacement) in inst {
+                    if inst_name == name {
+                        return Ok(replacement.clone());
+                    }
+                }
+                Ok(self.clone())
+            }
+            TyKind::Type { name, args } => {
+                let new_args: Vec<Ty> = args.iter()
+                    .map(|a| a.subst_type_vars(inst))
+                    .collect::<Result<_, _>>()?;
+                Ok(Ty(TyKind::Type { name: name.clone(), args: new_args }))
+            }
+        }
+    }
+    pub(crate) fn is_monomorphic_instance_of(&self, instance: &Ty) -> bool {
+        let mut bindings: BTreeMap<TypeVarId, Ty> = BTreeMap::new();
+        if !Self::match_scheme(self, instance, &mut bindings) { return false; }
+        bindings.values().all(|t| t.is_concrete_type())
+    }
+    fn match_scheme(scheme: &Ty, instance: &Ty, bindings: &mut BTreeMap<TypeVarId, Ty>) -> bool {
+        match (&scheme.0, &instance.0) {
+            (TyKind::TypeVar { name, index, sort }, _) => {
+                if sort != &Sort::typ() { return false; }
+                let id = TypeVarId::new(name.clone(), *index);
+                if let Some(existing) = bindings.get(&id) { return existing == instance; }
+                bindings.insert(id, instance.clone()); true
+            }
+            (TyKind::Type { name: sn, args: sa }, TyKind::Type { name: in_, args: ia }) => {
+                sn == in_ && sa.len() == ia.len() && sa.iter().zip(ia.iter()).all(|(s,i)| Self::match_scheme(s,i,bindings))
+            }
+            _ => false,
+        }
+    }
+
+
     pub fn prop() -> Self {
         Ty(TyKind::Type { name: Name::from("prop"), args: vec![] })
     }
@@ -50,6 +158,12 @@ impl Ty {
     }
     pub(crate) fn write_canonical(&self, encoder: &mut CanonicalEncoder) {
         match &self.0 {
+            TyKind::TypeVar { name, index, sort } => {
+                encoder.write_u8(1); // type variable tag
+                encoder.write_name(name);
+                encoder.write_u64(*index as u64);
+                encoder.write_name(&sort.0);
+            },
             TyKind::Type { name, args } => {
                 encoder.write_u8(0); // type application, type schema v1
                 encoder.write_name(name);
@@ -65,11 +179,62 @@ impl Ty {
 impl fmt::Debug for Ty {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.0 {
+            TyKind::TypeVar { name, index, .. } if *index == 0 => write!(f, "'{name}"),
+            TyKind::TypeVar { name, index, .. } => write!(f, "'{name}.{index}"),
             TyKind::Type { name, args } if args.is_empty() => write!(f, "{name}"),
             TyKind::Type { name, args } if name.as_str() == "fun" && args.len() == 2 => {
                 write!(f, "({:?} => {:?})", args[0], args[1])
             },
             TyKind::Type { name, args } => f.debug_tuple(name.as_str()).field(args).finish(),
         }
+    }
+}
+
+
+#[cfg(test)]
+mod polytype_tests {
+    use super::*;
+
+    #[test]
+    fn monomorphic_instance_rejects_inconsistent_binding() {
+        let s = Ty::arrow(Ty::tvar("'a",0,Sort::typ()), Ty::arrow(Ty::tvar("'a",0,Sort::typ()), Ty::base("bool").unwrap()));
+        let i = Ty::arrow(Ty::base("bool").unwrap(), Ty::arrow(Ty::base("nat").unwrap(), Ty::base("bool").unwrap()));
+        assert!(!s.is_monomorphic_instance_of(&i));
+    }
+
+    #[test]
+    fn monomorphic_instance_distinguishes_same_name_different_index() {
+        let s = Ty::arrow(Ty::tvar("'a",0,Sort::typ()), Ty::arrow(Ty::tvar("'a",1,Sort::typ()), Ty::base("bool").unwrap()));
+        let i = Ty::arrow(Ty::base("bool").unwrap(), Ty::arrow(Ty::base("nat").unwrap(), Ty::base("bool").unwrap()));
+        assert!(s.is_monomorphic_instance_of(&i));
+    }
+
+    #[test]
+    fn monomorphic_instance_rejects_non_concrete_replacement() {
+        let s = Ty::arrow(Ty::tvar("'a",0,Sort::typ()), Ty::base("bool").unwrap());
+        let i = Ty::arrow(Ty::tvar("'b",0,Sort::typ()), Ty::base("bool").unwrap());
+        assert!(!s.is_monomorphic_instance_of(&i));
+    }
+
+    #[test]
+    fn monomorphic_instance_accepts_exact_match() {
+        let id_ty = Ty::arrow(Ty::base("bool").unwrap(), Ty::base("bool").unwrap());
+        let s = Ty::arrow(Ty::tvar("'a",0,Sort::typ()), Ty::arrow(Ty::tvar("'a",0,Sort::typ()), Ty::base("bool").unwrap()));
+        let i = Ty::arrow(id_ty.clone(), Ty::arrow(id_ty, Ty::base("bool").unwrap()));
+        assert!(s.is_monomorphic_instance_of(&i));
+    }
+
+    #[test]
+    fn is_concrete_type_rejects_nested_type_var() {
+        // fun('b, bool) should NOT be concrete because 'b is a TypeVar inside
+        let nested = Ty::apply("fun", vec![Ty::tvar("'b", 0, Sort::typ()), Ty::base("bool").unwrap()]).unwrap();
+        assert!(!nested.is_concrete_type());
+        // fun(bool, bool) IS concrete
+        let concrete = Ty::apply("fun", vec![Ty::base("bool").unwrap(), Ty::base("bool").unwrap()]).unwrap();
+        assert!(concrete.is_concrete_type());
+        // plain bool IS concrete
+        assert!(Ty::base("bool").unwrap().is_concrete_type());
+        // plain 'a is NOT concrete
+        assert!(!Ty::tvar("'a", 0, Sort::typ()).is_concrete_type());
     }
 }

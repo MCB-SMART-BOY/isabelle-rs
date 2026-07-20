@@ -43,9 +43,9 @@ pub fn hol_basis() -> LogicBasis {
                 scheme: PolyType::new(
                     vec![Name::from("'a")],
                     Ty::arrow(
-                        Ty::base("'a").expect("'a type"),
+                        Ty::tvar("'a", 0, crate::kernel::Sort::typ()),
                         Ty::arrow(
-                            Ty::base("'a").expect("'a type"),
+                            Ty::tvar("'a", 0, crate::kernel::Sort::typ()),
                             Ty::base("bool").expect("bool type"),
                         ),
                     ),
@@ -59,7 +59,7 @@ pub fn hol_basis() -> LogicBasis {
                 // ∀t. Trueprop (t = t)
                 prop: RawTerm::Forall {
                     name: Name::from("t"),
-                    param_ty: Ty::base("'a").expect("'a type"),
+                    param_ty: Ty::tvar("'a", 0, crate::kernel::Sort::typ()),
                     body: Box::new(RawTerm::app(
                         RawTerm::const_(
                             Name::from("HOL.Trueprop"),
@@ -70,16 +70,16 @@ pub fn hol_basis() -> LogicBasis {
                                 RawTerm::const_(
                                     Name::from("HOL.eq"),
                                     Ty::arrow(
-                                        Ty::base("'a").expect("'a"),
+                                        Ty::tvar("'a", 0, crate::kernel::Sort::typ()),
                                         Ty::arrow(
-                                            Ty::base("'a").expect("'a"),
+                                            Ty::tvar("'a", 0, crate::kernel::Sort::typ()),
                                             Ty::base("bool").expect("bool"),
                                         ),
                                     ),
                                 ),
-                                RawTerm::var(Name::from("t"), 0, Ty::base("'a").expect("'a")),
+                                RawTerm::Bound(0),
                             ),
-                            RawTerm::var(Name::from("t"), 0, Ty::base("'a").expect("'a")),
+                            RawTerm::Bound(0),
                         ),
                     )),
                 },
@@ -89,10 +89,10 @@ pub fn hol_basis() -> LogicBasis {
                 // ∀s t. (s = t) ⟶ P s ⟶ P t
                 prop: RawTerm::Forall {
                     name: Name::from("s"),
-                    param_ty: Ty::base("'a").expect("'a"),
+                    param_ty: Ty::tvar("'a", 0, crate::kernel::Sort::typ()),
                     body: Box::new(RawTerm::Forall {
                         name: Name::from("t"),
-                        param_ty: Ty::base("'a").expect("'a"),
+                        param_ty: Ty::tvar("'a", 0, crate::kernel::Sort::typ()),
                         body: Box::new(RawTerm::Imp {
                             premise: Box::new(RawTerm::app(
                                 RawTerm::const_(
@@ -104,9 +104,9 @@ pub fn hol_basis() -> LogicBasis {
                                         RawTerm::const_(
                                             Name::from("HOL.eq"),
                                             Ty::arrow(
-                                                Ty::base("'a").expect("'a"),
+                                                Ty::tvar("'a", 0, crate::kernel::Sort::typ()),
                                                 Ty::arrow(
-                                                    Ty::base("'a").expect("'a"),
+                                                    Ty::tvar("'a", 0, crate::kernel::Sort::typ()),
                                                     Ty::base("bool").expect("bool"),
                                                 ),
                                             ),
@@ -114,10 +114,14 @@ pub fn hol_basis() -> LogicBasis {
                                         RawTerm::var(
                                             Name::from("s"),
                                             0,
-                                            Ty::base("'a").expect("'a"),
+                                            Ty::tvar("'a", 0, crate::kernel::Sort::typ()),
                                         ),
                                     ),
-                                    RawTerm::var(Name::from("t"), 1, Ty::base("'a").expect("'a")),
+                                    RawTerm::var(
+                                        Name::from("t"),
+                                        1,
+                                        Ty::tvar("'a", 0, crate::kernel::Sort::typ()),
+                                    ),
                                 ),
                             )),
                             conclusion: Box::new(RawTerm::Imp {
@@ -131,14 +135,14 @@ pub fn hol_basis() -> LogicBasis {
                                             Name::from("P"),
                                             0,
                                             Ty::arrow(
-                                                Ty::base("'a").expect("'a"),
+                                                Ty::tvar("'a", 0, crate::kernel::Sort::typ()),
                                                 Ty::base("bool").expect("bool"),
                                             ),
                                         ),
                                         RawTerm::var(
                                             Name::from("s"),
                                             2,
-                                            Ty::base("'a").expect("'a"),
+                                            Ty::tvar("'a", 0, crate::kernel::Sort::typ()),
                                         ),
                                     ),
                                 )),
@@ -152,14 +156,14 @@ pub fn hol_basis() -> LogicBasis {
                                             Name::from("P"),
                                             0,
                                             Ty::arrow(
-                                                Ty::base("'a").expect("'a"),
+                                                Ty::tvar("'a", 0, crate::kernel::Sort::typ()),
                                                 Ty::base("bool").expect("bool"),
                                             ),
                                         ),
                                         RawTerm::var(
                                             Name::from("t"),
                                             2,
-                                            Ty::base("'a").expect("'a"),
+                                            Ty::tvar("'a", 0, crate::kernel::Sort::typ()),
                                         ),
                                     ),
                                 )),

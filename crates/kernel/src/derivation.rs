@@ -1,4 +1,4 @@
-use super::{CProp, CTerm, InstEntry, KernelThm, Name, TrustedTheorem, Ty};
+use super::{CProp, CTerm, InstEntry, KernelThm, Name, RawTerm, TrustedTheorem, Ty};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Derivation {
@@ -89,15 +89,15 @@ pub enum Derivation {
         axiom_name: Name,
         /// Type substitution: maps schematic type variables to concrete types.
         type_inst: Vec<(Name, Ty)>,
-        /// Term substitution: maps schematic term variables to concrete terms.
-        term_inst: Vec<(Name, CTerm)>,
+        /// Term substitution: ordered list of replacements for schema binders.
+        term_inst: Vec<CTerm>,
     },
-    /// A conservative definition: `c == rhs` where `c` is fresh and `rhs` is closed.
     ConservativeDefinition {
         const_name: Name,
         rhs: CTerm,
-        /// Witness that the definition is conservative (e.g. existence proof).
-        /// Opaque for now — full conservativeness requires future work.
-        witness: Box<KernelThm>,
+        rhs_raw: RawTerm,
+        /// The definition proposition: `const_name == rhs`.
+        /// Verified against independent reconstruction during replay.
+        prop: RawTerm,
     },
 }

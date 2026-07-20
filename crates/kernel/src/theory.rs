@@ -1,7 +1,8 @@
 use std::{collections::BTreeSet, fmt, sync::Arc};
 
 use super::{
-    CProp, ClosedThm, ContextStamp, KernelError, Name, Signature, Ty,
+    CProp, CTerm, ClosedThm, ContextStamp, KernelError, KernelThm, Name, ProofContext, RawTerm,
+    Signature, Ty,
     identity::{CanonicalEncoder, THEORY_DOMAIN, TheoryId},
     invariant::replay_closed_theorem_in,
 };
@@ -89,18 +90,16 @@ impl DependencySet {
             .insert(DependencyId { kind: DependencyKind::Theorem, digest: theorem.to_bytes() });
     }
 
-    pub(crate) fn insert_axiom(&mut self, name: Name) {
-        use super::identity::CanonicalEncoder;
-        let mut encoder = CanonicalEncoder::new(b"isabelle-rs/dep-axiom/v1");
-        encoder.write_name(&name);
-        let digest = encoder.finish();
-        self.entries.insert(DependencyId { kind: DependencyKind::Axiom, digest });
+    pub(crate) fn insert_axiom(&mut self, dep_id: super::AxiomDependencyId) {
+        self.entries.insert(DependencyId {
+            kind: DependencyKind::Axiom,
+            digest: dep_id.to_bytes(),
+        });
     }
 
-    pub(crate) fn insert_definition(&mut self, name: Name) {
-        use super::identity::CanonicalEncoder;
-        let mut encoder = CanonicalEncoder::new(b"isabelle-rs/dep-defn/v1");
-        encoder.write_name(&name);
+    pub(crate) fn insert_definition(&mut self, definition_id: [u8; 32]) {
+        let mut encoder = super::identity::CanonicalEncoder::new(b"isabelle-rs/dep-defn/v1");
+        encoder.write_fixed_bytes(&definition_id);
         let digest = encoder.finish();
         self.entries.insert(DependencyId { kind: DependencyKind::Definition, digest });
     }
@@ -143,6 +142,7 @@ enum TheoryExtension {
     Root { name: Name },
     BeginChild { name: Name },
     DeclareConst { name: Name, ty: Ty },
+    DefineConst { name: Name, ty: Ty, definition_id: [u8; 32] },
     StoreTheorem { name: Name, theorem: TheoremId },
 }
 
@@ -163,6 +163,15 @@ impl TheorySnapshot {
         let name = name.into();
         let signature = self.signature().extend_const(name.clone(), ty.clone())?;
         Ok(Self::build(Some(self.clone()), signature, TheoryExtension::DeclareConst { name, ty }))
+    }
+
+    pub fn extend_definition(
+        &self, name: impl Into<Name>, ty: Ty, definition_id: [u8; 32],
+    ) -> Result<Self, KernelError> {
+        let name = name.into();
+        let signature = self.signature().extend_const(name.clone(), ty.clone())?;
+        Ok(Self::build(Some(self.clone()), signature,
+            TheoryExtension::DefineConst { name, ty, definition_id }))
     }
 
     pub fn id(&self) -> TheoryId {
@@ -269,6 +278,12 @@ impl TheoryExtension {
                 encoder.write_name(name);
                 ty.write_canonical(encoder);
             },
+            TheoryExtension::DefineConst { name, ty, definition_id } => {
+                encoder.write_u8(4);
+                encoder.write_name(name);
+                ty.write_canonical(encoder);
+                encoder.write_fixed_bytes(definition_id);
+            },
             TheoryExtension::StoreTheorem { name, theorem } => {
                 encoder.write_u8(3);
                 encoder.write_name(name);
@@ -310,6 +325,11 @@ impl TrustedTheorem {
 
     pub fn prop(&self) -> &CProp {
         self.0.closed.as_kernel().prop()
+    }
+
+    /// Extract the sealed kernel theorem (for use as a premise in further derivations).
+    pub fn as_kernel(&self) -> &KernelThm {
+        self.0.closed.as_kernel()
     }
 
     pub fn proved_context(&self) -> ContextStamp {
@@ -379,7 +399,7 @@ struct TrustedTheoryNode {
     parent: Option<TrustedTheory>,
     local_fact: Option<TrustedTheorem>,
     fact_count: usize,
-    logic_basis: Option<super::LogicBasisId>,
+    logic_basis: Option<Arc<super::LogicBasis>>,
 }
 
 impl TrustedTheory {
@@ -408,14 +428,14 @@ impl TrustedTheory {
                 parent: None,
                 local_fact: None,
                 fact_count: 0,
-                logic_basis: Some(basis.id),
+                logic_basis: Some(Arc::new(basis.clone())),
             }),
         })
     }
 
     /// The installed logic basis, if any.
-    pub fn logic_basis(&self) -> Option<super::LogicBasisId> {
-        self.inner.logic_basis
+    pub fn logic_basis(&self) -> Option<&super::LogicBasis> {
+        self.inner.logic_basis.as_deref()
     }
 
     pub fn begin_child(&self, name: impl Into<Name>) -> Self {
@@ -426,6 +446,35 @@ impl TrustedTheory {
     pub fn extend_const(&self, name: impl Into<Name>, ty: Ty) -> Result<Self, KernelError> {
         let snapshot = self.snapshot().extend_const(name, ty)?;
         Ok(Self::child(self, snapshot, None))
+    }
+
+    /// Atomically extend the theory with a conservative definition.
+    ///
+    /// Certifies RHS in the parent context (guaranteeing freshness — the
+    /// constant does not yet exist), checks closedness, then extends the
+    /// signature with a `DefineConst` extension. Returns the child theory
+    /// and the certified RHS term.
+    pub fn extend_definition(
+        &self,
+        name: impl Into<Name>,
+        rhs_raw: RawTerm,
+    ) -> Result<(TrustedTheory, CTerm), KernelError> {
+        let name = name.into();
+        let parent_ctx = ProofContext::new(self.snapshot().clone());
+        let rhs = parent_ctx.certify_term(rhs_raw.clone())?;
+        let rhs_ty = rhs.ty();
+        if rhs_raw.has_free_vars() {
+            return Err(KernelError::Invariant("definition RHS is not closed".into()));
+        }
+        let mut encoder = CanonicalEncoder::new(b"isabelle-rs/define-const/v1");
+        self.id().write_canonical(&mut encoder);
+        encoder.write_name(&name);
+        rhs_ty.write_canonical(&mut encoder);
+        rhs_raw.write_canonical(&mut encoder);
+        let definition_id = encoder.finish();
+        let snapshot = self.snapshot().extend_definition(name, rhs_ty, definition_id)?;
+        let child = Self::child(self, snapshot, None);
+        Ok((child, rhs))
     }
 
     pub fn snapshot(&self) -> &TheorySnapshot {
@@ -476,7 +525,7 @@ impl TrustedTheory {
     ) -> Self {
         debug_assert_eq!(snapshot.parent().map(TheorySnapshot::id), Some(parent.id()));
         let fact_count = parent.len() + usize::from(local_fact.is_some());
-        let logic_basis = parent.inner.logic_basis;
+        let logic_basis = parent.inner.logic_basis.clone();
         Self {
             inner: Arc::new(TrustedTheoryNode {
                 snapshot,
@@ -525,6 +574,19 @@ impl TrustedTheory {
                         ));
                     }
                 },
+                (Some(parent), TheoryExtension::DefineConst { name, ty, definition_id }, None) => {
+                    let expected = parent.snapshot().extend_definition(
+                        name.clone(), ty.clone(), *definition_id,
+                    )?;
+                    if snapshot.parent().map(TheorySnapshot::id) != Some(parent.id())
+                        || theory.len() != parent.len()
+                        || expected.id() != theory.id()
+                    {
+                        return Err(KernelError::Invariant(
+                            "trusted definition owner does not match its snapshot parent".into(),
+                        ));
+                    }
+                },
                 (
                     Some(parent),
                     TheoryExtension::StoreTheorem { name, theorem: theorem_id },
@@ -564,10 +626,25 @@ impl TrustedTheory {
     /// check for the canonical dependency set, not an authority check.
     fn resolves(&self, dependencies: &DependencySet) -> bool {
         dependencies.entries.iter().all(|dependency| match dependency.kind {
-            DependencyKind::Axiom | DependencyKind::Definition => false,
+            DependencyKind::Axiom => self.contains_axiom_dependency(dependency.digest),
+            DependencyKind::Definition => self.contains_definition_digest(dependency.digest),
             DependencyKind::Theorem => self.contains_theorem_digest(dependency.digest),
         })
     }
+
+
+    fn contains_axiom_dependency(&self, digest: [u8; 32]) -> bool {
+        if let Some(basis) = self.logic_basis() {
+            for schema in &basis.axioms {
+                let dep_id = super::AxiomDependencyId::compute(basis.id, schema.id());
+                if dep_id.to_bytes() == digest {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
 
     fn contains_theorem_digest(&self, digest: [u8; 32]) -> bool {
         let mut current = Some(self);
@@ -585,6 +662,20 @@ impl TrustedTheory {
         false
     }
 
+    fn contains_definition_digest(&self, digest: [u8; 32]) -> bool {
+        let mut current = Some(self);
+        while let Some(theory) = current {
+            if let TheoryExtension::DefineConst { definition_id, .. } = theory.snapshot().extension() {
+                let mut encoder = CanonicalEncoder::new(b"isabelle-rs/dep-defn/v1");
+                encoder.write_fixed_bytes(definition_id);
+                if encoder.finish() == digest {
+                    return true;
+                }
+            }
+            current = theory.parent();
+        }
+        false
+    }
     pub(crate) fn contains_theorem(&self, expected: &TrustedTheorem) -> bool {
         let mut current = Some(self);
         while let Some(theory) = current {
@@ -678,7 +769,7 @@ fn write_digest(f: &mut fmt::Formatter<'_>, label: &str, digest: &[u8; 32]) -> f
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CTerm, Derivation, KernelRules, KernelThm, ProofContext, RawTerm, Term};
+    use crate::{AxiomSchema, CTerm, Derivation, KernelRules, KernelThm, LogicBasis, ProofContext, RawTerm, Term, TrustedTheory};
 
     fn prop(name: &str) -> RawTerm {
         RawTerm::const_(name, Ty::prop())
@@ -996,5 +1087,241 @@ mod tests {
 
         assert_eq!(forward_id, reverse_id);
         assert_ne!(forward_id, changed_id);
+    }
+
+    #[test]
+    fn axiom_rejects_unknown_type_variable() {
+        let sig = Signature::new();
+        let basis = LogicBasis::new(
+            vec![],
+            vec![AxiomSchema {
+                name: Name::from("test_ax"),
+                prop: RawTerm::Forall { name: Name::from("x"),
+                    param_ty: Ty::tvar("'a", 0, crate::Sort::typ()),
+                    body: Box::new(RawTerm::Var {
+                        name: Name::from("x"), index: 0, ty: Ty::tvar("'a", 0, crate::Sort::typ()),
+                    }),
+                },
+            }],
+        );
+        let theory = TrustedTheory::with_basis("T", sig, &basis).unwrap();
+        let ctx = ProofContext::new(theory.snapshot().clone());
+        // Missing type_inst: 'a not resolved
+        let result = crate::theorem_builder::axiom_theorem(
+            &ctx, theory.logic_basis().unwrap(),
+            Name::from("test_ax"),
+            vec![], // no type_inst — 'a unresolved
+            vec![],
+            RawTerm::const_("P", Ty::prop()),
+        );
+        assert!(result.is_err(), "missing type_inst must be rejected");
+    }
+
+    #[test]
+    fn axiom_rejects_extra_type_instantiation() {
+        let sig = Signature::new();
+        let basis = LogicBasis::new(
+            vec![],
+            vec![AxiomSchema {
+                name: Name::from("test_ax"),
+                prop: RawTerm::const_("P", Ty::prop()), // no type vars
+            }],
+        );
+        let theory = TrustedTheory::with_basis("T", sig, &basis).unwrap();
+        let ctx = ProofContext::new(theory.snapshot().clone());
+        let result = crate::theorem_builder::axiom_theorem(
+            &ctx, theory.logic_basis().unwrap(),
+            Name::from("test_ax"),
+            vec![(Name::from("'a"), Ty::prop())], // extra inst
+            vec![],
+            RawTerm::const_("P", Ty::prop()),
+        );
+        assert!(result.is_err(), "extra type_inst must be rejected");
+    }
+
+    #[test]
+    fn axiom_nested_binders_preserve_variable_identity() {
+        // Schema: ∀x:'a. ∀y:'a. x ==> y
+        // After 'a := prop, x := c1, y := c2, result must be c1 ==> c2.
+        // The old de Bruijn bug (i > 0 instead of i > depth)
+        // would produce c2 ==> c2 (variable capture).
+
+        let schema = RawTerm::Forall {
+            name: Name::from("x"),
+            param_ty: Ty::tvar("'a", 0, crate::Sort::typ()),
+            body: Box::new(RawTerm::Forall {
+                name: Name::from("y"),
+                param_ty: Ty::tvar("'a", 0, crate::Sort::typ()),
+                body: Box::new(RawTerm::Imp {
+                    premise: Box::new(RawTerm::Bound(1)),   // x
+                    conclusion: Box::new(RawTerm::Bound(0)), // y
+                }),
+            }),
+        };
+        let sig = Signature::new()
+            .extend_const("c1", Ty::prop()).unwrap()
+            .extend_const("c2", Ty::prop()).unwrap();
+
+        let basis = LogicBasis::new(
+            vec![],
+            vec![AxiomSchema { name: Name::from("nested"), prop: schema }],
+        );
+        let theory = TrustedTheory::with_basis("T", sig, &basis).unwrap();
+        let ctx = ProofContext::new(theory.snapshot().clone());
+
+        let c1 = ctx.certify_term(RawTerm::const_("c1", Ty::prop())).unwrap();
+        let c2 = ctx.certify_term(RawTerm::const_("c2", Ty::prop())).unwrap();
+
+        // Expected: c1 ==> c2
+        let expected = RawTerm::Imp {
+            premise: Box::new(RawTerm::Const { name: Name::from("c1"), ty: Ty::prop() }),
+            conclusion: Box::new(RawTerm::Const { name: Name::from("c2"), ty: Ty::prop() }),
+        };
+
+        let result = crate::theorem_builder::axiom_theorem(
+            &ctx, theory.logic_basis().unwrap(),
+            Name::from("nested"),
+            vec![(Name::from("'a"), Ty::prop())], // 'a := prop
+            vec![c1, c2],
+            expected,
+        );
+        assert!(result.is_ok(),
+            "nested binders must instantiate correctly (x=c1, y=c2): {:?}",
+            result.err());
+    }
+
+    #[test]
+    fn axiom_rejects_substituting_concrete_type() {
+        // Concrete types (prop, bool, fun) must NOT be substitution targets.
+        // Only Ty::tvar type variables can be substituted.
+        let sig = Signature::new();
+        let basis = LogicBasis::new(
+            vec![],
+            vec![AxiomSchema {
+                name: Name::from("test_ax"),
+                prop: RawTerm::const_("P", Ty::prop()), // uses prop — concrete, not a tvar
+            }],
+        );
+        let theory = TrustedTheory::with_basis("T", sig, &basis).unwrap();
+        let ctx = ProofContext::new(theory.snapshot().clone());
+        // Trying to substitute "prop" (a concrete type) must be rejected
+        let result = crate::theorem_builder::axiom_theorem(
+            &ctx, theory.logic_basis().unwrap(),
+            Name::from("test_ax"),
+            vec![(Name::from("prop"), Ty::prop())], // "prop" is concrete, not a tvar
+            vec![],
+            RawTerm::const_("P", Ty::prop()),
+        );
+        assert!(result.is_err(),
+            "substituting concrete type `prop` must be rejected: {:?}",
+            result.err());
+    }
+}
+
+
+#[cfg(test)]
+mod definition_tests {
+    use super::*;
+
+    fn hol_sig() -> Signature {
+        Signature::new()
+            .extend_const("HOL.Trueprop", Ty::arrow(Ty::base("bool").unwrap(), Ty::prop())).unwrap()
+    }
+
+    #[test]
+    fn extend_definition_rejects_self_reference() {
+        let sig = hol_sig();
+        let parent = TrustedTheory::root("Test", sig);
+        let self_ref = RawTerm::const_("HOL.True", Ty::base("bool").unwrap());
+        let result = parent.extend_definition("HOL.True", self_ref);
+        assert!(result.is_err(), "must reject self-referential RHS");
+    }
+
+    #[test]
+    fn extend_definition_rejects_open_rhs() {
+        let sig = hol_sig();
+        let parent = TrustedTheory::root("Test", sig);
+        let open_rhs = RawTerm::Free { name: Name::from("x"), ty: Ty::base("bool").unwrap() };
+        let result = parent.extend_definition("HOL.True", open_rhs);
+        assert!(result.is_err(), "must reject open RHS");
+    }
+
+    #[test]
+    fn extend_definition_rejects_wrong_parent() {
+        let sig = hol_sig().extend_const("HOL.eq", Ty::arrow(
+            Ty::tvar("'a", 0, crate::Sort::typ()),
+            Ty::arrow(Ty::tvar("'a", 0, crate::Sort::typ()), Ty::base("bool").unwrap()),
+        )).unwrap();
+        let parent = TrustedTheory::root("Test", sig);
+        // Valid definition on parent
+        let rhs = RawTerm::const_("HOL.Trueprop", Ty::arrow(Ty::base("bool").unwrap(), Ty::prop()));
+        let (child, _) = parent.extend_definition("HOL.True", rhs.clone()).unwrap();
+        // Cannot re-define the same constant
+        let result = child.extend_definition("HOL.True", rhs);
+        assert!(result.is_err(), "must reject re-definition of existing constant");
+    }
+
+    #[test]
+    fn extend_definition_rejects_tampered_id() {
+        let sig = hol_sig().extend_const("HOL.eq", Ty::arrow(
+            Ty::tvar("'a", 0, crate::Sort::typ()),
+            Ty::arrow(Ty::tvar("'a", 0, crate::Sort::typ()), Ty::base("bool").unwrap()),
+        )).unwrap();
+        let parent = TrustedTheory::root("Test", sig);
+        let rhs = RawTerm::const_("HOL.Trueprop", Ty::arrow(Ty::base("bool").unwrap(), Ty::prop()));
+        let (child, _rhs_cterm) = parent.extend_definition("HOL.True", rhs).unwrap();
+        // The child theory has the definition in its signature
+        assert!(child.signature().const_type(&Name::from("HOL.True")).is_some(),
+            "child must have HOL.True in signature");
+        // Re-defining fails
+        let rhs2 = RawTerm::const_("HOL.Trueprop", Ty::arrow(Ty::base("bool").unwrap(), Ty::prop()));
+        assert!(child.extend_definition("HOL.True", rhs2).is_err(),
+            "must reject re-definition");
+    }
+}
+
+
+#[cfg(test)]
+mod axiom_dep_tests {
+    use super::*;
+    use crate::{AxiomDependencyId, AxiomSchema, LogicBasis};
+
+    #[test]
+    fn axiom_rejects_cross_paired_basis_schema() {
+        let sig = Signature::new()
+            .extend_const("HOL.Trueprop", Ty::arrow(Ty::base("bool").unwrap(), Ty::prop())).unwrap()
+            .extend_const("HOL.eq", Ty::arrow(
+                Ty::tvar("'a", 0, crate::Sort::typ()),
+                Ty::arrow(Ty::tvar("'a", 0, crate::Sort::typ()), Ty::base("bool").unwrap()),
+            )).unwrap();
+        // Two different bases with same axiom name
+        let basis_a = LogicBasis::new(
+            vec![],
+            vec![AxiomSchema {
+                name: Name::from("test_ax"),
+                prop: RawTerm::Forall {
+                    name: Name::from("x"),
+                    param_ty: Ty::tvar("'a", 0, crate::Sort::typ()),
+                    body: Box::new(RawTerm::Var {
+                        name: Name::from("x"), index: 0, ty: Ty::tvar("'a", 0, crate::Sort::typ()),
+                    }),
+                },
+            }],
+        );
+        let basis_b = LogicBasis::new(
+            vec![],
+            vec![AxiomSchema {
+                name: Name::from("test_ax"),
+                prop: RawTerm::Forall {
+                    name: Name::from("x"),
+                    param_ty: Ty::tvar("'a", 0, crate::Sort::typ()),
+                    body: Box::new(RawTerm::Bound(0)),
+                },
+            }],
+        );
+        // Different bases produce different AxiomDependencyIds for same-named schemas
+        let dep_a = crate::AxiomDependencyId::compute(basis_a.id, basis_a.get_axiom(&Name::from("test_ax")).unwrap().id());
+        let dep_b = crate::AxiomDependencyId::compute(basis_b.id, basis_b.get_axiom(&Name::from("test_ax")).unwrap().id());
+        assert_ne!(dep_a.to_bytes(), dep_b.to_bytes(), "different bases must produce different dependency IDs");
     }
 }
