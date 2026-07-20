@@ -60,3 +60,9 @@ The platform is organized into four layers with strict dependency direction:
 - ADR-0001: kernel-core rewrite
 - ADR-0002: layered platform architecture (original)
 - ADR-0003: HOL logic trusted extension
+
+## Relationship to ISIP
+
+This ADR is the architectural foundation for the ISIP standard suite
+(see `docs/isip/ISIP.md`). ISIP-000 formalizes the same layer model as a
+specification with RFC 2119 normative language.

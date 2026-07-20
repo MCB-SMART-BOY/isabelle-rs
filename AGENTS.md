@@ -110,6 +110,31 @@ Branch `wip/kernel-trusted-slice` merged at `03d28a6` delivered:
 - Production source -> kernel bridge not implemented.
 - `KernelTrustedClosed` remains `0/125`.
 
+
+## ISIP Vision
+
+The project's long-term interaction model is defined by the **ISIP** (Isabelle
+Structured Interaction and Proof) standard suite. ISIP is a family of
+specifications for editor-agnostic, model-agnostic, transport-agnostic proof
+interaction. See `docs/isip/ISIP.md` for the full overview.
+
+ISIP is currently **design-only**. No ISIP runtime, wire protocol, or adapter
+will be implemented before the TCB closes (`KernelTrustedClosed: 1/125`).
+
+The seven ISIP specifications:
+
+| Spec | Scope |
+|------|-------|
+| ISIP-000 | Architecture and Trust Boundary |
+| ISIP-100 | Semantic Model (DocumentRevision, ProofSnapshot, Goal, Fact) |
+| ISIP-200 | Runtime Model (branches, speculative execution, leases) |
+| ISIP-300 | Evidence and Trust Model (certificates, replay, oracle/admit) |
+| ISIP-400 | Wire Protocol (JSON-RPC 2.0, capability negotiation) |
+| ISIP-500 | Integration Profiles (LSP, MCP, A2A, Native SDK, CLI) |
+| ISIP-600 | Security and Conformance (permissions, audit, threat model) |
+
+Six normative requirements govern all ISIP specs; the first and most important
+is: **the kernel MUST NOT depend on ISIP, MCP, LSP, A2A, or AI.**
 ## Current Trusted Main Line
 
 The implementation order is strict:

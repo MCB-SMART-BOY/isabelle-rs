@@ -242,14 +242,31 @@ Allowed when it does not delay or weaken the main line:
 Compute remains an untrusted candidate producer. Burn/CubeCL/GPU work, if ever
 added, stays outside the kernel and cannot produce theorem values.
 
+## Phase 9+: ISIP Platform
+
+ISIP (Isabelle Structured Interaction and Proof) is a family of standards
+for editor-agnostic, model-agnostic proof interaction. See
+[docs/isip/ISIP.md](isip/ISIP.md). **Design-only until TCB closes.**
+
+ISIP implementation stages:
+
+| Stage | Name | Prerequisite | Key Deliverables |
+|-------|------|-------------|-----------------|
+| 0 | Design | None (now) | ISIP-000, ISIP-100 draft, ISIP-300 draft |
+| 1 | Observable | TCB closed | `getSnapshot`, `getGoals`, `getContext`, diagnostics |
+| 2 | Transactional | Stage 1 | `LogicalAction`, `StateTransition`, `StateDiff` |
+| 3 | Branching + Agent | Stage 2 | `fork`, `moveHead`, `tryBatch`, budget, MCP Profile |
+| 4 | Evidence-Aware | Stage 3 | Replay, certificate check, artifact persist, theory extend |
+| 5 | Multi-Logic | Stage 4 | Second logic backend, TranslationEvidence, A2A Profile |
+
 ## Deferred Platform Work
 
 Defer until the trusted HOL loop closes:
 
 - Cargo workspace split;
+- ISIP Stage 1+ runtime implementation;
 - session snapshot/rollback engine;
 - `isabelle.toml` project system;
-- Agent Proof Protocol;
 - broad LSP/PIDE/WASM/plugin work;
 - broad HOL/Isar/tool coverage;
 - AFP-scale claims.

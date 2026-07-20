@@ -183,6 +183,7 @@ The following areas have a coherent implementation and regression coverage:
 | Attribute fallback honesty | Non-derivational theorem transformations are admitted as `admitted:attribute_transformation`. |
 | T4 minimal replay | `assume`, `reflexive`, `symmetric`, `transitive`, `implies_intr`, `implies_elim` replay with burden checks. |
 | HPC symbolic compute | Design-only parallel track for untrusted candidate generation, fingerprinting, and prefiltering; no Burn/CubeCL dependency and no kernel dependency. |
+| ISIP standard suite | Architecture specification for editor-agnostic, model-agnostic proof interaction (ISIP-000 through ISIP-600). Design-only; no runtime implementation until TCB closes. See `docs/isip/`. |
 | Attack tests | `tests/kernel_context_identity.rs`, `tests/kernel_trusted_acceptance.rs`, `tests/kernel_rewrite_soundness.rs`, strict-kernel unit tests, and legacy core/proofterm tests encode identity, owner, replay, dependency, canonical-ID, type, burden, and compatibility regressions. |
 
 Important distinction:
@@ -458,6 +459,9 @@ Sledgehammer, SMT, or Code Generator work. The route is:
 6. **Partially addressed (2026-07-21):** `extend_definition` exists with 4 attack tests, but `ConservativeDefinition` still carries multi-source payload (`const_name/rhs/rhs_raw/prop`) instead of atomic `DefinitionCertificate`. This is the next priority for TCB closure.
 7. Re-derive `HOL::TrueI` as the first real sampled `KernelTrustedClosed`
    theorem before resuming `HOL::trans` or any `2/125` work.
+7.5. **Design:** Draft ISIP standard specifications (ISIP-000 architecture,
+   ISIP-100 semantic model, ISIP-300 evidence/trust model) as design documents.
+   No runtime implementation. See `docs/isip/`.
 8. Continue core hardening only as migration support, not new trusted proof
    power in `src/core`.
 9. Split and reduce admitted/compat paths by cause.
