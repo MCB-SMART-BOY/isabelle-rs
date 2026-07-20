@@ -38,29 +38,24 @@ pub fn prove_true_i(
     let id_ty = Ty::arrow(bool_ty.clone(), bool_ty.clone());
     let id_raw = RawTerm::abs(Name::from("x"), bool_ty.clone(), RawTerm::bound(0));
 
-    // -- 1. Extend theory with HOL.True definition --
+    // -- 1. Define HOL.True and accept True_def as a theorem --
+    let (theory, true_def_token) = define_true(theory)?;
+
+    // -- 2. Reference the accepted True_def theorem --
+    let true_def_closed = KernelRules::theorem_ref(&theory, &true_def_token)?;
+
+    // -- 3. Create proof context and certify the id term --
+    let ctx = ProofContext::new(theory.snapshot().clone());
+    let id_cterm = ctx.certify_term(id_raw.clone())?;
+
+    // -- 4. Construct the RHS raw term for refl instantiation --
     let rhs_raw = {
         let fun_ty = Ty::arrow(id_ty.clone(), Ty::arrow(id_ty.clone(), bool_ty.clone()));
         let hol_eq = RawTerm::const_(Name::from("HOL.eq"), fun_ty);
         RawTerm::app(RawTerm::app(hol_eq, id_raw.clone()), id_raw.clone())
     };
-    let (theory, _rhs) = theory.extend_definition(Name::from("HOL.True"), rhs_raw.clone())?;
 
-    // -- 2. Create proof context in the extended theory --
-    let ctx = ProofContext::new(theory.snapshot().clone());
-    let rhs_cterm = ctx.certify_term(rhs_raw.clone())?;
-    let id_cterm = ctx.certify_term(id_raw.clone())?;
-
-    // -- 3. Derive True_def: |- True == rhs --
-    let true_def_thm = theorem_builder::definition_theorem(
-        &ctx,
-        Name::from("HOL.True"),
-        rhs_cterm,
-        rhs_raw.clone(),
-    )?;
-
-    // -- 4. Derive Trueprop(rhs) via HOL.refl --
-    // Schema: ∀t. Trueprop (HOL.eq t t), type inst: 'a := id_ty, term inst: t := id
+    // -- 5. Derive Trueprop(rhs) via HOL.refl --
     let trueprop_const =
         RawTerm::const_(Name::from("HOL.Trueprop"), Ty::arrow(bool_ty.clone(), Ty::prop()));
     let rhs_prop = RawTerm::app(trueprop_const, rhs_raw.clone());
@@ -73,13 +68,13 @@ pub fn prove_true_i(
         rhs_prop,
     )?;
 
-    // -- 5. Lift True_def to prop level via Combination --
+    // -- 6. Lift True_def to prop level via Combination --
     let tp_cterm = ctx.certify_term(RawTerm::const_(
         Name::from("HOL.Trueprop"),
         Ty::arrow(bool_ty, Ty::prop()),
     ))?;
     let tp_refl = KernelRules::reflexive(tp_cterm);
-    let lifted = KernelRules::combination(tp_refl.as_kernel(), &true_def_thm)?;
+    let lifted = KernelRules::combination(tp_refl.as_kernel(), true_def_closed.as_kernel())?;
 
     // Symmetric: Trueprop RHS == Trueprop True
     let lifted_sym = KernelRules::symmetric(&lifted)?;
@@ -128,6 +123,16 @@ mod tests {
             Ok((_child, token)) => {
                 assert_eq!(token.name().as_str(), "TrueI", "theorem name must be TrueI");
                 assert!(token.prop().term().ty().is_prop(), "TrueI proposition must be prop-typed");
+                // Exact proposition: must destructure as HOL.Trueprop applied to HOL.True
+                if let Some((_head, arg)) = token.prop().term().dest_app() {
+                    assert_eq!(
+                        arg.ty(),
+                        Ty::base("bool").unwrap(),
+                        "TrueI argument must be bool-typed HOL.True"
+                    );
+                } else {
+                    panic!("TrueI proposition must be an application");
+                }
             },
             Err(e) => panic!("prove_true_i failed: {e:?}"),
         }

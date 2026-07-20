@@ -66,7 +66,10 @@ impl Ty {
     }
 
     pub fn is_concrete_type(&self) -> bool {
-        matches!(&self.0, TyKind::Type { .. })
+        match &self.0 {
+            TyKind::TypeVar { .. } => false,
+            TyKind::Type { args, .. } => args.iter().all(Self::is_concrete_type),
+        }
     }
 
     pub fn tvar_name(&self) -> Option<&Name> {
@@ -219,5 +222,19 @@ mod polytype_tests {
         let s = Ty::arrow(Ty::tvar("'a",0,Sort::typ()), Ty::arrow(Ty::tvar("'a",0,Sort::typ()), Ty::base("bool").unwrap()));
         let i = Ty::arrow(id_ty.clone(), Ty::arrow(id_ty, Ty::base("bool").unwrap()));
         assert!(s.is_monomorphic_instance_of(&i));
+    }
+
+    #[test]
+    fn is_concrete_type_rejects_nested_type_var() {
+        // fun('b, bool) should NOT be concrete because 'b is a TypeVar inside
+        let nested = Ty::apply("fun", vec![Ty::tvar("'b", 0, Sort::typ()), Ty::base("bool").unwrap()]).unwrap();
+        assert!(!nested.is_concrete_type());
+        // fun(bool, bool) IS concrete
+        let concrete = Ty::apply("fun", vec![Ty::base("bool").unwrap(), Ty::base("bool").unwrap()]).unwrap();
+        assert!(concrete.is_concrete_type());
+        // plain bool IS concrete
+        assert!(Ty::base("bool").unwrap().is_concrete_type());
+        // plain 'a is NOT concrete
+        assert!(!Ty::tvar("'a", 0, Sort::typ()).is_concrete_type());
     }
 }
