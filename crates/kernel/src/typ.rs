@@ -92,6 +92,12 @@ impl Ty {
         }
     }
 
+    pub fn has_type_vars(&self) -> bool {
+        let mut found = false;
+        self.for_each_type_var(&mut |_, _| found = true);
+        found
+    }
+
     /// Apply a type-variable substitution. Only TypeVar leaves are replaced.
     pub(crate) fn subst_type_vars(&self, inst: &crate::logic::TypeInstantiation) -> Result<Ty, KernelError> {
         match &self.0 {
@@ -102,7 +108,7 @@ impl Ty {
                     ));
                 }
                 let id = crate::logic::TypeVarId::new(name.clone(), *index as u32);
-                if let Some(replacement) = inst.bindings.get(&id) {
+                if let Some(replacement) = inst.get(&id) {
                     return Ok(replacement.clone());
                 }
                 Ok(self.clone())
@@ -126,7 +132,7 @@ impl Ty {
         if !bindings.values().all(|t| t.is_concrete_type()) {
             return None;
         }
-        Some(super::logic::TypeInstantiation { bindings })
+        Some(super::logic::TypeInstantiation::try_new(bindings).ok()?)
     }
     fn match_scheme(
         scheme: &Ty,

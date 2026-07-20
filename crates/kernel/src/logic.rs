@@ -44,7 +44,7 @@ pub struct PolyTypeParam {
 /// A monomorphic instantiation of a polymorphic scheme.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TypeInstantiation {
-    pub bindings: BTreeMap<TypeVarId, Ty>,
+    bindings: BTreeMap<TypeVarId, Ty>,
 }
 
 impl TypeInstantiation {
@@ -52,28 +52,27 @@ impl TypeInstantiation {
         TypeInstantiation { bindings: BTreeMap::new() }
     }
 
-    pub fn singleton(name: Name, ty: Ty) -> Self {
-        let mut bindings = BTreeMap::new();
-        bindings.insert(TypeVarId::new(name, 0), ty);
-        TypeInstantiation { bindings }
+    pub fn try_new(bindings: BTreeMap<TypeVarId, Ty>) -> Result<Self, KernelError> {
+        for (id, ty) in &bindings {
+            if ty.has_type_vars() {
+                return Err(KernelError::Invariant(
+                    format!("non-concrete replacement for {:?}: {:?}", id, ty).into(),
+                ));
+            }
+        }
+        Ok(TypeInstantiation { bindings })
     }
 
-    pub fn from_name_pairs(pairs: &[(Name, Ty)]) -> Self {
-        let mut bindings = BTreeMap::new();
-        for (name, ty) in pairs {
-            bindings.insert(TypeVarId::new(name.clone(), 0), ty.clone());
-        }
-        TypeInstantiation { bindings }
-    }
+    pub fn get(&self, id: &TypeVarId) -> Option<&Ty> { self.bindings.get(id) }
+    pub fn iter(&self) -> impl Iterator<Item = (&TypeVarId, &Ty)> { self.bindings.iter() }
 }
 
 /// A polymorphic type scheme: `forall 'a 'b ... . body`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct PolyType {
-    /// Type variable binders with their sorts.
-    pub params: Vec<PolyTypeParam>,
+    params: Box<[PolyTypeParam]>,
     /// The body type, which may reference the bound variables.
-    pub body: Ty,
+    body: Ty,
 }
 
 impl PolyType {
@@ -100,15 +99,18 @@ impl PolyType {
                 ));
             }
         }
-        Ok(PolyType { params, body })
+        Ok(PolyType { params: params.into_boxed_slice(), body })
     }
+
+    pub fn params(&self) -> &[PolyTypeParam] { &self.params }
+    pub fn body(&self) -> &Ty { &self.body }
 
     /// Check whether a monomorphic type is a valid instance of this scheme.
     pub fn monomorphic_instance_matches(&self, instance: &Ty) -> Option<TypeInstantiation> {
-        let inst = self.body.is_monomorphic_instance_of(instance)?;
+        let inst = self.body().is_monomorphic_instance_of(instance)?;
         // Verify all instantiated variables are declared in params
-        for tvid in inst.bindings.keys() {
-            if !self.params.iter().any(|p| p.id == *tvid) {
+        for (tvid, _) in inst.iter() {
+            if !self.params().iter().any(|p| p.id == *tvid) {
                 return None;
             }
         }
@@ -116,13 +118,13 @@ impl PolyType {
     }
 
     pub(crate) fn write_canonical(&self, encoder: &mut CanonicalEncoder) {
-        encoder.write_u64(self.params.len() as u64);
-        for param in &self.params {
+        encoder.write_u64(self.params().len() as u64);
+        for param in self.params() {
             encoder.write_name(&param.id.name);
             encoder.write_u64(param.id.index as u64);
             encoder.write_name(param.sort.name()); // Sort is a Name newtype
         }
-        self.body.write_canonical(encoder);
+        self.body().write_canonical(encoder);
     }
 }
 
@@ -282,21 +284,49 @@ impl fmt::Debug for LogicBasisId {
 /// instances and definition extensions.
 #[derive(Clone, Debug)]
 pub struct LogicBasis {
-    pub id: LogicBasisId,
-    pub declarations: Vec<BasisDeclaration>,
-    pub axioms: Vec<AxiomSchema>,
+    id: LogicBasisId,
+    declarations: Box<[BasisDeclaration]>,
+    axioms: Box<[AxiomSchema]>,
 }
 
 impl LogicBasis {
-    /// Create a new basis and compute its identity.
-    pub fn new(declarations: Vec<BasisDeclaration>, axioms: Vec<AxiomSchema>) -> Self {
+    pub fn try_new(declarations: Vec<BasisDeclaration>, axioms: Vec<AxiomSchema>) -> Result<Self, KernelError> {
+        let mut seen = std::collections::HashSet::new();
+        for d in &declarations {
+            let name = match d {
+                BasisDeclaration::TypeConstructor { name, .. } => name,
+                BasisDeclaration::Judgment { const_name, .. } => const_name,
+                BasisDeclaration::Constant { name, .. } => name,
+            };
+            if !seen.insert(name.clone()) {
+                return Err(KernelError::Invariant(
+                    format!("duplicate basis declaration `{}`", name).into(),
+                ));
+            }
+        }
+        let mut ax_seen = std::collections::HashSet::new();
+        for a in &axioms {
+            if !ax_seen.insert(a.name.clone()) {
+                return Err(KernelError::Invariant(
+                    format!("duplicate axiom name `{}`", a.name).into(),
+                ));
+            }
+        }
         let id = LogicBasisId::compute(&declarations, &axioms);
-        LogicBasis { id, declarations, axioms }
+        Ok(LogicBasis { id, declarations: declarations.into_boxed_slice(), axioms: axioms.into_boxed_slice() })
     }
+
+    pub fn from_untrusted_snapshot(declarations: Vec<BasisDeclaration>, axioms: Vec<AxiomSchema>) -> Result<Self, KernelError> {
+        Self::try_new(declarations, axioms)
+    }
+
+    pub fn id(&self) -> LogicBasisId { self.id }
+    pub fn declarations(&self) -> &[BasisDeclaration] { &self.declarations }
+    pub fn axioms(&self) -> &[AxiomSchema] { &self.axioms }
 
     /// Validate that this basis's declarations are compatible with a signature.
     pub fn validate_against(&self, signature: &Signature) -> Result<(), KernelError> {
-        for decl in &self.declarations {
+        for decl in self.declarations() {
             match decl {
                 BasisDeclaration::TypeConstructor { name, arity: _ } => {
                     // Type constructors are not yet represented in Signature.
@@ -366,13 +396,13 @@ mod tests {
         sig = sig
             .extend_const("HOL.Trueprop", Ty::arrow(Ty::base("bool").unwrap(), Ty::prop()))
             .unwrap();
-        let basis = LogicBasis::new(
+        let basis = LogicBasis::try_new(
             vec![BasisDeclaration::Judgment {
                 const_name: Name::from("HOL.Trueprop"),
                 ty: Ty::arrow(Ty::base("nat").unwrap(), Ty::prop()), // wrong!
             }],
             vec![],
-        );
+        ).unwrap();
         assert!(basis.validate_against(&sig).is_err());
     }
 
@@ -382,13 +412,13 @@ mod tests {
         sig = sig
             .extend_const("HOL.Trueprop", Ty::arrow(Ty::base("bool").unwrap(), Ty::prop()))
             .unwrap();
-        let basis = LogicBasis::new(
+        let basis = LogicBasis::try_new(
             vec![BasisDeclaration::Judgment {
                 const_name: Name::from("HOL.Trueprop"),
                 ty: Ty::arrow(Ty::base("bool").unwrap(), Ty::prop()),
             }],
             vec![],
-        );
+        ).unwrap();
         assert!(basis.validate_against(&sig).is_ok());
     }
 }

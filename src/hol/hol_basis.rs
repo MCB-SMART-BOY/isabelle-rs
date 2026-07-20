@@ -27,7 +27,7 @@ use crate::kernel::{
 /// Use `HOL_BASIS.validate_against(&signature)` to check compatibility
 /// before installing the basis into a `TrustedTheory`.
 pub fn hol_basis() -> LogicBasis {
-    LogicBasis::new(
+    LogicBasis::try_new(
         vec![
             // ── Type constructors ──────────────────────────────────────
             BasisDeclaration::TypeConstructor { name: Name::from("bool"), arity: 0 },
@@ -174,7 +174,7 @@ pub fn hol_basis() -> LogicBasis {
                 },
             },
         ],
-    )
+    ).unwrap()
 }
 
 #[cfg(test)]
@@ -192,8 +192,8 @@ mod tests {
             .extend_const(
                 "HOL.eq",
                 Ty::arrow(
-                    Ty::base("'a").unwrap(),
-                    Ty::arrow(Ty::base("'a").unwrap(), Ty::base("bool").unwrap()),
+                    Ty::tvar("alpha", 0, crate::kernel::Sort::typ()),
+                    Ty::arrow(Ty::tvar("alpha", 0, crate::kernel::Sort::typ()), Ty::base("bool").unwrap()),
                 ),
             )
             .unwrap();
@@ -205,13 +205,13 @@ mod tests {
     fn hol_basis_id_is_stable() {
         let basis1 = hol_basis();
         let basis2 = hol_basis();
-        assert_eq!(basis1.id, basis2.id);
+        assert_eq!(basis1.id(), basis2.id());
     }
 
     #[test]
     fn hol_basis_contains_refl_and_subst() {
         let basis = hol_basis();
-        let names: Vec<&str> = basis.axioms.iter().map(|a| a.name.as_str()).collect();
+        let names: Vec<&str> = basis.axioms().iter().map(|a| a.name.as_str()).collect();
         assert!(names.contains(&"HOL.refl"));
         assert!(names.contains(&"HOL.subst"));
     }

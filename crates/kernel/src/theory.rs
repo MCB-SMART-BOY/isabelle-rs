@@ -5,6 +5,7 @@ use super::{
     Signature, Ty,
     identity::{CanonicalEncoder, THEORY_DOMAIN, TheoryId},
     invariant::replay_closed_theorem_in,
+    logic::LogicBasisId,
     theorem_builder,
 };
 
@@ -131,6 +132,23 @@ impl DefinitionCertificate {
         }
         Ok(())
     }
+
+    /// Full semantic validation for replay. Checks ID integrity, parent ownership,
+    /// self-reference, and closedness.
+    pub(crate) fn validate_semantics(&self, expected_parent: &TheoryId) -> Result<(), KernelError> {
+        self.validate(expected_parent)?;
+        if self.rhs_raw.mentions_const(&self.name) {
+            return Err(KernelError::Invariant(
+                format!("definition RHS for `{}` references itself", self.name).into(),
+            ));
+        }
+        if self.rhs_raw.has_free_vars() {
+            return Err(KernelError::Invariant(
+                format!("definition RHS for `{}` is not closed", self.name).into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// Dependency categories reserved by the accepted-theorem identity schema.
@@ -234,6 +252,7 @@ enum TheoryExtension {
     DeclareConst { name: Name, ty: Ty },
     DefineConst { certificate: DefinitionCertificate },
     StoreTheorem { name: Name, theorem: TheoremId },
+    InstallLogicBasis { logic_basis_id: LogicBasisId },
 }
 
 impl TheorySnapshot {
@@ -272,9 +291,22 @@ impl TheorySnapshot {
     pub fn signature(&self) -> &Signature {
         &self.inner.signature
     }
-
     pub fn stamp(&self) -> ContextStamp {
-        ContextStamp::new(self.id(), self.signature().id())
+        // Walk the extension chain to find an InstallLogicBasis node
+        let logic_basis = self.find_logic_basis_id();
+        ContextStamp::new(self.id(), self.signature().id(), logic_basis)
+    }
+
+    /// Walk the extension chain to locate the nearest InstallLogicBasis.
+    fn find_logic_basis_id(&self) -> Option<super::LogicBasisId> {
+        let mut node = Some(self);
+        while let Some(n) = node {
+            if let TheoryExtension::InstallLogicBasis { logic_basis_id } = n.extension() {
+                return Some(*logic_basis_id);
+            }
+            node = n.parent();
+        }
+        None
     }
 
     pub fn parent(&self) -> Option<&TheorySnapshot> {
@@ -379,6 +411,10 @@ impl TheoryExtension {
                 encoder.write_u8(3);
                 encoder.write_name(name);
                 theorem.write_canonical(encoder);
+            },
+            TheoryExtension::InstallLogicBasis { logic_basis_id } => {
+                encoder.write_u8(5);
+                logic_basis_id.write_canonical(encoder);
             },
         }
     }
@@ -485,6 +521,7 @@ pub struct TrustedTheory {
     inner: Arc<TrustedTheoryNode>,
 }
 
+#[derive(Clone)]
 struct TrustedTheoryNode {
     snapshot: TheorySnapshot,
     parent: Option<TrustedTheory>,
@@ -506,22 +543,26 @@ impl TrustedTheory {
         }
     }
 
-    /// Create a root theory with a validated logic basis.
+    /// Create a root theory that installs a validated logic basis as its first
+    /// extension. The basis's identity is bound into the TheoryId.
     pub fn with_basis(
         name: impl Into<Name>,
         signature: Signature,
         basis: &super::LogicBasis,
     ) -> Result<Self, KernelError> {
         basis.validate_against(&signature)?;
-        Ok(Self {
-            inner: Arc::new(TrustedTheoryNode {
-                snapshot: TheorySnapshot::root(name, signature),
-                parent: None,
-                local_fact: None,
-                fact_count: 0,
-                logic_basis: Some(Arc::new(basis.clone())),
-            }),
-        })
+        let root = TrustedTheory::root(name, signature.clone());
+        let child_snapshot = TheorySnapshot::build(
+            Some(root.snapshot().clone()),
+            signature,
+            TheoryExtension::InstallLogicBasis { logic_basis_id: basis.id() },
+        );
+        let basis_arc = Arc::new(basis.clone());
+        let child = Self::child(&root, child_snapshot, None);
+        // Override the logic_basis on the child (child inherits parent's None)
+        let mut inner = (*child.inner).clone();
+        inner.logic_basis = Some(basis_arc);
+        Ok(Self { inner: Arc::new(inner) })
     }
 
     /// The installed logic basis, if any.
@@ -711,8 +752,21 @@ impl TrustedTheory {
                         ));
                     }
                     // Validate certificate identity
-                    certificate.validate(&parent.id())?;
+                    certificate.validate_semantics(&parent.id())?;
                 },
+                (Some(parent), TheoryExtension::InstallLogicBasis { logic_basis_id }, None) => {
+                    if snapshot.parent().map(TheorySnapshot::id) != Some(parent.id())
+                        || theory.len() != parent.len()
+                    {
+                        return Err(KernelError::Invariant(
+                            "trusted logic-basis owner does not match its snapshot parent".into(),
+                        ));
+                    }
+                    // The basis itself is validated at install time via validate_against.
+                    // The basis_id is bound into TheoryId via write_canonical.
+                    let _ = logic_basis_id;
+                },
+
                 (
                     Some(parent),
                     TheoryExtension::StoreTheorem { name, theorem: theorem_id },
@@ -761,8 +815,8 @@ impl TrustedTheory {
 
     fn contains_axiom_dependency(&self, digest: [u8; 32]) -> bool {
         if let Some(basis) = self.logic_basis() {
-            for schema in &basis.axioms {
-                let dep_id = super::AxiomDependencyId::compute(basis.id, schema.id());
+            for schema in basis.axioms() {
+                let dep_id = super::AxiomDependencyId::compute(basis.id(), schema.id());
                 if dep_id.to_bytes() == digest {
                     return true;
                 }
@@ -1236,7 +1290,7 @@ mod tests {
     #[test]
     fn axiom_rejects_unknown_type_variable() {
         let sig = Signature::new();
-        let basis = LogicBasis::new(
+        let basis = LogicBasis::try_new(
             vec![],
             vec![AxiomSchema {
                 name: Name::from("test_ax"),
@@ -1247,7 +1301,7 @@ mod tests {
                     }),
                 },
             }],
-        );
+        ).unwrap();
         let theory = TrustedTheory::with_basis("T", sig, &basis).unwrap();
         let ctx = ProofContext::new(theory.snapshot().clone());
         // Missing type_inst: 'a not resolved
@@ -1264,13 +1318,13 @@ mod tests {
     #[test]
     fn axiom_rejects_extra_type_instantiation() {
         let sig = Signature::new();
-        let basis = LogicBasis::new(
+        let basis = LogicBasis::try_new(
             vec![],
             vec![AxiomSchema {
                 name: Name::from("test_ax"),
                 prop: RawTerm::const_("P", Ty::prop()), // no type vars
             }],
-        );
+        ).unwrap();
         let theory = TrustedTheory::with_basis("T", sig, &basis).unwrap();
         let ctx = ProofContext::new(theory.snapshot().clone());
         let result = crate::theorem_builder::axiom_theorem(
@@ -1306,10 +1360,10 @@ mod tests {
             .extend_const("c1", Ty::prop()).unwrap()
             .extend_const("c2", Ty::prop()).unwrap();
 
-        let basis = LogicBasis::new(
+        let basis = LogicBasis::try_new(
             vec![],
             vec![AxiomSchema { name: Name::from("nested"), prop: schema }],
-        );
+        ).unwrap();
         let theory = TrustedTheory::with_basis("T", sig, &basis).unwrap();
         let ctx = ProofContext::new(theory.snapshot().clone());
 
@@ -1339,13 +1393,13 @@ mod tests {
         // Concrete types (prop, bool, fun) must NOT be substitution targets.
         // Only Ty::tvar type variables can be substituted.
         let sig = Signature::new();
-        let basis = LogicBasis::new(
+        let basis = LogicBasis::try_new(
             vec![],
             vec![AxiomSchema {
                 name: Name::from("test_ax"),
                 prop: RawTerm::const_("P", Ty::prop()), // uses prop — concrete, not a tvar
             }],
-        );
+        ).unwrap();
         let theory = TrustedTheory::with_basis("T", sig, &basis).unwrap();
         let ctx = ProofContext::new(theory.snapshot().clone());
         // Trying to substitute "prop" (a concrete type) must be rejected
@@ -1615,7 +1669,7 @@ mod axiom_dep_tests {
                 Ty::tvar("'a", 0, crate::Sort::typ()),
                 Ty::arrow(Ty::tvar("'a", 0, crate::Sort::typ()), Ty::base("bool").unwrap()),
             )).unwrap();
-        let basis_a = LogicBasis::new(
+        let basis_a = LogicBasis::try_new(
             vec![],
             vec![AxiomSchema {
                 name: Name::from("test_ax"),
@@ -1627,8 +1681,8 @@ mod axiom_dep_tests {
                     }),
                 },
             }],
-        );
-        let basis_b = LogicBasis::new(
+        ).unwrap();
+        let basis_b = LogicBasis::try_new(
             vec![],
             vec![AxiomSchema {
                 name: Name::from("test_ax"),
@@ -1638,15 +1692,15 @@ mod axiom_dep_tests {
                     body: Box::new(RawTerm::Bound(0)),
                 },
             }],
-        );
-        let dep_a = crate::AxiomDependencyId::compute(basis_a.id, basis_a.get_axiom(&Name::from("test_ax")).unwrap().id());
-        let dep_b = crate::AxiomDependencyId::compute(basis_b.id, basis_b.get_axiom(&Name::from("test_ax")).unwrap().id());
+        ).unwrap();
+        let dep_a = crate::AxiomDependencyId::compute(basis_a.id(), basis_a.get_axiom(&Name::from("test_ax")).unwrap().id());
+        let dep_b = crate::AxiomDependencyId::compute(basis_b.id(), basis_b.get_axiom(&Name::from("test_ax")).unwrap().id());
         assert_ne!(dep_a.to_bytes(), dep_b.to_bytes(), "different bases must produce different dependency IDs");
     }
 
     #[test]
     fn axiom_rejects_wrong_basis() {
-        let _basis_a = LogicBasis::new(
+        let _basis_a = LogicBasis::try_new(
             vec![],
             vec![AxiomSchema {
                 name: Name::from("ax"),
@@ -1655,15 +1709,15 @@ mod axiom_dep_tests {
                     body: Box::new(RawTerm::Bound(0)),
                 },
             }],
-        );
-        let basis_b = LogicBasis::new(vec![], vec![]);
+        ).unwrap();
+        let basis_b = LogicBasis::try_new(vec![], vec![]).unwrap();
         assert!(basis_b.get_axiom(&Name::from("ax")).is_none(),
             "wrong basis must not have the axiom schema");
     }
 
     #[test]
     fn axiom_rejects_wrong_schema() {
-        let basis = LogicBasis::new(
+        let basis = LogicBasis::try_new(
             vec![],
             vec![
                 AxiomSchema {
@@ -1681,9 +1735,9 @@ mod axiom_dep_tests {
                     },
                 },
             ],
-        );
-        let dep1 = crate::AxiomDependencyId::compute(basis.id, basis.get_axiom(&Name::from("ax1")).unwrap().id());
-        let dep2 = crate::AxiomDependencyId::compute(basis.id, basis.get_axiom(&Name::from("ax2")).unwrap().id());
+        ).unwrap();
+        let dep1 = crate::AxiomDependencyId::compute(basis.id(), basis.get_axiom(&Name::from("ax1")).unwrap().id());
+        let dep2 = crate::AxiomDependencyId::compute(basis.id(), basis.get_axiom(&Name::from("ax2")).unwrap().id());
         assert_ne!(dep1.to_bytes(), dep2.to_bytes(),
             "different schemas in same basis must produce different dependency IDs");
     }
@@ -1703,16 +1757,16 @@ mod axiom_dep_tests {
         };
         assert_ne!(s1.id(), s2.id(),
             "same name with different props must produce different schema IDs");
-        let basis = LogicBasis::new(vec![], vec![s1]);
-        let dep1 = crate::AxiomDependencyId::compute(basis.id, basis.get_axiom(&Name::from("ax")).unwrap().id());
-        let dep2 = crate::AxiomDependencyId::compute(basis.id, s2.id());
+        let basis = LogicBasis::try_new(vec![], vec![s1]).unwrap();
+        let dep1 = crate::AxiomDependencyId::compute(basis.id(), basis.get_axiom(&Name::from("ax")).unwrap().id());
+        let dep2 = crate::AxiomDependencyId::compute(basis.id(), s2.id());
         assert_ne!(dep1.to_bytes(), dep2.to_bytes(),
             "tampered proposition must produce different dependency ID");
     }
 
     #[test]
     fn axiom_rejects_tampered_dependency_id() {
-        let basis = LogicBasis::new(
+        let basis = LogicBasis::try_new(
             vec![],
             vec![AxiomSchema {
                 name: Name::from("ax"),
@@ -1721,8 +1775,8 @@ mod axiom_dep_tests {
                     body: Box::new(RawTerm::Bound(0)),
                 },
             }],
-        );
-        let dep = crate::AxiomDependencyId::compute(basis.id, basis.get_axiom(&Name::from("ax")).unwrap().id());
+        ).unwrap();
+        let dep = crate::AxiomDependencyId::compute(basis.id(), basis.get_axiom(&Name::from("ax")).unwrap().id());
         let bytes = dep.to_bytes();
         let mut tampered = bytes;
         tampered[0] ^= 0xFF;
@@ -1732,7 +1786,7 @@ mod axiom_dep_tests {
             name: Name::from("ax"),
             prop: RawTerm::Const { name: Name::from("P"), ty: Ty::prop() },
         };
-        let dep2 = crate::AxiomDependencyId::compute(basis.id, tampered_schema.id());
+        let dep2 = crate::AxiomDependencyId::compute(basis.id(), tampered_schema.id());
         assert_ne!(dep.to_bytes(), dep2.to_bytes(),
             "different schema content must produce different dependency IDs");
     }
@@ -1746,9 +1800,9 @@ mod axiom_dep_tests {
                 body: Box::new(RawTerm::Bound(0)),
             },
         };
-        let basis = LogicBasis::new(vec![], vec![schema]);
+        let basis = LogicBasis::try_new(vec![], vec![schema]).unwrap();
         assert!(basis.get_axiom(&Name::from("ax")).is_some());
-        let empty_basis = LogicBasis::new(vec![], vec![]);
+        let empty_basis = LogicBasis::try_new(vec![], vec![]).unwrap();
         assert!(empty_basis.get_axiom(&Name::from("ax")).is_none());
     }
 
@@ -1766,7 +1820,7 @@ mod axiom_dep_tests {
                 name: Name::from("P"), ty: Ty::prop(),
             },
         };
-        let basis = LogicBasis::new(vec![], vec![schema.clone()]);
+        let basis = LogicBasis::try_new(vec![], vec![schema.clone()]).unwrap();
 
         let theory_a = TrustedTheory::with_basis("A", sig.clone(), &basis).unwrap();
         let theory_b = TrustedTheory::root("B", sig.clone());
@@ -1799,7 +1853,7 @@ mod axiom_dep_tests {
                 name: Name::from("P"), ty: Ty::prop(),
             },
         };
-        let basis = LogicBasis::new(vec![], vec![schema.clone()]);
+        let basis = LogicBasis::try_new(vec![], vec![schema.clone()]).unwrap();
 
         // Theory WITH basis — axiom acceptance succeeds
         let theory_with = TrustedTheory::with_basis("With", sig.clone(), &basis).unwrap();

@@ -352,7 +352,7 @@ fn replay_derivation(
             // Certify the independently-reconstructed proposition
             let replayed_prop = ctx.certify_prop(body)?;
             let _schema_id = schema.id();
-            dependencies.insert_axiom(super::AxiomDependencyId::compute(basis.id, schema.id()));
+            dependencies.insert_axiom(super::AxiomDependencyId::compute(basis.id(), schema.id()));
             Ok(KernelThm::new(
                 Vec::new(),
                 replayed_prop,
@@ -374,7 +374,7 @@ fn replay_derivation(
                     format!("definition {def_id:?} not found in owner theory ancestry").into(),
                 ))?;
             // Validate certificate identity: recompute ID from payload and check parent
-            certificate.validate(&parent_id)?;
+            certificate.validate_semantics(&parent_id)?;
 
             // 2. Verify constant is declared in owner signature with declared type
             let declared_ty = ctx.signature()

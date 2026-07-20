@@ -3,6 +3,7 @@ use std::fmt;
 use sha2::{Digest, Sha256};
 
 use super::Name;
+use super::logic::LogicBasisId;
 
 // Canonical identity schema v1. Every tag, width, byte order, and field order
 // below is part of the persisted identity contract. Any byte-level encoding
@@ -80,6 +81,7 @@ impl TheoryId {
 pub struct ContextStamp {
     theory: TheoryId,
     signature: SignatureId,
+    logic_basis: Option<LogicBasisId>,
 }
 
 impl ContextStamp {
@@ -91,8 +93,12 @@ impl ContextStamp {
         self.signature
     }
 
-    pub(crate) fn new(theory: TheoryId, signature: SignatureId) -> Self {
-        Self { theory, signature }
+    pub fn logic_basis(self) -> Option<LogicBasisId> {
+        self.logic_basis
+    }
+
+    pub(crate) fn new(theory: TheoryId, signature: SignatureId, logic_basis: Option<LogicBasisId>) -> Self {
+        Self { theory, signature, logic_basis }
     }
 
     pub(crate) fn write_canonical(self, encoder: &mut CanonicalEncoder) {

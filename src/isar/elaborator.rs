@@ -279,12 +279,12 @@ mod tests {
             .extend_const(
                 "HOL.eq",
                 Ty::arrow(
-                    Ty::base("'a").unwrap(),
-                    Ty::arrow(Ty::base("'a").unwrap(), Ty::base("bool").unwrap()),
+                    Ty::tvar("alpha", 0, crate::kernel::Sort::typ()),
+                    Ty::arrow(Ty::tvar("alpha", 0, crate::kernel::Sort::typ()), Ty::base("bool").unwrap()),
                 ),
             )
             .unwrap()
-            .extend_const("P", Ty::arrow(Ty::base("'a").unwrap(), Ty::base("bool").unwrap()))
+            .extend_const("P", Ty::arrow(Ty::tvar("alpha", 0, crate::kernel::Sort::typ()), Ty::base("bool").unwrap()))
             .unwrap();
         let snapshot = TheorySnapshot::root("test", sig);
         ProofContext::new(snapshot)

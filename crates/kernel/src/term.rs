@@ -184,7 +184,11 @@ pub fn subst_types(raw: &RawTerm, type_inst: &[(Name, Ty)]) -> Result<RawTerm, K
             ));
         }
     }
-    let ti = crate::logic::TypeInstantiation::from_name_pairs(type_inst);
+    let mut bindings = std::collections::BTreeMap::new();
+    for (name, ty) in type_inst {
+        bindings.insert(crate::logic::TypeVarId::new(name.clone(), 0), ty.clone());
+    }
+    let ti = crate::logic::TypeInstantiation::try_new(bindings)?;
     apply_type_subst(raw, &ti)
 }
 
