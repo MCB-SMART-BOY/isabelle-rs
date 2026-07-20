@@ -93,18 +93,17 @@ impl Ty {
     }
 
     /// Apply a type-variable substitution. Only TypeVar leaves are replaced.
-    pub(crate) fn subst_type_vars(&self, inst: &[(Name, Ty)]) -> Result<Ty, KernelError> {
+    pub(crate) fn subst_type_vars(&self, inst: &crate::logic::TypeInstantiation) -> Result<Ty, KernelError> {
         match &self.0 {
-            TyKind::TypeVar { name, index: _, sort } => {
+            TyKind::TypeVar { name, index, sort } => {
                 if sort != &Sort::typ() {
                     return Err(KernelError::Invariant(
                         format!("unsupported sort `{sort:?}` in type variable `{name}`").into(),
                     ));
                 }
-                for (inst_name, replacement) in inst {
-                    if inst_name == name {
-                        return Ok(replacement.clone());
-                    }
+                let id = crate::logic::TypeVarId::new(name.clone(), *index as u32);
+                if let Some(replacement) = inst.bindings.get(&id) {
+                    return Ok(replacement.clone());
                 }
                 Ok(self.clone())
             }

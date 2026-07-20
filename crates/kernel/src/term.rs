@@ -184,7 +184,8 @@ pub fn subst_types(raw: &RawTerm, type_inst: &[(Name, Ty)]) -> Result<RawTerm, K
             ));
         }
     }
-    apply_type_subst(raw, type_inst)
+    let ti = crate::logic::TypeInstantiation::from_name_pairs(type_inst);
+    apply_type_subst(raw, &ti)
 }
 
 fn collect_type_vars(raw: &RawTerm, out: &mut Vec<(Name, usize)>) {
@@ -220,7 +221,7 @@ fn collect_type_vars(raw: &RawTerm, out: &mut Vec<(Name, usize)>) {
     }
 }
 
-fn apply_type_subst(raw: &RawTerm, inst: &[(Name, Ty)]) -> Result<RawTerm, KernelError> {
+fn apply_type_subst(raw: &RawTerm, inst: &crate::logic::TypeInstantiation) -> Result<RawTerm, KernelError> {
     let subst = |ty: &Ty| ty.subst_type_vars(inst);
     Ok(match raw {
         RawTerm::Const { name, ty } => RawTerm::Const { name: name.clone(), ty: subst(ty)? },

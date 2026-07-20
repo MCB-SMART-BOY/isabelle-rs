@@ -49,7 +49,8 @@ pub fn hol_basis() -> LogicBasis {
                             Ty::base("bool").expect("bool type"),
                         ),
                     ),
-                ),
+                )
+                .expect("HOL.eq PolyType"),
             },
         ],
         vec![

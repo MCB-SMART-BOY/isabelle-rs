@@ -51,6 +51,20 @@ impl TypeInstantiation {
     pub fn empty() -> Self {
         TypeInstantiation { bindings: BTreeMap::new() }
     }
+
+    pub fn singleton(name: Name, ty: Ty) -> Self {
+        let mut bindings = BTreeMap::new();
+        bindings.insert(TypeVarId::new(name, 0), ty);
+        TypeInstantiation { bindings }
+    }
+
+    pub fn from_name_pairs(pairs: &[(Name, Ty)]) -> Self {
+        let mut bindings = BTreeMap::new();
+        for (name, ty) in pairs {
+            bindings.insert(TypeVarId::new(name.clone(), 0), ty.clone());
+        }
+        TypeInstantiation { bindings }
+    }
 }
 
 /// A polymorphic type scheme: `forall 'a 'b ... . body`.
@@ -63,13 +77,42 @@ pub struct PolyType {
 }
 
 impl PolyType {
-    pub fn new(params: Vec<PolyTypeParam>, body: Ty) -> Self {
-        PolyType { params, body }
+    pub fn new(params: Vec<PolyTypeParam>, body: Ty) -> Result<Self, KernelError> {
+        // Check for duplicate params
+        let mut seen: std::collections::HashSet<TypeVarId> = std::collections::HashSet::new();
+        for p in &params {
+            if !seen.insert(p.id.clone()) {
+                return Err(KernelError::Invariant(
+                    format!("duplicate type variable parameter {:?}", p.id).into(),
+                ));
+            }
+        }
+        // Check that all free type variables in body are bound in params
+        let mut body_vars: std::collections::HashSet<(Name, usize)> = std::collections::HashSet::new();
+        body.for_each_type_var(&mut |name, index| {
+            body_vars.insert((name.clone(), index));
+        });
+        for (name, index) in &body_vars {
+            let id = TypeVarId::new(name.clone(), *index as u32);
+            if !params.iter().any(|p| p.id == id) {
+                return Err(KernelError::Invariant(
+                    format!("free type variable {:?} in body not bound in params", id).into(),
+                ));
+            }
+        }
+        Ok(PolyType { params, body })
     }
 
     /// Check whether a monomorphic type is a valid instance of this scheme.
     pub fn monomorphic_instance_matches(&self, instance: &Ty) -> Option<TypeInstantiation> {
-        self.body.is_monomorphic_instance_of(instance)
+        let inst = self.body.is_monomorphic_instance_of(instance)?;
+        // Verify all instantiated variables are declared in params
+        for tvid in inst.bindings.keys() {
+            if !self.params.iter().any(|p| p.id == *tvid) {
+                return None;
+            }
+        }
+        Some(inst)
     }
 
     pub(crate) fn write_canonical(&self, encoder: &mut CanonicalEncoder) {

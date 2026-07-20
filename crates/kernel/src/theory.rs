@@ -1751,5 +1751,84 @@ mod axiom_dep_tests {
         let empty_basis = LogicBasis::new(vec![], vec![]);
         assert!(empty_basis.get_axiom(&Name::from("ax")).is_none());
     }
+
+    // ── Real axiom attack tests through accept_closed_theorem ──
+
+    /// Build axiom in one theory's context, try to accept in another.
+    /// Context stamp mismatch is caught by accept_closed_theorem.
+    #[test]
+    fn axiom_rejects_cross_theory_acceptance() {
+        let sig = Signature::new()
+            .extend_const("P", Ty::prop()).unwrap();
+        let schema = AxiomSchema {
+            name: Name::from("ax"),
+            prop: RawTerm::Const {
+                name: Name::from("P"), ty: Ty::prop(),
+            },
+        };
+        let basis = LogicBasis::new(vec![], vec![schema.clone()]);
+
+        let theory_a = TrustedTheory::with_basis("A", sig.clone(), &basis).unwrap();
+        let theory_b = TrustedTheory::root("B", sig.clone());
+
+        // Build axiom theorem in theory_a's context
+        let ctx_a = ProofContext::new(theory_a.snapshot().clone());
+        let ax_thm = theorem_builder::axiom_theorem(
+            &ctx_a, &basis, Name::from("ax"),
+            vec![], vec![],
+            RawTerm::Const {
+                name: Name::from("P"), ty: Ty::prop(),
+            },
+        ).unwrap();
+        let closed = theorem_builder::close_thm(ax_thm).unwrap();
+
+        // Try accept in theory_b — different context stamp
+        let result = accept_closed_theorem(&theory_b, "ax_inst", closed);
+        assert!(result.is_err(), "cross-theory axiom acceptance must be rejected");
+    }
+
+    /// Accept an axiom in a theory WITH the basis, then try to accept
+    /// the same axiom in a theory WITHOUT the basis — replay rejects.
+    #[test]
+    fn axiom_rejects_missing_basis_at_accept() {
+        let sig = Signature::new()
+            .extend_const("P", Ty::prop()).unwrap();
+        let schema = AxiomSchema {
+            name: Name::from("ax"),
+            prop: RawTerm::Const {
+                name: Name::from("P"), ty: Ty::prop(),
+            },
+        };
+        let basis = LogicBasis::new(vec![], vec![schema.clone()]);
+
+        // Theory WITH basis — axiom acceptance succeeds
+        let theory_with = TrustedTheory::with_basis("With", sig.clone(), &basis).unwrap();
+        let ctx_with = ProofContext::new(theory_with.snapshot().clone());
+        let ax_thm = theorem_builder::axiom_theorem(
+            &ctx_with, &basis, Name::from("ax"),
+            vec![], vec![],
+            RawTerm::Const {
+                name: Name::from("P"), ty: Ty::prop(),
+            },
+        ).unwrap();
+        let closed = theorem_builder::close_thm(ax_thm).unwrap();
+        let (_child, _token) = accept_closed_theorem(&theory_with, "ax_inst", closed).unwrap();
+
+        // Theory WITHOUT basis — build axiom theorem and try to accept
+        let theory_no = TrustedTheory::root("NoBasis", sig.clone());
+        let ctx_no = ProofContext::new(theory_no.snapshot().clone());
+        let ax_thm2 = theorem_builder::axiom_theorem(
+            &ctx_no, &basis, Name::from("ax"),
+            vec![], vec![],
+            RawTerm::Const {
+                name: Name::from("P"), ty: Ty::prop(),
+            },
+        ).unwrap();
+        let closed2 = theorem_builder::close_thm(ax_thm2).unwrap();
+
+        // Replay looks for logic_basis but there is none
+        let result = accept_closed_theorem(&theory_no, "ax_inst", closed2);
+        assert!(result.is_err(), "axiom acceptance without basis must be rejected");
+    }
 }
 
