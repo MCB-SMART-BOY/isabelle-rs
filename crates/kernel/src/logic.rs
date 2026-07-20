@@ -16,34 +16,68 @@
 use std::fmt;
 
 use super::{KernelError, Name, RawTerm, Signature, Ty, identity::CanonicalEncoder};
+use crate::Sort;
+use std::collections::BTreeMap;
 
 // ── PolyType ──────────────────────────────────────────────────────────
+
+/// A type-variable identity carrying a sort.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TypeVarId {
+    pub name: Name,
+    pub index: u32,
+}
+
+impl TypeVarId {
+    pub fn new(name: impl Into<Name>, index: u32) -> Self {
+        TypeVarId { name: name.into(), index }
+    }
+}
+
+/// One parameter of a polymorphic type scheme.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct PolyTypeParam {
+    pub id: TypeVarId,
+    pub sort: Sort,
+}
+
+/// A monomorphic instantiation of a polymorphic scheme.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TypeInstantiation {
+    pub bindings: BTreeMap<TypeVarId, Ty>,
+}
+
+impl TypeInstantiation {
+    pub fn empty() -> Self {
+        TypeInstantiation { bindings: BTreeMap::new() }
+    }
+}
 
 /// A polymorphic type scheme: `forall 'a 'b ... . body`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct PolyType {
-    /// Type variable binders (e.g. `['a, 'b]`).
-    pub params: Vec<Name>,
+    /// Type variable binders with their sorts.
+    pub params: Vec<PolyTypeParam>,
     /// The body type, which may reference the bound variables.
     pub body: Ty,
 }
 
 impl PolyType {
-    pub fn new(params: Vec<Name>, body: Ty) -> Self {
+    pub fn new(params: Vec<PolyTypeParam>, body: Ty) -> Self {
         PolyType { params, body }
     }
 
     /// Check whether a monomorphic type is a valid instance of this scheme.
-    /// Currently accepts any type — full polymorphic checking requires a
-    /// substitution engine (deferred to Phase 4).
-    pub fn monomorphic_instance_matches(&self, instance: &Ty) -> bool {
+    pub fn monomorphic_instance_matches(&self, instance: &Ty) -> Option<TypeInstantiation> {
         self.body.is_monomorphic_instance_of(instance)
     }
 
     pub(crate) fn write_canonical(&self, encoder: &mut CanonicalEncoder) {
         encoder.write_u64(self.params.len() as u64);
         for param in &self.params {
-            encoder.write_name(param);
+            encoder.write_name(&param.id.name);
+            encoder.write_u64(param.id.index as u64);
+            encoder.write_name(param.sort.name()); // Sort is a Name newtype
         }
         self.body.write_canonical(encoder);
     }
@@ -240,7 +274,7 @@ impl LogicBasis {
                     let declared = signature
                         .const_type(name)
                         .ok_or_else(|| KernelError::UndeclaredConst(name.clone()))?;
-                    if !scheme.monomorphic_instance_matches(declared) {
+                    if scheme.monomorphic_instance_matches(declared).is_none() {
                         return Err(KernelError::TypeMismatch {
                             expected: Ty::prop(), // placeholder
                             actual: declared.clone(),

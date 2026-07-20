@@ -26,10 +26,6 @@ impl fmt::Debug for Sort {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) struct TypeVarId { pub name: Name, pub index: usize }
-impl TypeVarId { pub fn new(name: impl Into<Name>, index: usize) -> Self { TypeVarId { name: name.into(), index } } }
-
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 enum TyKind {
     Type { name: Name, args: Vec<Ty> },
@@ -115,16 +111,28 @@ impl Ty {
             }
         }
     }
-    pub(crate) fn is_monomorphic_instance_of(&self, instance: &Ty) -> bool {
-        let mut bindings: BTreeMap<TypeVarId, Ty> = BTreeMap::new();
-        if !Self::match_scheme(self, instance, &mut bindings) { return false; }
-        bindings.values().all(|t| t.is_concrete_type())
+    pub(crate) fn is_monomorphic_instance_of(
+        &self,
+        instance: &Ty,
+    ) -> Option<super::logic::TypeInstantiation> {
+        let mut bindings: BTreeMap<super::logic::TypeVarId, Ty> = BTreeMap::new();
+        if !Self::match_scheme(self, instance, &mut bindings) {
+            return None;
+        }
+        if !bindings.values().all(|t| t.is_concrete_type()) {
+            return None;
+        }
+        Some(super::logic::TypeInstantiation { bindings })
     }
-    fn match_scheme(scheme: &Ty, instance: &Ty, bindings: &mut BTreeMap<TypeVarId, Ty>) -> bool {
+    fn match_scheme(
+        scheme: &Ty,
+        instance: &Ty,
+        bindings: &mut BTreeMap<super::logic::TypeVarId, Ty>,
+    ) -> bool {
         match (&scheme.0, &instance.0) {
             (TyKind::TypeVar { name, index, sort }, _) => {
                 if sort != &Sort::typ() { return false; }
-                let id = TypeVarId::new(name.clone(), *index);
+                let id = super::logic::TypeVarId::new(name.clone(), *index as u32);
                 if let Some(existing) = bindings.get(&id) { return existing == instance; }
                 bindings.insert(id, instance.clone()); true
             }
@@ -199,21 +207,21 @@ mod polytype_tests {
     fn monomorphic_instance_rejects_inconsistent_binding() {
         let s = Ty::arrow(Ty::tvar("'a",0,Sort::typ()), Ty::arrow(Ty::tvar("'a",0,Sort::typ()), Ty::base("bool").unwrap()));
         let i = Ty::arrow(Ty::base("bool").unwrap(), Ty::arrow(Ty::base("nat").unwrap(), Ty::base("bool").unwrap()));
-        assert!(!s.is_monomorphic_instance_of(&i));
+        assert!(s.is_monomorphic_instance_of(&i).is_none());
     }
 
     #[test]
     fn monomorphic_instance_distinguishes_same_name_different_index() {
         let s = Ty::arrow(Ty::tvar("'a",0,Sort::typ()), Ty::arrow(Ty::tvar("'a",1,Sort::typ()), Ty::base("bool").unwrap()));
         let i = Ty::arrow(Ty::base("bool").unwrap(), Ty::arrow(Ty::base("nat").unwrap(), Ty::base("bool").unwrap()));
-        assert!(s.is_monomorphic_instance_of(&i));
+        assert!(s.is_monomorphic_instance_of(&i).is_some());
     }
 
     #[test]
     fn monomorphic_instance_rejects_non_concrete_replacement() {
         let s = Ty::arrow(Ty::tvar("'a",0,Sort::typ()), Ty::base("bool").unwrap());
         let i = Ty::arrow(Ty::tvar("'b",0,Sort::typ()), Ty::base("bool").unwrap());
-        assert!(!s.is_monomorphic_instance_of(&i));
+        assert!(s.is_monomorphic_instance_of(&i).is_none());
     }
 
     #[test]
@@ -221,7 +229,7 @@ mod polytype_tests {
         let id_ty = Ty::arrow(Ty::base("bool").unwrap(), Ty::base("bool").unwrap());
         let s = Ty::arrow(Ty::tvar("'a",0,Sort::typ()), Ty::arrow(Ty::tvar("'a",0,Sort::typ()), Ty::base("bool").unwrap()));
         let i = Ty::arrow(id_ty.clone(), Ty::arrow(id_ty, Ty::base("bool").unwrap()));
-        assert!(s.is_monomorphic_instance_of(&i));
+        assert!(s.is_monomorphic_instance_of(&i).is_some());
     }
 
     #[test]

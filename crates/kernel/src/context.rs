@@ -206,7 +206,7 @@ impl ProofContext {
                     .const_type(&name)
                     .ok_or_else(|| KernelError::UndeclaredConst(name.clone()))?;
                 if declared != &ty {
-                    if !declared.is_monomorphic_instance_of(&ty) {
+                    if declared.is_monomorphic_instance_of(&ty).is_none() {
                         return Err(KernelError::TypeMismatch { expected: declared.clone(), actual: ty });
                     }
                     Ok(Term::Const { name, ty })

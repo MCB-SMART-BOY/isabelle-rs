@@ -25,7 +25,7 @@ pub use context::{ProofContext, ProofObligation};
 pub use cterm::{CProp, CTerm, InstEntry};
 pub use derivation::Derivation;
 pub use identity::{ContextStamp, SignatureId, TheoryId};
-pub use logic::{AxiomDependencyId, AxiomSchema, AxiomSchemaId, BasisDeclaration, LogicBasis, LogicBasisId, PolyType};
+pub use logic::{AxiomDependencyId, AxiomSchema, AxiomSchemaId, BasisDeclaration, LogicBasis, LogicBasisId, PolyType, PolyTypeParam, TypeInstantiation, TypeVarId};
 pub use name::Name;
 pub use rules::KernelRules;
 pub use search_fact::{SearchFact, SearchFactDb};

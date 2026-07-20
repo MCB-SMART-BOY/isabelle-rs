@@ -13,7 +13,8 @@ pub use isabelle_kernel::identity::{ContextStamp, SignatureId, TheoryId};
 pub use isabelle_kernel::invariant;
 pub use isabelle_kernel::logic;
 pub use isabelle_kernel::logic::{
-    AxiomSchema, BasisDeclaration, LogicBasis, LogicBasisId, PolyType,
+    AxiomSchema, BasisDeclaration, LogicBasis, LogicBasisId, PolyType, PolyTypeParam,
+    TypeInstantiation, TypeVarId,
 };
 pub use isabelle_kernel::name::Name;
 pub use isabelle_kernel::rules::KernelRules;

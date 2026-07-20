@@ -18,8 +18,8 @@
 //! trusted-base assumption.
 
 use crate::kernel::{
-    BasisDeclaration, LogicBasis, Name, RawTerm, Ty,
-    logic::{AxiomSchema, PolyType},
+    BasisDeclaration, LogicBasis, Name, RawTerm, Sort, Ty,
+    logic::{AxiomSchema, PolyType, PolyTypeParam, TypeVarId},
 };
 
 /// The Isabelle/HOL logic basis.
@@ -41,7 +41,7 @@ pub fn hol_basis() -> LogicBasis {
             BasisDeclaration::Constant {
                 name: Name::from("HOL.eq"),
                 scheme: PolyType::new(
-                    vec![Name::from("'a")],
+                    vec![PolyTypeParam { id: TypeVarId::new("'a", 0), sort: Sort::typ() }],
                     Ty::arrow(
                         Ty::tvar("'a", 0, crate::kernel::Sort::typ()),
                         Ty::arrow(
