@@ -179,6 +179,7 @@ with `continue-on-error: true`). Green CI does not require these to pass.
 | `theory::loader::test_set_thy_style_lemma` | `theory loader batch compatibility` |
 | `theory::loader::test_simple_lemma` | `theory loader batch compatibility` |
 | `theory::loader::test_structured_proof` | `theory loader batch compatibility` |
+| `integration_tests::test_theory_processor_pipeline` | `proof-context certification gap` |
 ## Post-Commit All-Targets Audit
 
 On 2026-07-19, `cargo +stable check --locked` and
