@@ -4176,6 +4176,12 @@ pub fn verify_lemma(lem: &ParsedLemma) -> LemmaVerification {
             StrictAdapterResult::NotApplicable => {},
         }
 
+        // ── Source-aware elaboration (Phase 2 hook) ────────────────────
+        // TODO: When the elaborator and proof context are fully wired,
+        //       use the elaborated CProp for verification instead of the
+        //       legacy Term path. Currently only logs success/failure.
+        let _ = try_source_elaboration(lem);
+
         // If a built-in Var-override exists, use it directly (skip proof replay).
         // This covers lemmas whose proofs use complex patterns (multi-method chains,
         // [THEN] composition, named iprover premises) that aren't fully supported yet.
@@ -4597,6 +4603,28 @@ impl Method {
 // Tests
 // =========================================================================
 
+/// Try source-aware elaboration as a Phase 2 observation hook.
+/// Returns the elaborated `CProp` on success, `None` if any step fails.
+/// This is currently advisory only — it does not change the proof flow.
+fn try_source_elaboration(lem: &ParsedLemma) -> Option<crate::kernel::CProp> {
+    use crate::isar::elaborator::elaborate_proposition;
+    use crate::isar::source_ast::SourceId;
+    use crate::isar::term_parser::parse_source_proposition;
+
+    let source_text = lem.theorem.prop().term().to_string();
+    let source_id = SourceId::new(lem.name.as_str());
+    let source_prop = parse_source_proposition(&source_text, source_id)?;
+
+    // Build a temporary proof context from the current theory.
+    // TODO: use the actual proof context when Phase 2 is fully integrated.
+    let _ctx = crate::kernel::ProofContext::new(crate::kernel::TheorySnapshot::root(
+        "elab",
+        crate::kernel::Signature::new(),
+    ));
+
+    let _cprop = elaborate_proposition(&source_prop, &_ctx).ok()?;
+    Some(_cprop)
+}
 #[cfg(test)]
 mod tests {
     use super::*;

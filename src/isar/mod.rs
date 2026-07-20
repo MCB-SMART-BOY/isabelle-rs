@@ -17,6 +17,7 @@
 
 pub mod args;
 pub mod attrib;
+pub mod elaborator;
 pub mod keyword;
 pub mod linarith;
 pub mod method;

@@ -2,6 +2,9 @@
 
 use std::sync::Arc;
 
+use crate::isar::source_ast::{
+    SourceBinder, SourceExpr, SourceId, SourceName, SourceProposition, SourceSpan, SourceSyntax,
+};
 use crate::{
     core::{
         term::Term,
@@ -1086,7 +1089,58 @@ pub fn print_term(term: &Term) -> String {
     }
 }
 
-#[cfg(test)]
+// ── Source proposition parsing ────────────────────────────────────────
+
+/// Parse a source string into a data-only `SourceProposition` AST.
+///
+/// This uses the existing legacy parser to produce a `Term`, then losslessly
+/// converts the `Term` into an unresolved `SourceExpr`. Every name is stored
+pub fn parse_source_proposition(input: &str, source_id: SourceId) -> Option<SourceProposition> {
+    let (term, _status) = parse_term_with_status(input)?;
+    let expr = term_to_source_expr(&term);
+    Some(SourceProposition {
+        source: source_id,
+        span: SourceSpan { start: 0, end: input.len() },
+        expression: expr,
+    })
+}
+
+fn term_to_source_expr(term: &Term) -> SourceExpr {
+    match term {
+        Term::Const { name, typ: _ } => {
+            SourceExpr::Name { name: SourceName { spelling: name.clone() }, span: default_span() }
+        },
+        Term::Free { name, typ: _ } => {
+            SourceExpr::Name { name: SourceName { spelling: name.clone() }, span: default_span() }
+        },
+        Term::Var { name, index: _, typ: _ } => {
+            SourceExpr::Name { name: SourceName { spelling: name.clone() }, span: default_span() }
+        },
+        Term::Bound(_) => {
+            SourceExpr::Name { name: SourceName { spelling: "BOUND".into() }, span: default_span() }
+        },
+        Term::Abs { name, typ: _, body } => SourceExpr::Binder {
+            syntax: SourceSyntax { spelling: "λ".into(), span: default_span() },
+            binders: vec![SourceBinder {
+                name: SourceName { spelling: name.clone() },
+                typ: None,
+                span: default_span(),
+            }],
+            body: Box::new(term_to_source_expr(body)),
+            span: default_span(),
+        },
+        Term::App { func, arg } => SourceExpr::Application {
+            function: Box::new(term_to_source_expr(func)),
+            argument: Box::new(term_to_source_expr(arg)),
+            span: default_span(),
+        },
+    }
+}
+
+fn default_span() -> SourceSpan {
+    SourceSpan { start: 0, end: 0 }
+}
+
 mod tests {
     use super::*;
 
