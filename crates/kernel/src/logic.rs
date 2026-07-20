@@ -16,6 +16,7 @@
 use std::fmt;
 
 use super::{KernelError, Name, RawTerm, Signature, Ty, identity::CanonicalEncoder};
+use crate::signature::ConstScheme;
 use crate::Sort;
 use std::collections::BTreeMap;
 
@@ -345,14 +346,25 @@ impl LogicBasis {
                     }
                 },
                 BasisDeclaration::Constant { name, scheme } => {
-                    let declared = signature
-                        .const_type(name)
-                        .ok_or_else(|| KernelError::UndeclaredConst(name.clone()))?;
-                    if scheme.monomorphic_instance_matches(declared).is_none() {
-                        return Err(KernelError::TypeMismatch {
-                            expected: Ty::prop(), // placeholder
-                            actual: declared.clone(),
-                        });
+                    match signature.get_const(name) {
+                        Some(ConstScheme::Monomorphic(ty)) => {
+                            if scheme.monomorphic_instance_matches(ty).is_none() {
+                                return Err(KernelError::TypeMismatch {
+                                    expected: Ty::prop(),
+                                    actual: ty.clone(),
+                                });
+                            }
+                        },
+                        Some(ConstScheme::Polymorphic(sig_scheme)) => {
+                            // Compare parameter counts as a basic check
+                            if scheme.params().len() != sig_scheme.params().len() {
+                                return Err(KernelError::TypeMismatch {
+                                    expected: Ty::prop(),
+                                    actual: Ty::prop(),
+                                });
+                            }
+                        },
+                        None => return Err(KernelError::UndeclaredConst(name.clone())),
                     }
                 },
             }
