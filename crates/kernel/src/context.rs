@@ -88,16 +88,7 @@ impl ProofContext {
     fn validate_checked(&self, term: &Term, bounds: &mut Vec<Ty>) -> Result<Ty, KernelError> {
         match term {
             Term::Const { name, ty } => {
-                let declared = self
-                    .signature()
-                    .const_type(name)
-                    .ok_or_else(|| KernelError::UndeclaredConst(name.clone()))?;
-                if declared != ty {
-                    return Err(KernelError::TypeMismatch {
-                        expected: declared.clone(),
-                        actual: ty.clone(),
-                    });
-                }
+                let _inst = self.signature().certify_const_instance(name, ty)?;
                 Ok(ty.clone())
             },
             Term::Free { name, ty } => {
@@ -201,18 +192,8 @@ impl ProofContext {
     fn certify_raw(&self, raw: RawTerm, bounds: &[Ty]) -> Result<Term, KernelError> {
         match raw {
             RawTerm::Const { name, ty } => {
-                let declared = self
-                    .signature()
-                    .const_type(&name)
-                    .ok_or_else(|| KernelError::UndeclaredConst(name.clone()))?;
-                if declared != &ty {
-                    if declared.is_monomorphic_instance_of(&ty).is_none() {
-                        return Err(KernelError::TypeMismatch { expected: declared.clone(), actual: ty });
-                    }
-                    Ok(Term::Const { name, ty })
-                } else {
-                    Ok(Term::Const { name, ty: declared.clone() })
-                }
+                let _inst = self.signature().certify_const_instance(&name, &ty)?;
+                Ok(Term::Const { name, ty })
             },
             RawTerm::Free { name, ty } => {
                 let declared = self

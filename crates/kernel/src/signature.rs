@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, sync::Arc};
 use super::{
     KernelError, Name, Ty,
     identity::{CanonicalEncoder, SIGNATURE_DOMAIN, SignatureId},
-    logic::PolyType,
+    logic::{PolyType, TypeInstantiation},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -24,7 +24,9 @@ impl Signature {
         Self::from_map(BTreeMap::new())
     }
 
-    pub fn id(&self) -> SignatureId { self.id }
+    pub fn id(&self) -> SignatureId {
+        self.id
+    }
 
     pub fn extend_const(&self, name: impl Into<Name>, ty: Ty) -> Result<Self, KernelError> {
         let name = name.into();
@@ -36,7 +38,11 @@ impl Signature {
         Ok(Self::from_map(consts))
     }
 
-    pub fn extend_const_scheme(&self, name: impl Into<Name>, scheme: PolyType) -> Result<Self, KernelError> {
+    pub fn extend_const_scheme(
+        &self,
+        name: impl Into<Name>,
+        scheme: PolyType,
+    ) -> Result<Self, KernelError> {
         let name = name.into();
         if self.consts.contains_key(&name) {
             return Err(KernelError::DuplicateDeclaration { name });
@@ -46,12 +52,44 @@ impl Signature {
         Ok(Self::from_map(consts))
     }
 
-    pub fn get_const(&self, name: &Name) -> Option<&ConstScheme> { self.consts.get(name) }
+    pub fn get_const(&self, name: &Name) -> Option<&ConstScheme> {
+        self.consts.get(name)
+    }
 
     pub fn const_type(&self, name: &Name) -> Option<&Ty> {
         match self.consts.get(name) {
             Some(ConstScheme::Monomorphic(ty)) => Some(ty),
             _ => None,
+        }
+    }
+
+    /// Check whether a constant may be used at `requested_ty` and return the
+    /// [`TypeInstantiation`] for polymorphic constants.
+    ///
+    /// - `Monomorphic(declared)` → `requested_ty == declared` (structurally equal).
+    /// - `Polymorphic(scheme)` → delegates to [`PolyType::monomorphic_instance_matches`].
+    pub fn certify_const_instance(
+        &self,
+        name: &Name,
+        requested_ty: &Ty,
+    ) -> Result<TypeInstantiation, KernelError> {
+        match self.consts.get(name) {
+            Some(ConstScheme::Monomorphic(declared)) => {
+                if declared != requested_ty {
+                    return Err(KernelError::TypeMismatch {
+                        expected: declared.clone(),
+                        actual: requested_ty.clone(),
+                    });
+                }
+                Ok(TypeInstantiation::empty())
+            },
+            Some(ConstScheme::Polymorphic(scheme)) => scheme
+                .monomorphic_instance_matches(requested_ty)
+                .ok_or_else(|| KernelError::TypeMismatch {
+                    expected: scheme.body().clone(),
+                    actual: requested_ty.clone(),
+                }),
+            None => Err(KernelError::UndeclaredConst(name.clone())),
         }
     }
 
@@ -72,8 +110,12 @@ impl Signature {
         Ok(signature)
     }
 
-    pub fn len(&self) -> usize { self.consts.len() }
-    pub fn is_empty(&self) -> bool { self.consts.is_empty() }
+    pub fn len(&self) -> usize {
+        self.consts.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.consts.is_empty()
+    }
 
     fn from_map(consts: BTreeMap<Name, ConstScheme>) -> Self {
         let id = compute_signature_id(&consts);
@@ -82,7 +124,9 @@ impl Signature {
 }
 
 impl Default for Signature {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 fn compute_signature_id(consts: &BTreeMap<Name, ConstScheme>) -> SignatureId {

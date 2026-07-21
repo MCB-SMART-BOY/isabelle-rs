@@ -1,6 +1,6 @@
 use super::{
     CTerm, ClosedThm, Derivation, KernelError, KernelThm, Name, ProofContext,
-    RawTerm, Ty,
+    RawTerm,
 };
 use super::theory::DefinitionCertificate;
 
