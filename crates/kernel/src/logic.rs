@@ -335,6 +335,7 @@ impl LogicBasis {
                     let _ = name;
                 },
                 BasisDeclaration::Judgment { const_name, ty } => {
+                    // Judgment operators are always monomorphic; const_type() is correct here.
                     let declared = signature
                         .const_type(const_name)
                         .ok_or_else(|| KernelError::UndeclaredConst(const_name.clone()))?;

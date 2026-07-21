@@ -16,7 +16,7 @@ use crate::isar::source_ast::{
     SourceBinder, SourceExpr, SourceId, SourceName, SourceProposition, SourceSpan, SourceSyntax,
     SourceType,
 };
-use crate::kernel::{CProp, KernelError, Name, ProofContext, RawTerm, Ty};
+use crate::kernel::{CProp, ConstScheme, KernelError, Name, ProofContext, RawTerm, Ty};
 
 /// Errors that can occur during source proposition elaboration.
 #[derive(Debug, Clone)]
@@ -178,8 +178,16 @@ fn elaborate_expr(expr: &SourceExpr, ctx: &ProofContext) -> Result<RawTerm, Elab
         SourceExpr::Name { name, span } => {
             let kname = source_name_to_kernel(name);
             // Try constant first
-            if let Some(declared_ty) = ctx.signature().const_type(&kname) {
-                return Ok(RawTerm::const_(kname, declared_ty.clone()));
+            match ctx.signature().get_const(&kname) {
+                Some(ConstScheme::Monomorphic(ty)) => {
+                    return Ok(RawTerm::const_(kname, ty.clone()));
+                }
+                Some(ConstScheme::Polymorphic(scheme)) => {
+                    // Return the scheme body - contains type variables that the kernel
+                    // will validate as a monomorphic instance at certify_raw time.
+                    return Ok(RawTerm::const_(kname, scheme.body().clone()));
+                }
+                None => { /* fall through to free-variable check */ }
             }
             // Try free variable
             if let Some(declared_ty) = ctx.free_type(&kname) {
@@ -233,12 +241,16 @@ fn elaborate_expr(expr: &SourceExpr, ctx: &ProofContext) -> Result<RawTerm, Elab
         },
         SourceExpr::SyntaxApplication { syntax, arguments, span } => {
             let kname = source_name_to_kernel(&SourceName { spelling: syntax.spelling.clone() });
-            let declared_ty = ctx.signature().const_type(&kname).ok_or_else(|| {
-                ElaborationError::UnresolvedName {
-                    spelling: syntax.spelling.clone(),
-                    span: syntax.span,
+            let declared_ty = match ctx.signature().get_const(&kname) {
+                Some(ConstScheme::Monomorphic(ty)) => ty.clone(),
+                Some(ConstScheme::Polymorphic(scheme)) => scheme.body().clone(),
+                None => {
+                    return Err(ElaborationError::UnresolvedName {
+                        spelling: syntax.spelling.clone(),
+                        span: syntax.span,
+                    })
                 }
-            })?;
+            };
             let mut result = RawTerm::const_(kname, declared_ty.clone());
             for arg in arguments {
                 let arg_term = elaborate_expr(arg, ctx)?;
@@ -280,11 +292,20 @@ mod tests {
                 "HOL.eq",
                 Ty::arrow(
                     Ty::tvar("alpha", 0, crate::kernel::Sort::typ()),
-                    Ty::arrow(Ty::tvar("alpha", 0, crate::kernel::Sort::typ()), Ty::base("bool").unwrap()),
+                    Ty::arrow(
+                        Ty::tvar("alpha", 0, crate::kernel::Sort::typ()),
+                        Ty::base("bool").unwrap(),
+                    ),
                 ),
             )
             .unwrap()
-            .extend_const("P", Ty::arrow(Ty::tvar("alpha", 0, crate::kernel::Sort::typ()), Ty::base("bool").unwrap()))
+            .extend_const(
+                "P",
+                Ty::arrow(
+                    Ty::tvar("alpha", 0, crate::kernel::Sort::typ()),
+                    Ty::base("bool").unwrap(),
+                ),
+            )
             .unwrap();
         let snapshot = TheorySnapshot::root("test", sig);
         ProofContext::new(snapshot)
