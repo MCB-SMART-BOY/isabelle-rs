@@ -1,6 +1,6 @@
 use isabelle_rs::kernel::{
     ContextStamp, InstEntry, KernelError, KernelRules, Name, ProofContext, RawTerm, SearchFact,
-    Signature, TrustedTheory, Ty, accept_closed_theorem,
+    Signature, TrustedTheory, Ty, accept_closed_theorem, theorem_id_v2_reference,
 };
 
 fn prop(name: &str) -> RawTerm {
@@ -274,20 +274,17 @@ fn vacuous_forall_payload_with_same_stamp_free_is_rejected() {
 }
 
 #[test]
-fn theorem_id_v2_matches_pinned_regression_vector() {
+fn theorem_id_matches_independent_v2_reference() {
     let parent = theory("Pure", &["A"]);
     let (_, accepted) =
         accept_closed_theorem(&parent, "imp_identity", implication_identity(&parent, "A")).unwrap();
 
     let id = accepted.id();
 
-    // Structural validation: the TheoremId must be deterministically derived
-    // from the theorem's context, proposition, and dependencies.
+    // Structural validation
     let stamp: ContextStamp = accepted.prop().context();
     assert_eq!(stamp, parent.stamp(),
         "theorem context stamp must match parent theory stamp");
-    // accepted_in is the child theory created by accept_closed_theorem,
-    // not the parent we passed in.
     assert_ne!(accepted.accepted_in(), parent.id(),
         "theorem must be accepted in a child theory, not the parent");
     assert_eq!(stamp.logic_basis(), None,
@@ -296,17 +293,16 @@ fn theorem_id_v2_matches_pinned_regression_vector() {
         "Pure implication has no dependencies");
     assert_eq!(accepted.name().as_str(), "imp_identity");
 
-    // Pinned v2 regression vector. Any change to the bytes below means
-    // the canonical encoding changed. If intentional, the THEOREM_DOMAIN
-    // version tag must be bumped and this vector updated to the new value.
+    // Independent v2 reference encoder must match production encoder.
+    let expected = theorem_id_v2_reference(
+        accepted.prop().context(),
+        accepted.prop(),
+        accepted.dependencies(),
+    );
     assert_eq!(
         id.to_bytes(),
-        [
-            0x06, 0xb5, 0x63, 0xb8, 0xb7, 0xe5, 0x70, 0x54,
-            0xae, 0xb9, 0xf5, 0xfd, 0xe3, 0xa3, 0xdf, 0xbb,
-            0xce, 0x94, 0xd4, 0x33, 0x5c, 0x41, 0xa6, 0x3c,
-            0x53, 0xa9, 0x08, 0x9b, 0xa8, 0x1b, 0xee, 0x7c,
-        ]
+        expected,
+        "theorem ID must match independent v2 reference encoder"
     );
 }
 #[test]

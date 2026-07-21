@@ -121,6 +121,17 @@ impl PolyType {
                 }
             }
         }
+        // Every declared param must appear in the body
+        let used_ids: std::collections::HashSet<TypeVarId> = body_vars.iter()
+            .map(|(n, i, _)| TypeVarId::new(n.clone(), *i as u32))
+            .collect();
+        for p in &params {
+            if !used_ids.contains(&p.id) {
+                return Err(KernelError::Invariant(
+                    format!("type variable parameter {:?} does not appear in body", p.id).into(),
+                ));
+            }
+        }
         Ok(PolyType { params: params.into_boxed_slice(), body })
     }
 
@@ -503,25 +514,35 @@ mod tests {
     }
 
     #[test]
-    fn polymorphic_scheme_rejects_sort_mismatch() {
-        // Construct a PolyType where param sort differs from body sort.
-        // Since only Sort::typ() exists, we test that PolyType::new rejects
-        // a scheme where body type var sort doesn't match param sort.
-        // We do this by constructing params and body with deliberately
-        // different sorts using raw struct construction.
+    fn polymorphic_scheme_accepts_matching_sorts_and_rejects_mismatch() {
         let params = vec![PolyTypeParam {
             id: TypeVarId::new("'a", 0),
             sort: Sort::typ(),
         }];
-        // The body uses 'a: a non-existent sort (effectively testing sort mismatch)
-        // Actually, since Sort is opaque and only Sort::typ() exists, use the
-        // same sort for both — the test verifies that matching sorts are accepted.
-        let body = Ty::arrow(
+        // Matching sorts: accepted
+        let body_match = Ty::arrow(
             Ty::tvar("'a", 0, Sort::typ()),
-            Ty::arrow(Ty::tvar("'a", 0, Sort::typ()), Ty::prop()),
+            Ty::tvar("'a", 0, Sort::typ()),
         );
-        let result = PolyType::new(params, body);
-        assert!(result.is_ok(),
-            "matching sorts must be accepted, got: {result:?}");
+        assert!(PolyType::new(params.clone(), body_match).is_ok(),
+            "matching sorts must be accepted");
+
+        // Mismatched sort: rejected
+        let body_mismatch = Ty::tvar("'a", 0, Sort::arbitrary("other"));
+        let result = PolyType::new(params, body_mismatch);
+        assert!(result.is_err(),
+            "sort mismatch must be rejected, got: {result:?}");
+    }
+
+    #[test]
+    fn polymorphic_scheme_rejects_unused_param() {
+        let params = vec![
+            PolyTypeParam { id: TypeVarId::new("'a", 0), sort: Sort::typ() },
+            PolyTypeParam { id: TypeVarId::new("'b", 0), sort: Sort::typ() },
+        ];
+        // Body only uses 'a, not 'b
+        let body = Ty::tvar("'a", 0, Sort::typ());
+        assert!(PolyType::new(params, body).is_err(),
+            "unused param must be rejected");
     }
 }

@@ -24,8 +24,8 @@ KernelTrustedClosed:      0/125  （生产路径未接通）
 
 ## 未完成
 
-- `ConservativeDefinition` 非原子化（`DefinitionCertificate` 待实现）
-- `PolyType.params` 非权威
+- `ConservativeDefinition` 已通过 `DefinitionId` 原子化，存储在 `TheoryExtension::DefineConst`，重放时沿 owner 祖先链查找证书
+- `PolyType::new` 验证参数排序一致性并要求每个声明的参数都出现在 body 中；`monomorphic_instance_matches` 依据参数授权实例
 - 内核→遗留转换器使用 Debug 字符串
 - 生产 source→kernel 桥接未实现
 - `KernelTrustedClosed` 仍为 0/125
@@ -40,15 +40,11 @@ KernelTrustedClosed:      0/125  （生产路径未接通）
 
 ## 下一步优先级
 
-1. 将 `ConservativeDefinition` 改为单一 `DefinitionCertificate`
-2. 统一 `TypeInstantiation` 为 `TypeVarId`
-3. 补齐 axiom/definition 攻击测试矩阵
-4. 接通实际 source → CProp → 实际理论 → TrueI 令牌
-5. 设计 ISIP 标准规范（设计文档，不实现运行时）
-
-## ISIP 平台路线
-
-ISIP（Isabelle 结构化交互与证明标准）定义五阶段平台演进：
+1. 统一 `TypeInstantiation` 为 `TypeVarId`
+2. 补齐 axiom/definition 攻击测试矩阵
+3. 接通实际 source → CProp → 实际理论 → TrueI 令牌
+4. 设计 ISIP 标准规范（设计文档，不实现运行时）
+5. ISIP（Isabelle 结构化交互与证明标准）定义五阶段平台演进：
 
 | 阶段 | 前置条件 |
 |------|---------|

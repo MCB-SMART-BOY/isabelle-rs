@@ -20,6 +20,13 @@ impl Sort {
     }
 }
 
+#[cfg(test)]
+impl Sort {
+    pub fn arbitrary(name: &str) -> Self {
+        Sort(Name::from(name))
+    }
+}
+
 impl fmt::Debug for Sort {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
@@ -188,6 +195,36 @@ impl Ty {
                 encoder.write_u64(args.len() as u64);
                 for arg in args {
                     arg.write_canonical(encoder);
+                }
+            },
+        }
+    }
+
+    /// Write canonical encoding to a byte buffer (reference encoder path).
+    /// Mirrors `write_canonical` but writes to `Vec<u8>` directly.
+    pub(crate) fn write_canonical_raw(&self, buf: &mut Vec<u8>) {
+        match &self.0 {
+            TyKind::TypeVar { name, index, sort } => {
+                buf.push(1u8);
+                // write_name: u64 BE length + bytes
+                let nbytes = name.as_str().as_bytes();
+                buf.extend_from_slice(&(nbytes.len() as u64).to_be_bytes());
+                buf.extend_from_slice(nbytes);
+                // write_u64 BE
+                buf.extend_from_slice(&(*index as u64).to_be_bytes());
+                // write_name for sort
+                let sbytes = sort.0.as_str().as_bytes();
+                buf.extend_from_slice(&(sbytes.len() as u64).to_be_bytes());
+                buf.extend_from_slice(sbytes);
+            },
+            TyKind::Type { name, args } => {
+                buf.push(0u8);
+                let nbytes = name.as_str().as_bytes();
+                buf.extend_from_slice(&(nbytes.len() as u64).to_be_bytes());
+                buf.extend_from_slice(nbytes);
+                buf.extend_from_slice(&(args.len() as u64).to_be_bytes());
+                for arg in args {
+                    arg.write_canonical_raw(buf);
                 }
             },
         }

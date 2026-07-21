@@ -268,6 +268,18 @@ impl DependencySet {
             encoder.write_fixed_bytes(&dependency.digest);
         }
     }
+    pub(crate) fn write_canonical_raw(&self, buf: &mut Vec<u8>) {
+        buf.extend_from_slice(&(self.entries.len() as u64).to_be_bytes());
+        for dependency in &self.entries {
+            let tag = match dependency.kind {
+                DependencyKind::Axiom => 0,
+                DependencyKind::Definition => 1,
+                DependencyKind::Theorem => 2,
+            };
+            buf.push(tag);
+            buf.extend_from_slice(&dependency.digest);
+        }
+    }
 }
 
 impl fmt::Debug for DependencySet {
@@ -1024,7 +1036,7 @@ pub fn accept_closed_theorem(
     Ok((child, trusted))
 }
 
-fn compute_theorem_id(
+pub(crate) fn compute_theorem_id(
     context: ContextStamp,
     prop: &CProp,
     dependencies: &DependencySet,
@@ -1659,7 +1671,8 @@ mod definition_tests {
     use crate::Derivation;
     use crate::KernelRules;
     use crate::Term;
-    use crate::logic::{BasisDeclaration, LogicBasis, PolyType};
+    use crate::logic::{BasisDeclaration, LogicBasis, PolyType, PolyTypeParam, TypeVarId};
+    use crate::Sort;
 
     fn hol_sig() -> Signature {
         Signature::new()
@@ -2273,6 +2286,52 @@ mod definition_tests {
         assert!(
             matches!(result, Err(KernelError::Invariant(_))),
             "must reject corrupted basis, got: {result:?}"
+        );
+    }
+
+    /// A theory whose stored logic_basis has a different ID than the extension's
+    /// logic_basis_id must be rejected by check_consistency (wrong-ID branch).
+    #[test]
+    fn corrupted_logic_basis_wrong_id_is_rejected() {
+        let sig = hol_sig();
+        let basis_a = LogicBasis::try_new(
+            vec![BasisDeclaration::Constant {
+                name: Name::from("HOL.Trueprop"),
+                scheme: PolyType::new(
+                    vec![],
+                    Ty::arrow(Ty::base("bool").unwrap(), Ty::prop()),
+                ).unwrap(),
+            }],
+            vec![],
+        ).unwrap();
+        // basis_b differs in declaration name → different LogicBasisId
+        let basis_b = LogicBasis::try_new(
+            vec![BasisDeclaration::Constant {
+                name: Name::from("HOL.All"),
+                scheme: PolyType::new(
+                    vec![PolyTypeParam::typ(TypeVarId::new("'a", 0))],
+                    Ty::arrow(
+                        Ty::arrow(Ty::tvar("'a", 0, Sort::typ()), Ty::prop()),
+                        Ty::prop(),
+                    ),
+                ).unwrap(),
+            }],
+            vec![],
+        ).unwrap();
+        assert_ne!(basis_a.id(), basis_b.id(),
+            "different declarations must produce different LogicBasisIds");
+
+        let theory = TrustedTheory::with_basis("HOL", sig, &basis_a).unwrap();
+
+        // Corrupt: swap basis_a payload for basis_b while extension still references basis_a.id()
+        let mut inner = (*theory.inner).clone();
+        inner.logic_basis = Some(Arc::new(basis_b));
+        let corrupted = TrustedTheory { inner: Arc::new(inner) };
+
+        let result = corrupted.check_consistency();
+        assert!(
+            matches!(result, Err(KernelError::Invariant(_))),
+            "must reject wrong logic basis ID, got: {result:?}"
         );
     }
 }

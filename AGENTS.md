@@ -104,8 +104,8 @@ Branch `wip/kernel-trusted-slice` merged at `03d28a6` delivered:
 - `prove_true_i` via accepted `True_def` + `theorem_ref` + `Combination + Symmetric + EqualElim` chain.
 
 **Not yet complete:**
-- `ConservativeDefinition` not atomic (`DefinitionCertificate` pending).
-- `PolyType.params` not authoritative.
+- `ConservativeDefinition` is now atomic via `DefinitionId` stored in `TheoryExtension::DefineConst`, with replay walking owner ancestry to find the certificate.
+- `PolyType::new` validates param sort consistency and requires every declared param appears in the body; `monomorphic_instance_matches` authorizes instances against params.
 - Kernel -> legacy conversion uses Debug strings (untrusted path).
 - Production source -> kernel bridge not implemented.
 - `KernelTrustedClosed` remains `0/125`.

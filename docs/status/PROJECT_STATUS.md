@@ -432,9 +432,11 @@ Branch `wip/kernel-trusted-slice` merged `03d28a6` onto `dev`:
 - 10 TCB attack tests: 5 polytype, 1 axiom dep, 4 conservative definition
 - `strict` gate passes; `prove_true_i_succeeds` with dest_app-based proposition check
 
+**Completed (2026-07-21):**
+- `ConservativeDefinition` is atomic via `DefinitionId` stored in `TheoryExtension::DefineConst`. Replay walks owner ancestry to find the certificate.
+- `PolyType::new` validates param sort consistency and requires every declared param appears in the body. `monomorphic_instance_matches` authorizes instances against params.
+
 **Deferred:**
-- `ConservativeDefinition` not yet atomic (`DefinitionCertificate`/`define_const` pending)
-- `PolyType.params` not yet used as instance authorization contract
 - `Ty::base("'a")` not yet rejected (tick-prefix guard pending)
 - Production source->kernel bridge not implemented
 - `KernelTrustedClosed` remains `0/125`
@@ -455,11 +457,10 @@ Sledgehammer, SMT, or Code Generator work. The route is:
 4. **Next:** integrate source parsing and elaborate checked `judgment`,
    constant, and polymorphic type-scheme declarations, including
    `HOL.Trueprop`, into the existing `CProp : prop` boundary.
-5. **Partially addressed (2026-07-21):** HOL logical basis manifest is installed via `hol_basis()`; axiom-schema instances are replayed with exact `AxiomDependencyId`. Kernel warnings at zero. Missing: full axiom attack-test matrix.
-6. **Partially addressed (2026-07-21):** `extend_definition` exists with 4 attack tests, but `ConservativeDefinition` still carries multi-source payload (`const_name/rhs/rhs_raw/prop`) instead of atomic `DefinitionCertificate`. This is the next priority for TCB closure.
-7. Re-derive `HOL::TrueI` as the first real sampled `KernelTrustedClosed`
+5. **Done (2026-07-21):** `ConservativeDefinition` is now atomic. `DefinitionCertificate` validates parent, freshness, concrete types, and replays through owner ancestry.
+6. Re-derive `HOL::TrueI` as the first real sampled `KernelTrustedClosed`
    theorem before resuming `HOL::trans` or any `2/125` work.
-7.5. **Design:** Draft ISIP standard specifications (ISIP-000 architecture,
+7. **Design:** Draft ISIP standard specifications (ISIP-000 architecture,
    ISIP-100 semantic model, ISIP-300 evidence/trust model) as design documents.
    No runtime implementation. See `docs/isip/`.
 8. Continue core hardening only as migration support, not new trusted proof
