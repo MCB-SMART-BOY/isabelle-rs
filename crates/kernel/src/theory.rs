@@ -1661,6 +1661,100 @@ mod definition_tests {
         assert!(result.is_err(), "must reject cross-theory definition acceptance");
     }
 
+    // ── Real white-box attack tests: definition certificate corruption ──
+
+    /// Definition certificate whose rhs_raw references the constant itself must be rejected
+    /// during replay (validate_semantics check).
+    #[test]
+    fn definition_rejects_certificate_self_reference() {
+        let sig = hol_sig().extend_const("P", Ty::prop()).unwrap();
+        let parent = TrustedTheory::root("Test", sig.clone());
+        let rhs = RawTerm::const_("P", Ty::prop());
+        let (child, token) = parent.define_const("Q", rhs.clone()).unwrap();
+
+        let def_id = match token.as_kernel().derivation() {
+            Derivation::ConservativeDefinition { definition } => *definition,
+            _ => panic!("expected ConservativeDefinition"),
+        };
+        let (real_cert, _) = child.find_definition_certificate(&def_id).unwrap();
+
+        // Tamper: make RHS reference the constant itself
+        let mut tampered_cert = real_cert.clone();
+        tampered_cert.rhs_raw = RawTerm::const_("Q", Ty::prop());
+
+        // Recompute ID so validate passes, but validate_semantics should catch self-ref
+        tampered_cert.id = DefinitionCertificate::compute_id(
+            &tampered_cert.parent, &tampered_cert.name,
+            &tampered_cert.declared_ty, &tampered_cert.rhs_raw,
+        );
+
+        let ctx = ProofContext::new(child.snapshot().clone());
+        let thm = theorem_builder::definition_theorem(&ctx, &tampered_cert).unwrap();
+        let closed = theorem_builder::close_thm(thm).unwrap();
+
+        let result = accept_closed_theorem(&child, "Test_def", closed);
+        assert!(result.is_err(), "must reject self-referencing definition during replay");
+    }
+
+
+    /// Certificate from one theory chain cannot be accepted in an unrelated theory.
+    #[test]
+    fn definition_rejects_cross_certificate_reuse() {
+        let sig_a = hol_sig().extend_const("P", Ty::prop()).unwrap();
+        let parent_a = TrustedTheory::root("ChainA", sig_a.clone());
+        let rhs = RawTerm::const_("P", Ty::prop());
+        let (child_a, token) = parent_a.define_const("Q", rhs.clone()).unwrap();
+
+        let def_id = match token.as_kernel().derivation() {
+            Derivation::ConservativeDefinition { definition } => *definition,
+            _ => panic!("expected ConservativeDefinition"),
+        };
+        let (real_cert, _) = child_a.find_definition_certificate(&def_id).unwrap();
+
+        // Build theorem in child_a's context
+        let ctx_a = ProofContext::new(child_a.snapshot().clone());
+        let thm = theorem_builder::definition_theorem(&ctx_a, &real_cert).unwrap();
+        let closed = theorem_builder::close_thm(thm).unwrap();
+
+        // Try to accept in an unrelated theory with a different chain
+        let sig_b = hol_sig().extend_const("R", Ty::prop()).unwrap();
+        let unrelated = TrustedTheory::root("ChainB", sig_b);
+        let result = accept_closed_theorem(&unrelated, "Test_def", closed);
+        assert!(result.is_err(), "must reject certificate from unrelated theory chain");
+    }
+
+    /// Theorem proposition tampered after building must be rejected.
+    #[test]
+    fn definition_rejects_tampered_derivation_proposition() {
+        let sig = hol_sig().extend_const("P", Ty::prop()).unwrap();
+        let parent = TrustedTheory::root("Test", sig.clone());
+        let rhs = RawTerm::const_("P", Ty::prop());
+        let (child, token) = parent.define_const("Q", rhs.clone()).unwrap();
+
+        let def_id = match token.as_kernel().derivation() {
+            Derivation::ConservativeDefinition { definition } => *definition,
+            _ => panic!("expected ConservativeDefinition"),
+        };
+        let (real_cert, _) = child.find_definition_certificate(&def_id).unwrap();
+
+        // Build a theorem with the REAL certificate but a WRONG proposition
+        let ctx = ProofContext::new(child.snapshot().clone());
+        let wrong_prop = ctx.certify_prop(RawTerm::imp(
+            RawTerm::const_("P", Ty::prop()),
+            RawTerm::const_("P", Ty::prop()),
+        )).unwrap();
+        let good_thm = theorem_builder::definition_theorem(&ctx, &real_cert).unwrap();
+        let forged = KernelThm::new(
+            good_thm.hyps().to_vec(),
+            wrong_prop,
+            good_thm.derivation().clone(),
+        );
+        let closed = theorem_builder::close_thm(forged).unwrap();
+
+        let result = accept_closed_theorem(&child, "Test_def", closed);
+        assert!(result.is_err(), "must reject tampered proposition");
+    }
+
 }
 
 #[cfg(test)]
@@ -1892,5 +1986,86 @@ mod axiom_dep_tests {
         let result = accept_closed_theorem(&theory_no, "ax_inst", closed2);
         assert!(result.is_err(), "axiom acceptance without basis must be rejected");
     }
+
+    // ── Real white-box attack tests: axiom authorization ──
+
+    /// Same name+sig but different basis must produce different context stamps.
+    #[test]
+    fn axiom_rejects_same_context_different_basis() {
+        let sig = Signature::new()
+            .extend_const("P", Ty::prop()).unwrap();
+        let schema_a = AxiomSchema {
+            name: Name::from("ax_a"),
+            prop: RawTerm::Const { name: Name::from("P"), ty: Ty::prop() },
+        };
+        let schema_b = AxiomSchema {
+            name: Name::from("ax_b"),
+            prop: RawTerm::Const { name: Name::from("P"), ty: Ty::prop() },
+        };
+        let basis_a = LogicBasis::try_new(vec![], vec![schema_a.clone()]).unwrap();
+        let basis_b = LogicBasis::try_new(vec![], vec![schema_b.clone()]).unwrap();
+        assert_ne!(basis_a.id(), basis_b.id(), "different content = different id");
+
+        let theory_a = TrustedTheory::with_basis("T", sig.clone(), &basis_a).unwrap();
+        let theory_b = TrustedTheory::with_basis("T", sig.clone(), &basis_b).unwrap();
+
+        // Build axiom theorem in theory_a's context
+        let ctx_a = ProofContext::new(theory_a.snapshot().clone());
+        let ax_thm = theorem_builder::axiom_theorem(
+            &ctx_a, &basis_a, Name::from("ax_a"),
+            TypeInstantiation::empty(), vec![],
+            RawTerm::Const { name: Name::from("P"), ty: Ty::prop() },
+        ).unwrap();
+        let closed = theorem_builder::close_thm(ax_thm).unwrap();
+
+        // Accept in theory_a: should succeed (same context)
+        let (_child_a, _token) = accept_closed_theorem(&theory_a, "ax_inst", closed.clone()).unwrap();
+
+        // Try to accept the SAME closed theorem in theory_b — should fail via context stamp mismatch
+        // because theory_b has a different LogicBasisId in its ContextStamp even though content is same
+        // (the basis ID is computed from content, so same content = same basis.id(),
+        //  but the theory IDs differ because they each install their own basis as a separate extension node)
+        let result = accept_closed_theorem(&theory_b, "ax_inst", closed);
+        assert!(result.is_err(), "cross-basis axiom acceptance must be rejected");
+    }
+
+    /// TypeInstantiation with wrong index must be rejected by subst_types validation.
+    #[test]
+    fn axiom_rejects_type_inst_index_mismatch() {
+        let sig = Signature::new()
+            .extend_const("P", Ty::prop()).unwrap();
+        // Schema with two distinct type vars: 'a:0 and 'a:1
+        let schema = AxiomSchema {
+            name: Name::from("ax"),
+            prop: RawTerm::Forall {
+                name: Name::from("x"),
+                param_ty: Ty::tvar("'a", 0, crate::Sort::typ()),
+                body: Box::new(RawTerm::Forall {
+                    name: Name::from("y"),
+                    param_ty: Ty::tvar("'a", 1, crate::Sort::typ()),
+                    body: Box::new(RawTerm::Const {
+                        name: Name::from("P"), ty: Ty::prop(),
+                    }),
+                }),
+            },
+        };
+        let basis = LogicBasis::try_new(vec![], vec![schema]).unwrap();
+        let theory = TrustedTheory::with_basis("T", sig, &basis).unwrap();
+
+        // Provide instantiation only for 'a:0 but not 'a:1
+        let ctx = ProofContext::new(theory.snapshot().clone());
+        let result = theorem_builder::axiom_theorem(
+            &ctx, &basis, Name::from("ax"),
+            {
+                let mut bindings = std::collections::BTreeMap::new();
+                bindings.insert(TypeVarId::new("'a", 0), Ty::prop());
+                TypeInstantiation::try_new(bindings).unwrap()
+            }, // only instantiates index 0 (default)
+            vec![],
+            RawTerm::Const { name: Name::from("P"), ty: Ty::prop() },
+        );
+        assert!(result.is_err(), "must reject incomplete type instantiation");
+    }
+
 }
 
