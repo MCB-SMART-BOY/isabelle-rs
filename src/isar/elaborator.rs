@@ -29,6 +29,8 @@ pub enum ElaborationError {
     TypeAnnotationMismatch { expected: String, actual: String, span: SourceSpan },
     /// Internal elaboration failure (wraps kernel or other errors).
     ElaborationInternal(String),
+    /// A polymorphic constant was used without a type annotation to infer its instance.
+    CannotInferPolymorphicInstance { name: Name, span: SourceSpan },
 }
 
 impl std::fmt::Display for ElaborationError {
@@ -45,6 +47,9 @@ impl std::fmt::Display for ElaborationError {
             },
             Self::ElaborationInternal(msg) => {
                 write!(f, "elaboration internal error: {msg}")
+            },
+            Self::CannotInferPolymorphicInstance { name, span: _ } => {
+                write!(f, "cannot infer polymorphic instance for {name:?} without type annotation")
             },
         }
     }
@@ -182,10 +187,11 @@ fn elaborate_expr(expr: &SourceExpr, ctx: &ProofContext) -> Result<RawTerm, Elab
                 Some(ConstScheme::Monomorphic(ty)) => {
                     return Ok(RawTerm::const_(kname, ty.clone()));
                 }
-                Some(ConstScheme::Polymorphic(scheme)) => {
-                    // Return the scheme body - contains type variables that the kernel
-                    // will validate as a monomorphic instance at certify_raw time.
-                    return Ok(RawTerm::const_(kname, scheme.body().clone()));
+                Some(ConstScheme::Polymorphic(_)) => {
+                    return Err(ElaborationError::CannotInferPolymorphicInstance {
+                        name: kname,
+                        span: *span,
+                    });
                 }
                 None => { /* fall through to free-variable check */ }
             }
@@ -243,7 +249,12 @@ fn elaborate_expr(expr: &SourceExpr, ctx: &ProofContext) -> Result<RawTerm, Elab
             let kname = source_name_to_kernel(&SourceName { spelling: syntax.spelling.clone() });
             let declared_ty = match ctx.signature().get_const(&kname) {
                 Some(ConstScheme::Monomorphic(ty)) => ty.clone(),
-                Some(ConstScheme::Polymorphic(scheme)) => scheme.body().clone(),
+                Some(ConstScheme::Polymorphic(_)) => {
+                    return Err(ElaborationError::CannotInferPolymorphicInstance {
+                        name: kname,
+                        span: *span,
+                    });
+                }
                 None => {
                     return Err(ElaborationError::UnresolvedName {
                         spelling: syntax.spelling.clone(),
@@ -354,5 +365,41 @@ mod tests {
         });
         let result = elaborate_proposition(&p, &ctx);
         assert!(matches!(result, Err(ElaborationError::TypeAnnotationMismatch { .. })));
+    }
+
+    fn make_polymorphic_context() -> ProofContext {
+        use crate::kernel::logic::{PolyType, PolyTypeParam};
+        let scheme = PolyType::new(
+            vec![PolyTypeParam {
+                id: crate::kernel::TypeVarId::new("'a", 0),
+                sort: crate::kernel::Sort::typ(),
+            }],
+            Ty::arrow(
+                Ty::tvar("'a", 0, crate::kernel::Sort::typ()),
+                Ty::arrow(
+                    Ty::tvar("'a", 0, crate::kernel::Sort::typ()),
+                    Ty::base("bool").unwrap(),
+                ),
+            ),
+        )
+        .unwrap();
+        let sig = Signature::new()
+            .extend_const_scheme("HOL.eq", scheme)
+            .unwrap()
+            .extend_const("HOL.Trueprop", Ty::arrow(Ty::base("bool").unwrap(), Ty::prop()))
+            .unwrap();
+        let snapshot = TheorySnapshot::root("test_poly", sig);
+        ProofContext::new(snapshot)
+    }
+
+    #[test]
+    fn polymorphic_const_without_ascription_is_rejected() {
+        let ctx = make_polymorphic_context();
+        let p = prop(SourceExpr::Name { name: name("HOL.eq"), span: span() });
+        let result = elaborate_proposition(&p, &ctx);
+        assert!(
+            matches!(result, Err(ElaborationError::CannotInferPolymorphicInstance { .. })),
+            "must reject polymorphic constant without type annotation, got: {result:?}"
+        );
     }
 }

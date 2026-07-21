@@ -174,10 +174,13 @@ pub(crate) fn validate_definition_certificate_in_parent(
 
     // 4. RHS type must match declared type
     if &rhs.ty() != &certificate.declared_ty {
-        return Err(KernelError::TypeMismatch {
-            expected: certificate.declared_ty.clone(),
-            actual: rhs.ty(),
-        });
+        return Err(KernelError::DefinitionCertificate(
+            DefinitionCertificateError::RhsTypeMismatch {
+                name: certificate.name.clone(),
+                declared: certificate.declared_ty.clone(),
+                actual: rhs.ty(),
+            },
+        ));
     }
 
     Ok(())
@@ -1578,7 +1581,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_checked_accepts_polymorphic_instance() {
+    fn certify_raw_accepts_polymorphic_instance() {
         use crate::logic::{PolyType, PolyTypeParam};
         let scheme = PolyType::new(
             vec![PolyTypeParam { id: TypeVarId::new("'a", 0), sort: crate::Sort::typ() }],
@@ -1597,8 +1600,7 @@ mod tests {
             Ty::arrow(bool_ty.clone(), Ty::arrow(bool_ty.clone(), Ty::prop())),
         );
         let cterm = ctx.certify_term(raw).unwrap();
-        let mut bounds = Vec::new();
-        let validated = ctx.validate_checked(&cterm.term(), &mut bounds).unwrap();
+        let validated = crate::context::validate_checked_for_test(&ctx, cterm.term()).unwrap();
         assert_eq!(validated, cterm.ty());
     }
 }
@@ -2058,11 +2060,10 @@ mod definition_tests {
 
         let err = accept_closed_theorem(&owner, "irrelevant", closed).unwrap_err();
         assert!(
-            matches!(err, KernelError::TypeMismatch { .. })
-                || matches!(err, KernelError::DefinitionCertificate(
-                    DefinitionCertificateError::RhsTypeMismatch { .. }
-                )),
-            "must reject type-mismatched stored cert during consistency check, got: {err:?}"
+            matches!(err, KernelError::DefinitionCertificate(
+                DefinitionCertificateError::RhsTypeMismatch { .. }
+            )),
+            "must reject type-mismatched stored cert with RhsTypeMismatch, got: {err:?}"
         );
     }
 

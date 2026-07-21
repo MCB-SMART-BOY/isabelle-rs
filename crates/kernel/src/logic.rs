@@ -335,10 +335,15 @@ impl LogicBasis {
                     let _ = name;
                 },
                 BasisDeclaration::Judgment { const_name, ty } => {
-                    // Judgment operators are always monomorphic; const_type() is correct here.
+                    // Judgment operators must be monomorphic (no type variables).
                     let declared = signature
                         .const_type(const_name)
                         .ok_or_else(|| KernelError::UndeclaredConst(const_name.clone()))?;
+                    if !declared.is_concrete_type() {
+                        return Err(KernelError::Invariant(
+                            format!("judgment type for {const_name:?} must be monomorphic").into(),
+                        ));
+                    }
                     if declared != ty {
                         return Err(KernelError::TypeMismatch {
                             expected: ty.clone(),

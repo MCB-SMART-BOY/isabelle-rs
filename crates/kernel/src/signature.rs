@@ -38,6 +38,21 @@ impl Signature {
         Ok(Self::from_map(consts))
     }
 
+    /// Like `extend_const`, but rejects types containing type variables.
+    /// Intended for judgment operators that must be monomorphic.
+    pub fn extend_judgment_const(
+        &self,
+        name: impl Into<Name>,
+        ty: Ty,
+    ) -> Result<Self, KernelError> {
+        if !ty.is_concrete_type() {
+            return Err(KernelError::Invariant(
+                "judgment constant type must be monomorphic (no type variables)".into(),
+            ));
+        }
+        self.extend_const(name, ty)
+    }
+
     pub fn extend_const_scheme(
         &self,
         name: impl Into<Name>,

@@ -1,8 +1,7 @@
 use super::{
-    signature::ConstScheme,
     CProp, CTerm, ContextStamp, Derivation, InstEntry, KernelError, KernelRules, KernelThm,
     ProofContext, RawTerm,
-    theory::{DependencySet, TrustedTheory},
+    theory::{validate_definition_certificate_in_parent, DependencySet, TrustedTheory},
 };
 
 /// Canonical result reconstructed by owner-parameterized accepting replay.
@@ -377,38 +376,16 @@ fn replay_derivation(
                 ))?;
             // Validate certificate identity: recompute ID from payload and check parent
             certificate.validate_semantics(&parent_id)?;
-            // 2. Verify constant is declared in owner signature with declared type
-            let declared_ty = match ctx.signature().get_const(&certificate.name) {
-                Some(ConstScheme::Monomorphic(ty)) => ty.clone(),
-                Some(ConstScheme::Polymorphic(_)) => {
-                    // Polymorphic definition constants use their declared_ty directly;
-                    // the kernel validates instances at use-sites via certify_const_instance.
-                    certificate.declared_ty.clone()
-                }
-                None => return Err(KernelError::UndeclaredConst(certificate.name.clone())),
-            };
-            if declared_ty != certificate.declared_ty {
-                return Err(KernelError::TypeMismatch {
-                    expected: declared_ty.clone(),
-                    actual: certificate.declared_ty.clone(),
-                });
-            }
-
-            // 3. Re-certify RHS and verify type matches declared type
-            let rhs = ctx.certify_term(certificate.rhs_raw.clone())?;
-            if &rhs.ty() != &certificate.declared_ty {
-                return Err(KernelError::TypeMismatch {
-                    expected: certificate.declared_ty.clone(),
-                    actual: rhs.ty(),
-                });
-            }
-
-            // 4. Verify RHS has no free variables
-            if certificate.rhs_raw.has_free_vars() {
-                return Err(KernelError::Invariant(
-                    "definition RHS is not closed".into(),
-                ));
-            }
+            // 2. Reuse the unified definition-certificate validator.
+            // The parent snapshot is the owner's parent — the theory before this
+            // definition extension was applied. Passing it ensures the RHS is
+            // certified in the pre-definition context (same as check_consistency).
+            // validate_semantics is called again (harmless, idempotent).
+            // Freshness check passes because the parent does not have the constant yet.
+            let parent_snap = owner.parent()
+                .ok_or(KernelError::UnsupportedAcceptanceDerivation)?
+                .snapshot();
+            validate_definition_certificate_in_parent(parent_snap, &certificate)?;
 
             // 5. Independently reconstruct: |- const_name == rhs
             let reconstructed = RawTerm::Eq {
