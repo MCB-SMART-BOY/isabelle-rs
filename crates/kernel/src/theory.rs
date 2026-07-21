@@ -117,10 +117,7 @@ impl DefinitionCertificate {
             Self::compute_id(expected_parent, &self.name, &self.declared_ty, &self.rhs_raw);
         if recomputed != self.id {
             return Err(KernelError::DefinitionCertificate(
-                DefinitionCertificateError::IdMismatch {
-                    stored: self.id,
-                    recomputed,
-                },
+                DefinitionCertificateError::IdMismatch { stored: self.id, recomputed },
             ));
         }
         if &self.parent != expected_parent {
@@ -272,6 +269,7 @@ impl DependencySet {
     /// Each entry is (DependencyKind, digest). Entries are sorted by kind then digest
     /// (the BTreeSet ordering), matching the production canonical encoding order.
     /// NOT for production encoding paths — use `write_canonical` for that.
+    #[cfg(test)]
     pub(crate) fn as_sorted_entries(&self) -> Vec<(DependencyKind, [u8; 32])> {
         self.entries.iter().map(|dep| (dep.kind, dep.digest)).collect()
     }
@@ -848,13 +846,13 @@ impl TrustedTheory {
                                 "stored logic basis ID does not match extension's logic_basis_id"
                                     .into(),
                             ));
-                        }
+                        },
                         None => {
                             return Err(KernelError::Invariant(
                                 "theory has no logic basis but extension claims one".into(),
                             ));
-                        }
-                        _ => {}
+                        },
+                        _ => {},
                     }
                 },
 
@@ -1566,10 +1564,7 @@ mod tests {
     #[test]
     fn certify_const_instance_rejects_wrong_monomorphic_type() {
         let sig = Signature::new().extend_const("P", Ty::prop()).unwrap();
-        let result = sig.certify_const_instance(
-            &Name::from("P"),
-            &Ty::base("bool").unwrap(),
-        );
+        let result = sig.certify_const_instance(&Name::from("P"), &Ty::base("bool").unwrap());
         assert!(matches!(result, Err(KernelError::TypeMismatch { .. })));
     }
 
@@ -1582,16 +1577,14 @@ mod tests {
                 Ty::tvar("'a", 0, crate::Sort::typ()),
                 Ty::arrow(Ty::tvar("'a", 0, crate::Sort::typ()), Ty::prop()),
             ),
-        ).unwrap();
+        )
+        .unwrap();
         let sig = Signature::new().extend_const_scheme("eq", scheme).unwrap();
 
         // bool -> nat -> prop fails because bool != nat (different 'a positions)
         let result = sig.certify_const_instance(
             &Name::from("eq"),
-            &Ty::arrow(
-                Ty::base("bool").unwrap(),
-                Ty::arrow(Ty::base("nat").unwrap(), Ty::prop()),
-            ),
+            &Ty::arrow(Ty::base("bool").unwrap(), Ty::arrow(Ty::base("nat").unwrap(), Ty::prop())),
         );
         assert!(result.is_err(), "non-uniform instance must be rejected");
     }
@@ -1599,10 +1592,7 @@ mod tests {
     #[test]
     fn certify_const_instance_rejects_unknown_constant() {
         let sig = Signature::new();
-        let result = sig.certify_const_instance(
-            &Name::from("nonexistent"),
-            &Ty::prop(),
-        );
+        let result = sig.certify_const_instance(&Name::from("nonexistent"), &Ty::prop());
         assert!(matches!(result, Err(KernelError::UndeclaredConst(_))));
     }
 
@@ -1619,15 +1609,13 @@ mod tests {
                 Ty::tvar("'a", 0, crate::Sort::typ()),
                 Ty::arrow(Ty::tvar("'b", 0, crate::Sort::typ()), Ty::prop()),
             ),
-        ).unwrap();
+        )
+        .unwrap();
         let sig = Signature::new().extend_const_scheme("f", scheme).unwrap();
 
         let result = sig.certify_const_instance(
             &Name::from("f"),
-            &Ty::arrow(
-                Ty::base("bool").unwrap(),
-                Ty::arrow(Ty::base("nat").unwrap(), Ty::prop()),
-            ),
+            &Ty::arrow(Ty::base("bool").unwrap(), Ty::arrow(Ty::base("nat").unwrap(), Ty::prop())),
         );
         assert!(
             result.is_ok(),
@@ -1644,7 +1632,8 @@ mod tests {
                 Ty::tvar("'a", 0, crate::Sort::typ()),
                 Ty::arrow(Ty::tvar("'a", 0, crate::Sort::typ()), Ty::prop()),
             ),
-        ).unwrap();
+        )
+        .unwrap();
         let sig = Signature::new().extend_const_scheme("eq", scheme).unwrap();
         let theory = TrustedTheory::root("T", sig);
         let ctx = ProofContext::new(theory.snapshot().clone());
@@ -1665,9 +1654,9 @@ mod definition_tests {
     use super::*;
     use crate::Derivation;
     use crate::KernelRules;
+    use crate::Sort;
     use crate::Term;
     use crate::logic::{BasisDeclaration, LogicBasis, PolyType, PolyTypeParam, TypeVarId};
-    use crate::Sort;
 
     fn hol_sig() -> Signature {
         Signature::new()
@@ -1970,9 +1959,12 @@ mod definition_tests {
 
         let err = accept_closed_theorem(&owner, "Q_def", closed).unwrap_err();
         assert!(
-            matches!(err, KernelError::DefinitionCertificate(
-                DefinitionCertificateError::SelfReference { .. }
-            )),
+            matches!(
+                err,
+                KernelError::DefinitionCertificate(
+                    DefinitionCertificateError::SelfReference { .. }
+                )
+            ),
             "must reject self-referencing stored cert, got: {err:?}"
         );
     }
@@ -2010,9 +2002,12 @@ mod definition_tests {
 
         let err = accept_closed_theorem(&owner, "Q_def", closed).unwrap_err();
         assert!(
-            matches!(err, KernelError::DefinitionCertificate(
-                DefinitionCertificateError::ParentMismatch { .. }
-            )),
+            matches!(
+                err,
+                KernelError::DefinitionCertificate(
+                    DefinitionCertificateError::ParentMismatch { .. }
+                )
+            ),
             "must reject parent-mismatched stored cert, got: {err:?}"
         );
     }
@@ -2052,19 +2047,22 @@ mod definition_tests {
 
         // Build an unrelated theorem (P -> P)
         let ctx = ProofContext::new(owner.snapshot().clone());
-        let prop = ctx.certify_prop(RawTerm::Imp {
-            premise: Box::new(RawTerm::const_("P", Ty::prop())),
-            conclusion: Box::new(RawTerm::const_("P", Ty::prop())),
-        }).unwrap();
+        let prop = ctx
+            .certify_prop(RawTerm::Imp {
+                premise: Box::new(RawTerm::const_("P", Ty::prop())),
+                conclusion: Box::new(RawTerm::const_("P", Ty::prop())),
+            })
+            .unwrap();
         let assumed = KernelRules::assume(prop.clone()).into_kernel();
         let thm = KernelRules::implies_intr(&prop, &assumed).unwrap();
         let closed = theorem_builder::close_thm(thm).unwrap();
 
         let err = accept_closed_theorem(&owner, "irrelevant", closed).unwrap_err();
         assert!(
-            matches!(err, KernelError::DefinitionCertificate(
-                DefinitionCertificateError::RhsNotClosed { .. }
-            )) || matches!(err, KernelError::UndeclaredFree(_)),
+            matches!(
+                err,
+                KernelError::DefinitionCertificate(DefinitionCertificateError::RhsNotClosed { .. })
+            ) || matches!(err, KernelError::UndeclaredFree(_)),
             "must reject open-RHS stored cert during consistency check, got: {err:?}"
         );
     }
@@ -2077,8 +2075,7 @@ mod definition_tests {
     /// type mismatch (prop != bool).
     #[test]
     fn stored_certificate_rejects_declared_type_mismatch() {
-        let sig = Signature::new()
-            .extend_const("P", Ty::prop()).unwrap();
+        let sig = Signature::new().extend_const("P", Ty::prop()).unwrap();
         let theory = TrustedTheory::root("T", sig.clone());
         let rhs = RawTerm::const_("P", Ty::prop());
 
@@ -2107,19 +2104,24 @@ mod definition_tests {
 
         // Build an unrelated theorem (P -> P)
         let ctx = ProofContext::new(owner.snapshot().clone());
-        let prop = ctx.certify_prop(RawTerm::Imp {
-            premise: Box::new(RawTerm::const_("P", Ty::prop())),
-            conclusion: Box::new(RawTerm::const_("P", Ty::prop())),
-        }).unwrap();
+        let prop = ctx
+            .certify_prop(RawTerm::Imp {
+                premise: Box::new(RawTerm::const_("P", Ty::prop())),
+                conclusion: Box::new(RawTerm::const_("P", Ty::prop())),
+            })
+            .unwrap();
         let assumed = KernelRules::assume(prop.clone()).into_kernel();
         let thm = KernelRules::implies_intr(&prop, &assumed).unwrap();
         let closed = theorem_builder::close_thm(thm).unwrap();
 
         let err = accept_closed_theorem(&owner, "irrelevant", closed).unwrap_err();
         assert!(
-            matches!(err, KernelError::DefinitionCertificate(
-                DefinitionCertificateError::RhsTypeMismatch { .. }
-            )),
+            matches!(
+                err,
+                KernelError::DefinitionCertificate(
+                    DefinitionCertificateError::RhsTypeMismatch { .. }
+                )
+            ),
             "must reject type-mismatched stored cert with RhsTypeMismatch, got: {err:?}"
         );
     }
@@ -2200,8 +2202,7 @@ mod definition_tests {
         let (real_cert, _) = child.find_definition_certificate(&def_id).unwrap();
 
         // Descend further: add another constant to create a grandchild
-        let grandchild_snap = child.snapshot()
-            .extend_const("R", Ty::prop()).unwrap();
+        let grandchild_snap = child.snapshot().extend_const("R", Ty::prop()).unwrap();
         let grandchild = TrustedTheory::child(&child, grandchild_snap, None);
 
         // Replay the definition theorem at the grandchild level.
@@ -2225,12 +2226,16 @@ mod definition_tests {
             .unwrap();
         let root = TrustedTheory::root("Root", sig);
         // Try to define Q with RHS f (which has type 'a -> prop, containing 'a)
-        let rhs = RawTerm::const_("f", Ty::arrow(Ty::tvar("'a", 0, crate::Sort::typ()), Ty::prop()));
+        let rhs =
+            RawTerm::const_("f", Ty::arrow(Ty::tvar("'a", 0, crate::Sort::typ()), Ty::prop()));
         let result = root.define_const("Q", rhs);
         assert!(
-            matches!(result, Err(KernelError::DefinitionCertificate(
-                DefinitionCertificateError::NonConcreteDeclaredType { .. }
-            ))),
+            matches!(
+                result,
+                Err(KernelError::DefinitionCertificate(
+                    DefinitionCertificateError::NonConcreteDeclaredType { .. }
+                ))
+            ),
             "must reject non-concrete declared type, got: {result:?}"
         );
     }
@@ -2243,13 +2248,12 @@ mod definition_tests {
         let basis = LogicBasis::try_new(
             vec![BasisDeclaration::Constant {
                 name: Name::from("HOL.Trueprop"),
-                scheme: PolyType::new(
-                    vec![],
-                    Ty::arrow(Ty::base("bool").unwrap(), Ty::prop()),
-                ).unwrap(),
+                scheme: PolyType::new(vec![], Ty::arrow(Ty::base("bool").unwrap(), Ty::prop()))
+                    .unwrap(),
             }],
             vec![],
-        ).unwrap();
+        )
+        .unwrap();
         let theory = TrustedTheory::with_basis("HOL", sig, &basis).unwrap();
         let result = theory.check_consistency();
         assert!(result.is_ok(), "valid logic basis must pass check_consistency, got: {result:?}");
@@ -2263,13 +2267,12 @@ mod definition_tests {
         let basis = LogicBasis::try_new(
             vec![BasisDeclaration::Constant {
                 name: Name::from("HOL.Trueprop"),
-                scheme: PolyType::new(
-                    vec![],
-                    Ty::arrow(Ty::base("bool").unwrap(), Ty::prop()),
-                ).unwrap(),
+                scheme: PolyType::new(vec![], Ty::arrow(Ty::base("bool").unwrap(), Ty::prop()))
+                    .unwrap(),
             }],
             vec![],
-        ).unwrap();
+        )
+        .unwrap();
         let theory = TrustedTheory::with_basis("HOL", sig, &basis).unwrap();
 
         // Corrupt: set logic_basis to None while extension still references it
@@ -2292,29 +2295,30 @@ mod definition_tests {
         let basis_a = LogicBasis::try_new(
             vec![BasisDeclaration::Constant {
                 name: Name::from("HOL.Trueprop"),
-                scheme: PolyType::new(
-                    vec![],
-                    Ty::arrow(Ty::base("bool").unwrap(), Ty::prop()),
-                ).unwrap(),
+                scheme: PolyType::new(vec![], Ty::arrow(Ty::base("bool").unwrap(), Ty::prop()))
+                    .unwrap(),
             }],
             vec![],
-        ).unwrap();
+        )
+        .unwrap();
         // basis_b differs in declaration name → different LogicBasisId
         let basis_b = LogicBasis::try_new(
             vec![BasisDeclaration::Constant {
                 name: Name::from("HOL.All"),
                 scheme: PolyType::new(
                     vec![PolyTypeParam::typ(TypeVarId::new("'a", 0))],
-                    Ty::arrow(
-                        Ty::arrow(Ty::tvar("'a", 0, Sort::typ()), Ty::prop()),
-                        Ty::prop(),
-                    ),
-                ).unwrap(),
+                    Ty::arrow(Ty::arrow(Ty::tvar("'a", 0, Sort::typ()), Ty::prop()), Ty::prop()),
+                )
+                .unwrap(),
             }],
             vec![],
-        ).unwrap();
-        assert_ne!(basis_a.id(), basis_b.id(),
-            "different declarations must produce different LogicBasisIds");
+        )
+        .unwrap();
+        assert_ne!(
+            basis_a.id(),
+            basis_b.id(),
+            "different declarations must produce different LogicBasisIds"
+        );
 
         let theory = TrustedTheory::with_basis("HOL", sig, &basis_a).unwrap();
 

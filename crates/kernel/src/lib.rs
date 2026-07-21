@@ -11,11 +11,12 @@ pub mod identity;
 pub mod invariant;
 pub mod logic;
 pub mod name;
+#[cfg(test)]
+mod reference;
 pub mod rules;
 pub mod search_fact;
 pub mod signature;
 pub mod term;
-pub(crate) mod reference;
 pub mod theorem_builder;
 pub mod theory;
 pub mod thm;
@@ -26,22 +27,24 @@ pub use context::{ProofContext, ProofObligation};
 pub use cterm::{CProp, CTerm, InstEntry};
 pub use derivation::Derivation;
 pub use identity::{ContextStamp, SignatureId, TheoryId};
-pub use logic::{AxiomDependencyId, AxiomSchema, AxiomSchemaId, BasisDeclaration, LogicBasis, LogicBasisId, PolyType, PolyTypeParam, TypeInstantiation, TypeVarId};
+pub use logic::{
+    AxiomDependencyId, AxiomSchema, AxiomSchemaId, BasisDeclaration, LogicBasis, LogicBasisId,
+    PolyType, PolyTypeParam, TypeInstantiation, TypeVarId,
+};
 pub use name::Name;
 pub use rules::KernelRules;
 pub use search_fact::{SearchFact, SearchFactDb};
 pub use signature::{ConstScheme, Signature};
 pub use term::{RawTerm, Term};
 pub use theory::{
-    DefinitionId, DependencyKind, DependencySet, TheoremId,
-    TheorySnapshot, TrustedTheorem, TrustedTheory, accept_closed_theorem,
+    DefinitionId, DependencyKind, DependencySet, TheoremId, TheorySnapshot, TrustedTheorem,
+    TrustedTheory, accept_closed_theorem,
 };
 pub use thm::{ClosedThm, KernelThm, OpenThm};
-pub use typ::Ty;
 pub use typ::Sort;
+pub use typ::Ty;
 
 use thiserror::Error;
-
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DefinitionCertificateError {
@@ -63,27 +66,35 @@ impl std::fmt::Display for DefinitionCertificateError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::IdMismatch { stored, recomputed } => {
-                write!(f, "definition certificate id mismatch: stored {stored:?} != recomputed {recomputed:?}")
-            }
+                write!(
+                    f,
+                    "definition certificate id mismatch: stored {stored:?} != recomputed {recomputed:?}"
+                )
+            },
             Self::ParentMismatch { stored, expected } => {
-                write!(f, "definition certificate parent mismatch: stored {stored:?} != expected {expected:?}")
-            }
+                write!(
+                    f,
+                    "definition certificate parent mismatch: stored {stored:?} != expected {expected:?}"
+                )
+            },
             Self::SelfReference { name } => {
                 write!(f, "definition RHS for `{name}` references itself")
-            }
+            },
             Self::RhsNotClosed { name } => {
                 write!(f, "definition RHS for `{name}` is not closed")
-            }
+            },
             Self::RhsTypeMismatch { name, declared, actual } => {
-                write!(f, "definition RHS type mismatch for `{name}`: declared {declared:?}, actual {actual:?}")
-            }
+                write!(
+                    f,
+                    "definition RHS type mismatch for `{name}`: declared {declared:?}, actual {actual:?}"
+                )
+            },
             Self::NonConcreteDeclaredType { name, ty } => {
                 write!(f, "definition {name:?} has non-concrete declared type {ty:?}")
-            }
+            },
         }
     }
 }
-
 
 /// Errors from the strict kernel nucleus.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]

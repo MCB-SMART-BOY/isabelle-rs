@@ -7,10 +7,8 @@
 //!
 //! The reference is compared against production TheoremId output in tests.
 
+use super::{CProp, ContextStamp, DependencyKind, DependencySet, Name, Term, Ty};
 use sha2::{Digest, Sha256};
-use super::{
-    CProp, ContextStamp, DependencyKind, DependencySet, Name, Term, Ty,
-};
 
 /// Domain tag (must match `THEOREM_DOMAIN` in `theory.rs`).
 const DOMAIN_V2: &[u8] = b"isabelle-rs/theorem/v2";
@@ -53,49 +51,49 @@ fn write_term(buf: &mut Vec<u8>, term: &Term) {
             buf.push(0u8);
             write_name(buf, name);
             write_ty(buf, ty);
-        }
+        },
         Term::Free { name, ty } => {
             buf.push(1u8);
             write_name(buf, name);
             write_ty(buf, ty);
-        }
+        },
         Term::Var { name, index, ty } => {
             buf.push(2u8);
             write_name(buf, name);
             write_u64_be(buf, *index as u64);
             write_ty(buf, ty);
-        }
+        },
         Term::Bound { index, ty } => {
             buf.push(3u8);
             write_u64_be(buf, *index as u64);
             write_ty(buf, ty);
-        }
+        },
         Term::Abs { param_ty, body, .. } => {
             buf.push(4u8);
             write_ty(buf, param_ty);
             write_term(buf, body);
-        }
+        },
         Term::Forall { param_ty, body, .. } => {
             buf.push(5u8);
             write_ty(buf, param_ty);
             write_term(buf, body);
-        }
+        },
         Term::App { func, arg, .. } => {
             buf.push(6u8);
             write_term(buf, func);
             write_term(buf, arg);
-        }
+        },
         Term::Eq { object_ty, lhs, rhs } => {
             buf.push(7u8);
             write_ty(buf, object_ty);
             write_term(buf, lhs);
             write_term(buf, rhs);
-        }
+        },
         Term::Imp { premise, conclusion } => {
             buf.push(8u8);
             write_term(buf, premise);
             write_term(buf, conclusion);
-        }
+        },
     }
 }
 fn write_deps(buf: &mut Vec<u8>, deps: &DependencySet) {
@@ -130,10 +128,10 @@ pub(crate) fn reference_theorem_id_v2(
         Some(basis) => {
             buf.push(1u8);
             buf.extend_from_slice(&basis.to_bytes());
-        }
+        },
         None => {
             buf.push(0u8);
-        }
+        },
     }
 
     // 3. PureReplayV1
@@ -159,10 +157,7 @@ pub(crate) fn reference_theorem_id_v2(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        accept_closed_theorem,
-        Name, ProofContext, RawTerm, TrustedTheory, Ty,
-    };
+    use crate::{Name, ProofContext, RawTerm, TrustedTheory, Ty, accept_closed_theorem};
 
     fn theory(name: &str, atoms: &[&str]) -> TrustedTheory {
         let mut sig = crate::Signature::new();
@@ -174,10 +169,8 @@ mod tests {
 
     fn implication_identity(theory: &TrustedTheory, a: &str) -> crate::ClosedThm {
         let context = ProofContext::new(theory.snapshot().clone());
-        let proposition = context.certify_prop(RawTerm::Const {
-            name: Name::from(a),
-            ty: Ty::prop(),
-        }).unwrap();
+        let proposition =
+            context.certify_prop(RawTerm::Const { name: Name::from(a), ty: Ty::prop() }).unwrap();
         let assumed = crate::KernelRules::assume(proposition.clone()).into_kernel();
         crate::KernelRules::implies_intr(&proposition, &assumed).unwrap().try_close().unwrap()
     }
@@ -195,9 +188,6 @@ mod tests {
         let ref_id = reference_theorem_id_v2(&stamp, prop, deps);
         let prod_bytes = accepted.id().to_bytes();
 
-        assert_eq!(
-            ref_id, prod_bytes,
-            "reference encoder must match production encoder"
-        );
+        assert_eq!(ref_id, prod_bytes, "reference encoder must match production encoder");
     }
 }

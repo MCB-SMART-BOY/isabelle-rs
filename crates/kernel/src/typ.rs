@@ -95,7 +95,7 @@ impl Ty {
                 for arg in args {
                     arg.for_each_type_var(f);
                 }
-            }
+            },
         }
     }
 
@@ -106,7 +106,10 @@ impl Ty {
     }
 
     /// Apply a type-variable substitution. Only TypeVar leaves are replaced.
-    pub(crate) fn subst_type_vars(&self, inst: &crate::logic::TypeInstantiation) -> Result<Ty, KernelError> {
+    pub(crate) fn subst_type_vars(
+        &self,
+        inst: &crate::logic::TypeInstantiation,
+    ) -> Result<Ty, KernelError> {
         match &self.0 {
             TyKind::TypeVar { name, index, sort } => {
                 if sort != &Sort::typ() {
@@ -119,13 +122,12 @@ impl Ty {
                     return Ok(replacement.clone());
                 }
                 Ok(self.clone())
-            }
+            },
             TyKind::Type { name, args } => {
-                let new_args: Vec<Ty> = args.iter()
-                    .map(|a| a.subst_type_vars(inst))
-                    .collect::<Result<_, _>>()?;
+                let new_args: Vec<Ty> =
+                    args.iter().map(|a| a.subst_type_vars(inst)).collect::<Result<_, _>>()?;
                 Ok(Ty(TyKind::Type { name: name.clone(), args: new_args }))
-            }
+            },
         }
     }
     pub(crate) fn is_monomorphic_instance_of(
@@ -148,18 +150,24 @@ impl Ty {
     ) -> bool {
         match (&scheme.0, &instance.0) {
             (TyKind::TypeVar { name, index, sort }, _) => {
-                if sort != &Sort::typ() { return false; }
+                if sort != &Sort::typ() {
+                    return false;
+                }
                 let id = super::logic::TypeVarId::new(name.clone(), *index as u32);
-                if let Some(existing) = bindings.get(&id) { return existing == instance; }
-                bindings.insert(id, instance.clone()); true
-            }
+                if let Some(existing) = bindings.get(&id) {
+                    return existing == instance;
+                }
+                bindings.insert(id, instance.clone());
+                true
+            },
             (TyKind::Type { name: sn, args: sa }, TyKind::Type { name: in_, args: ia }) => {
-                sn == in_ && sa.len() == ia.len() && sa.iter().zip(ia.iter()).all(|(s,i)| Self::match_scheme(s,i,bindings))
-            }
+                sn == in_
+                    && sa.len() == ia.len()
+                    && sa.iter().zip(ia.iter()).all(|(s, i)| Self::match_scheme(s, i, bindings))
+            },
             _ => false,
         }
     }
-
 
     pub fn prop() -> Self {
         Ty(TyKind::Type { name: Name::from("prop"), args: vec![] })
@@ -203,6 +211,7 @@ impl Ty {
     /// Reference encoder accessor: deconstruct a type application.
     /// Returns `None` for type variables. NOT for production encoding paths —
     /// use `write_canonical` for that.
+    #[cfg(test)]
     pub(crate) fn as_type_app(&self) -> Option<(&Name, &[Ty])> {
         match &self.0 {
             TyKind::Type { name, args } => Some((name, args)),
@@ -213,6 +222,7 @@ impl Ty {
     /// Reference encoder accessor: deconstruct a type variable.
     /// Returns `None` for type applications. NOT for production encoding paths —
     /// use `write_canonical` for that.
+    #[cfg(test)]
     pub(crate) fn as_type_var(&self) -> Option<(&Name, usize, &Sort)> {
         match &self.0 {
             TyKind::TypeVar { name, index, sort } => Some((name, *index, sort)),
@@ -235,36 +245,50 @@ impl fmt::Debug for Ty {
     }
 }
 
-
 #[cfg(test)]
 mod polytype_tests {
     use super::*;
 
     #[test]
     fn monomorphic_instance_rejects_inconsistent_binding() {
-        let s = Ty::arrow(Ty::tvar("'a",0,Sort::typ()), Ty::arrow(Ty::tvar("'a",0,Sort::typ()), Ty::base("bool").unwrap()));
-        let i = Ty::arrow(Ty::base("bool").unwrap(), Ty::arrow(Ty::base("nat").unwrap(), Ty::base("bool").unwrap()));
+        let s = Ty::arrow(
+            Ty::tvar("'a", 0, Sort::typ()),
+            Ty::arrow(Ty::tvar("'a", 0, Sort::typ()), Ty::base("bool").unwrap()),
+        );
+        let i = Ty::arrow(
+            Ty::base("bool").unwrap(),
+            Ty::arrow(Ty::base("nat").unwrap(), Ty::base("bool").unwrap()),
+        );
         assert!(s.is_monomorphic_instance_of(&i).is_none());
     }
 
     #[test]
     fn monomorphic_instance_distinguishes_same_name_different_index() {
-        let s = Ty::arrow(Ty::tvar("'a",0,Sort::typ()), Ty::arrow(Ty::tvar("'a",1,Sort::typ()), Ty::base("bool").unwrap()));
-        let i = Ty::arrow(Ty::base("bool").unwrap(), Ty::arrow(Ty::base("nat").unwrap(), Ty::base("bool").unwrap()));
+        let s = Ty::arrow(
+            Ty::tvar("'a", 0, Sort::typ()),
+            Ty::arrow(Ty::tvar("'a", 1, Sort::typ()), Ty::base("bool").unwrap()),
+        );
+        let i = Ty::arrow(
+            Ty::base("bool").unwrap(),
+            Ty::arrow(Ty::base("nat").unwrap(), Ty::base("bool").unwrap()),
+        );
         assert!(s.is_monomorphic_instance_of(&i).is_some());
     }
 
     #[test]
     fn monomorphic_instance_rejects_non_concrete_replacement() {
-        let s = Ty::arrow(Ty::tvar("'a",0,Sort::typ()), Ty::base("bool").unwrap());
-        let i = Ty::arrow(Ty::tvar("'b",0,Sort::typ()), Ty::base("bool").unwrap());
+        let s = Ty::arrow(Ty::tvar("'a", 0, Sort::typ()), Ty::base("bool").unwrap());
+        let i = Ty::arrow(Ty::tvar("'b", 0, Sort::typ()), Ty::base("bool").unwrap());
         assert!(s.is_monomorphic_instance_of(&i).is_none());
     }
 
     #[test]
     fn monomorphic_instance_accepts_exact_match() {
         let id_ty = Ty::arrow(Ty::base("bool").unwrap(), Ty::base("bool").unwrap());
-        let s = Ty::arrow(Ty::tvar("'a",0,Sort::typ()), Ty::arrow(Ty::tvar("'a",0,Sort::typ()), Ty::base("bool").unwrap()));
+        let s = Ty::arrow(
+            Ty::tvar("'a", 0, Sort::typ()),
+            Ty::arrow(Ty::tvar("'a", 0, Sort::typ()), Ty::base("bool").unwrap()),
+        );
         let i = Ty::arrow(id_ty.clone(), Ty::arrow(id_ty, Ty::base("bool").unwrap()));
         assert!(s.is_monomorphic_instance_of(&i).is_some());
     }
@@ -272,10 +296,13 @@ mod polytype_tests {
     #[test]
     fn is_concrete_type_rejects_nested_type_var() {
         // fun('b, bool) should NOT be concrete because 'b is a TypeVar inside
-        let nested = Ty::apply("fun", vec![Ty::tvar("'b", 0, Sort::typ()), Ty::base("bool").unwrap()]).unwrap();
+        let nested =
+            Ty::apply("fun", vec![Ty::tvar("'b", 0, Sort::typ()), Ty::base("bool").unwrap()])
+                .unwrap();
         assert!(!nested.is_concrete_type());
         // fun(bool, bool) IS concrete
-        let concrete = Ty::apply("fun", vec![Ty::base("bool").unwrap(), Ty::base("bool").unwrap()]).unwrap();
+        let concrete =
+            Ty::apply("fun", vec![Ty::base("bool").unwrap(), Ty::base("bool").unwrap()]).unwrap();
         assert!(concrete.is_concrete_type());
         // plain bool IS concrete
         assert!(Ty::base("bool").unwrap().is_concrete_type());

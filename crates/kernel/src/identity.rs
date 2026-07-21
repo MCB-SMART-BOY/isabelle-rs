@@ -97,7 +97,11 @@ impl ContextStamp {
         self.logic_basis
     }
 
-    pub(crate) fn new(theory: TheoryId, signature: SignatureId, logic_basis: Option<LogicBasisId>) -> Self {
+    pub(crate) fn new(
+        theory: TheoryId,
+        signature: SignatureId,
+        logic_basis: Option<LogicBasisId>,
+    ) -> Self {
         Self { theory, signature, logic_basis }
     }
 
@@ -110,10 +114,10 @@ impl ContextStamp {
             Some(basis) => {
                 encoder.write_u8(1);
                 basis.write_canonical(encoder);
-            }
+            },
             None => {
                 encoder.write_u8(0);
-            }
+            },
         }
     }
 }

@@ -1,8 +1,5 @@
-use super::{
-    CTerm, ClosedThm, Derivation, KernelError, KernelThm, Name, ProofContext,
-    RawTerm,
-};
 use super::theory::DefinitionCertificate;
+use super::{CTerm, ClosedThm, Derivation, KernelError, KernelThm, Name, ProofContext, RawTerm};
 
 pub fn axiom_theorem(
     ctx: &ProofContext,
@@ -12,10 +9,9 @@ pub fn axiom_theorem(
     term_inst: Vec<CTerm>,
     prop_term: RawTerm,
 ) -> Result<KernelThm, KernelError> {
-    let schema = basis.get_axiom(&axiom_name)
-        .ok_or_else(|| KernelError::Invariant(
-            format!("axiom `{axiom_name}` not found in logic basis").into(),
-        ))?;
+    let schema = basis.get_axiom(&axiom_name).ok_or_else(|| {
+        KernelError::Invariant(format!("axiom `{axiom_name}` not found in logic basis").into())
+    })?;
     // Independently instantiate the schema
     let typed = crate::term::subst_types(&schema.prop, &type_inst)?;
     let expected = crate::term::instantiate_schema_binders(&typed, &term_inst)?;
@@ -30,9 +26,7 @@ pub fn axiom_theorem(
     Ok(KernelThm::new(
         Vec::new(),
         supplied,
-        Derivation::AxiomInstance {
-            axiom_name, type_inst, term_inst,
-        },
+        Derivation::AxiomInstance { axiom_name, type_inst, term_inst },
     ))
 }
 
@@ -52,9 +46,7 @@ pub(crate) fn definition_theorem(
     Ok(KernelThm::new(
         Vec::new(),
         prop,
-        Derivation::ConservativeDefinition {
-            definition: certificate.id,
-        },
+        Derivation::ConservativeDefinition { definition: certificate.id },
     ))
 }
 pub fn close_thm(thm: KernelThm) -> Result<ClosedThm, KernelError> {

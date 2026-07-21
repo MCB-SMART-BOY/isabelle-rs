@@ -16,8 +16,8 @@
 use std::fmt;
 
 use super::{KernelError, Name, RawTerm, Signature, Ty, identity::CanonicalEncoder};
-use crate::signature::ConstScheme;
 use crate::Sort;
+use crate::signature::ConstScheme;
 use std::collections::BTreeMap;
 
 // ── PolyType ──────────────────────────────────────────────────────────
@@ -71,8 +71,12 @@ impl TypeInstantiation {
         Ok(TypeInstantiation { bindings })
     }
 
-    pub fn get(&self, id: &TypeVarId) -> Option<&Ty> { self.bindings.get(id) }
-    pub fn iter(&self) -> impl Iterator<Item = (&TypeVarId, &Ty)> { self.bindings.iter() }
+    pub fn get(&self, id: &TypeVarId) -> Option<&Ty> {
+        self.bindings.get(id)
+    }
+    pub fn iter(&self) -> impl Iterator<Item = (&TypeVarId, &Ty)> {
+        self.bindings.iter()
+    }
 }
 
 /// A polymorphic type scheme: `forall 'a 'b ... . body`.
@@ -102,8 +106,8 @@ impl PolyType {
                 body_vars.push((name.clone(), index, sort.clone()));
             }
         });
-        let param_map: std::collections::HashMap<TypeVarId, &PolyTypeParam> = params.iter()
-            .map(|p| (p.id.clone(), p)).collect();
+        let param_map: std::collections::HashMap<TypeVarId, &PolyTypeParam> =
+            params.iter().map(|p| (p.id.clone(), p)).collect();
         for (name, index, sort) in &body_vars {
             let id = TypeVarId::new(name.clone(), *index as u32);
             match param_map.get(&id) {
@@ -113,18 +117,17 @@ impl PolyType {
                             format!("type variable `{name}` index {index}: body sort {sort:?} != declared sort {:?}", param.sort).into(),
                         ));
                     }
-                }
+                },
                 None => {
                     return Err(KernelError::Invariant(
                         format!("free type variable {id:?} in body not bound in params").into(),
                     ));
-                }
+                },
             }
         }
         // Every declared param must appear in the body
-        let used_ids: std::collections::HashSet<TypeVarId> = body_vars.iter()
-            .map(|(n, i, _)| TypeVarId::new(n.clone(), *i as u32))
-            .collect();
+        let used_ids: std::collections::HashSet<TypeVarId> =
+            body_vars.iter().map(|(n, i, _)| TypeVarId::new(n.clone(), *i as u32)).collect();
         for p in &params {
             if !used_ids.contains(&p.id) {
                 return Err(KernelError::Invariant(
@@ -135,8 +138,12 @@ impl PolyType {
         Ok(PolyType { params: params.into_boxed_slice(), body })
     }
 
-    pub fn params(&self) -> &[PolyTypeParam] { &self.params }
-    pub fn body(&self) -> &Ty { &self.body }
+    pub fn params(&self) -> &[PolyTypeParam] {
+        &self.params
+    }
+    pub fn body(&self) -> &Ty {
+        &self.body
+    }
 
     /// Check whether a monomorphic type is a valid instance of this scheme.
     pub fn monomorphic_instance_matches(&self, instance: &Ty) -> Option<TypeInstantiation> {
@@ -205,7 +212,11 @@ impl BasisDeclaration {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct AxiomSchemaId(pub(crate) [u8; 32]);
 
-impl AxiomSchemaId { pub fn to_bytes(self) -> [u8; 32] { self.0 } }
+impl AxiomSchemaId {
+    pub fn to_bytes(self) -> [u8; 32] {
+        self.0
+    }
+}
 
 impl fmt::Debug for AxiomSchemaId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -235,7 +246,6 @@ impl AxiomSchema {
     }
 }
 
-
 /// Content-addressed pairing of a specific logic basis with a specific axiom schema.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AxiomDependencyId([u8; 32]);
@@ -247,7 +257,9 @@ impl AxiomDependencyId {
         encoder.write_fixed_bytes(&schema_id.to_bytes());
         Self(encoder.finish())
     }
-    pub fn to_bytes(self) -> [u8; 32] { self.0 }
+    pub fn to_bytes(self) -> [u8; 32] {
+        self.0
+    }
 }
 
 impl fmt::Debug for AxiomDependencyId {
@@ -285,10 +297,7 @@ impl LogicBasisId {
     }
 
     /// Compute the identity digest from declarations and axioms.
-    pub(crate) fn compute(
-        declarations: &[BasisDeclaration],
-        axioms: &[AxiomSchema],
-    ) -> Self {
+    pub(crate) fn compute(declarations: &[BasisDeclaration], axioms: &[AxiomSchema]) -> Self {
         let mut encoder = CanonicalEncoder::new(LOGIC_BASIS_DOMAIN);
         encoder.write_u64(declarations.len() as u64);
         for d in declarations {
@@ -323,7 +332,10 @@ pub struct LogicBasis {
 }
 
 impl LogicBasis {
-    pub fn try_new(declarations: Vec<BasisDeclaration>, axioms: Vec<AxiomSchema>) -> Result<Self, KernelError> {
+    pub fn try_new(
+        declarations: Vec<BasisDeclaration>,
+        axioms: Vec<AxiomSchema>,
+    ) -> Result<Self, KernelError> {
         let mut seen = std::collections::HashSet::new();
         for d in &declarations {
             let name = match d {
@@ -346,16 +358,29 @@ impl LogicBasis {
             }
         }
         let id = LogicBasisId::compute(&declarations, &axioms);
-        Ok(LogicBasis { id, declarations: declarations.into_boxed_slice(), axioms: axioms.into_boxed_slice() })
+        Ok(LogicBasis {
+            id,
+            declarations: declarations.into_boxed_slice(),
+            axioms: axioms.into_boxed_slice(),
+        })
     }
 
-    pub fn from_untrusted_snapshot(declarations: Vec<BasisDeclaration>, axioms: Vec<AxiomSchema>) -> Result<Self, KernelError> {
+    pub fn from_untrusted_snapshot(
+        declarations: Vec<BasisDeclaration>,
+        axioms: Vec<AxiomSchema>,
+    ) -> Result<Self, KernelError> {
         Self::try_new(declarations, axioms)
     }
 
-    pub fn id(&self) -> LogicBasisId { self.id }
-    pub fn declarations(&self) -> &[BasisDeclaration] { &self.declarations }
-    pub fn axioms(&self) -> &[AxiomSchema] { &self.axioms }
+    pub fn id(&self) -> LogicBasisId {
+        self.id
+    }
+    pub fn declarations(&self) -> &[BasisDeclaration] {
+        &self.declarations
+    }
+    pub fn axioms(&self) -> &[AxiomSchema] {
+        &self.axioms
+    }
 
     /// Validate that this basis's declarations are compatible with a signature.
     pub fn validate_against(&self, signature: &Signature) -> Result<(), KernelError> {
@@ -454,7 +479,8 @@ mod tests {
                 ty: Ty::arrow(Ty::base("nat").unwrap(), Ty::prop()), // wrong!
             }],
             vec![],
-        ).unwrap();
+        )
+        .unwrap();
         assert!(basis.validate_against(&sig).is_err());
     }
 
@@ -470,7 +496,8 @@ mod tests {
                 ty: Ty::arrow(Ty::base("bool").unwrap(), Ty::prop()),
             }],
             vec![],
-        ).unwrap();
+        )
+        .unwrap();
         assert!(basis.validate_against(&sig).is_ok());
     }
 
@@ -483,14 +510,16 @@ mod tests {
                 Ty::tvar("'a", 0, crate::Sort::typ()),
                 Ty::arrow(Ty::tvar("'a", 0, crate::Sort::typ()), Ty::prop()),
             ),
-        ).unwrap();
+        )
+        .unwrap();
         let basis = LogicBasis::try_new(
             vec![BasisDeclaration::Constant {
                 name: Name::from("eq"),
                 scheme: basis_scheme.clone(),
             }],
             vec![],
-        ).unwrap();
+        )
+        .unwrap();
 
         // Install a DIFFERENT scheme in the signature: 'b -> 'b -> prop
         // Same arity (1 param), different body (uses 'b not 'a).
@@ -501,10 +530,9 @@ mod tests {
                 Ty::tvar("'b", 0, crate::Sort::typ()),
                 Ty::arrow(Ty::tvar("'b", 0, crate::Sort::typ()), Ty::prop()),
             ),
-        ).unwrap();
-        let sig = Signature::new()
-            .extend_const_scheme("eq", sig_scheme)
-            .unwrap();
+        )
+        .unwrap();
+        let sig = Signature::new().extend_const_scheme("eq", sig_scheme).unwrap();
 
         // Must reject: 'a -> 'a -> prop != 'b -> 'b -> prop
         assert!(
@@ -515,23 +543,18 @@ mod tests {
 
     #[test]
     fn polymorphic_scheme_accepts_matching_sorts_and_rejects_mismatch() {
-        let params = vec![PolyTypeParam {
-            id: TypeVarId::new("'a", 0),
-            sort: Sort::typ(),
-        }];
+        let params = vec![PolyTypeParam { id: TypeVarId::new("'a", 0), sort: Sort::typ() }];
         // Matching sorts: accepted
-        let body_match = Ty::arrow(
-            Ty::tvar("'a", 0, Sort::typ()),
-            Ty::tvar("'a", 0, Sort::typ()),
+        let body_match = Ty::arrow(Ty::tvar("'a", 0, Sort::typ()), Ty::tvar("'a", 0, Sort::typ()));
+        assert!(
+            PolyType::new(params.clone(), body_match).is_ok(),
+            "matching sorts must be accepted"
         );
-        assert!(PolyType::new(params.clone(), body_match).is_ok(),
-            "matching sorts must be accepted");
 
         // Mismatched sort: rejected
         let body_mismatch = Ty::tvar("'a", 0, Sort::arbitrary("other"));
         let result = PolyType::new(params, body_mismatch);
-        assert!(result.is_err(),
-            "sort mismatch must be rejected, got: {result:?}");
+        assert!(result.is_err(), "sort mismatch must be rejected, got: {result:?}");
     }
 
     #[test]
@@ -542,7 +565,6 @@ mod tests {
         ];
         // Body only uses 'a, not 'b
         let body = Ty::tvar("'a", 0, Sort::typ());
-        assert!(PolyType::new(params, body).is_err(),
-            "unused param must be rejected");
+        assert!(PolyType::new(params, body).is_err(), "unused param must be rejected");
     }
 }

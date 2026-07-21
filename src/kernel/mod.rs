@@ -5,6 +5,7 @@
 
 pub mod convert;
 
+pub use isabelle_kernel::DefinitionCertificateError;
 pub use isabelle_kernel::KernelError;
 pub use isabelle_kernel::context::{ProofContext, ProofObligation};
 pub use isabelle_kernel::cterm::{CProp, CTerm, InstEntry};
@@ -22,10 +23,9 @@ pub use isabelle_kernel::search_fact::{SearchFact, SearchFactDb};
 pub use isabelle_kernel::signature::{ConstScheme, Signature};
 pub use isabelle_kernel::term::{RawTerm, Term};
 pub(crate) use isabelle_kernel::theorem_builder;
-pub use isabelle_kernel::DefinitionCertificateError;
 pub use isabelle_kernel::theory::{
-    DefinitionId, DependencyKind, DependencySet, TheoremId,
-    TheorySnapshot, TrustedTheorem, TrustedTheory, accept_closed_theorem,
+    DefinitionId, DependencyKind, DependencySet, TheoremId, TheorySnapshot, TrustedTheorem,
+    TrustedTheory, accept_closed_theorem,
 };
 pub use isabelle_kernel::thm::{ClosedThm, KernelThm, OpenThm};
 pub use isabelle_kernel::typ::{Sort, Ty};
