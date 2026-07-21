@@ -56,6 +56,10 @@ impl Signature {
         self.consts.get(name)
     }
 
+    /// Returns the type only for [`ConstScheme::Monomorphic`] entries.
+    /// Returns `None` for [`ConstScheme::Polymorphic`] entries.
+    /// Prefer [`Signature::get_const`] or [`Signature::certify_const_instance`]
+    /// for code that needs to handle both cases.
     pub fn const_type(&self, name: &Name) -> Option<&Ty> {
         match self.consts.get(name) {
             Some(ConstScheme::Monomorphic(ty)) => Some(ty),

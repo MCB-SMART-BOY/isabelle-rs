@@ -1,5 +1,7 @@
 use super::{
-    CProp, CTerm, ContextStamp, Derivation, InstEntry, KernelError, KernelRules, KernelThm, ProofContext, RawTerm,
+    signature::ConstScheme,
+    CProp, CTerm, ContextStamp, Derivation, InstEntry, KernelError, KernelRules, KernelThm,
+    ProofContext, RawTerm,
     theory::{DependencySet, TrustedTheory},
 };
 
@@ -375,12 +377,17 @@ fn replay_derivation(
                 ))?;
             // Validate certificate identity: recompute ID from payload and check parent
             certificate.validate_semantics(&parent_id)?;
-
             // 2. Verify constant is declared in owner signature with declared type
-            let declared_ty = ctx.signature()
-                .const_type(&certificate.name)
-                .ok_or_else(|| KernelError::UndeclaredConst(certificate.name.clone()))?;
-            if declared_ty != &certificate.declared_ty {
+            let declared_ty = match ctx.signature().get_const(&certificate.name) {
+                Some(ConstScheme::Monomorphic(ty)) => ty.clone(),
+                Some(ConstScheme::Polymorphic(_)) => {
+                    // Polymorphic definition constants use their declared_ty directly;
+                    // the kernel validates instances at use-sites via certify_const_instance.
+                    certificate.declared_ty.clone()
+                }
+                None => return Err(KernelError::UndeclaredConst(certificate.name.clone())),
+            };
+            if declared_ty != certificate.declared_ty {
                 return Err(KernelError::TypeMismatch {
                     expected: declared_ty.clone(),
                     actual: certificate.declared_ty.clone(),

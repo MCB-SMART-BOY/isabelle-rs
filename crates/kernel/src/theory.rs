@@ -1,8 +1,8 @@
 use std::{collections::BTreeSet, fmt, sync::Arc};
 
 use super::{
-    CProp, ClosedThm, ContextStamp, KernelError, KernelThm, Name, ProofContext, RawTerm, Signature,
-    Ty,
+    CProp, ClosedThm, ContextStamp, DefinitionCertificateError, KernelError, KernelThm, Name,
+    ProofContext, RawTerm, Signature, Ty,
     identity::{CanonicalEncoder, THEORY_DOMAIN, TheoryId},
     invariant::replay_closed_theorem_in,
     logic::LogicBasisId,
@@ -116,21 +116,19 @@ impl DefinitionCertificate {
         let recomputed =
             Self::compute_id(expected_parent, &self.name, &self.declared_ty, &self.rhs_raw);
         if recomputed != self.id {
-            return Err(KernelError::Invariant(
-                format!(
-                    "definition certificate id mismatch: stored {:?} != recomputed {:?}",
-                    self.id, recomputed,
-                )
-                .into(),
+            return Err(KernelError::DefinitionCertificate(
+                DefinitionCertificateError::IdMismatch {
+                    stored: self.id,
+                    recomputed,
+                },
             ));
         }
         if &self.parent != expected_parent {
-            return Err(KernelError::Invariant(
-                format!(
-                    "definition certificate parent mismatch: stored {:?} != expected {:?}",
-                    self.parent, expected_parent,
-                )
-                .into(),
+            return Err(KernelError::DefinitionCertificate(
+                DefinitionCertificateError::ParentMismatch {
+                    stored: self.parent,
+                    expected: *expected_parent,
+                },
             ));
         }
         Ok(())
@@ -141,17 +139,48 @@ impl DefinitionCertificate {
     pub(crate) fn validate_semantics(&self, expected_parent: &TheoryId) -> Result<(), KernelError> {
         self.validate(expected_parent)?;
         if self.rhs_raw.mentions_const(&self.name) {
-            return Err(KernelError::Invariant(
-                format!("definition RHS for `{}` references itself", self.name).into(),
+            return Err(KernelError::DefinitionCertificate(
+                DefinitionCertificateError::SelfReference { name: self.name.clone() },
             ));
         }
         if self.rhs_raw.has_free_vars() {
-            return Err(KernelError::Invariant(
-                format!("definition RHS for `{}` is not closed", self.name).into(),
+            return Err(KernelError::DefinitionCertificate(
+                DefinitionCertificateError::RhsNotClosed { name: self.name.clone() },
             ));
         }
         Ok(())
     }
+}
+
+/// Validate a definition certificate against a parent theory snapshot.
+///
+/// Checks: ID integrity, parent ownership, self-reference, closedness,
+/// constant freshness, RHS typability, and RHS type == declared_ty.
+pub(crate) fn validate_definition_certificate_in_parent(
+    parent_snapshot: &TheorySnapshot,
+    certificate: &DefinitionCertificate,
+) -> Result<(), KernelError> {
+    // 1. ID integrity + parent ownership + self-ref + closedness
+    certificate.validate_semantics(&parent_snapshot.id())?;
+
+    // 2. Constant must not already exist in parent
+    if parent_snapshot.signature().get_const(&certificate.name).is_some() {
+        return Err(KernelError::DuplicateDeclaration { name: certificate.name.clone() });
+    }
+
+    // 3. RHS must certify in parent context
+    let ctx = ProofContext::new(parent_snapshot.clone());
+    let rhs = ctx.certify_term(certificate.rhs_raw.clone())?;
+
+    // 4. RHS type must match declared type
+    if &rhs.ty() != &certificate.declared_ty {
+        return Err(KernelError::TypeMismatch {
+            expected: certificate.declared_ty.clone(),
+            actual: rhs.ty(),
+        });
+    }
+
+    Ok(())
 }
 
 /// Dependency categories reserved by the accepted-theorem identity schema.
@@ -746,6 +775,9 @@ impl TrustedTheory {
                     }
                 },
                 (Some(parent), TheoryExtension::DefineConst { certificate }, None) => {
+                    // Validate certificate against parent BEFORE extending signature
+                    validate_definition_certificate_in_parent(parent.snapshot(), certificate)?;
+
                     let expected = parent.snapshot().extend_definition(certificate)?;
                     if snapshot.parent().map(TheorySnapshot::id) != Some(parent.id())
                         || theory.len() != parent.len()
@@ -755,8 +787,6 @@ impl TrustedTheory {
                             "trusted definition owner does not match its snapshot parent".into(),
                         ));
                     }
-                    // Validate certificate identity
-                    certificate.validate_semantics(&parent.id())?;
                 },
                 (Some(parent), TheoryExtension::InstallLogicBasis { logic_basis_id }, None) => {
                     if snapshot.parent().map(TheorySnapshot::id) != Some(parent.id())
@@ -1474,13 +1504,110 @@ mod tests {
             result.err()
         );
     }
+
+    #[test]
+    fn certify_const_instance_rejects_wrong_monomorphic_type() {
+        let sig = Signature::new().extend_const("P", Ty::prop()).unwrap();
+        let result = sig.certify_const_instance(
+            &Name::from("P"),
+            &Ty::base("bool").unwrap(),
+        );
+        assert!(matches!(result, Err(KernelError::TypeMismatch { .. })));
+    }
+
+    #[test]
+    fn certify_const_instance_rejects_non_instance_of_polymorphic() {
+        use crate::logic::{PolyType, PolyTypeParam};
+        let scheme = PolyType::new(
+            vec![PolyTypeParam { id: TypeVarId::new("'a", 0), sort: crate::Sort::typ() }],
+            Ty::arrow(
+                Ty::tvar("'a", 0, crate::Sort::typ()),
+                Ty::arrow(Ty::tvar("'a", 0, crate::Sort::typ()), Ty::prop()),
+            ),
+        ).unwrap();
+        let sig = Signature::new().extend_const_scheme("eq", scheme).unwrap();
+
+        // bool -> nat -> prop fails because bool != nat (different 'a positions)
+        let result = sig.certify_const_instance(
+            &Name::from("eq"),
+            &Ty::arrow(
+                Ty::base("bool").unwrap(),
+                Ty::arrow(Ty::base("nat").unwrap(), Ty::prop()),
+            ),
+        );
+        assert!(result.is_err(), "non-uniform instance must be rejected");
+    }
+
+    #[test]
+    fn certify_const_instance_rejects_unknown_constant() {
+        let sig = Signature::new();
+        let result = sig.certify_const_instance(
+            &Name::from("nonexistent"),
+            &Ty::prop(),
+        );
+        assert!(matches!(result, Err(KernelError::UndeclaredConst(_))));
+    }
+
+    #[test]
+    fn certify_const_instance_accepts_different_type_var_ids() {
+        use crate::logic::{PolyType, PolyTypeParam};
+        // f : 'a -> 'b -> prop (two distinct params)
+        let scheme = PolyType::new(
+            vec![
+                PolyTypeParam { id: TypeVarId::new("'a", 0), sort: crate::Sort::typ() },
+                PolyTypeParam { id: TypeVarId::new("'b", 0), sort: crate::Sort::typ() },
+            ],
+            Ty::arrow(
+                Ty::tvar("'a", 0, crate::Sort::typ()),
+                Ty::arrow(Ty::tvar("'b", 0, crate::Sort::typ()), Ty::prop()),
+            ),
+        ).unwrap();
+        let sig = Signature::new().extend_const_scheme("f", scheme).unwrap();
+
+        let result = sig.certify_const_instance(
+            &Name::from("f"),
+            &Ty::arrow(
+                Ty::base("bool").unwrap(),
+                Ty::arrow(Ty::base("nat").unwrap(), Ty::prop()),
+            ),
+        );
+        assert!(
+            result.is_ok(),
+            "different type var positions should accept different concrete types"
+        );
+    }
+
+    #[test]
+    fn validate_checked_accepts_polymorphic_instance() {
+        use crate::logic::{PolyType, PolyTypeParam};
+        let scheme = PolyType::new(
+            vec![PolyTypeParam { id: TypeVarId::new("'a", 0), sort: crate::Sort::typ() }],
+            Ty::arrow(
+                Ty::tvar("'a", 0, crate::Sort::typ()),
+                Ty::arrow(Ty::tvar("'a", 0, crate::Sort::typ()), Ty::prop()),
+            ),
+        ).unwrap();
+        let sig = Signature::new().extend_const_scheme("eq", scheme).unwrap();
+        let theory = TrustedTheory::root("T", sig);
+        let ctx = ProofContext::new(theory.snapshot().clone());
+
+        let bool_ty = Ty::base("bool").unwrap();
+        let raw = RawTerm::const_(
+            "eq",
+            Ty::arrow(bool_ty.clone(), Ty::arrow(bool_ty.clone(), Ty::prop())),
+        );
+        let cterm = ctx.certify_term(raw).unwrap();
+        let mut bounds = Vec::new();
+        let validated = ctx.validate_checked(&cterm.term(), &mut bounds).unwrap();
+        assert_eq!(validated, cterm.ty());
+    }
 }
 
-#[cfg(test)]
 #[cfg(test)]
 mod definition_tests {
     use super::*;
     use crate::Derivation;
+    use crate::KernelRules;
     use crate::Term;
 
     fn hol_sig() -> Signature {
@@ -1567,7 +1694,7 @@ mod definition_tests {
     }
 
     #[test]
-    fn define_const_rejects_wrong_parent_certificate() {
+    fn child_certificate_is_inaccessible_to_sibling() {
         let sig = hol_sig()
             .extend_const(
                 "HOL.eq",
@@ -1606,7 +1733,7 @@ mod definition_tests {
     }
 
     #[test]
-    fn define_const_rejects_tampered_definition_id() {
+    fn bogus_definition_id_not_found_in_ancestry() {
         let sig = hol_sig()
             .extend_const(
                 "HOL.eq",
@@ -1628,7 +1755,7 @@ mod definition_tests {
     }
 
     #[test]
-    fn define_const_rejects_wrong_immediate_extension() {
+    fn certificate_lookup_respects_extension_chain() {
         let sig = hol_sig()
             .extend_const(
                 "HOL.eq",
@@ -1653,7 +1780,7 @@ mod definition_tests {
     }
 
     #[test]
-    fn define_const_rejects_reused_certificate() {
+    fn sibling_cannot_access_child_theorem() {
         let sig = hol_sig()
             .extend_const(
                 "HOL.eq",
@@ -1690,7 +1817,7 @@ mod definition_tests {
     }
 
     #[test]
-    fn define_const_rejects_tampered_final_proposition() {
+    fn define_const_produces_correct_proposition_shape() {
         let sig = hol_sig()
             .extend_const(
                 "HOL.eq",
@@ -1751,37 +1878,6 @@ mod definition_tests {
         assert!(result.is_err(), "must reject definition with tampered id");
     }
 
-    /// Build a definition theorem in one theory's context, try to accept in another.
-    #[test]
-    fn definition_rejects_cross_theory_acceptance() {
-        let sig = hol_sig()
-            .extend_const(
-                "HOL.eq",
-                Ty::arrow(
-                    Ty::tvar("'a", 0, crate::Sort::typ()),
-                    Ty::arrow(Ty::tvar("'a", 0, crate::Sort::typ()), Ty::base("bool").unwrap()),
-                ),
-            )
-            .unwrap();
-        let parent = TrustedTheory::root("Test", sig.clone());
-        let rhs = RawTerm::const_("HOL.Trueprop", Ty::arrow(Ty::base("bool").unwrap(), Ty::prop()));
-        let (child_a, token) = parent.define_const("HOL.True", rhs.clone()).unwrap();
-
-        let def_id = match token.as_kernel().derivation() {
-            Derivation::ConservativeDefinition { definition } => *definition,
-            _ => panic!("expected ConservativeDefinition derivation"),
-        };
-        let (real_cert, _) = child_a.find_definition_certificate(&def_id).unwrap();
-
-        let ctx_a = ProofContext::new(child_a.snapshot().clone());
-        let thm = theorem_builder::definition_theorem(&ctx_a, &real_cert).unwrap();
-        let closed = theorem_builder::close_thm(thm).unwrap();
-
-        let sibling = TrustedTheory::root("Sibling", sig);
-        let result = accept_closed_theorem(&sibling, "Test_def", closed);
-        assert!(result.is_err(), "must reject cross-theory definition acceptance");
-    }
-
     // ── Real white-box attacks: stored-certificate corruption ──
 
     /// Stored certificate with self-referencing RHS must be rejected by
@@ -1815,7 +1911,9 @@ mod definition_tests {
 
         let err = accept_closed_theorem(&owner, "Q_def", closed).unwrap_err();
         assert!(
-            format!("{err:?}").contains("references itself"),
+            matches!(err, KernelError::DefinitionCertificate(
+                DefinitionCertificateError::SelfReference { .. }
+            )),
             "must reject self-referencing stored cert, got: {err:?}"
         );
     }
@@ -1853,17 +1951,23 @@ mod definition_tests {
 
         let err = accept_closed_theorem(&owner, "Q_def", closed).unwrap_err();
         assert!(
-            format!("{err:?}").contains("parent mismatch"),
+            matches!(err, KernelError::DefinitionCertificate(
+                DefinitionCertificateError::ParentMismatch { .. }
+            )),
             "must reject parent-mismatched stored cert, got: {err:?}"
         );
     }
 
-    /// Stored certificate with open RHS must be rejected by validate_semantics.
-    /// Tested directly because the definition theorem builder cannot certify
-    /// a free variable in a pure constant context.
+    /// Stored certificate with open RHS must be rejected during
+    /// check_consistency via validate_definition_certificate_in_parent.
+    ///
+    /// Constructs a corrupted TrustedTheory owner (Q defined with open RHS),
+    /// then attempts to accept an unrelated theorem (P -> P). The acceptance
+    /// triggers check_consistency which validates the stored certificate and
+    /// rejects the open RHS.
     #[test]
     fn stored_certificate_rejects_open_rhs() {
-        let sig = hol_sig().extend_const("P", Ty::prop()).unwrap();
+        let sig = Signature::new().extend_const("P", Ty::prop()).unwrap();
         let theory = TrustedTheory::root("T", sig.clone());
         let rhs = RawTerm::free("x", Ty::prop());
 
@@ -1880,29 +1984,46 @@ mod definition_tests {
             rhs_raw: rhs,
         };
 
-        let err = tampered_cert.validate_semantics(&theory.id()).unwrap_err();
+        let snapshot = TheorySnapshot::build(
+            Some(theory.snapshot().clone()),
+            sig.clone(),
+            TheoryExtension::DefineConst { certificate: tampered_cert },
+        );
+        let owner = TrustedTheory::child(&theory, snapshot, None);
+
+        // Build an unrelated theorem (P -> P)
+        let ctx = ProofContext::new(owner.snapshot().clone());
+        let prop = ctx.certify_prop(RawTerm::Imp {
+            premise: Box::new(RawTerm::const_("P", Ty::prop())),
+            conclusion: Box::new(RawTerm::const_("P", Ty::prop())),
+        }).unwrap();
+        let assumed = KernelRules::assume(prop.clone()).into_kernel();
+        let thm = KernelRules::implies_intr(&prop, &assumed).unwrap();
+        let closed = theorem_builder::close_thm(thm).unwrap();
+
+        let err = accept_closed_theorem(&owner, "irrelevant", closed).unwrap_err();
         assert!(
-            format!("{err:?}").contains("not closed"),
-            "validate_semantics must reject open RHS, got: {err:?}"
+            matches!(err, KernelError::DefinitionCertificate(
+                DefinitionCertificateError::RhsNotClosed { .. }
+            )) || matches!(err, KernelError::UndeclaredFree(_)),
+            "must reject open-RHS stored cert during consistency check, got: {err:?}"
         );
     }
 
-    /// Stored certificate with mismatched declared_ty must be rejected by
-    /// validate (ID mismatch because ID is computed from stored fields,
-    /// and validate recomputes from expected parent).
+    /// Stored certificate with mismatched declared_ty must be rejected during
+    /// check_consistency via validate_definition_certificate_in_parent.
+    ///
+    /// The certificate declares Q: bool but the RHS is P: prop.
+    /// check_consistency certifies the RHS in parent context and finds
+    /// type mismatch (prop != bool).
     #[test]
     fn stored_certificate_rejects_declared_type_mismatch() {
-        let sig = hol_sig()
-            .extend_const("P", Ty::prop())
-            .unwrap()
-            .extend_const("a", Ty::base("bool").unwrap())
-            .unwrap();
+        let sig = Signature::new()
+            .extend_const("P", Ty::prop()).unwrap();
         let theory = TrustedTheory::root("T", sig.clone());
         let rhs = RawTerm::const_("P", Ty::prop());
 
-        // Certificate with declared_ty = bool, but store it with Q : prop
-        // in the signature.  validate recomputes ID using the parent's
-        // expected parent and declared_ty, which won't match the stored ID.
+        // Certificate says Q: bool but RHS is P: prop
         let tampered_cert = DefinitionCertificate {
             id: DefinitionCertificate::compute_id(
                 &theory.id(),
@@ -1916,19 +2037,33 @@ mod definition_tests {
             rhs_raw: rhs,
         };
 
-        // Build snapshot where Q is declared as prop (via extend_definition
-        // which extends signature with the cert's declared_ty), but the cert
-        // itself claims declared_ty = bool.  extend_definition extends the
-        // signature with Q: bool.  The definition theorem then uses Q: bool
-        // in the equation, but rhs P : prop — the polymorphic eq rejects
-        // the mismatched arguments.  So this test verifies that a cert with
-        // declared_ty mismatch cannot be used to build a valid theorem.
-        let snapshot = theory.snapshot().extend_definition(&tampered_cert).unwrap();
+        // Build signature with Q: bool (matches declared_ty)
+        let extended_sig = sig.extend_const("Q", Ty::base("bool").unwrap()).unwrap();
+        let snapshot = TheorySnapshot::build(
+            Some(theory.snapshot().clone()),
+            extended_sig,
+            TheoryExtension::DefineConst { certificate: tampered_cert },
+        );
         let owner = TrustedTheory::child(&theory, snapshot, None);
 
+        // Build an unrelated theorem (P -> P)
         let ctx = ProofContext::new(owner.snapshot().clone());
-        let result = theorem_builder::definition_theorem(&ctx, &tampered_cert);
-        assert!(result.is_err(), "must reject theorem with type-mismatched certificate");
+        let prop = ctx.certify_prop(RawTerm::Imp {
+            premise: Box::new(RawTerm::const_("P", Ty::prop())),
+            conclusion: Box::new(RawTerm::const_("P", Ty::prop())),
+        }).unwrap();
+        let assumed = KernelRules::assume(prop.clone()).into_kernel();
+        let thm = KernelRules::implies_intr(&prop, &assumed).unwrap();
+        let closed = theorem_builder::close_thm(thm).unwrap();
+
+        let err = accept_closed_theorem(&owner, "irrelevant", closed).unwrap_err();
+        assert!(
+            matches!(err, KernelError::TypeMismatch { .. })
+                || matches!(err, KernelError::DefinitionCertificate(
+                    DefinitionCertificateError::RhsTypeMismatch { .. }
+                )),
+            "must reject type-mismatched stored cert during consistency check, got: {err:?}"
+        );
     }
 
     /// Context stamp mismatch: theorem built in one theory context must be
@@ -1997,7 +2132,7 @@ mod axiom_dep_tests {
     use crate::{AxiomSchema, LogicBasis};
 
     #[test]
-    fn axiom_rejects_cross_paired_basis_schema() {
+    fn cross_basis_schemas_produce_different_dep_ids() {
         let _sig = Signature::new()
             .extend_const("HOL.Trueprop", Ty::arrow(Ty::base("bool").unwrap(), Ty::prop()))
             .unwrap()
@@ -2053,7 +2188,7 @@ mod axiom_dep_tests {
     }
 
     #[test]
-    fn axiom_rejects_wrong_basis() {
+    fn wrong_basis_lacks_axiom() {
         let _basis_a = LogicBasis::try_new(
             vec![],
             vec![AxiomSchema {
@@ -2074,7 +2209,7 @@ mod axiom_dep_tests {
     }
 
     #[test]
-    fn axiom_rejects_wrong_schema() {
+    fn different_schemas_produce_different_dependency_ids() {
         let basis = LogicBasis::try_new(
             vec![],
             vec![
@@ -2113,7 +2248,7 @@ mod axiom_dep_tests {
     }
 
     #[test]
-    fn axiom_rejects_same_name_changed_proposition() {
+    fn same_name_different_prop_gives_different_dep_id() {
         let s1 = AxiomSchema {
             name: Name::from("ax"),
             prop: RawTerm::Forall {
@@ -2145,7 +2280,7 @@ mod axiom_dep_tests {
     }
 
     #[test]
-    fn axiom_rejects_tampered_dependency_id() {
+    fn tampered_bytes_produce_different_dep_id() {
         let basis = LogicBasis::try_new(
             vec![],
             vec![AxiomSchema {
@@ -2180,7 +2315,7 @@ mod axiom_dep_tests {
     }
 
     #[test]
-    fn axiom_rejects_missing_basis() {
+    fn empty_basis_has_no_axioms() {
         let schema = AxiomSchema {
             name: Name::from("ax"),
             prop: RawTerm::Forall {

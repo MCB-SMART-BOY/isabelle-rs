@@ -85,7 +85,8 @@ impl ProofContext {
         Ok(())
     }
 
-    fn validate_checked(&self, term: &Term, bounds: &mut Vec<Ty>) -> Result<Ty, KernelError> {
+    /// Validate an already-certified term — used during replay.
+    pub(crate) fn validate_checked(&self, term: &Term, bounds: &mut Vec<Ty>) -> Result<Ty, KernelError> {
         match term {
             Term::Const { name, ty } => {
                 let _inst = self.signature().certify_const_instance(name, ty)?;
