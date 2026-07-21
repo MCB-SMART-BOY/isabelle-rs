@@ -424,6 +424,7 @@ impl fmt::Debug for TheorySnapshot {
             .field("id", &self.id())
             .field("parent", &self.parent().map(TheorySnapshot::id))
             .field("signature", &self.signature().id())
+            .field("logic_basis", &self.find_logic_basis_id())
             .finish()
     }
 }
@@ -976,6 +977,7 @@ impl fmt::Debug for TrustedTheory {
             .field("id", &self.id())
             .field("parent", &self.parent().map(TrustedTheory::id))
             .field("signature", &self.signature().id())
+            .field("logic_basis", &self.logic_basis().map(|b| b.id()))
             .field("facts", &self.len())
             .finish()
     }
@@ -2243,6 +2245,35 @@ mod definition_tests {
         let theory = TrustedTheory::with_basis("HOL", sig, &basis).unwrap();
         let result = theory.check_consistency();
         assert!(result.is_ok(), "valid logic basis must pass check_consistency, got: {result:?}");
+    }
+
+    /// A theory whose stored logic_basis does not match the extension's
+    /// logic_basis_id must be rejected by check_consistency.
+    #[test]
+    fn corrupted_logic_basis_id_is_rejected() {
+        let sig = hol_sig();
+        let basis = LogicBasis::try_new(
+            vec![BasisDeclaration::Constant {
+                name: Name::from("HOL.Trueprop"),
+                scheme: PolyType::new(
+                    vec![],
+                    Ty::arrow(Ty::base("bool").unwrap(), Ty::prop()),
+                ).unwrap(),
+            }],
+            vec![],
+        ).unwrap();
+        let theory = TrustedTheory::with_basis("HOL", sig, &basis).unwrap();
+
+        // Corrupt: set logic_basis to None while extension still references it
+        let mut inner = (*theory.inner).clone();
+        inner.logic_basis = None;
+        let corrupted = TrustedTheory { inner: Arc::new(inner) };
+
+        let result = corrupted.check_consistency();
+        assert!(
+            matches!(result, Err(KernelError::Invariant(_))),
+            "must reject corrupted basis, got: {result:?}"
+        );
     }
 }
 

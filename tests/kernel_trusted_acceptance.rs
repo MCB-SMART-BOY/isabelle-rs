@@ -1,6 +1,6 @@
 use isabelle_rs::kernel::{
-    InstEntry, KernelError, KernelRules, Name, ProofContext, RawTerm, SearchFact, Signature,
-    TrustedTheory, Ty, accept_closed_theorem,
+    ContextStamp, InstEntry, KernelError, KernelRules, Name, ProofContext, RawTerm, SearchFact,
+    Signature, TrustedTheory, Ty, accept_closed_theorem,
 };
 
 fn prop(name: &str) -> RawTerm {
@@ -274,16 +274,33 @@ fn vacuous_forall_payload_with_same_stamp_free_is_rejected() {
 }
 
 #[test]
-fn pure_implication_theorem_id_matches_independent_golden_vector() {
+fn theorem_id_v2_matches_pinned_regression_vector() {
     let parent = theory("Pure", &["A"]);
     let (_, accepted) =
         accept_closed_theorem(&parent, "imp_identity", implication_identity(&parent, "A")).unwrap();
 
+    let id = accepted.id();
+
+    // Structural validation: the TheoremId must be deterministically derived
+    // from the theorem's context, proposition, and dependencies.
+    let stamp: ContextStamp = accepted.prop().context();
+    assert_eq!(stamp, parent.stamp(),
+        "theorem context stamp must match parent theory stamp");
+    // accepted_in is the child theory created by accept_closed_theorem,
+    // not the parent we passed in.
+    assert_ne!(accepted.accepted_in(), parent.id(),
+        "theorem must be accepted in a child theory, not the parent");
+    assert_eq!(stamp.logic_basis(), None,
+        "Pure implication has no logic basis");
+    assert_eq!(accepted.dependencies().len(), 0,
+        "Pure implication has no dependencies");
+    assert_eq!(accepted.name().as_str(), "imp_identity");
+
+    // Pinned v2 regression vector. Any change to the bytes below means
+    // the canonical encoding changed. If intentional, the THEOREM_DOMAIN
+    // version tag must be bumped and this vector updated to the new value.
     assert_eq!(
-        accepted.id().to_bytes(),
-        // Generated at isabelle-rs/theorem/v2 with ContextStamp including logic_basis.
-        // Any change to canonical encoding requires a new /vN domain tag and
-        // independent reference encoder validation.
+        id.to_bytes(),
         [
             0x06, 0xb5, 0x63, 0xb8, 0xb7, 0xe5, 0x70, 0x54,
             0xae, 0xb9, 0xf5, 0xfd, 0xe3, 0xa3, 0xdf, 0xbb,
@@ -292,7 +309,6 @@ fn pure_implication_theorem_id_matches_independent_golden_vector() {
         ]
     );
 }
-
 #[test]
 fn accepted_theorem_reference_replays_one_ancestry_dependency() {
     let parent = theory("Pure", &["A"]);

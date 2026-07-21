@@ -180,7 +180,7 @@ pub fn subst_types(raw: &RawTerm, type_inst: &crate::logic::TypeInstantiation) -
 
 fn collect_type_vars(raw: &RawTerm, out: &mut Vec<(Name, usize)>) {
     let push = |ty: &Ty, out: &mut Vec<(Name, usize)>| {
-        ty.for_each_type_var(&mut |name, index| {
+        ty.for_each_type_var(&mut |name, index, _sort| {
             let key = (name.clone(), index);
             if !out.iter().any(|(n, i)| n == name && *i == index) {
                 out.push(key);

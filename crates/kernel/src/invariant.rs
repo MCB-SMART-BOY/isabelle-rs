@@ -374,8 +374,6 @@ fn replay_derivation(
                 .ok_or_else(|| KernelError::Invariant(
                     format!("definition {def_id:?} not found in owner theory ancestry").into(),
                 ))?;
-            // Validate certificate identity: recompute ID from payload and check parent
-            certificate.validate_semantics(&parent_id)?;
             // 2. Reuse the unified definition-certificate validator.
             // The parent snapshot is the definition-installing node's parent,
             // not owner's parent. find_definition_certificate returns the

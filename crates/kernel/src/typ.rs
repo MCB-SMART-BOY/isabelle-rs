@@ -81,9 +81,9 @@ impl Ty {
     }
 
     /// Call `f` for every type variable leaf in this type.
-    pub fn for_each_type_var(&self, f: &mut impl FnMut(&Name, usize)) {
+    pub fn for_each_type_var(&self, f: &mut impl FnMut(&Name, usize, &Sort)) {
         match &self.0 {
-            TyKind::TypeVar { name, index, .. } => f(name, *index),
+            TyKind::TypeVar { name, index, sort } => f(name, *index, sort),
             TyKind::Type { args, .. } => {
                 for arg in args {
                     arg.for_each_type_var(f);
@@ -94,7 +94,7 @@ impl Ty {
 
     pub fn has_type_vars(&self) -> bool {
         let mut found = false;
-        self.for_each_type_var(&mut |_, _| found = true);
+        self.for_each_type_var(&mut |_, _, _| found = true);
         found
     }
 

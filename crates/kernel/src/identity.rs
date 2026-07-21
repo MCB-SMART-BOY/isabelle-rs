@@ -135,6 +135,7 @@ impl fmt::Debug for ContextStamp {
         f.debug_struct("ContextStamp")
             .field("theory", &self.theory)
             .field("signature", &self.signature)
+            .field("logic_basis", &self.logic_basis)
             .finish()
     }
 }
