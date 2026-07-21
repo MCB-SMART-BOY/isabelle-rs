@@ -54,6 +54,8 @@ pub enum DefinitionCertificateError {
     RhsNotClosed { name: Name },
     /// The RHS type does not match the declared type.
     RhsTypeMismatch { name: Name, declared: Ty, actual: Ty },
+    /// The declared type contains type variables; definitions must be fully concrete.
+    NonConcreteDeclaredType { name: Name, ty: Ty },
 }
 
 impl std::fmt::Display for DefinitionCertificateError {
@@ -73,6 +75,9 @@ impl std::fmt::Display for DefinitionCertificateError {
             }
             Self::RhsTypeMismatch { name, declared, actual } => {
                 write!(f, "definition RHS type mismatch for `{name}`: declared {declared:?}, actual {actual:?}")
+            }
+            Self::NonConcreteDeclaredType { name, ty } => {
+                write!(f, "definition {name:?} has non-concrete declared type {ty:?}")
             }
         }
     }

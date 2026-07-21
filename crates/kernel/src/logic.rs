@@ -362,8 +362,10 @@ impl LogicBasis {
                             }
                         },
                         Some(ConstScheme::Polymorphic(sig_scheme)) => {
-                            // Compare parameter counts as a basic check
-                            if scheme.params().len() != sig_scheme.params().len() {
+                            // Require exact scheme equality — same params and body.
+                            // This rejects mismatched type-variable names, indices,
+                            // and body types even when arities match.
+                            if scheme != sig_scheme {
                                 return Err(KernelError::TypeMismatch {
                                     expected: Ty::prop(),
                                     actual: Ty::prop(),
@@ -438,5 +440,44 @@ mod tests {
             vec![],
         ).unwrap();
         assert!(basis.validate_against(&sig).is_ok());
+    }
+
+    #[test]
+    fn polymorphic_scheme_mismatch_is_rejected() {
+        // Declare eq in logic basis: 'a -> 'a -> prop
+        let basis_scheme = PolyType::new(
+            vec![PolyTypeParam { id: TypeVarId::new("'a", 0), sort: crate::Sort::typ() }],
+            Ty::arrow(
+                Ty::tvar("'a", 0, crate::Sort::typ()),
+                Ty::arrow(Ty::tvar("'a", 0, crate::Sort::typ()), Ty::prop()),
+            ),
+        ).unwrap();
+        let basis = LogicBasis::try_new(
+            vec![BasisDeclaration::Constant {
+                name: Name::from("eq"),
+                scheme: basis_scheme.clone(),
+            }],
+            vec![],
+        ).unwrap();
+
+        // Install a DIFFERENT scheme in the signature: 'b -> 'b -> prop
+        // Same arity (1 param), different body (uses 'b not 'a).
+        // Under the old param-count check, this would pass.
+        let sig_scheme = PolyType::new(
+            vec![PolyTypeParam { id: TypeVarId::new("'b", 0), sort: crate::Sort::typ() }],
+            Ty::arrow(
+                Ty::tvar("'b", 0, crate::Sort::typ()),
+                Ty::arrow(Ty::tvar("'b", 0, crate::Sort::typ()), Ty::prop()),
+            ),
+        ).unwrap();
+        let sig = Signature::new()
+            .extend_const_scheme("eq", sig_scheme)
+            .unwrap();
+
+        // Must reject: 'a -> 'a -> prop != 'b -> 'b -> prop
+        assert!(
+            basis.validate_against(&sig).is_err(),
+            "must reject polymorphic scheme mismatch (different type-var names)"
+        );
     }
 }

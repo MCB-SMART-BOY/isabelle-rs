@@ -147,17 +147,16 @@ pub fn subst_types(raw: &RawTerm, type_inst: &crate::logic::TypeInstantiation) -
     // Collect all distinct type variables (name, index) in the term
     let mut type_vars: Vec<(Name, usize)> = Vec::new();
     collect_type_vars(raw, &mut type_vars);
-    // Detect same-name-different-index: ambiguous schema
-    let mut seen_names: std::collections::HashMap<Name, usize> = std::collections::HashMap::new();
-    for (name, index) in &type_vars {
-        if let Some(prev_idx) = seen_names.get(name) {
-            if prev_idx != index {
-                return Err(KernelError::Invariant(
-                    format!("ambiguous type variable `{name}` with indices {prev_idx} and {index}").into(),
-                ));
-            }
+    // Check for duplicate (name, index) pairs.
+    // Same name with different index is allowed (e.g., 'a.0 and 'a.1 are distinct).
+    let mut seen: std::collections::BTreeSet<(Name, u32)> = std::collections::BTreeSet::new();
+    for (name, idx) in &type_vars {
+        let key = (name.clone(), *idx as u32);
+        if !seen.insert(key) {
+            return Err(KernelError::Invariant(
+                format!("duplicate type variable `{name}` at index {idx}").into(),
+            ));
         }
-        seen_names.insert(name.clone(), *index);
     }
     // Validate: every inst entry must match a type variable present in the term
     for (tvid, _) in type_inst.iter() {
@@ -1095,5 +1094,34 @@ impl Term {
         new_chain.extend(new_prems.iter().cloned());
         new_chain.extend(prems[i + 1..].iter().cloned());
         Term::mk_imp_chain(&new_chain, conclusion)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::logic::{TypeInstantiation, TypeVarId};
+    use crate::{Ty, Sort};
+
+    #[test]
+    fn subst_types_allows_same_name_different_index() {
+        // Two type variables with same name 'a but different indices: 'a.0 and 'a.1
+        // should be treated as distinct variables, not rejected as ambiguous.
+        let raw = RawTerm::const_(
+            "f",
+            Ty::arrow(
+                Ty::tvar("'a", 0, Sort::typ()),
+                Ty::arrow(Ty::tvar("'a", 1, Sort::typ()), Ty::prop()),
+            ),
+        );
+
+        let mut bindings = std::collections::BTreeMap::new();
+        bindings.insert(TypeVarId::new("'a", 0), Ty::base("bool").unwrap());
+        bindings.insert(TypeVarId::new("'a", 1), Ty::base("nat").unwrap());
+        let inst = TypeInstantiation::try_new(bindings).unwrap();
+
+        let result = subst_types(&raw, &inst);
+        assert!(result.is_ok(),
+            "same-name-different-index must be allowed, got: {result:?}");
     }
 }

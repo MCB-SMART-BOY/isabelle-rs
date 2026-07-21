@@ -377,16 +377,16 @@ fn replay_derivation(
             // Validate certificate identity: recompute ID from payload and check parent
             certificate.validate_semantics(&parent_id)?;
             // 2. Reuse the unified definition-certificate validator.
-            // The parent snapshot is the owner's parent — the theory before this
-            // definition extension was applied. Passing it ensures the RHS is
-            // certified in the pre-definition context (same as check_consistency).
-            // validate_semantics is called again (harmless, idempotent).
-            // Freshness check passes because the parent does not have the constant yet.
-            let parent_snap = owner.parent()
-                .ok_or(KernelError::UnsupportedAcceptanceDerivation)?
-                .snapshot();
-            validate_definition_certificate_in_parent(parent_snap, &certificate)?;
-
+            // The parent snapshot is the definition-installing node's parent,
+            // not owner's parent. find_definition_certificate returns the
+            // correct parent_id — look up the snapshot for it.
+            validate_definition_certificate_in_parent(
+                owner.snapshot().find_snapshot_by_id(parent_id)
+                    .ok_or_else(|| KernelError::Invariant(
+                        "definition parent not in owner ancestry".into(),
+                    ))?,
+                &certificate,
+            )?;
             // 5. Independently reconstruct: |- const_name == rhs
             let reconstructed = RawTerm::Eq {
                 lhs: Box::new(RawTerm::Const {

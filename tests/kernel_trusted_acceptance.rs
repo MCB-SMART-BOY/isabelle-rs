@@ -274,12 +274,6 @@ fn vacuous_forall_payload_with_same_stamp_free_is_rejected() {
 }
 
 #[test]
-#[ignore = "pre-existing canonical-encoding drift from kernel migration.
-          TheoremId digest changed because ContextStamp/TheoryId/SignatureId
-          encoding was altered during the core→kernel TCB migration.
-          Golden vector (0x80, 0x00, 0x03...) represents the pre-kernel encoding.
-          Actual value (0xd4, 0x32, 0x6b...) reflects the new canonical format.
-          Needs independent reference re-computation before updating."]
 fn pure_implication_theorem_id_matches_independent_golden_vector() {
     let parent = theory("Pure", &["A"]);
     let (_, accepted) =
@@ -287,14 +281,14 @@ fn pure_implication_theorem_id_matches_independent_golden_vector() {
 
     assert_eq!(
         accepted.id().to_bytes(),
-        // Original golden vector from before core→kernel TCB migration.
-        // The kernel migration changed ContextStamp/TheoryId canonical encoding,
-        // causing all TheoremId digests to shift. This test is ignored until
-        // an independent reference encoder validates the new format.
+        // Generated at isabelle-rs/theorem/v2 with ContextStamp including logic_basis.
+        // Any change to canonical encoding requires a new /vN domain tag and
+        // independent reference encoder validation.
         [
-            0x80, 0x00, 0x03, 0x21, 0x78, 0xec, 0x6a, 0xb5, 0x16, 0x2f, 0x37, 0x28, 0x4f, 0x5e,
-            0x9a, 0x06, 0x16, 0xcd, 0x8f, 0x7f, 0x2c, 0x1c, 0x3f, 0xee, 0xd5, 0x76, 0x65, 0xd8,
-            0x1e, 0xd0, 0x3e, 0x82,
+            0x06, 0xb5, 0x63, 0xb8, 0xb7, 0xe5, 0x70, 0x54,
+            0xae, 0xb9, 0xf5, 0xfd, 0xe3, 0xa3, 0xdf, 0xbb,
+            0xce, 0x94, 0xd4, 0x33, 0x5c, 0x41, 0xa6, 0x3c,
+            0x53, 0xa9, 0x08, 0x9b, 0xa8, 0x1b, 0xee, 0x7c,
         ]
     );
 }

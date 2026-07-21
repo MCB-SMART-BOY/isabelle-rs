@@ -9,7 +9,7 @@ use super::{
     theorem_builder,
 };
 
-const THEOREM_DOMAIN: &[u8] = b"isabelle-rs/theorem/v1";
+const THEOREM_DOMAIN: &[u8] = b"isabelle-rs/theorem/v2";
 
 /// Content identity of a replay-accepted theorem.
 ///
@@ -166,6 +166,16 @@ pub(crate) fn validate_definition_certificate_in_parent(
     // 2. Constant must not already exist in parent
     if parent_snapshot.signature().get_const(&certificate.name).is_some() {
         return Err(KernelError::DuplicateDeclaration { name: certificate.name.clone() });
+    }
+
+    // 3. Reject non-concrete declared types — definitions must be monomorphic.
+    if !certificate.declared_ty.is_concrete_type() {
+        return Err(KernelError::DefinitionCertificate(
+            DefinitionCertificateError::NonConcreteDeclaredType {
+                name: certificate.name.clone(),
+                ty: certificate.declared_ty.clone(),
+            },
+        ));
     }
 
     // 3. RHS must certify in parent context
@@ -375,6 +385,19 @@ impl TheorySnapshot {
             current = theory.parent();
         }
         false
+    }
+
+    /// Find a snapshot by TheoryId in the ancestry chain.
+    /// Returns None if the id is not in the chain (including self).
+    pub(crate) fn find_snapshot_by_id(&self, target: TheoryId) -> Option<&TheorySnapshot> {
+        let mut current = Some(self);
+        while let Some(snap) = current {
+            if snap.id() == target {
+                return Some(snap);
+            }
+            current = snap.parent();
+        }
+        None
     }
 
     fn store_theorem(&self, name: Name, theorem: TheoremId) -> Self {
@@ -654,6 +677,16 @@ impl TrustedTheory {
             ));
         }
 
+        // 3b. Declared type must be concrete — definitions must be monomorphic.
+        if !rhs_ty.is_concrete_type() {
+            return Err(KernelError::DefinitionCertificate(
+                DefinitionCertificateError::NonConcreteDeclaredType {
+                    name: name.clone(),
+                    ty: rhs_ty,
+                },
+            ));
+        }
+
         // 4. Compute canonical DefinitionId
         let definition_id = DefinitionCertificate::compute_id(&self.id(), &name, &rhs_ty, &rhs_raw);
 
@@ -799,9 +832,22 @@ impl TrustedTheory {
                             "trusted logic-basis owner does not match its snapshot parent".into(),
                         ));
                     }
-                    // The basis itself is validated at install time via validate_against.
-                    // The basis_id is bound into TheoryId via write_canonical.
-                    let _ = logic_basis_id;
+                    // Cross-validate: the extension's logic_basis_id must match
+                    // the stored LogicBasis payload's identity.
+                    match theory.logic_basis() {
+                        Some(basis) if basis.id() != *logic_basis_id => {
+                            return Err(KernelError::Invariant(
+                                "stored logic basis ID does not match extension's logic_basis_id"
+                                    .into(),
+                            ));
+                        }
+                        None => {
+                            return Err(KernelError::Invariant(
+                                "theory has no logic basis but extension claims one".into(),
+                            ));
+                        }
+                        _ => {}
+                    }
                 },
 
                 (
@@ -1611,6 +1657,7 @@ mod definition_tests {
     use crate::Derivation;
     use crate::KernelRules;
     use crate::Term;
+    use crate::logic::{BasisDeclaration, LogicBasis, PolyType};
 
     fn hol_sig() -> Signature {
         Signature::new()
@@ -2123,6 +2170,79 @@ mod definition_tests {
 
         let result = accept_closed_theorem(&child, "Test_def", closed);
         assert!(result.is_err(), "must reject tampered proposition");
+    }
+
+    /// A definition certificate installed at an ancestor can be replayed
+    /// from a descendant theory. The replay must use the definition-installing
+    /// node's parent snapshot, not the replay owner's parent.
+    #[test]
+    fn definition_replay_works_from_descendant_theory() {
+        let sig = hol_sig().extend_const("P", Ty::prop()).unwrap();
+        let root = TrustedTheory::root("Root", sig.clone());
+        let rhs = RawTerm::const_("P", Ty::prop());
+        let (child, token) = root.define_const("Q", rhs.clone()).unwrap();
+
+        // Extract the definition certificate from the token
+        let def_id = match token.as_kernel().derivation() {
+            Derivation::ConservativeDefinition { definition } => *definition,
+            _ => panic!("expected ConservativeDefinition"),
+        };
+        let (real_cert, _) = child.find_definition_certificate(&def_id).unwrap();
+
+        // Descend further: add another constant to create a grandchild
+        let grandchild_snap = child.snapshot()
+            .extend_const("R", Ty::prop()).unwrap();
+        let grandchild = TrustedTheory::child(&child, grandchild_snap, None);
+
+        // Replay the definition theorem at the grandchild level.
+        // The grandchild's direct parent is `child` (which already has Q
+        // in its signature), so using owner.parent() would fail the
+        // freshness check. find_snapshot_by_id walks to the root.
+        let ctx = ProofContext::new(grandchild.snapshot().clone());
+        let thm = theorem_builder::definition_theorem(&ctx, &real_cert).unwrap();
+        let closed = theorem_builder::close_thm(thm).unwrap();
+        let result = accept_closed_theorem(&grandchild, "Q_def_replay", closed);
+        assert!(result.is_ok(), "replay from descendant must succeed, got: {result:?}");
+    }
+
+    /// Definitions must have fully concrete declared types.
+    /// A constant with a type containing type variables must be rejected.
+    #[test]
+    fn definition_rejects_non_concrete_declared_type() {
+        // Declare f: 'a -> prop — a polymorphic function
+        let sig = hol_sig()
+            .extend_const("f", Ty::arrow(Ty::tvar("'a", 0, crate::Sort::typ()), Ty::prop()))
+            .unwrap();
+        let root = TrustedTheory::root("Root", sig);
+        // Try to define Q with RHS f (which has type 'a -> prop, containing 'a)
+        let rhs = RawTerm::const_("f", Ty::arrow(Ty::tvar("'a", 0, crate::Sort::typ()), Ty::prop()));
+        let result = root.define_const("Q", rhs);
+        assert!(
+            matches!(result, Err(KernelError::DefinitionCertificate(
+                DefinitionCertificateError::NonConcreteDeclaredType { .. }
+            ))),
+            "must reject non-concrete declared type, got: {result:?}"
+        );
+    }
+
+    /// check_consistency cross-validates that the stored logic basis ID
+    /// matches the extension's logic_basis_id. Valid bases pass.
+    #[test]
+    fn valid_logic_basis_passes_consistency_check() {
+        let sig = hol_sig();
+        let basis = LogicBasis::try_new(
+            vec![BasisDeclaration::Constant {
+                name: Name::from("HOL.Trueprop"),
+                scheme: PolyType::new(
+                    vec![],
+                    Ty::arrow(Ty::base("bool").unwrap(), Ty::prop()),
+                ).unwrap(),
+            }],
+            vec![],
+        ).unwrap();
+        let theory = TrustedTheory::with_basis("HOL", sig, &basis).unwrap();
+        let result = theory.check_consistency();
+        assert!(result.is_ok(), "valid logic basis must pass check_consistency, got: {result:?}");
     }
 }
 

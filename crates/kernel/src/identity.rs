@@ -104,6 +104,17 @@ impl ContextStamp {
     pub(crate) fn write_canonical(self, encoder: &mut CanonicalEncoder) {
         self.theory.write_canonical(encoder);
         self.signature.write_canonical(encoder);
+        // Include the logic basis so TheoremId commits to it.
+        // None is encoded as a 0-byte discriminator.
+        match self.logic_basis {
+            Some(basis) => {
+                encoder.write_u8(1);
+                basis.write_canonical(encoder);
+            }
+            None => {
+                encoder.write_u8(0);
+            }
+        }
     }
 }
 
