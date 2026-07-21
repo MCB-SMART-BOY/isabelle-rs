@@ -190,15 +190,16 @@ mod tests {
             .extend_const("HOL.Trueprop", Ty::arrow(Ty::base("bool").unwrap(), Ty::prop()))
             .unwrap();
         sig = sig
-            .extend_const(
+            .extend_const_scheme(
                 "HOL.eq",
-                Ty::arrow(
-                    Ty::tvar("alpha", 0, crate::kernel::Sort::typ()),
+                PolyType::new(
+                    vec![PolyTypeParam { id: TypeVarId::new("'a", 0), sort: Sort::typ() }],
                     Ty::arrow(
-                        Ty::tvar("alpha", 0, crate::kernel::Sort::typ()),
-                        Ty::base("bool").unwrap(),
+                        Ty::tvar("'a", 0, Sort::typ()),
+                        Ty::arrow(Ty::tvar("'a", 0, Sort::typ()), Ty::base("bool").unwrap()),
                     ),
-                ),
+                )
+                .expect("HOL.eq PolyType"),
             )
             .unwrap();
         let basis = hol_basis();

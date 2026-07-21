@@ -101,7 +101,7 @@ mod tests {
         let basis = hol_basis();
         let theory = TrustedTheory::with_basis("HOL", sig, &basis).unwrap();
         match define_true(&theory) {
-            Ok((_child, token)) => assert_eq!(token.name().as_str(), "True_def"),
+            Ok((_child, token)) => assert_eq!(token.name().as_str(), "HOL.True_def"),
             Err(e) => panic!("define_true: {e:?}"),
         }
     }
