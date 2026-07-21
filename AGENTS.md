@@ -103,9 +103,11 @@ Branch `wip/kernel-trusted-slice` merged at `03d28a6` delivered:
 - 10 TCB attack tests.
 - `prove_true_i` via accepted `True_def` + `theorem_ref` + `Combination + Symmetric + EqualElim` chain.
 
+**Completed (2026-07-22):**
+- `ConservativeDefinition` is atomic via `DefinitionId` in `TheoryExtension::DefineConst`. Replay walks owner ancestry to find the certificate, validates parent, freshness, and concrete types.
+- `PolyType::new` validates param sort consistency and requires every declared param appears in the body. `monomorphic_instance_matches` authorizes instances against params.
+
 **Not yet complete:**
-- `ConservativeDefinition` is now atomic via `DefinitionId` stored in `TheoryExtension::DefineConst`, with replay walking owner ancestry to find the certificate.
-- `PolyType::new` validates param sort consistency and requires every declared param appears in the body; `monomorphic_instance_matches` authorizes instances against params.
 - Kernel -> legacy conversion uses Debug strings (untrusted path).
 - Production source -> kernel bridge not implemented.
 - `KernelTrustedClosed` remains `0/125`.

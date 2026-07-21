@@ -36,7 +36,6 @@ pub use theory::{
     DefinitionId, DependencyKind, DependencySet, TheoremId,
     TheorySnapshot, TrustedTheorem, TrustedTheory, accept_closed_theorem,
 };
-
 #[doc(hidden)]
 pub fn theorem_id_v2_reference(
     context: ContextStamp,

@@ -268,17 +268,12 @@ impl DependencySet {
             encoder.write_fixed_bytes(&dependency.digest);
         }
     }
-    pub(crate) fn write_canonical_raw(&self, buf: &mut Vec<u8>) {
-        buf.extend_from_slice(&(self.entries.len() as u64).to_be_bytes());
-        for dependency in &self.entries {
-            let tag = match dependency.kind {
-                DependencyKind::Axiom => 0,
-                DependencyKind::Definition => 1,
-                DependencyKind::Theorem => 2,
-            };
-            buf.push(tag);
-            buf.extend_from_slice(&dependency.digest);
-        }
+    /// Reference encoder accessor: expose sorted entries.
+    /// Each entry is (DependencyKind, digest). Entries are sorted by kind then digest
+    /// (the BTreeSet ordering), matching the production canonical encoding order.
+    /// NOT for production encoding paths — use `write_canonical` for that.
+    pub(crate) fn as_sorted_entries(&self) -> Vec<(DependencyKind, [u8; 32])> {
+        self.entries.iter().map(|dep| (dep.kind, dep.digest)).collect()
     }
 }
 
@@ -1036,7 +1031,7 @@ pub fn accept_closed_theorem(
     Ok((child, trusted))
 }
 
-pub(crate) fn compute_theorem_id(
+fn compute_theorem_id(
     context: ContextStamp,
     prop: &CProp,
     dependencies: &DependencySet,

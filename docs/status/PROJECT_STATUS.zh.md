@@ -13,7 +13,7 @@ TransitionalStrictClosed: 1/125  （HOL::TrueI 遗留迁移）
 KernelTrustedClosed:      0/125  （生产路径未接通）
 ```
 
-## 已完成（2026-07-21 检查点）
+## 已完成（2026-07-22 检查点）
 
 - 递归 `is_concrete_type`（嵌套类型变量检测）
 - `is_monomorphic_instance_of` 使用 `BTreeMap<TypeVarId, Ty>`
@@ -21,11 +21,11 @@ KernelTrustedClosed:      0/125  （生产路径未接通）
 - `prove_true_i` 通过已验收 `True_def` + `theorem_ref` 链
 - TCB 零警告门禁
 - 10 个 TCB 攻击测试（5 polytype, 1 axiom dep, 4 definition）
+- `ConservativeDefinition` 已通过 `DefinitionId` 原子化，存储在 `TheoryExtension::DefineConst`，重放时沿 owner 祖先链查找证书
+- `PolyType::new` 验证参数排序一致性并要求每个声明的参数都出现在 body 中；`monomorphic_instance_matches` 依据参数授权实例
 
 ## 未完成
 
-- `ConservativeDefinition` 已通过 `DefinitionId` 原子化，存储在 `TheoryExtension::DefineConst`，重放时沿 owner 祖先链查找证书
-- `PolyType::new` 验证参数排序一致性并要求每个声明的参数都出现在 body 中；`monomorphic_instance_matches` 依据参数授权实例
 - 内核→遗留转换器使用 Debug 字符串
 - 生产 source→kernel 桥接未实现
 - `KernelTrustedClosed` 仍为 0/125
@@ -40,11 +40,12 @@ KernelTrustedClosed:      0/125  （生产路径未接通）
 
 ## 下一步优先级
 
-1. 统一 `TypeInstantiation` 为 `TypeVarId`
-2. 补齐 axiom/definition 攻击测试矩阵
-3. 接通实际 source → CProp → 实际理论 → TrueI 令牌
+1. 接通实际 source → declaration-aware elaboration → CProp
+2. 授权生产 HOL bootstrap manifest
+3. 生成首个真实 `KernelTrustedClosed` 定理（HOL.Trueprop HOL.True）
 4. 设计 ISIP 标准规范（设计文档，不实现运行时）
-5. ISIP（Isabelle 结构化交互与证明标准）定义五阶段平台演进：
+
+## ISIP 平台路线
 
 | 阶段 | 前置条件 |
 |------|---------|

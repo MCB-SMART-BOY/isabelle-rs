@@ -437,7 +437,6 @@ Branch `wip/kernel-trusted-slice` merged `03d28a6` onto `dev`:
 - `PolyType::new` validates param sort consistency and requires every declared param appears in the body. `monomorphic_instance_matches` authorizes instances against params.
 
 **Deferred:**
-- `Ty::base("'a")` not yet rejected (tick-prefix guard pending)
 - Production source->kernel bridge not implemented
 - `KernelTrustedClosed` remains `0/125`
 

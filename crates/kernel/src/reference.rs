@@ -1,14 +1,15 @@
 //! Independent reference encoder for v2 TheoremId.
 //!
 //! Re-implements the v2 identity schema using `sha2::Sha256` directly.
-//! Does NOT call `compute_theorem_id`, `CanonicalEncoder`, or any
-//! `write_canonical` methods — every encoding step is spelled out.
+//! Every encoding step is independent of `CanonicalEncoder` and all
+//! `write_canonical` methods. Uses only public `#[cfg(test)]` accessor
+//! methods on `Ty` and `DependencySet` to extract structural data.
 //!
-//! The reference is compared against `compute_theorem_id` in tests.
+//! The reference is compared against production TheoremId output in tests.
 
 use sha2::{Digest, Sha256};
 use super::{
-    CProp, ContextStamp, DependencySet, Name, Term, Ty,
+    CProp, ContextStamp, DependencyKind, DependencySet, Name, Term, Ty,
 };
 
 /// Domain tag (must match `THEOREM_DOMAIN` in `theory.rs`).
@@ -30,7 +31,20 @@ fn write_name(buf: &mut Vec<u8>, name: &Name) {
 }
 
 fn write_ty(buf: &mut Vec<u8>, ty: &Ty) {
-    ty.write_canonical_raw(buf);
+    // Independent encoding — does NOT call any Ty::write_canonical* method.
+    if let Some((name, index, sort)) = ty.as_type_var() {
+        buf.push(1u8);
+        write_name(buf, name);
+        write_u64_be(buf, index as u64);
+        write_name(buf, sort.name());
+    } else if let Some((name, args)) = ty.as_type_app() {
+        buf.push(0u8);
+        write_name(buf, name);
+        write_u64_be(buf, args.len() as u64);
+        for arg in args {
+            write_ty(buf, arg);
+        }
+    }
 }
 
 fn write_term(buf: &mut Vec<u8>, term: &Term) {
@@ -84,9 +98,19 @@ fn write_term(buf: &mut Vec<u8>, term: &Term) {
         }
     }
 }
-
 fn write_deps(buf: &mut Vec<u8>, deps: &DependencySet) {
-    deps.write_canonical_raw(buf);
+    // Independent encoding — does NOT call any DependencySet::write_canonical* method.
+    let entries = deps.as_sorted_entries();
+    write_u64_be(buf, entries.len() as u64);
+    for (kind, digest) in &entries {
+        let tag = match kind {
+            DependencyKind::Axiom => 0u8,
+            DependencyKind::Definition => 1u8,
+            DependencyKind::Theorem => 2u8,
+        };
+        buf.push(tag);
+        buf.extend_from_slice(digest);
+    }
 }
 
 pub(crate) fn reference_theorem_id_v2(
@@ -135,7 +159,6 @@ pub(crate) fn reference_theorem_id_v2(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::theory::compute_theorem_id;
     use crate::{
         accept_closed_theorem,
         Name, ProofContext, RawTerm, TrustedTheory, Ty,
@@ -170,10 +193,10 @@ mod tests {
         let deps = accepted.dependencies();
 
         let ref_id = reference_theorem_id_v2(&stamp, prop, deps);
-        let prod_id = compute_theorem_id(stamp, prop, deps);
+        let prod_bytes = accepted.id().to_bytes();
 
         assert_eq!(
-            ref_id, prod_id.to_bytes(),
+            ref_id, prod_bytes,
             "reference encoder must match production encoder"
         );
     }

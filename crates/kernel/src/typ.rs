@@ -200,33 +200,23 @@ impl Ty {
         }
     }
 
-    /// Write canonical encoding to a byte buffer (reference encoder path).
-    /// Mirrors `write_canonical` but writes to `Vec<u8>` directly.
-    pub(crate) fn write_canonical_raw(&self, buf: &mut Vec<u8>) {
+    /// Reference encoder accessor: deconstruct a type application.
+    /// Returns `None` for type variables. NOT for production encoding paths —
+    /// use `write_canonical` for that.
+    pub(crate) fn as_type_app(&self) -> Option<(&Name, &[Ty])> {
         match &self.0 {
-            TyKind::TypeVar { name, index, sort } => {
-                buf.push(1u8);
-                // write_name: u64 BE length + bytes
-                let nbytes = name.as_str().as_bytes();
-                buf.extend_from_slice(&(nbytes.len() as u64).to_be_bytes());
-                buf.extend_from_slice(nbytes);
-                // write_u64 BE
-                buf.extend_from_slice(&(*index as u64).to_be_bytes());
-                // write_name for sort
-                let sbytes = sort.0.as_str().as_bytes();
-                buf.extend_from_slice(&(sbytes.len() as u64).to_be_bytes());
-                buf.extend_from_slice(sbytes);
-            },
-            TyKind::Type { name, args } => {
-                buf.push(0u8);
-                let nbytes = name.as_str().as_bytes();
-                buf.extend_from_slice(&(nbytes.len() as u64).to_be_bytes());
-                buf.extend_from_slice(nbytes);
-                buf.extend_from_slice(&(args.len() as u64).to_be_bytes());
-                for arg in args {
-                    arg.write_canonical_raw(buf);
-                }
-            },
+            TyKind::Type { name, args } => Some((name, args)),
+            _ => None,
+        }
+    }
+
+    /// Reference encoder accessor: deconstruct a type variable.
+    /// Returns `None` for type applications. NOT for production encoding paths —
+    /// use `write_canonical` for that.
+    pub(crate) fn as_type_var(&self) -> Option<(&Name, usize, &Sort)> {
+        match &self.0 {
+            TyKind::TypeVar { name, index, sort } => Some((name, *index, sort)),
+            _ => None,
         }
     }
 }

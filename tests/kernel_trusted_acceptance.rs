@@ -283,14 +283,14 @@ fn theorem_id_matches_independent_v2_reference() {
 
     // Structural validation
     let stamp: ContextStamp = accepted.prop().context();
-    assert_eq!(stamp, parent.stamp(),
-        "theorem context stamp must match parent theory stamp");
-    assert_ne!(accepted.accepted_in(), parent.id(),
-        "theorem must be accepted in a child theory, not the parent");
-    assert_eq!(stamp.logic_basis(), None,
-        "Pure implication has no logic basis");
-    assert_eq!(accepted.dependencies().len(), 0,
-        "Pure implication has no dependencies");
+    assert_eq!(stamp, parent.stamp(), "theorem context stamp must match parent theory stamp");
+    assert_ne!(
+        accepted.accepted_in(),
+        parent.id(),
+        "theorem must be accepted in a child theory, not the parent"
+    );
+    assert_eq!(stamp.logic_basis(), None, "Pure implication has no logic basis");
+    assert_eq!(accepted.dependencies().len(), 0, "Pure implication has no dependencies");
     assert_eq!(accepted.name().as_str(), "imp_identity");
 
     // Independent v2 reference encoder must match production encoder.
@@ -299,11 +299,7 @@ fn theorem_id_matches_independent_v2_reference() {
         accepted.prop(),
         accepted.dependencies(),
     );
-    assert_eq!(
-        id.to_bytes(),
-        expected,
-        "theorem ID must match independent v2 reference encoder"
-    );
+    assert_eq!(id.to_bytes(), expected, "theorem ID must match independent v2 reference encoder");
 }
 #[test]
 fn accepted_theorem_reference_replays_one_ancestry_dependency() {
