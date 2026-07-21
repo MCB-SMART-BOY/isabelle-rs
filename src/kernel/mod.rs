@@ -29,4 +29,3 @@ pub use isabelle_kernel::theory::{
 };
 pub use isabelle_kernel::thm::{ClosedThm, KernelThm, OpenThm};
 pub use isabelle_kernel::typ::{Sort, Ty};
-pub use isabelle_kernel::theorem_id_v2_reference;

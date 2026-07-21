@@ -2,7 +2,7 @@
 //!
 //! Re-implements the v2 identity schema using `sha2::Sha256` directly.
 //! Every encoding step is independent of `CanonicalEncoder` and all
-//! `write_canonical` methods. Uses only public `#[cfg(test)]` accessor
+//! `write_canonical` methods. Uses only `pub(crate)` accessor
 //! methods on `Ty` and `DependencySet` to extract structural data.
 //!
 //! The reference is compared against production TheoremId output in tests.

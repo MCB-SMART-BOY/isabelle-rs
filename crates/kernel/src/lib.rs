@@ -15,7 +15,7 @@ pub mod rules;
 pub mod search_fact;
 pub mod signature;
 pub mod term;
-pub mod reference;
+pub(crate) mod reference;
 pub mod theorem_builder;
 pub mod theory;
 pub mod thm;
@@ -36,14 +36,6 @@ pub use theory::{
     DefinitionId, DependencyKind, DependencySet, TheoremId,
     TheorySnapshot, TrustedTheorem, TrustedTheory, accept_closed_theorem,
 };
-#[doc(hidden)]
-pub fn theorem_id_v2_reference(
-    context: ContextStamp,
-    prop: &CProp,
-    deps: &DependencySet,
-) -> [u8; 32] {
-    reference::reference_theorem_id_v2(&context, prop, deps)
-}
 pub use thm::{ClosedThm, KernelThm, OpenThm};
 pub use typ::Ty;
 pub use typ::Sort;

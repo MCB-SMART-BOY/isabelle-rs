@@ -1,6 +1,6 @@
 use isabelle_rs::kernel::{
     ContextStamp, InstEntry, KernelError, KernelRules, Name, ProofContext, RawTerm, SearchFact,
-    Signature, TrustedTheory, Ty, accept_closed_theorem, theorem_id_v2_reference,
+    Signature, TrustedTheory, Ty, accept_closed_theorem,
 };
 
 fn prop(name: &str) -> RawTerm {
@@ -273,34 +273,6 @@ fn vacuous_forall_payload_with_same_stamp_free_is_rejected() {
     ));
 }
 
-#[test]
-fn theorem_id_matches_independent_v2_reference() {
-    let parent = theory("Pure", &["A"]);
-    let (_, accepted) =
-        accept_closed_theorem(&parent, "imp_identity", implication_identity(&parent, "A")).unwrap();
-
-    let id = accepted.id();
-
-    // Structural validation
-    let stamp: ContextStamp = accepted.prop().context();
-    assert_eq!(stamp, parent.stamp(), "theorem context stamp must match parent theory stamp");
-    assert_ne!(
-        accepted.accepted_in(),
-        parent.id(),
-        "theorem must be accepted in a child theory, not the parent"
-    );
-    assert_eq!(stamp.logic_basis(), None, "Pure implication has no logic basis");
-    assert_eq!(accepted.dependencies().len(), 0, "Pure implication has no dependencies");
-    assert_eq!(accepted.name().as_str(), "imp_identity");
-
-    // Independent v2 reference encoder must match production encoder.
-    let expected = theorem_id_v2_reference(
-        accepted.prop().context(),
-        accepted.prop(),
-        accepted.dependencies(),
-    );
-    assert_eq!(id.to_bytes(), expected, "theorem ID must match independent v2 reference encoder");
-}
 #[test]
 fn accepted_theorem_reference_replays_one_ancestry_dependency() {
     let parent = theory("Pure", &["A"]);
