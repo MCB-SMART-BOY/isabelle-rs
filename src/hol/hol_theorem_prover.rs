@@ -3,6 +3,7 @@
 use crate::kernel::{
     KernelError, KernelRules, Name, ProofContext, RawTerm, TrustedTheorem, TrustedTheory, Ty,
     accept_closed_theorem, theorem_builder,
+    logic::{TypeInstantiation, TypeVarId},
 };
 
 pub fn define_true(
@@ -56,7 +57,11 @@ pub fn prove_true_i(
         &ctx,
         basis,
         Name::from("HOL.refl"),
-        vec![(Name::from("'a"), id_ty.clone())],
+        {
+            let mut bindings = std::collections::BTreeMap::new();
+            bindings.insert(TypeVarId::new("'a", 0), id_ty.clone());
+            TypeInstantiation::try_new(bindings).unwrap()
+        },
         vec![id_cterm],
         rhs_prop,
     )?;

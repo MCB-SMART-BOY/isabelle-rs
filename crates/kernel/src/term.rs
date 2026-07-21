@@ -143,7 +143,7 @@ impl RawTerm {
 
 /// Apply type substitution to a RawTerm with validation.
 /// Rejects missing, extra, and duplicate inst entries.
-pub fn subst_types(raw: &RawTerm, type_inst: &[(Name, Ty)]) -> Result<RawTerm, KernelError> {
+pub fn subst_types(raw: &RawTerm, type_inst: &crate::logic::TypeInstantiation) -> Result<RawTerm, KernelError> {
     // Collect all distinct type variables (name, index) in the term
     let mut type_vars: Vec<(Name, usize)> = Vec::new();
     collect_type_vars(raw, &mut type_vars);
@@ -160,36 +160,23 @@ pub fn subst_types(raw: &RawTerm, type_inst: &[(Name, Ty)]) -> Result<RawTerm, K
         seen_names.insert(name.clone(), *index);
     }
     // Validate: every inst entry must match a type variable present in the term
-    for (name, _) in type_inst {
-        if !type_vars.iter().any(|(n, _)| n == name) {
+    for (tvid, _) in type_inst.iter() {
+        if !type_vars.iter().any(|(n, i)| n == &tvid.name && *i == tvid.index as usize) {
             return Err(KernelError::Invariant(
-                format!("type instantiation `{name}` not present in schema").into(),
-            ));
-        }
-    }
-    // Validate: no duplicate entries
-    let mut seen = std::collections::HashSet::new();
-    for (name, _) in type_inst {
-        if !seen.insert(name.clone()) {
-            return Err(KernelError::Invariant(
-                format!("duplicate type instantiation `{name}`").into(),
+                format!("type instantiation {:?} not present in schema", tvid).into(),
             ));
         }
     }
     // Validate: every type variable in the term must be resolved
-    for (name, _) in &type_vars {
-        if !type_inst.iter().any(|(n, _)| n == name) {
+    for (name, index) in &type_vars {
+        let id = crate::logic::TypeVarId::new(name.clone(), *index as u32);
+        if type_inst.get(&id).is_none() {
             return Err(KernelError::Invariant(
-                format!("unresolved type variable `{name}` in schema").into(),
+                format!("unresolved type variable `{name}` with index {index} in schema").into(),
             ));
         }
     }
-    let mut bindings = std::collections::BTreeMap::new();
-    for (name, ty) in type_inst {
-        bindings.insert(crate::logic::TypeVarId::new(name.clone(), 0), ty.clone());
-    }
-    let ti = crate::logic::TypeInstantiation::try_new(bindings)?;
-    apply_type_subst(raw, &ti)
+    apply_type_subst(raw, type_inst)
 }
 
 fn collect_type_vars(raw: &RawTerm, out: &mut Vec<(Name, usize)>) {

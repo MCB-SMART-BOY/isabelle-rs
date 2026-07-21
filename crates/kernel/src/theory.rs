@@ -968,6 +968,7 @@ fn write_digest(f: &mut fmt::Formatter<'_>, label: &str, digest: &[u8; 32]) -> f
 mod tests {
     use super::*;
     use crate::{AxiomSchema, CTerm, Derivation, KernelRules, KernelThm, LogicBasis, ProofContext, RawTerm, Term, TrustedTheory};
+    use crate::logic::{TypeInstantiation, TypeVarId};
 
     fn prop(name: &str) -> RawTerm {
         RawTerm::const_(name, Ty::prop())
@@ -1287,6 +1288,12 @@ mod tests {
         assert_ne!(forward_id, changed_id);
     }
 
+    fn type_inst_single(name: impl Into<Name>, ty: Ty) -> TypeInstantiation {
+        let mut bindings = std::collections::BTreeMap::new();
+        bindings.insert(TypeVarId::new(name, 0), ty);
+        TypeInstantiation::try_new(bindings).unwrap()
+    }
+
     #[test]
     fn axiom_rejects_unknown_type_variable() {
         let sig = Signature::new();
@@ -1308,7 +1315,7 @@ mod tests {
         let result = crate::theorem_builder::axiom_theorem(
             &ctx, theory.logic_basis().unwrap(),
             Name::from("test_ax"),
-            vec![], // no type_inst — 'a unresolved
+            TypeInstantiation::empty(), // no type_inst — 'a unresolved
             vec![],
             RawTerm::const_("P", Ty::prop()),
         );
@@ -1330,7 +1337,7 @@ mod tests {
         let result = crate::theorem_builder::axiom_theorem(
             &ctx, theory.logic_basis().unwrap(),
             Name::from("test_ax"),
-            vec![(Name::from("'a"), Ty::prop())], // extra inst
+            type_inst_single("'a", Ty::prop()), // extra inst
             vec![],
             RawTerm::const_("P", Ty::prop()),
         );
@@ -1379,7 +1386,7 @@ mod tests {
         let result = crate::theorem_builder::axiom_theorem(
             &ctx, theory.logic_basis().unwrap(),
             Name::from("nested"),
-            vec![(Name::from("'a"), Ty::prop())], // 'a := prop
+            type_inst_single("'a", Ty::prop()), // 'a := prop
             vec![c1, c2],
             expected,
         );
@@ -1406,7 +1413,7 @@ mod tests {
         let result = crate::theorem_builder::axiom_theorem(
             &ctx, theory.logic_basis().unwrap(),
             Name::from("test_ax"),
-            vec![(Name::from("prop"), Ty::prop())], // "prop" is concrete, not a tvar
+            type_inst_single("prop", Ty::prop()), // "prop" is concrete, not a tvar
             vec![],
             RawTerm::const_("P", Ty::prop()),
         );
@@ -1660,6 +1667,7 @@ mod definition_tests {
 mod axiom_dep_tests {
     use super::*;
     use crate::{AxiomSchema, LogicBasis};
+    use crate::logic::{TypeInstantiation, TypeVarId};
 
     #[test]
     fn axiom_rejects_cross_paired_basis_schema() {
@@ -1829,7 +1837,7 @@ mod axiom_dep_tests {
         let ctx_a = ProofContext::new(theory_a.snapshot().clone());
         let ax_thm = theorem_builder::axiom_theorem(
             &ctx_a, &basis, Name::from("ax"),
-            vec![], vec![],
+            TypeInstantiation::empty(), vec![],
             RawTerm::Const {
                 name: Name::from("P"), ty: Ty::prop(),
             },
@@ -1860,7 +1868,7 @@ mod axiom_dep_tests {
         let ctx_with = ProofContext::new(theory_with.snapshot().clone());
         let ax_thm = theorem_builder::axiom_theorem(
             &ctx_with, &basis, Name::from("ax"),
-            vec![], vec![],
+            TypeInstantiation::empty(), vec![],
             RawTerm::Const {
                 name: Name::from("P"), ty: Ty::prop(),
             },
@@ -1873,7 +1881,7 @@ mod axiom_dep_tests {
         let ctx_no = ProofContext::new(theory_no.snapshot().clone());
         let ax_thm2 = theorem_builder::axiom_theorem(
             &ctx_no, &basis, Name::from("ax"),
-            vec![], vec![],
+            TypeInstantiation::empty(), vec![],
             RawTerm::Const {
                 name: Name::from("P"), ty: Ty::prop(),
             },

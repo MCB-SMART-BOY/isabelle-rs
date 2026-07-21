@@ -8,7 +8,7 @@ pub fn axiom_theorem(
     ctx: &ProofContext,
     basis: &super::LogicBasis,
     axiom_name: Name,
-    type_inst: Vec<(Name, Ty)>,
+    type_inst: crate::logic::TypeInstantiation,
     term_inst: Vec<CTerm>,
     prop_term: RawTerm,
 ) -> Result<KernelThm, KernelError> {
