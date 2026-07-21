@@ -186,14 +186,14 @@ fn elaborate_expr(expr: &SourceExpr, ctx: &ProofContext) -> Result<RawTerm, Elab
             match ctx.signature().get_const(&kname) {
                 Some(ConstScheme::Monomorphic(ty)) => {
                     return Ok(RawTerm::const_(kname, ty.clone()));
-                }
+                },
                 Some(ConstScheme::Polymorphic(_)) => {
                     return Err(ElaborationError::CannotInferPolymorphicInstance {
                         name: kname,
                         span: *span,
                     });
-                }
-                None => { /* fall through to free-variable check */ }
+                },
+                None => { /* fall through to free-variable check */ },
             }
             // Try free variable
             if let Some(declared_ty) = ctx.free_type(&kname) {
@@ -254,13 +254,13 @@ fn elaborate_expr(expr: &SourceExpr, ctx: &ProofContext) -> Result<RawTerm, Elab
                         name: kname,
                         span: *span,
                     });
-                }
+                },
                 None => {
                     return Err(ElaborationError::UnresolvedName {
                         spelling: syntax.spelling.clone(),
                         span: syntax.span,
-                    })
-                }
+                    });
+                },
             };
             let mut result = RawTerm::const_(kname, declared_ty.clone());
             for arg in arguments {
@@ -376,10 +376,7 @@ mod tests {
             }],
             Ty::arrow(
                 Ty::tvar("'a", 0, crate::kernel::Sort::typ()),
-                Ty::arrow(
-                    Ty::tvar("'a", 0, crate::kernel::Sort::typ()),
-                    Ty::base("bool").unwrap(),
-                ),
+                Ty::arrow(Ty::tvar("'a", 0, crate::kernel::Sort::typ()), Ty::base("bool").unwrap()),
             ),
         )
         .unwrap();

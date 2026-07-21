@@ -174,7 +174,8 @@ pub fn hol_basis() -> LogicBasis {
                 },
             },
         ],
-    ).unwrap()
+    )
+    .unwrap()
 }
 
 #[cfg(test)]
@@ -193,7 +194,10 @@ mod tests {
                 "HOL.eq",
                 Ty::arrow(
                     Ty::tvar("alpha", 0, crate::kernel::Sort::typ()),
-                    Ty::arrow(Ty::tvar("alpha", 0, crate::kernel::Sort::typ()), Ty::base("bool").unwrap()),
+                    Ty::arrow(
+                        Ty::tvar("alpha", 0, crate::kernel::Sort::typ()),
+                        Ty::base("bool").unwrap(),
+                    ),
                 ),
             )
             .unwrap();

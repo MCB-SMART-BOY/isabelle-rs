@@ -2,8 +2,9 @@
 
 use crate::kernel::{
     KernelError, KernelRules, Name, ProofContext, RawTerm, TrustedTheorem, TrustedTheory, Ty,
-    accept_closed_theorem, theorem_builder,
+    accept_closed_theorem,
     logic::{TypeInstantiation, TypeVarId},
+    theorem_builder,
 };
 
 pub fn define_true(
