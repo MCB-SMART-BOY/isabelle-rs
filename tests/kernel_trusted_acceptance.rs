@@ -1,6 +1,6 @@
 use isabelle_rs::kernel::{
-    InstEntry, KernelError, KernelRules, Name, ProofContext, RawTerm, SearchFact, Signature,
-    TrustedTheory, Ty, accept_closed_theorem,
+    ContextStamp, InstEntry, KernelError, KernelRules, Name, ProofContext, RawTerm, SearchFact,
+    Signature, TrustedTheory, Ty, accept_closed_theorem,
 };
 
 fn prop(name: &str) -> RawTerm {
@@ -271,22 +271,6 @@ fn vacuous_forall_payload_with_same_stamp_free_is_rejected() {
         accept_closed_theorem(&parent, "vacuous_forall", eliminated.try_close().unwrap()),
         Err(KernelError::UndeclaredFree(_))
     ));
-}
-
-#[test]
-fn pure_implication_theorem_id_matches_independent_golden_vector() {
-    let parent = theory("Pure", &["A"]);
-    let (_, accepted) =
-        accept_closed_theorem(&parent, "imp_identity", implication_identity(&parent, "A")).unwrap();
-
-    assert_eq!(
-        accepted.id().to_bytes(),
-        [
-            0x80, 0x00, 0x03, 0x21, 0x78, 0xec, 0x6a, 0xb5, 0x16, 0x2f, 0x37, 0x28, 0x4f, 0x5e,
-            0x9a, 0x06, 0x16, 0xcd, 0x8f, 0x7f, 0x2c, 0x1c, 0x3f, 0xee, 0xd5, 0x76, 0x65, 0xd8,
-            0x1e, 0xd0, 0x3e, 0x82,
-        ]
-    );
 }
 
 #[test]

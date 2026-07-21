@@ -1,8 +1,10 @@
 //! HOL definitions and theorems through the new kernel acceptance pipeline.
 
 use crate::kernel::{
-    ClosedThm, Derivation, KernelError, KernelRules, Name, ProofContext, RawTerm, Signature,
-    TrustedTheorem, TrustedTheory, Ty, accept_closed_theorem, theorem_builder,
+    KernelError, KernelRules, Name, ProofContext, RawTerm, TrustedTheorem, TrustedTheory, Ty,
+    accept_closed_theorem,
+    logic::{TypeInstantiation, TypeVarId},
+    theorem_builder,
 };
 
 pub fn define_true(
@@ -16,15 +18,8 @@ pub fn define_true(
         let id_abs = RawTerm::abs(Name::from("x"), bool_ty.clone(), RawTerm::bound(0));
         RawTerm::app(RawTerm::app(hol_eq, id_abs.clone()), id_abs)
     };
-    // Atomic extend_definition: freshness, closedness, DefineConst extension
-    let (theory, rhs) = theory.extend_definition(Name::from("HOL.True"), rhs_raw.clone())?;
-
-    let ctx = ProofContext::new(theory.snapshot().clone());
-    let rhs_child = ctx.certify_term(rhs_raw.clone())?;
-    let def_thm =
-        theorem_builder::definition_theorem(&ctx, Name::from("HOL.True"), rhs_child, rhs_raw)?;
-    let closed = theorem_builder::close_thm(def_thm)?;
-    accept_closed_theorem(&theory, "True_def", closed)
+    // Atomic define_const: produces certificate, extends theory, accepts theorem
+    theory.define_const(Name::from("HOL.True"), rhs_raw)
 }
 
 pub fn prove_true_i(
@@ -63,7 +58,11 @@ pub fn prove_true_i(
         &ctx,
         basis,
         Name::from("HOL.refl"),
-        vec![(Name::from("'a"), id_ty.clone())],
+        {
+            let mut bindings = std::collections::BTreeMap::new();
+            bindings.insert(TypeVarId::new("'a", 0), id_ty.clone());
+            TypeInstantiation::try_new(bindings).unwrap()
+        },
         vec![id_cterm],
         rhs_prop,
     )?;
@@ -102,7 +101,7 @@ mod tests {
         let basis = hol_basis();
         let theory = TrustedTheory::with_basis("HOL", sig, &basis).unwrap();
         match define_true(&theory) {
-            Ok((_child, token)) => assert_eq!(token.name().as_str(), "True_def"),
+            Ok((_child, token)) => assert_eq!(token.name().as_str(), "HOL.True_def"),
             Err(e) => panic!("define_true: {e:?}"),
         }
     }

@@ -11,6 +11,8 @@ pub mod identity;
 pub mod invariant;
 pub mod logic;
 pub mod name;
+#[cfg(test)]
+mod reference;
 pub mod rules;
 pub mod search_fact;
 pub mod signature;
@@ -25,21 +27,74 @@ pub use context::{ProofContext, ProofObligation};
 pub use cterm::{CProp, CTerm, InstEntry};
 pub use derivation::Derivation;
 pub use identity::{ContextStamp, SignatureId, TheoryId};
-pub use logic::{AxiomDependencyId, AxiomSchema, AxiomSchemaId, BasisDeclaration, LogicBasis, LogicBasisId, PolyType};
+pub use logic::{
+    AxiomDependencyId, AxiomSchema, AxiomSchemaId, BasisDeclaration, LogicBasis, LogicBasisId,
+    PolyType, PolyTypeParam, TypeInstantiation, TypeVarId,
+};
 pub use name::Name;
 pub use rules::KernelRules;
 pub use search_fact::{SearchFact, SearchFactDb};
-pub use signature::Signature;
+pub use signature::{ConstScheme, Signature};
 pub use term::{RawTerm, Term};
 pub use theory::{
-    DependencyKind, DependencySet, TheoremId, TheorySnapshot, TrustedTheorem, TrustedTheory,
-    accept_closed_theorem,
+    DefinitionId, DependencyKind, DependencySet, TheoremId, TheorySnapshot, TrustedTheorem,
+    TrustedTheory, accept_closed_theorem,
 };
 pub use thm::{ClosedThm, KernelThm, OpenThm};
-pub use typ::Ty;
 pub use typ::Sort;
+pub use typ::Ty;
 
 use thiserror::Error;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DefinitionCertificateError {
+    /// The certificate's ID does not match the recomputed ID from its payload fields.
+    IdMismatch { stored: DefinitionId, recomputed: DefinitionId },
+    /// The certificate's parent field does not match the expected parent theory.
+    ParentMismatch { stored: TheoryId, expected: TheoryId },
+    /// The RHS references the constant being defined (self-reference).
+    SelfReference { name: Name },
+    /// The RHS contains free variables (must be closed).
+    RhsNotClosed { name: Name },
+    /// The RHS type does not match the declared type.
+    RhsTypeMismatch { name: Name, declared: Ty, actual: Ty },
+    /// The declared type contains type variables; definitions must be fully concrete.
+    NonConcreteDeclaredType { name: Name, ty: Ty },
+}
+
+impl std::fmt::Display for DefinitionCertificateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::IdMismatch { stored, recomputed } => {
+                write!(
+                    f,
+                    "definition certificate id mismatch: stored {stored:?} != recomputed {recomputed:?}"
+                )
+            },
+            Self::ParentMismatch { stored, expected } => {
+                write!(
+                    f,
+                    "definition certificate parent mismatch: stored {stored:?} != expected {expected:?}"
+                )
+            },
+            Self::SelfReference { name } => {
+                write!(f, "definition RHS for `{name}` references itself")
+            },
+            Self::RhsNotClosed { name } => {
+                write!(f, "definition RHS for `{name}` is not closed")
+            },
+            Self::RhsTypeMismatch { name, declared, actual } => {
+                write!(
+                    f,
+                    "definition RHS type mismatch for `{name}`: declared {declared:?}, actual {actual:?}"
+                )
+            },
+            Self::NonConcreteDeclaredType { name, ty } => {
+                write!(f, "definition {name:?} has non-concrete declared type {ty:?}")
+            },
+        }
+    }
+}
 
 /// Errors from the strict kernel nucleus.
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -135,4 +190,12 @@ pub enum KernelError {
              rule has `{rule_var:?}`, goal has `{goal_var:?}`"
     )]
     RequiresLifting { rule_var: Name, goal_var: Name },
+    #[error("definition certificate error: {0}")]
+    DefinitionCertificate(DefinitionCertificateError),
+}
+
+impl From<DefinitionCertificateError> for KernelError {
+    fn from(err: DefinitionCertificateError) -> Self {
+        KernelError::DefinitionCertificate(err)
+    }
 }

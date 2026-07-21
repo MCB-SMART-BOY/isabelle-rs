@@ -138,8 +138,8 @@ pub(crate) fn prop_from_term(term: Term, context: ContextStamp) -> CProp {
 #[cfg(test)]
 mod tests {
     use crate::{
-        CProp, Derivation, InstEntry, KernelError, KernelRules, KernelThm, Name, ProofContext,
-        RawTerm, Signature, Term, TheorySnapshot, Ty, invariant::check_kernel_thm,
+        CProp, Derivation, InstEntry, KernelError, KernelRules, KernelThm, ProofContext, RawTerm,
+        Signature, Term, TheorySnapshot, Ty, invariant::check_kernel_thm,
     };
 
     #[test]
@@ -285,10 +285,7 @@ mod tests {
         let bad_prop = crate::CProp::from_checked_term(
             crate::Term::mk_eq(
                 crate::Term::App {
-                    func: Box::new(crate::Term::Const {
-                        name: "g".into(),
-                        ty: fn_ty.clone(),
-                    }),
+                    func: Box::new(crate::Term::Const { name: "g".into(), ty: fn_ty.clone() }),
                     arg: Box::new(crate::Term::Const { name: "a".into(), ty: ty("nat") }),
                     ty: ty("nat"),
                 },
@@ -416,7 +413,7 @@ mod tests {
         let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
         ctx.declare_free("x", Ty::base("nat").unwrap());
 
-        let x_eq_x = ctx
+        let _x_eq_x = ctx
             .certify_prop(RawTerm::eq(
                 RawTerm::free("x", Ty::base("nat").unwrap()),
                 RawTerm::free("x", Ty::base("nat").unwrap()),
@@ -432,16 +429,8 @@ mod tests {
         // Tamper: use Var("x", 999, nat) instead of Var("x", 0, nat).
         let bad_prop = crate::CProp::from_checked_term(
             crate::Term::mk_eq(
-                crate::Term::Var {
-                    name: "x".into(),
-                    index: 999,
-                    ty: Ty::base("nat").unwrap(),
-                },
-                crate::Term::Var {
-                    name: "x".into(),
-                    index: 999,
-                    ty: Ty::base("nat").unwrap(),
-                },
+                crate::Term::Var { name: "x".into(), index: 999, ty: Ty::base("nat").unwrap() },
+                crate::Term::Var { name: "x".into(), index: 999, ty: Ty::base("nat").unwrap() },
             )
             .unwrap(),
             valid.context(),
@@ -467,10 +456,8 @@ mod tests {
         // Construct a CTerm containing Bound(0) — not possible through public
         // certification (ctx.certify_term rejects Bound), but an internal
         // kernel mistake could still produce one.
-        let bad_cterm = crate::CTerm::new(
-            crate::Term::Bound { index: 0, ty: ty("nat") },
-            ctx.stamp(),
-        );
+        let bad_cterm =
+            crate::CTerm::new(crate::Term::Bound { index: 0, ty: ty("nat") }, ctx.stamp());
         let entry = InstEntry::new("x", 0, ty("nat"), bad_cterm);
         let err = KernelRules::instantiate(&thm, &[entry]).unwrap_err();
         assert!(matches!(err, KernelError::BoundInSubstitution));

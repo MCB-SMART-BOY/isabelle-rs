@@ -18,8 +18,8 @@
 //! trusted-base assumption.
 
 use crate::kernel::{
-    BasisDeclaration, LogicBasis, Name, RawTerm, Ty,
-    logic::{AxiomSchema, PolyType},
+    BasisDeclaration, LogicBasis, Name, RawTerm, Sort, Ty,
+    logic::{AxiomSchema, PolyType, PolyTypeParam, TypeVarId},
 };
 
 /// The Isabelle/HOL logic basis.
@@ -27,7 +27,7 @@ use crate::kernel::{
 /// Use `HOL_BASIS.validate_against(&signature)` to check compatibility
 /// before installing the basis into a `TrustedTheory`.
 pub fn hol_basis() -> LogicBasis {
-    LogicBasis::new(
+    LogicBasis::try_new(
         vec![
             // ── Type constructors ──────────────────────────────────────
             BasisDeclaration::TypeConstructor { name: Name::from("bool"), arity: 0 },
@@ -41,7 +41,7 @@ pub fn hol_basis() -> LogicBasis {
             BasisDeclaration::Constant {
                 name: Name::from("HOL.eq"),
                 scheme: PolyType::new(
-                    vec![Name::from("'a")],
+                    vec![PolyTypeParam { id: TypeVarId::new("'a", 0), sort: Sort::typ() }],
                     Ty::arrow(
                         Ty::tvar("'a", 0, crate::kernel::Sort::typ()),
                         Ty::arrow(
@@ -49,7 +49,8 @@ pub fn hol_basis() -> LogicBasis {
                             Ty::base("bool").expect("bool type"),
                         ),
                     ),
-                ),
+                )
+                .expect("HOL.eq PolyType"),
             },
         ],
         vec![
@@ -174,6 +175,7 @@ pub fn hol_basis() -> LogicBasis {
             },
         ],
     )
+    .unwrap()
 }
 
 #[cfg(test)]
@@ -188,12 +190,16 @@ mod tests {
             .extend_const("HOL.Trueprop", Ty::arrow(Ty::base("bool").unwrap(), Ty::prop()))
             .unwrap();
         sig = sig
-            .extend_const(
+            .extend_const_scheme(
                 "HOL.eq",
-                Ty::arrow(
-                    Ty::base("'a").unwrap(),
-                    Ty::arrow(Ty::base("'a").unwrap(), Ty::base("bool").unwrap()),
-                ),
+                PolyType::new(
+                    vec![PolyTypeParam { id: TypeVarId::new("'a", 0), sort: Sort::typ() }],
+                    Ty::arrow(
+                        Ty::tvar("'a", 0, Sort::typ()),
+                        Ty::arrow(Ty::tvar("'a", 0, Sort::typ()), Ty::base("bool").unwrap()),
+                    ),
+                )
+                .expect("HOL.eq PolyType"),
             )
             .unwrap();
         let basis = hol_basis();
@@ -204,13 +210,13 @@ mod tests {
     fn hol_basis_id_is_stable() {
         let basis1 = hol_basis();
         let basis2 = hol_basis();
-        assert_eq!(basis1.id, basis2.id);
+        assert_eq!(basis1.id(), basis2.id());
     }
 
     #[test]
     fn hol_basis_contains_refl_and_subst() {
         let basis = hol_basis();
-        let names: Vec<&str> = basis.axioms.iter().map(|a| a.name.as_str()).collect();
+        let names: Vec<&str> = basis.axioms().iter().map(|a| a.name.as_str()).collect();
         assert!(names.contains(&"HOL.refl"));
         assert!(names.contains(&"HOL.subst"));
     }

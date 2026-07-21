@@ -34,10 +34,11 @@ open gaps:
 | Dual-entry axiom dependency (AxiomBasis + Axiom) | **Closed** | Single atomic `AxiomDependencyId::compute(basis_id, schema_id)` |
 | Polymorphic constant instance matching (always-true) | **Closed** | `is_monomorphic_instance_of` with `BTreeMap<TypeVarId,Ty>` + concrete check |
 
-Remaining open gaps:
-- `ConservativeDefinition` not certificate-backed (multi-source payload)
-- `PolyType.params` not authoritative
-- `Ty::base("'a")` not rejected
+**Closed (2026-07-22):**
+- `ConservativeDefinition` is certificate-backed (atomic `DefinitionId` in `TheoryExtension::DefineConst`, replay walks owner ancestry)
+- `PolyType::new` validates param sort consistency and requires every declared param appears in the body
+
+**Remaining open gaps:**
 - No production source->kernel bridge
 - `KernelTrustedClosed` still 0/125
 
@@ -261,9 +262,9 @@ trusted ancestry, recertifies its proposition into the descendant context, and
 adds its `TheoremId` to the replay-derived dependency set. Search facts carry
 no proof object and cannot manufacture this derivation.
 
-Replay still cannot validate object-logic axioms, conservative definitions, or
-an authorized Isabelle/HOL bootstrap root. Those derivations and certificates
-do not exist yet.
+Replay now validates conservative definitions via `DefinitionCertificate`
+found in owner ancestry. Object-logic axioms and an authorized Isabelle/HOL
+bootstrap root are not yet implemented.
 
 ## Bypass Audit
 

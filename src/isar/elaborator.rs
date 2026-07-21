@@ -16,7 +16,7 @@ use crate::isar::source_ast::{
     SourceBinder, SourceExpr, SourceId, SourceName, SourceProposition, SourceSpan, SourceSyntax,
     SourceType,
 };
-use crate::kernel::{CProp, KernelError, Name, ProofContext, RawTerm, Ty};
+use crate::kernel::{CProp, ConstScheme, KernelError, Name, ProofContext, RawTerm, Ty};
 
 /// Errors that can occur during source proposition elaboration.
 #[derive(Debug, Clone)]
@@ -29,6 +29,8 @@ pub enum ElaborationError {
     TypeAnnotationMismatch { expected: String, actual: String, span: SourceSpan },
     /// Internal elaboration failure (wraps kernel or other errors).
     ElaborationInternal(String),
+    /// A polymorphic constant was used without a type annotation to infer its instance.
+    CannotInferPolymorphicInstance { name: Name, span: SourceSpan },
 }
 
 impl std::fmt::Display for ElaborationError {
@@ -45,6 +47,9 @@ impl std::fmt::Display for ElaborationError {
             },
             Self::ElaborationInternal(msg) => {
                 write!(f, "elaboration internal error: {msg}")
+            },
+            Self::CannotInferPolymorphicInstance { name, span: _ } => {
+                write!(f, "cannot infer polymorphic instance for {name:?} without type annotation")
             },
         }
     }
@@ -178,8 +183,17 @@ fn elaborate_expr(expr: &SourceExpr, ctx: &ProofContext) -> Result<RawTerm, Elab
         SourceExpr::Name { name, span } => {
             let kname = source_name_to_kernel(name);
             // Try constant first
-            if let Some(declared_ty) = ctx.signature().const_type(&kname) {
-                return Ok(RawTerm::const_(kname, declared_ty.clone()));
+            match ctx.signature().get_const(&kname) {
+                Some(ConstScheme::Monomorphic(ty)) => {
+                    return Ok(RawTerm::const_(kname, ty.clone()));
+                },
+                Some(ConstScheme::Polymorphic(_)) => {
+                    return Err(ElaborationError::CannotInferPolymorphicInstance {
+                        name: kname,
+                        span: *span,
+                    });
+                },
+                None => { /* fall through to free-variable check */ },
             }
             // Try free variable
             if let Some(declared_ty) = ctx.free_type(&kname) {
@@ -233,12 +247,21 @@ fn elaborate_expr(expr: &SourceExpr, ctx: &ProofContext) -> Result<RawTerm, Elab
         },
         SourceExpr::SyntaxApplication { syntax, arguments, span } => {
             let kname = source_name_to_kernel(&SourceName { spelling: syntax.spelling.clone() });
-            let declared_ty = ctx.signature().const_type(&kname).ok_or_else(|| {
-                ElaborationError::UnresolvedName {
-                    spelling: syntax.spelling.clone(),
-                    span: syntax.span,
-                }
-            })?;
+            let declared_ty = match ctx.signature().get_const(&kname) {
+                Some(ConstScheme::Monomorphic(ty)) => ty.clone(),
+                Some(ConstScheme::Polymorphic(_)) => {
+                    return Err(ElaborationError::CannotInferPolymorphicInstance {
+                        name: kname,
+                        span: *span,
+                    });
+                },
+                None => {
+                    return Err(ElaborationError::UnresolvedName {
+                        spelling: syntax.spelling.clone(),
+                        span: syntax.span,
+                    });
+                },
+            };
             let mut result = RawTerm::const_(kname, declared_ty.clone());
             for arg in arguments {
                 let arg_term = elaborate_expr(arg, ctx)?;
@@ -279,12 +302,21 @@ mod tests {
             .extend_const(
                 "HOL.eq",
                 Ty::arrow(
-                    Ty::base("'a").unwrap(),
-                    Ty::arrow(Ty::base("'a").unwrap(), Ty::base("bool").unwrap()),
+                    Ty::tvar("alpha", 0, crate::kernel::Sort::typ()),
+                    Ty::arrow(
+                        Ty::tvar("alpha", 0, crate::kernel::Sort::typ()),
+                        Ty::base("bool").unwrap(),
+                    ),
                 ),
             )
             .unwrap()
-            .extend_const("P", Ty::arrow(Ty::base("'a").unwrap(), Ty::base("bool").unwrap()))
+            .extend_const(
+                "P",
+                Ty::arrow(
+                    Ty::tvar("alpha", 0, crate::kernel::Sort::typ()),
+                    Ty::base("bool").unwrap(),
+                ),
+            )
             .unwrap();
         let snapshot = TheorySnapshot::root("test", sig);
         ProofContext::new(snapshot)
@@ -333,5 +365,38 @@ mod tests {
         });
         let result = elaborate_proposition(&p, &ctx);
         assert!(matches!(result, Err(ElaborationError::TypeAnnotationMismatch { .. })));
+    }
+
+    fn make_polymorphic_context() -> ProofContext {
+        use crate::kernel::logic::{PolyType, PolyTypeParam};
+        let scheme = PolyType::new(
+            vec![PolyTypeParam {
+                id: crate::kernel::TypeVarId::new("'a", 0),
+                sort: crate::kernel::Sort::typ(),
+            }],
+            Ty::arrow(
+                Ty::tvar("'a", 0, crate::kernel::Sort::typ()),
+                Ty::arrow(Ty::tvar("'a", 0, crate::kernel::Sort::typ()), Ty::base("bool").unwrap()),
+            ),
+        )
+        .unwrap();
+        let sig = Signature::new()
+            .extend_const_scheme("HOL.eq", scheme)
+            .unwrap()
+            .extend_const("HOL.Trueprop", Ty::arrow(Ty::base("bool").unwrap(), Ty::prop()))
+            .unwrap();
+        let snapshot = TheorySnapshot::root("test_poly", sig);
+        ProofContext::new(snapshot)
+    }
+
+    #[test]
+    fn polymorphic_const_without_ascription_is_rejected() {
+        let ctx = make_polymorphic_context();
+        let p = prop(SourceExpr::Name { name: name("HOL.eq"), span: span() });
+        let result = elaborate_proposition(&p, &ctx);
+        assert!(
+            matches!(result, Err(ElaborationError::CannotInferPolymorphicInstance { .. })),
+            "must reject polymorphic constant without type annotation, got: {result:?}"
+        );
     }
 }

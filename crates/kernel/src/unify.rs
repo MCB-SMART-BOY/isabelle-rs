@@ -69,10 +69,7 @@ pub(crate) struct MatchBinding {
 /// // Target:  A ==> B    (concrete)
 /// // → binds ?P → A, ?Q → B
 /// ```
-pub(crate) fn match_terms(
-    pattern: &Term,
-    target: &Term,
-) -> Result<Vec<MatchBinding>, KernelError> {
+pub(crate) fn match_terms(pattern: &Term, target: &Term) -> Result<Vec<MatchBinding>, KernelError> {
     let mut bindings: HashMap<(Name, usize), MatchBinding> = HashMap::new();
     let mut stack: Vec<(Term, Term)> = vec![(pattern.clone(), target.clone())];
 

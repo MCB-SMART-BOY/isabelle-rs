@@ -3,6 +3,7 @@ use std::fmt;
 use sha2::{Digest, Sha256};
 
 use super::Name;
+use super::logic::LogicBasisId;
 
 // Canonical identity schema v1. Every tag, width, byte order, and field order
 // below is part of the persisted identity contract. Any byte-level encoding
@@ -80,6 +81,7 @@ impl TheoryId {
 pub struct ContextStamp {
     theory: TheoryId,
     signature: SignatureId,
+    logic_basis: Option<LogicBasisId>,
 }
 
 impl ContextStamp {
@@ -91,13 +93,32 @@ impl ContextStamp {
         self.signature
     }
 
-    pub(crate) fn new(theory: TheoryId, signature: SignatureId) -> Self {
-        Self { theory, signature }
+    pub fn logic_basis(self) -> Option<LogicBasisId> {
+        self.logic_basis
+    }
+
+    pub(crate) fn new(
+        theory: TheoryId,
+        signature: SignatureId,
+        logic_basis: Option<LogicBasisId>,
+    ) -> Self {
+        Self { theory, signature, logic_basis }
     }
 
     pub(crate) fn write_canonical(self, encoder: &mut CanonicalEncoder) {
         self.theory.write_canonical(encoder);
         self.signature.write_canonical(encoder);
+        // Include the logic basis so TheoremId commits to it.
+        // None is encoded as a 0-byte discriminator.
+        match self.logic_basis {
+            Some(basis) => {
+                encoder.write_u8(1);
+                basis.write_canonical(encoder);
+            },
+            None => {
+                encoder.write_u8(0);
+            },
+        }
     }
 }
 
@@ -118,6 +139,7 @@ impl fmt::Debug for ContextStamp {
         f.debug_struct("ContextStamp")
             .field("theory", &self.theory)
             .field("signature", &self.signature)
+            .field("logic_basis", &self.logic_basis)
             .finish()
     }
 }

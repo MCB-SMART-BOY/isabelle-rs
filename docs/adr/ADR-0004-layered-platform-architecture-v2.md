@@ -51,7 +51,7 @@ The platform is organized into four layers with strict dependency direction:
 
 ## Consequences
 
-- Layer 2 and 3 are blocked on completing Layer 1's `ConservativeDefinition` certificate and the first production `KernelTrustedClosed` theorem.
+- Layer 2 and 3 are blocked on the first production `KernelTrustedClosed` theorem. The `ConservativeDefinition` certificate is now complete.
 - Multi-logic support (G) requires `LogicId` in every identity type — this is forward-compatible with the current pure-HOL implementation.
 - The kernel->legacy conversion (`src/kernel/convert.rs`) is a migration adapter, not a permanent Layer 1 component.
 

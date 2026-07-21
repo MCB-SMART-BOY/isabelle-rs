@@ -1,6 +1,7 @@
 use super::{
-    CProp, CTerm, ContextStamp, Derivation, InstEntry, KernelError, KernelRules, KernelThm, ProofContext, RawTerm,
-    theory::{DependencySet, TrustedTheory},
+    CProp, CTerm, ContextStamp, Derivation, InstEntry, KernelError, KernelRules, KernelThm,
+    ProofContext, RawTerm,
+    theory::{DependencySet, TrustedTheory, validate_definition_certificate_in_parent},
 };
 
 /// Canonical result reconstructed by owner-parameterized accepting replay.
@@ -135,10 +136,17 @@ fn rebuild_premise(
     dependencies: &mut DependencySet,
     theorem: &KernelThm,
     logic_basis: Option<&super::LogicBasis>,
+    owner: Option<&TrustedTheory>,
 ) -> Result<KernelThm, KernelError> {
     validate_theorem_fields(expected, validator, theorem)?;
-    let replayed =
-        replay_derivation(expected, validator, dependencies, theorem.derivation(), logic_basis)?;
+    let replayed = replay_derivation(
+        expected,
+        validator,
+        dependencies,
+        theorem.derivation(),
+        logic_basis,
+        owner,
+    )?;
     if replayed.context() != theorem.context()
         || replayed.hyps() != theorem.hyps()
         || replayed.prop() != theorem.prop()
@@ -156,7 +164,7 @@ fn rebuild_premise(
 /// cannot construct a [`super::TrustedTheorem`].
 pub fn check_kernel_thm(theorem: &KernelThm) -> Result<(), KernelError> {
     let mut dependencies = DependencySet::empty();
-    rebuild_premise(theorem.context(), None, &mut dependencies, theorem, None)?;
+    rebuild_premise(theorem.context(), None, &mut dependencies, theorem, None, None)?;
     Ok(())
 }
 
@@ -175,6 +183,7 @@ pub(crate) fn replay_closed_theorem_in(
         &mut dependencies,
         theorem.as_kernel().derivation(),
         theory.logic_basis(),
+        Some(theory),
     )?;
     Ok(ReplayResult::from_kernel(replayed, dependencies))
 }
@@ -185,6 +194,7 @@ fn replay_derivation(
     dependencies: &mut DependencySet,
     derivation: &Derivation,
     logic_basis: Option<&super::LogicBasis>,
+    owner: Option<&TrustedTheory>,
 ) -> Result<KernelThm, KernelError> {
     match derivation {
         Derivation::TheoremRef { theorem } => {
@@ -210,28 +220,34 @@ fn replay_derivation(
         },
         Derivation::Symmetric { premise } => {
             require_same_context(expected, premise.context())?;
-            let premise = rebuild_premise(expected, validator, dependencies, premise, logic_basis)?;
+            let premise =
+                rebuild_premise(expected, validator, dependencies, premise, logic_basis, owner)?;
             KernelRules::symmetric(&premise)
         },
         Derivation::Transitive { left, right } => {
             require_same_context(expected, left.context())?;
             require_same_context(expected, right.context())?;
-            let left = rebuild_premise(expected, validator, dependencies, left, logic_basis)?;
-            let right = rebuild_premise(expected, validator, dependencies, right, logic_basis)?;
+            let left =
+                rebuild_premise(expected, validator, dependencies, left, logic_basis, owner)?;
+            let right =
+                rebuild_premise(expected, validator, dependencies, right, logic_basis, owner)?;
             KernelRules::transitive(&left, &right)
         },
         Derivation::ImpliesIntr { assumption, premise } => {
             require_same_context(expected, assumption.context())?;
             require_same_context(expected, premise.context())?;
             validate_cprop(expected, validator, assumption)?;
-            let premise = rebuild_premise(expected, validator, dependencies, premise, logic_basis)?;
+            let premise =
+                rebuild_premise(expected, validator, dependencies, premise, logic_basis, owner)?;
             KernelRules::implies_intr(assumption, &premise)
         },
         Derivation::ImpliesElim { major, minor } => {
             require_same_context(expected, major.context())?;
             require_same_context(expected, minor.context())?;
-            let major = rebuild_premise(expected, validator, dependencies, major, logic_basis)?;
-            let minor = rebuild_premise(expected, validator, dependencies, minor, logic_basis)?;
+            let major =
+                rebuild_premise(expected, validator, dependencies, major, logic_basis, owner)?;
+            let minor =
+                rebuild_premise(expected, validator, dependencies, minor, logic_basis, owner)?;
             KernelRules::implies_elim(&major, &minor)
         },
         Derivation::BetaConversion { redex } => {
@@ -242,47 +258,58 @@ fn replay_derivation(
             require_same_context(expected, variable.context())?;
             require_same_context(expected, premise.context())?;
             validate_cterm(expected, validator, variable)?;
-            let premise = rebuild_premise(expected, validator, dependencies, premise, logic_basis)?;
+            let premise =
+                rebuild_premise(expected, validator, dependencies, premise, logic_basis, owner)?;
             KernelRules::forall_intr(variable, &premise)
         },
         Derivation::ForallElim { forall, arg } => {
             require_same_context(expected, forall.context())?;
             require_same_context(expected, arg.context())?;
             validate_cterm(expected, validator, arg)?;
-            let forall = rebuild_premise(expected, validator, dependencies, forall, logic_basis)?;
+            let forall =
+                rebuild_premise(expected, validator, dependencies, forall, logic_basis, owner)?;
             KernelRules::forall_elim(&forall, arg)
         },
         Derivation::Combination { function, argument } => {
             require_same_context(expected, function.context())?;
             require_same_context(expected, argument.context())?;
-            let function = rebuild_premise(expected, validator, dependencies, function, logic_basis)?;
-            let argument = rebuild_premise(expected, validator, dependencies, argument, logic_basis)?;
+            let function =
+                rebuild_premise(expected, validator, dependencies, function, logic_basis, owner)?;
+            let argument =
+                rebuild_premise(expected, validator, dependencies, argument, logic_basis, owner)?;
             KernelRules::combination(&function, &argument)
         },
         Derivation::Abstraction { variable_name, variable_type, premise } => {
             require_same_context(expected, premise.context())?;
-            let premise = rebuild_premise(expected, validator, dependencies, premise, logic_basis)?;
+            let premise =
+                rebuild_premise(expected, validator, dependencies, premise, logic_basis, owner)?;
             KernelRules::abstraction(variable_name.clone(), variable_type.clone(), &premise)
         },
         Derivation::EqualIntr { left, right } => {
             require_same_context(expected, left.context())?;
             require_same_context(expected, right.context())?;
-            let left = rebuild_premise(expected, validator, dependencies, left, logic_basis)?;
-            let right = rebuild_premise(expected, validator, dependencies, right, logic_basis)?;
+            let left =
+                rebuild_premise(expected, validator, dependencies, left, logic_basis, owner)?;
+            let right =
+                rebuild_premise(expected, validator, dependencies, right, logic_basis, owner)?;
             KernelRules::equal_intr(&left, &right)
         },
         Derivation::EqualElim { equality, minor } => {
             require_same_context(expected, equality.context())?;
             require_same_context(expected, minor.context())?;
-            let equality = rebuild_premise(expected, validator, dependencies, equality, logic_basis)?;
-            let minor = rebuild_premise(expected, validator, dependencies, minor, logic_basis)?;
+            let equality =
+                rebuild_premise(expected, validator, dependencies, equality, logic_basis, owner)?;
+            let minor =
+                rebuild_premise(expected, validator, dependencies, minor, logic_basis, owner)?;
             KernelRules::equal_elim(&equality, &minor)
         },
         Derivation::SubstPremise { equality, goal_state, selected_subgoal_index } => {
             require_same_context(expected, equality.context())?;
             require_same_context(expected, goal_state.context())?;
-            let equality = rebuild_premise(expected, validator, dependencies, equality, logic_basis)?;
-            let goal_state = rebuild_premise(expected, validator, dependencies, goal_state, logic_basis)?;
+            let equality =
+                rebuild_premise(expected, validator, dependencies, equality, logic_basis, owner)?;
+            let goal_state =
+                rebuild_premise(expected, validator, dependencies, goal_state, logic_basis, owner)?;
             KernelRules::subst_premise(&equality, &goal_state, *selected_subgoal_index)
         },
         Derivation::Generalize { frees, start_index, premise } => {
@@ -292,7 +319,8 @@ fn replay_derivation(
             {
                 return Err(KernelError::UndeclaredFree(name.clone()));
             }
-            let premise = rebuild_premise(expected, validator, dependencies, premise, logic_basis)?;
+            let premise =
+                rebuild_premise(expected, validator, dependencies, premise, logic_basis, owner)?;
             let expected_start = premise.max_var_index().map_or(0, |index| index + 1);
             if expected_start != *start_index {
                 return Err(KernelError::Invariant(format!(
@@ -305,7 +333,8 @@ fn replay_derivation(
             require_same_context(expected, premise.context())?;
             preflight_substitution_contexts(expected, subst)?;
             validate_substitution(expected, validator, subst)?;
-            let premise = rebuild_premise(expected, validator, dependencies, premise, logic_basis)?;
+            let premise =
+                rebuild_premise(expected, validator, dependencies, premise, logic_basis, owner)?;
             KernelRules::instantiate(&premise, subst)
         },
         Derivation::Resolve1Match { rule, goal_state, selected_subgoal_index, subst } => {
@@ -313,8 +342,10 @@ fn replay_derivation(
             require_same_context(expected, goal_state.context())?;
             preflight_substitution_contexts(expected, subst)?;
             validate_substitution(expected, validator, subst)?;
-            let rule = rebuild_premise(expected, validator, dependencies, rule, logic_basis)?;
-            let goal_state = rebuild_premise(expected, validator, dependencies, goal_state, logic_basis)?;
+            let rule =
+                rebuild_premise(expected, validator, dependencies, rule, logic_basis, owner)?;
+            let goal_state =
+                rebuild_premise(expected, validator, dependencies, goal_state, logic_basis, owner)?;
             let expected_subst = KernelRules::match_terms_certified(
                 &rule.prop().term().dest_imp_chain().1,
                 &goal_state.prop().term().select_subgoal(*selected_subgoal_index).ok_or_else(
@@ -335,21 +366,22 @@ fn replay_derivation(
 
         Derivation::AxiomInstance { axiom_name, type_inst, term_inst } => {
             let ctx = validator.ok_or(KernelError::UnsupportedAcceptanceDerivation)?;
-            let basis = logic_basis.ok_or_else(|| KernelError::Invariant(
-                "AxiomInstance requires an installed logic basis".into(),
-            ))?;
+            let basis = logic_basis.ok_or_else(|| {
+                KernelError::Invariant("AxiomInstance requires an installed logic basis".into())
+            })?;
             // Look up the axiom schema FROM THE BASIS (not from derivation)
-            let schema = basis.get_axiom(axiom_name)
-                .ok_or_else(|| KernelError::Invariant(
+            let schema = basis.get_axiom(axiom_name).ok_or_else(|| {
+                KernelError::Invariant(
                     format!("axiom `{axiom_name}` not found in installed logic basis").into(),
-                ))?;
+                )
+            })?;
             // Independently reconstruct: type subst → instantiate binders
             let typed = crate::term::subst_types(&schema.prop, type_inst)?;
             let body = crate::term::instantiate_schema_binders(&typed, term_inst)?;
             // Certify the independently-reconstructed proposition
             let replayed_prop = ctx.certify_prop(body)?;
             let _schema_id = schema.id();
-            dependencies.insert_axiom(super::AxiomDependencyId::compute(basis.id, schema.id()));
+            dependencies.insert_axiom(super::AxiomDependencyId::compute(basis.id(), schema.id()));
             Ok(KernelThm::new(
                 Vec::new(),
                 replayed_prop,
@@ -361,67 +393,44 @@ fn replay_derivation(
             ))
         },
 
-        Derivation::ConservativeDefinition { const_name, rhs, rhs_raw, prop: stored_prop } => {
+        Derivation::ConservativeDefinition { definition: def_id } => {
             let ctx = validator.ok_or(KernelError::UnsupportedAcceptanceDerivation)?;
 
-            // 1. Verify const_name is declared in the owner's signature
-            let declared_ty = ctx
-                .signature()
-                .const_type(const_name)
-                .ok_or_else(|| KernelError::UndeclaredConst(const_name.clone()))?;
-
-            // 2. Verify rhs is a valid certified term in the owner context
-            let _ = ctx.validate_cterm(rhs)?;
-
-            // 3. Verify rhs type matches declared constant type
-            if &rhs.ty() != declared_ty {
-                return Err(KernelError::TypeMismatch {
-                    expected: declared_ty.clone(),
-                    actual: rhs.ty(),
-                });
-            }
-
-            // 4. Independently reconstruct: |- const_name == rhs
+            // 1. Walk the owner's extension chain to find the matching certificate
+            let owner = owner.ok_or(KernelError::UnsupportedAcceptanceDerivation)?;
+            let (certificate, parent_id) =
+                owner.find_definition_certificate(def_id).ok_or_else(|| {
+                    KernelError::Invariant(
+                        format!("definition {def_id:?} not found in owner theory ancestry").into(),
+                    )
+                })?;
+            // 2. Reuse the unified definition-certificate validator.
+            // The parent snapshot is the definition-installing node's parent,
+            // not owner's parent. find_definition_certificate returns the
+            // correct parent_id — look up the snapshot for it.
+            validate_definition_certificate_in_parent(
+                owner.snapshot().find_snapshot_by_id(parent_id).ok_or_else(|| {
+                    KernelError::Invariant("definition parent not in owner ancestry".into())
+                })?,
+                &certificate,
+            )?;
+            // 5. Independently reconstruct: |- const_name == rhs
             let reconstructed = RawTerm::Eq {
                 lhs: Box::new(RawTerm::Const {
-                    name: const_name.clone(),
-                    ty: declared_ty.clone(),
+                    name: certificate.name.clone(),
+                    ty: certificate.declared_ty.clone(),
                 }),
-                rhs: Box::new(rhs_raw.clone()),
+                rhs: Box::new(certificate.rhs_raw.clone()),
             };
-            let replayed = ctx.certify_prop(reconstructed.clone())?;
+            let replayed = ctx.certify_prop(reconstructed)?;
 
-            // 5. Compare: stored prop must match independently-reconstructed prop
-            let stored = ctx.certify_prop(stored_prop.clone())?;
-            if replayed.term() != stored.term() {
-                return Err(KernelError::Invariant(
-                    "stored definition proposition does not match independently-reconstructed const == rhs".into(),
-                ));
-            }
-
-            // 6. Compute precise definition_id matching extend_definition encoding
-            use super::identity::CanonicalEncoder;
-            let parent_id = ctx.theory()
-                .parent()
-                .map(|p| p.id())
-                .unwrap_or_else(|| ctx.theory().id());
-            let mut encoder = CanonicalEncoder::new(b"isabelle-rs/define-const/v1");
-            parent_id.write_canonical(&mut encoder);
-            encoder.write_name(const_name);
-            declared_ty.write_canonical(&mut encoder);
-            rhs_raw.write_canonical(&mut encoder);
-            let computed_id = encoder.finish();
-            dependencies.insert_definition(computed_id);
+            // 6. Insert the definition dependency
+            dependencies.insert_definition(*def_id);
 
             Ok(KernelThm::new(
                 Vec::new(),
                 replayed,
-                Derivation::ConservativeDefinition {
-                    const_name: const_name.clone(),
-                    rhs: rhs.clone(),
-                    rhs_raw: rhs_raw.clone(),
-                    prop: reconstructed.clone(),
-                },
+                Derivation::ConservativeDefinition { definition: *def_id },
             ))
         },
     }

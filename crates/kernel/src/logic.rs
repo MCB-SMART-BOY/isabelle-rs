@@ -16,36 +16,155 @@
 use std::fmt;
 
 use super::{KernelError, Name, RawTerm, Signature, Ty, identity::CanonicalEncoder};
+use crate::Sort;
+use crate::signature::ConstScheme;
+use std::collections::BTreeMap;
 
 // ── PolyType ──────────────────────────────────────────────────────────
+
+/// A type-variable identity carrying a sort.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TypeVarId {
+    pub name: Name,
+    pub index: u32,
+}
+
+impl TypeVarId {
+    pub fn new(name: impl Into<Name>, index: u32) -> Self {
+        TypeVarId { name: name.into(), index }
+    }
+}
+
+/// One parameter of a polymorphic type scheme.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct PolyTypeParam {
+    pub id: TypeVarId,
+    pub sort: Sort,
+}
+
+impl PolyTypeParam {
+    #[allow(dead_code)] // part of public API for external users
+    pub(crate) fn typ(id: TypeVarId) -> Self {
+        Self { id, sort: Sort::typ() }
+    }
+}
+
+/// A monomorphic instantiation of a polymorphic scheme.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TypeInstantiation {
+    bindings: BTreeMap<TypeVarId, Ty>,
+}
+
+impl TypeInstantiation {
+    pub fn empty() -> Self {
+        TypeInstantiation { bindings: BTreeMap::new() }
+    }
+
+    pub fn try_new(bindings: BTreeMap<TypeVarId, Ty>) -> Result<Self, KernelError> {
+        for (id, ty) in &bindings {
+            if ty.has_type_vars() {
+                return Err(KernelError::Invariant(
+                    format!("non-concrete replacement for {:?}: {:?}", id, ty).into(),
+                ));
+            }
+        }
+        Ok(TypeInstantiation { bindings })
+    }
+
+    pub fn get(&self, id: &TypeVarId) -> Option<&Ty> {
+        self.bindings.get(id)
+    }
+    pub fn iter(&self) -> impl Iterator<Item = (&TypeVarId, &Ty)> {
+        self.bindings.iter()
+    }
+}
 
 /// A polymorphic type scheme: `forall 'a 'b ... . body`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct PolyType {
-    /// Type variable binders (e.g. `['a, 'b]`).
-    pub params: Vec<Name>,
+    params: Box<[PolyTypeParam]>,
     /// The body type, which may reference the bound variables.
-    pub body: Ty,
+    body: Ty,
 }
 
 impl PolyType {
-    pub fn new(params: Vec<Name>, body: Ty) -> Self {
-        PolyType { params, body }
+    pub fn new(params: Vec<PolyTypeParam>, body: Ty) -> Result<Self, KernelError> {
+        // Check for duplicate params
+        let mut seen: std::collections::HashSet<TypeVarId> = std::collections::HashSet::new();
+        for p in &params {
+            if !seen.insert(p.id.clone()) {
+                return Err(KernelError::Invariant(
+                    format!("duplicate type variable parameter {:?}", p.id).into(),
+                ));
+            }
+        }
+        // Check that all free type variables in body are bound in params
+        // and that their sorts match the declared param sort.
+        let mut body_vars: Vec<(Name, usize, Sort)> = Vec::new();
+        body.for_each_type_var(&mut |name, index, sort| {
+            if !body_vars.iter().any(|(n, i, _)| n == name && *i == index) {
+                body_vars.push((name.clone(), index, sort.clone()));
+            }
+        });
+        let param_map: std::collections::HashMap<TypeVarId, &PolyTypeParam> =
+            params.iter().map(|p| (p.id.clone(), p)).collect();
+        for (name, index, sort) in &body_vars {
+            let id = TypeVarId::new(name.clone(), *index as u32);
+            match param_map.get(&id) {
+                Some(param) => {
+                    if param.sort != *sort {
+                        return Err(KernelError::Invariant(
+                            format!("type variable `{name}` index {index}: body sort {sort:?} != declared sort {:?}", param.sort).into(),
+                        ));
+                    }
+                },
+                None => {
+                    return Err(KernelError::Invariant(
+                        format!("free type variable {id:?} in body not bound in params").into(),
+                    ));
+                },
+            }
+        }
+        // Every declared param must appear in the body
+        let used_ids: std::collections::HashSet<TypeVarId> =
+            body_vars.iter().map(|(n, i, _)| TypeVarId::new(n.clone(), *i as u32)).collect();
+        for p in &params {
+            if !used_ids.contains(&p.id) {
+                return Err(KernelError::Invariant(
+                    format!("type variable parameter {:?} does not appear in body", p.id).into(),
+                ));
+            }
+        }
+        Ok(PolyType { params: params.into_boxed_slice(), body })
+    }
+
+    pub fn params(&self) -> &[PolyTypeParam] {
+        &self.params
+    }
+    pub fn body(&self) -> &Ty {
+        &self.body
     }
 
     /// Check whether a monomorphic type is a valid instance of this scheme.
-    /// Currently accepts any type — full polymorphic checking requires a
-    /// substitution engine (deferred to Phase 4).
-    pub fn monomorphic_instance_matches(&self, instance: &Ty) -> bool {
-        self.body.is_monomorphic_instance_of(instance)
+    pub fn monomorphic_instance_matches(&self, instance: &Ty) -> Option<TypeInstantiation> {
+        let inst = self.body().is_monomorphic_instance_of(instance)?;
+        // Verify all instantiated variables are declared in params
+        for (tvid, _) in inst.iter() {
+            if !self.params().iter().any(|p| p.id == *tvid) {
+                return None;
+            }
+        }
+        Some(inst)
     }
 
     pub(crate) fn write_canonical(&self, encoder: &mut CanonicalEncoder) {
-        encoder.write_u64(self.params.len() as u64);
-        for param in &self.params {
-            encoder.write_name(param);
+        encoder.write_u64(self.params().len() as u64);
+        for param in self.params() {
+            encoder.write_name(&param.id.name);
+            encoder.write_u64(param.id.index as u64);
+            encoder.write_name(param.sort.name()); // Sort is a Name newtype
         }
-        self.body.write_canonical(encoder);
+        self.body().write_canonical(encoder);
     }
 }
 
@@ -90,9 +209,14 @@ impl BasisDeclaration {
 ///
 /// The proposition may contain schematic type and term variables. These are
 /// instantiated when the axiom is used in a derivation (`Derivation::AxiomInstance`).
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct AxiomSchemaId(pub(crate) [u8; 32]);
 
-impl AxiomSchemaId { pub fn to_bytes(self) -> [u8; 32] { self.0 } }
+impl AxiomSchemaId {
+    pub fn to_bytes(self) -> [u8; 32] {
+        self.0
+    }
+}
 
 impl fmt::Debug for AxiomSchemaId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -122,7 +246,6 @@ impl AxiomSchema {
     }
 }
 
-
 /// Content-addressed pairing of a specific logic basis with a specific axiom schema.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AxiomDependencyId([u8; 32]);
@@ -134,7 +257,9 @@ impl AxiomDependencyId {
         encoder.write_fixed_bytes(&schema_id.to_bytes());
         Self(encoder.finish())
     }
-    pub fn to_bytes(self) -> [u8; 32] { self.0 }
+    pub fn to_bytes(self) -> [u8; 32] {
+        self.0
+    }
 }
 
 impl fmt::Debug for AxiomDependencyId {
@@ -172,10 +297,7 @@ impl LogicBasisId {
     }
 
     /// Compute the identity digest from declarations and axioms.
-    pub(crate) fn compute(
-        declarations: &[BasisDeclaration],
-        axioms: &[AxiomSchema],
-    ) -> Self {
+    pub(crate) fn compute(declarations: &[BasisDeclaration], axioms: &[AxiomSchema]) -> Self {
         let mut encoder = CanonicalEncoder::new(LOGIC_BASIS_DOMAIN);
         encoder.write_u64(declarations.len() as u64);
         for d in declarations {
@@ -204,21 +326,65 @@ impl fmt::Debug for LogicBasisId {
 /// instances and definition extensions.
 #[derive(Clone, Debug)]
 pub struct LogicBasis {
-    pub id: LogicBasisId,
-    pub declarations: Vec<BasisDeclaration>,
-    pub axioms: Vec<AxiomSchema>,
+    id: LogicBasisId,
+    declarations: Box<[BasisDeclaration]>,
+    axioms: Box<[AxiomSchema]>,
 }
 
 impl LogicBasis {
-    /// Create a new basis and compute its identity.
-    pub fn new(declarations: Vec<BasisDeclaration>, axioms: Vec<AxiomSchema>) -> Self {
+    pub fn try_new(
+        declarations: Vec<BasisDeclaration>,
+        axioms: Vec<AxiomSchema>,
+    ) -> Result<Self, KernelError> {
+        let mut seen = std::collections::HashSet::new();
+        for d in &declarations {
+            let name = match d {
+                BasisDeclaration::TypeConstructor { name, .. } => name,
+                BasisDeclaration::Judgment { const_name, .. } => const_name,
+                BasisDeclaration::Constant { name, .. } => name,
+            };
+            if !seen.insert(name.clone()) {
+                return Err(KernelError::Invariant(
+                    format!("duplicate basis declaration `{}`", name).into(),
+                ));
+            }
+        }
+        let mut ax_seen = std::collections::HashSet::new();
+        for a in &axioms {
+            if !ax_seen.insert(a.name.clone()) {
+                return Err(KernelError::Invariant(
+                    format!("duplicate axiom name `{}`", a.name).into(),
+                ));
+            }
+        }
         let id = LogicBasisId::compute(&declarations, &axioms);
-        LogicBasis { id, declarations, axioms }
+        Ok(LogicBasis {
+            id,
+            declarations: declarations.into_boxed_slice(),
+            axioms: axioms.into_boxed_slice(),
+        })
+    }
+
+    pub fn from_untrusted_snapshot(
+        declarations: Vec<BasisDeclaration>,
+        axioms: Vec<AxiomSchema>,
+    ) -> Result<Self, KernelError> {
+        Self::try_new(declarations, axioms)
+    }
+
+    pub fn id(&self) -> LogicBasisId {
+        self.id
+    }
+    pub fn declarations(&self) -> &[BasisDeclaration] {
+        &self.declarations
+    }
+    pub fn axioms(&self) -> &[AxiomSchema] {
+        &self.axioms
     }
 
     /// Validate that this basis's declarations are compatible with a signature.
     pub fn validate_against(&self, signature: &Signature) -> Result<(), KernelError> {
-        for decl in &self.declarations {
+        for decl in self.declarations() {
             match decl {
                 BasisDeclaration::TypeConstructor { name, arity: _ } => {
                     // Type constructors are not yet represented in Signature.
@@ -226,9 +392,15 @@ impl LogicBasis {
                     let _ = name;
                 },
                 BasisDeclaration::Judgment { const_name, ty } => {
+                    // Judgment operators must be monomorphic (no type variables).
                     let declared = signature
                         .const_type(const_name)
                         .ok_or_else(|| KernelError::UndeclaredConst(const_name.clone()))?;
+                    if !declared.is_concrete_type() {
+                        return Err(KernelError::Invariant(
+                            format!("judgment type for {const_name:?} must be monomorphic").into(),
+                        ));
+                    }
                     if declared != ty {
                         return Err(KernelError::TypeMismatch {
                             expected: ty.clone(),
@@ -237,14 +409,27 @@ impl LogicBasis {
                     }
                 },
                 BasisDeclaration::Constant { name, scheme } => {
-                    let declared = signature
-                        .const_type(name)
-                        .ok_or_else(|| KernelError::UndeclaredConst(name.clone()))?;
-                    if !scheme.monomorphic_instance_matches(declared) {
-                        return Err(KernelError::TypeMismatch {
-                            expected: Ty::prop(), // placeholder
-                            actual: declared.clone(),
-                        });
+                    match signature.get_const(name) {
+                        Some(ConstScheme::Monomorphic(ty)) => {
+                            if scheme.monomorphic_instance_matches(ty).is_none() {
+                                return Err(KernelError::TypeMismatch {
+                                    expected: Ty::prop(),
+                                    actual: ty.clone(),
+                                });
+                            }
+                        },
+                        Some(ConstScheme::Polymorphic(sig_scheme)) => {
+                            // Require exact scheme equality — same params and body.
+                            // This rejects mismatched type-variable names, indices,
+                            // and body types even when arities match.
+                            if scheme != sig_scheme {
+                                return Err(KernelError::TypeMismatch {
+                                    expected: Ty::prop(),
+                                    actual: Ty::prop(),
+                                });
+                            }
+                        },
+                        None => return Err(KernelError::UndeclaredConst(name.clone())),
                     }
                 },
             }
@@ -288,13 +473,14 @@ mod tests {
         sig = sig
             .extend_const("HOL.Trueprop", Ty::arrow(Ty::base("bool").unwrap(), Ty::prop()))
             .unwrap();
-        let basis = LogicBasis::new(
+        let basis = LogicBasis::try_new(
             vec![BasisDeclaration::Judgment {
                 const_name: Name::from("HOL.Trueprop"),
                 ty: Ty::arrow(Ty::base("nat").unwrap(), Ty::prop()), // wrong!
             }],
             vec![],
-        );
+        )
+        .unwrap();
         assert!(basis.validate_against(&sig).is_err());
     }
 
@@ -304,13 +490,81 @@ mod tests {
         sig = sig
             .extend_const("HOL.Trueprop", Ty::arrow(Ty::base("bool").unwrap(), Ty::prop()))
             .unwrap();
-        let basis = LogicBasis::new(
+        let basis = LogicBasis::try_new(
             vec![BasisDeclaration::Judgment {
                 const_name: Name::from("HOL.Trueprop"),
                 ty: Ty::arrow(Ty::base("bool").unwrap(), Ty::prop()),
             }],
             vec![],
-        );
+        )
+        .unwrap();
         assert!(basis.validate_against(&sig).is_ok());
+    }
+
+    #[test]
+    fn polymorphic_scheme_mismatch_is_rejected() {
+        // Declare eq in logic basis: 'a -> 'a -> prop
+        let basis_scheme = PolyType::new(
+            vec![PolyTypeParam { id: TypeVarId::new("'a", 0), sort: crate::Sort::typ() }],
+            Ty::arrow(
+                Ty::tvar("'a", 0, crate::Sort::typ()),
+                Ty::arrow(Ty::tvar("'a", 0, crate::Sort::typ()), Ty::prop()),
+            ),
+        )
+        .unwrap();
+        let basis = LogicBasis::try_new(
+            vec![BasisDeclaration::Constant {
+                name: Name::from("eq"),
+                scheme: basis_scheme.clone(),
+            }],
+            vec![],
+        )
+        .unwrap();
+
+        // Install a DIFFERENT scheme in the signature: 'b -> 'b -> prop
+        // Same arity (1 param), different body (uses 'b not 'a).
+        // Under the old param-count check, this would pass.
+        let sig_scheme = PolyType::new(
+            vec![PolyTypeParam { id: TypeVarId::new("'b", 0), sort: crate::Sort::typ() }],
+            Ty::arrow(
+                Ty::tvar("'b", 0, crate::Sort::typ()),
+                Ty::arrow(Ty::tvar("'b", 0, crate::Sort::typ()), Ty::prop()),
+            ),
+        )
+        .unwrap();
+        let sig = Signature::new().extend_const_scheme("eq", sig_scheme).unwrap();
+
+        // Must reject: 'a -> 'a -> prop != 'b -> 'b -> prop
+        assert!(
+            basis.validate_against(&sig).is_err(),
+            "must reject polymorphic scheme mismatch (different type-var names)"
+        );
+    }
+
+    #[test]
+    fn polymorphic_scheme_accepts_matching_sorts_and_rejects_mismatch() {
+        let params = vec![PolyTypeParam { id: TypeVarId::new("'a", 0), sort: Sort::typ() }];
+        // Matching sorts: accepted
+        let body_match = Ty::arrow(Ty::tvar("'a", 0, Sort::typ()), Ty::tvar("'a", 0, Sort::typ()));
+        assert!(
+            PolyType::new(params.clone(), body_match).is_ok(),
+            "matching sorts must be accepted"
+        );
+
+        // Mismatched sort: rejected
+        let body_mismatch = Ty::tvar("'a", 0, Sort::arbitrary("other"));
+        let result = PolyType::new(params, body_mismatch);
+        assert!(result.is_err(), "sort mismatch must be rejected, got: {result:?}");
+    }
+
+    #[test]
+    fn polymorphic_scheme_rejects_unused_param() {
+        let params = vec![
+            PolyTypeParam { id: TypeVarId::new("'a", 0), sort: Sort::typ() },
+            PolyTypeParam { id: TypeVarId::new("'b", 0), sort: Sort::typ() },
+        ];
+        // Body only uses 'a, not 'b
+        let body = Ty::tvar("'a", 0, Sort::typ());
+        assert!(PolyType::new(params, body).is_err(), "unused param must be rejected");
     }
 }
