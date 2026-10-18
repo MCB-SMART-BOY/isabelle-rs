@@ -86,7 +86,7 @@ pub fn source_workspace(root: &std::path::Path) -> (Value, String) {
     )
 }
 pub fn sha1_hex(bytes: &[u8]) -> String {
-    format!("{:x}", Sha1::digest(bytes))
+    base16ct::lower::encode_string(&Sha1::digest(bytes))
 }
 pub fn command(name: &str, source: &str, line: &str, offset: &str, files: Vec<Element>) -> Element {
     element(

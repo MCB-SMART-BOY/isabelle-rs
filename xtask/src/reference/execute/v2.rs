@@ -1,15 +1,23 @@
 //! The v2 path never reuses P0 launch, inputs, or publication semantics.
 use std::path::Path;
 
+#[cfg(target_os = "linux")]
 use serde_json::{Value, json};
 
+#[cfg(target_os = "linux")]
 use super::super::{approved_identity, artifacts, common, compare, instrumentation, prepare};
+#[cfg(target_os = "linux")]
 use super::{finalize, sandbox, validate};
-use crate::runner::{StepError, io_error};
+use crate::runner::StepError;
+#[cfg(target_os = "linux")]
+use crate::runner::io_error;
 
+#[cfg(target_os = "linux")]
 const SOURCE_LIMIT: u64 = 512 * 1024 * 1024;
+#[cfg(target_os = "linux")]
 const RECEIPT_LIMIT: u64 = 128 * 1024;
 
+#[cfg(target_os = "linux")]
 fn prepare_home(run: &Path, components: &str) -> Result<(), StepError> {
     let config = run.join("home/.isabelle/p0-reference/etc");
     prepare::ensure_directory(&config)?;
@@ -19,6 +27,7 @@ fn prepare_home(run: &Path, components: &str) -> Result<(), StepError> {
     prepare::ensure_directory(&run.join("inventory"))
 }
 
+#[cfg(target_os = "linux")]
 fn require_preapproved_build(
     build: &Path,
     workspace: &Path,
@@ -63,6 +72,7 @@ fn require_preapproved_build(
     )
 }
 
+#[cfg(target_os = "linux")]
 fn save_attestation(
     run: &Path,
     overlay: &instrumentation::Overlay,
@@ -87,6 +97,7 @@ fn save_attestation(
     )
 }
 
+#[cfg(target_os = "linux")]
 fn describe_mounts(run: &Path, operation: &str) -> Value {
     json!({"source_snapshot":{"path":run.join("fixed-source"),"guest":"/work/fixed-source","readonly":true},
         "session":{"path":run.join("session"),"guest":"/work/session","readonly":true,"phase":operation},
@@ -95,6 +106,39 @@ fn describe_mounts(run: &Path, operation: &str) -> Value {
         "heaps":{"guest":"/work/empty-system-heaps","readonly":true}})
 }
 
+#[cfg(not(target_os = "linux"))]
+pub fn execute_reference_v2(
+    _repository: &Path,
+    _workspace: &Path,
+    _operation: &str,
+    _build_run: Option<&Path>,
+    _preapproval_path: &Path,
+) -> Result<(), StepError> {
+    Err(StepError::Input(
+        "reference execution requires Linux cgroup v2 containment and sandbox isolation".into(),
+    ))
+}
+
+#[cfg(all(test, not(target_os = "linux")))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn execute_reference_v2_without_linux_containment_rejects_before_io() {
+        let error = execute_reference_v2(
+            Path::new("missing-repository"),
+            Path::new("missing-workspace"),
+            "build",
+            None,
+            Path::new("missing-preapproval"),
+        )
+        .unwrap_err();
+        assert!(matches!(error, StepError::Input(_)));
+        assert!(error.to_string().contains("Linux cgroup v2"));
+    }
+}
+
+#[cfg(target_os = "linux")]
 pub fn execute_reference_v2(
     repository: &Path,
     workspace: &Path,

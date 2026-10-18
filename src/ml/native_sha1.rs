@@ -55,7 +55,7 @@ impl Vm {
         original: &str,
     ) -> Result<NativeSha1Transformation, MlError> {
         self.check_stop()?;
-        let source_sha256 = format!("{:x}", Sha256::digest(original.as_bytes()));
+        let source_sha256 = base16ct::lower::encode_string(&Sha256::digest(original.as_bytes()));
         if source_sha256 != SHA1_SOURCE_SHA256 {
             return Err(sha1_error(
                 source_name,
@@ -83,7 +83,9 @@ impl Vm {
         );
         let identity = NativeSha1Transformation {
             source_sha256,
-            executable_sha256: format!("{:x}", Sha256::digest(executable.as_bytes())),
+            executable_sha256: base16ct::lower::encode_string(&Sha256::digest(
+                executable.as_bytes(),
+            )),
         };
         if identity.source_sha256 == identity.executable_sha256 {
             return Err(sha1_error(
@@ -107,7 +109,7 @@ fn sha1_digest_string(vm: &mut Vm, args: &[Value]) -> Result<Value, MlError> {
         digest.update(chunk);
     }
     vm.check_stop()?;
-    Ok(Value::text(format!("{:x}", digest.finalize())))
+    Ok(Value::text(base16ct::lower::encode_string(&digest.finalize())))
 }
 
 fn find_sha1_foreign_ranges(

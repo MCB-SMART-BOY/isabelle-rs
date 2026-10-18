@@ -1,3 +1,4 @@
+#[cfg(target_os = "linux")]
 mod cgroup;
 mod finalize;
 mod sandbox;

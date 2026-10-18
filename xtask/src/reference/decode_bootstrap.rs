@@ -51,7 +51,7 @@ fn bind_source(
 ) -> Result<Value, StepError> {
     let (relative, bytes) = read_fixed_file(path, root, "bootstrap source")?;
     require(
-        format!("{:x}", Sha1::digest(&bytes)) == sha1,
+        base16ct::lower::encode_string(&Sha1::digest(&bytes)) == sha1,
         format!("{relative}: bootstrap source SHA1 differs"),
     )?;
     let observations = reads.get(&relative).ok_or_else(|| {

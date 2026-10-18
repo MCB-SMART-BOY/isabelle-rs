@@ -80,10 +80,10 @@ fn source_graph_diamond_preserves_import_order_and_exact_bytes() {
     assert_eq!(root.parents, ["HOL.Left", "HOL.Right"]);
     assert_eq!(root.header.imports, ["Left", "Right"]);
     assert_eq!(root.bytes(), root.text().as_bytes());
-    assert_eq!(root.sha256, format!("{:x}", Sha256::digest(root.bytes())));
+    assert_eq!(root.sha256, base16ct::lower::encode_string(&Sha256::digest(root.bytes())));
     area.write("src/HOL/Root.thy", "theory Root begin\nchanged\n");
     assert_eq!(root.text(), "theory Root imports Left Right begin\nend\n");
-    assert_eq!(root.sha256, format!("{:x}", Sha256::digest(root.bytes())));
+    assert_eq!(root.sha256, base16ct::lower::encode_string(&Sha256::digest(root.bytes())));
 }
 
 #[test]
@@ -235,7 +235,7 @@ fn source_graph_fixed_source_smoke_is_live_and_unique() {
         assert!(names.contains(root));
     }
     for theory in graph.theories() {
-        assert_eq!(theory.sha256, format!("{:x}", Sha256::digest(theory.bytes())));
+        assert_eq!(theory.sha256, base16ct::lower::encode_string(&Sha256::digest(theory.bytes())));
         for parent in &theory.parents {
             assert!(names.contains(parent.as_str()));
         }

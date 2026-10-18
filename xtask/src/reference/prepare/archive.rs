@@ -94,7 +94,7 @@ fn hash_member(entry: &mut impl Read, name: &Path) -> Result<String, StepError> 
         }
         hasher.update(&buffer[..count]);
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(base16ct::lower::encode_string(&hasher.finalize()))
 }
 
 fn validate_member_links(members: &[Member]) -> Result<(), StepError> {

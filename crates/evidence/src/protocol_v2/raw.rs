@@ -112,7 +112,7 @@ pub(super) fn parse_frames(
             root_id,
             local_id,
             payload,
-            sha256: format!("{:x}", Sha256::digest(frame)),
+            sha256: base16ct::lower::encode_string(&Sha256::digest(frame)),
         });
     }
     Ok(frames)

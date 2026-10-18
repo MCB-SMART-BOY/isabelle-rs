@@ -251,7 +251,7 @@ fn resolve_source(root: &Path, relative: &Path) -> Result<PathBuf, DiagnosticErr
 }
 
 fn compute_source_hash(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    base16ct::lower::encode_string(&Sha256::digest(bytes))
 }
 
 fn make_entry(root: &Path, theory: &str, path: &Path) -> Result<SourceEntry, DiagnosticError> {

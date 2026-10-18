@@ -21,7 +21,7 @@ fn frame(parts: &[&[u8]]) -> Vec<u8> {
 #[test]
 fn decode_bootstrap_events_v2_completed_unsealed_load_stays_incomplete() {
     let source = b"real source bytes";
-    let digest = format!("{:x}", Sha256::digest(source));
+    let digest = base16ct::lower::encode_string(&Sha256::digest(source));
     let begin = fields(&[
         b"src/Pure/ML/ml_name_space.ML",
         b"ROOT0-host-use",
@@ -46,7 +46,7 @@ fn decode_bootstrap_events_v2_completed_unsealed_load_stays_incomplete() {
 #[test]
 fn decode_bootstrap_events_v2_actual_read_bytes_consumes_exact_source() {
     let source = b"real source bytes";
-    let digest = format!("{:x}", Sha256::digest(source));
+    let digest = base16ct::lower::encode_string(&Sha256::digest(source));
     let begin = fields(&[
         b"session/reference_observation.ML",
         b"",
@@ -79,7 +79,7 @@ fn decode_bootstrap_events_v2_actual_read_bytes_consumes_exact_source() {
 
 #[test]
 fn decode_bootstrap_events_v2_malformed_load_field_count_rejects() {
-    let digest = format!("{:x}", Sha256::digest(b"real source bytes"));
+    let digest = base16ct::lower::encode_string(&Sha256::digest(b"real source bytes"));
     let identity = json!({"build_run_id":"build","inventory_run_id":"inventory",
         "source_commit":"765fb2460a57eb46e8490283241ad46f1fac857f",
         "overlay_id":"overlay", "source_hashes":{"src/Pure/ML/ml_name_space.ML":digest}});
@@ -112,7 +112,7 @@ fn decode_bootstrap_events_v2_malformed_load_field_count_rejects() {
 
 #[test]
 fn decode_bootstrap_events_v2_duplicate_begin_rejects() {
-    let digest = format!("{:x}", Sha256::digest(b"real source bytes"));
+    let digest = base16ct::lower::encode_string(&Sha256::digest(b"real source bytes"));
     let identity = json!({"build_run_id":"build","inventory_run_id":"inventory",
         "source_commit":"765fb2460a57eb46e8490283241ad46f1fac857f",
         "overlay_id":"overlay", "source_hashes":{"src/Pure/ML/ml_name_space.ML":digest}});
@@ -140,7 +140,7 @@ fn decode_bootstrap_events_v2_duplicate_begin_rejects() {
 
 #[test]
 fn decode_bootstrap_events_v2_wrong_consumed_bytes_rejects() {
-    let digest = format!("{:x}", Sha256::digest(b"approved source bytes"));
+    let digest = base16ct::lower::encode_string(&Sha256::digest(b"approved source bytes"));
     let identity = json!({"build_run_id":"build","inventory_run_id":"inventory",
         "source_commit":"765fb2460a57eb46e8490283241ad46f1fac857f",
         "overlay_id":"overlay", "source_hashes":{"src/Pure/ML/ml_name_space.ML":digest}});
@@ -171,7 +171,7 @@ fn decode_bootstrap_events_v2_wrong_consumed_bytes_rejects() {
 #[test]
 fn decode_bootstrap_events_v2_empty_source_preserves_unsealed_load() {
     let source = b"";
-    let digest = format!("{:x}", Sha256::digest(source));
+    let digest = base16ct::lower::encode_string(&Sha256::digest(source));
     let payload =
         fields(&[b"src/Pure/empty.ML", b"", b"Pure", b"", b"1", b"actual_read_bytes", source]);
     let mut raw = frame(&[b"bootstrap", b"load_begin", b"build", b"empty", b"begin", &payload]);

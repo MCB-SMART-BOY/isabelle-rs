@@ -93,13 +93,22 @@ Pure 形式必须是 `!!P::prop. PROP P ==> PROP P` 配合 `by assumption`；
 `release-check` 使用版本检查加 `verify`，不再隐式运行 Tier 诊断。
 实施授权、局部行为通过、完整质量门与兼容验收是不同结论。
 
-2026-10-19 的工程修复已通过完整 `cargo +stable xtask verify`：
+前一轮（`700dea1`）2026-10-19 工程修复已通过完整 `cargo +stable xtask verify`：
 10 个项目步骤全部通过，workspace 测试汇总为 2508 passed、0 failed、
 9 个既有 ignored；严格 all-targets Clippy、`strict`、`selftest` 和 `core`
 也已通过。两个独立 fixture 与官方 `HOL.thy` 的 `TrueI` 窄投影经实际 CLI 接受。
 修复路径与证明边界见[工程修复记录](PROJECT_STATUS.md#engineering-quality-repair-2026-10-19)。
 全局门及提交资格按最终不变工作树的实际输出和验证戳单独验收；
 不把下方旧失败或本轮局部通过当作当前整树结论。
+
+随后开展的依赖升级和 GitHub CI 修复单独记录在
+[稳定依赖与 CI 修复](PROJECT_STATUS.md#stable-dependency-and-ci-repair-2026-10-19)：
+更新全部直接稳定版依赖，保留哈希身份、受检 SQLite 转换和完整安全门；
+worker 首次请求的双端哈希热点采用 `sha2` 包级优化，未放宽超时。
+不得用前一轮本地结果代替本轮最终树或原生 Windows/macOS CI 结果。
+本轮 `strict`、`core`、完整 `verify` 已通过：2512 passed、0 failed、
+9 个既有 ignored；真实 CLI 的两个 fixture 与官方 TrueI 投影均接受，
+采样可信计数仍为 1/125。远端与全局验证按该轮实际结果另行报告。
 
 以下为修复前的[原生自动化历史验证](PROJECT_STATUS.md#native-rust-automation-verification-2026-10-14)：
 

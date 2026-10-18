@@ -69,5 +69,5 @@ pub fn source_tree_sha256(root: &Path) -> Result<String, StepError> {
         hash.update((bytes.len() as u64).to_be_bytes());
         hash.update(bytes);
     }
-    Ok(format!("{:x}", hash.finalize()))
+    Ok(base16ct::lower::encode_string(&hash.finalize()))
 }

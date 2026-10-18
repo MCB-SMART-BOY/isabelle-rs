@@ -61,6 +61,60 @@ retains its historical scoped passes and full-project blockers. Official
 reference success did not resolve those blockers. Follow the
 [engineering workflow](../guides/DEVELOPMENT.md#engineering-workflow).
 
+### Stable dependency and CI repair (2026-10-19)
+
+本轮接续 `700dea1` 的工程交付，不把前一轮本地通过视为远端 CI 通过。
+已按 crates.io 官方索引核对原有 23 个直接 registry 依赖；9 项升级至
+最新非 yanked 稳定版，其余保留已是最新的版本。新增 `base16ct 1.0.0`
+后共 24 个直接依赖；Wasmtime 使用稳定 `49.0.3`，不采用 `50.0.0-rc.1`。
+锁文件仍含 Wasmtime/Cranelift 要求的传递 `sha2 0.10.9`，不是直接依赖漏升。
+固定 Isabelle2025 Gitlink、内核直接依赖集合和 accepted-token 规则不变。
+
+- SHA-1/SHA-256 的文本表示改为明确的 lowercase byte encoding，
+  不改输入、摘要字节、前导零或身份算法；`base16ct` 不进入 TCB。
+- `rusqlite` 启用 `fallible_uint`，沿用超出 SQLite 有符号范围时失败、
+  读取负时间戳时拒绝的行为，不改缓存 schema。
+- 升级后原有 LSP 两项和 Session 一项仍在首次请求时超时。
+  真实 `--compute-worker` probe 对约 278 MB debug 二进制测得
+  Hello 自哈希约 4932 ms，首次 Check 约 2 ms。保留父进程先哈希再启动、
+  子进程独立哈希及原超时，只对 dev/test 的 `sha2` 包启用优化；
+  无效的 CLI 分流改动已撤回。
+- reference 的 Linux 执行代码不再进入其他平台编译；Unix 离线导入
+  保留 descriptor-relative no-follow，非支持平台在导入前明确拒绝。
+- GitHub Actions 与扫描工具升级到核对过的稳定版，保留八个独立必需任务、
+  完整 `unmaintained`/`unsound` 审计范围和原有精确误报例外。
+  Linux namespace 预检及 AppArmor 单程序授权边界见
+  [开发流程](../guides/DEVELOPMENT.md#ci-release-and-submission)。
+- launcher 诊断使用启动前保留的文件描述符，防止 worker 把日志替换成
+  FIFO 或符号链接后阻塞父进程或诱导读取其他文件。
+
+本轮保留 `load_offline_identity` 的局部长度例外：只在已有长审批流程前
+增加平台拒绝，保持身份、路径、receipt 和预算检查顺序，不借 CI 修复扩大重构。
+
+本轮已执行的定向证据：
+- 真实 `--compute-worker` 完成匹配 executable hash 的 Hello 与 Check，
+  退出 0；约 279 MB debug 二进制的 Hello 为 359 ms，Check 再用 2 ms。
+  这是当前环境的单次 smoke，不是性能基准或资源隔离保证。
+- 原有 LSP 两项、Session/compute worker 三项全部通过；升级后的
+  codec/bootstrap/source-graph 与监督流程回归保留原功能断言。
+- 恢复完整 `unsound = "all"` 后，`cargo +stable deny check` 的
+  advisories、bans、licenses、sources 全部通过；传递重复版本仍报告 warning。
+- CI/release/composite YAML 解析和 namespace Shell 语法检查通过；
+  本地无 `actionlint`，不声称已运行该工具。
+- 修复后新增日志替换回归实际完成 FIFO／symlink 替换并通过；独立
+  correctness 与 security 审查的 findings 已关闭。
+- `cargo +stable xtask strict`、`core`、`verify` 全部退出 0。
+  `verify` 的十个步骤全部通过，workspace 汇总 2512 passed、
+  0 failed、9 个既有 ignored；包含 all-targets 严格 Clippy 与固定源码检查。
+- 真实 `isabelle-build` 接受 Pure identity、独立 HOL TrueI fixture
+  和官方 `HOL.thy` 的受审计 TrueI 投影；采样仍为
+  `KernelTrustedClosed: 1/125`、`TransitionalStrictClosed: 0/125`，
+  不是整个 HOL 理论构建成功。
+
+本地 Windows 交叉编译被缺少 MSVC `lib.exe` 阻断，不计作 Windows 通过。
+真实 solver 的清理前置阻塞、JVM-free 策略和原生 ROOT/HOL 兼容缺口均保留；
+依赖升级及 CI 通过不构成新的兼容验收。
+
 ### Engineering quality repair (2026-10-19)
 
 本轮根据明确授权修复提交前的工程阻塞；下方文案与权属调查的失败记录

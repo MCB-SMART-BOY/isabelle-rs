@@ -375,6 +375,10 @@ pub fn load_offline_identity(
     manifest_bytes: &[u8],
     remaining: &mut u64,
 ) -> Result<ApprovedObserverIdentity, StepError> {
+    common::require(
+        cfg!(unix),
+        "offline reference approval requires Unix descriptor-relative no-follow reads",
+    )?;
     let is_clean = |path: &Path| {
         path.is_absolute()
             && path

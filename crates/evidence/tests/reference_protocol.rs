@@ -31,7 +31,7 @@ const MISSING: [&str; 6] = [
 ];
 
 fn digest(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    base16ct::lower::encode_string(&Sha256::digest(bytes))
 }
 fn available(value: Value) -> Value {
     json!({"status":"Available","value":value,"evidence":"synthetic internal test input","completeness":"complete"})

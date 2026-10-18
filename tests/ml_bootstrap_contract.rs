@@ -146,8 +146,14 @@ fn root_prefix_original_directives_stop_at_context_without_skipping_suffix() {
     );
     assert_eq!(progress.next_ml_file, "src/Pure/context.ML");
     assert_eq!(progress.remaining_files, ["src/Pure/context.ML", "src/Pure/after.ML"]);
-    assert_eq!(progress.root0_sha256, format!("{:x}", Sha256::digest(root0.as_bytes())));
-    assert_eq!(progress.root_sha256, format!("{:x}", Sha256::digest(root.as_bytes())));
+    assert_eq!(
+        progress.root0_sha256,
+        base16ct::lower::encode_string(&Sha256::digest(root0.as_bytes()))
+    );
+    assert_eq!(
+        progress.root_sha256,
+        base16ct::lower::encode_string(&Sha256::digest(root.as_bytes()))
+    );
     assert!(vm.lookup_value("after").unwrap().is_none());
     bridge.complete().unwrap();
     lifecycle.begin_draining().unwrap();
@@ -294,7 +300,7 @@ fn native_sha1_bridge_sml_bytes_and_padding_boundaries_match_raw_bytes() {
         vec![b'x'; 64],
         vec![b'x'; 65],
     ] {
-        let expected = format!("{:x}", Sha1::digest(&bytes));
+        let expected = base16ct::lower::encode_string(&Sha1::digest(&bytes));
         let result = vm.apply(&function, &[Value::bytes(bytes)]).unwrap();
         assert_eq!(result.as_text(), Some(expected.as_str()));
     }
@@ -307,7 +313,7 @@ fn native_sha1_bridge_sml_bytes_and_padding_boundaries_match_raw_bytes() {
     .unwrap();
     assert_eq!(
         vm.lookup_value("escaped").unwrap().and_then(Value::as_text),
-        Some(format!("{:x}", Sha1::digest([0, 255])).as_str())
+        Some(base16ct::lower::encode_string(&Sha1::digest([0, 255])).as_str())
     );
     assert_eq!(
         vm.lookup_value("utf8").unwrap().and_then(Value::as_text),
@@ -357,7 +363,10 @@ fun replicate_string (0: int) _ = ""
     .unwrap();
     let source = include_str!("../isabelle-source/src/Pure/General/sha1.ML");
     let identity = vm.evaluate_native_sha1_module("src/Pure/General/sha1.ML", source).unwrap();
-    assert_eq!(identity.source_sha256, format!("{:x}", Sha256::digest(source.as_bytes())));
+    assert_eq!(
+        identity.source_sha256,
+        base16ct::lower::encode_string(&Sha256::digest(source.as_bytes()))
+    );
     assert_ne!(identity.source_sha256, identity.executable_sha256);
     assert!(vm.lookup_value("Native_SHA1.digest_string").unwrap().is_none());
     vm.evaluate(
@@ -385,7 +394,7 @@ fn official_ml_name_space_builds_live_global_tables_from_native_vm() {
     vm.register_host_type("Native_Context.probe", 0, false).unwrap();
     let loaded = vm.evaluate_source_file("src/Pure/ML/ml_name_space.ML").unwrap();
     assert_eq!(loaded.path, "src/Pure/ML/ml_name_space.ML");
-    assert_eq!(loaded.sha256, format!("{:x}", Sha256::digest(source.as_bytes())));
+    assert_eq!(loaded.sha256, base16ct::lower::encode_string(&Sha256::digest(source.as_bytes())));
     let values = vm.lookup_value("ML_Name_Space.sml_val").unwrap().unwrap();
     let values = values.as_list().unwrap();
     assert!(

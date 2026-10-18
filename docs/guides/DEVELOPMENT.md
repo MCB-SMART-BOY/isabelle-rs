@@ -98,6 +98,27 @@ Release verification uses the exact selected tag and the same matrix, not
 Tier statistics. Artifact names must match their actual target architecture.
 Pushing a branch is not permission to create a tag, publish binaries or deploy.
 
+Linux CI first runs the supervisor's actual user/PID namespace launch flags.
+On an ephemeral Ubuntu runner where AppArmor restricts unprivileged namespaces,
+the shared `linux-namespaces` action may grant `userns` to `/usr/bin/unshare`
+through a per-executable profile, then must repeat the probe successfully.
+It does not disable the host-wide AppArmor policy or bypass isolation tests.
+Supervisor failure diagnostics read the original retained log descriptor,
+not a pathname the worker can replace. This setup does not authorize the
+separately blocked production solver.
+
+The workspace optimizes only `sha2` in the development profile; the test
+profile inherits that setting. Both sides still hash the complete executable,
+the parent finishes verification before spawn, and worker startup/request
+deadlines are unchanged. Do not replace this with identity caching,
+spawn-before-verification, host-specific CPU flags or relaxed test deadlines.
+
+Reference execution remains Linux-only and disabled by the JVM-free policy.
+Approved offline comparison uses descriptor-relative no-follow reads on Unix;
+unsupported platforms reject before importing evidence, never fall back to
+ordinary pathname reads. Compile-only platform jobs do not establish runtime
+or offline-import success.
+
 Before a requested commit, review the entire proposed tree, including existing
 work, dependency intent and Gitlink identity. Resolve the intended scope before
 mixing unrelated work into a delivery. Passing quality checks does not complete

@@ -216,7 +216,7 @@ fn hash_file(file: &mut File) -> io::Result<String> {
         remaining -= count as u64;
         sha.update(&buffer[..count]);
     }
-    Ok(format!("{:x}", sha.finalize()))
+    Ok(base16ct::lower::encode_string(&sha.finalize()))
 }
 
 fn write_checked(domain: &Path, name: &str, value: &str) -> Result<(), SolverError> {

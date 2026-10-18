@@ -19,7 +19,7 @@ impl OfflineApprovalFixture {
         std::fs::create_dir_all(run.join("fixed-source/src/Pure")).unwrap();
         let source = b"independently opened source bytes";
         std::fs::write(run.join("fixed-source/src/Pure/ROOT.ML"), source).unwrap();
-        let source_hash = format!("{:x}", Sha256::digest(source));
+        let source_hash = base16ct::lower::encode_string(&Sha256::digest(source));
         let run_record = |phase: &str, id: &str| {
             json!({"phase":phase,"run_id":id,
             "prepared_sha256":"a".repeat(64),"source_snapshot_sha256":"a".repeat(64),
@@ -33,7 +33,7 @@ impl OfflineApprovalFixture {
         let manifest_path = run.join("manifest.json");
         std::fs::write(&manifest_path, &manifest_bytes).unwrap();
         let approval_path = directory.path().join("operator-approval.json");
-        let manifest_hash = format!("{:x}", Sha256::digest(&manifest_bytes));
+        let manifest_hash = base16ct::lower::encode_string(&Sha256::digest(&manifest_bytes));
         let producer =
             json!({"kind":"independent_official","identity":"outside operator reviewed producer"});
         let receipt = json!({"schema_version":1,"purpose":"offline_reference_run_receipt",
@@ -52,7 +52,7 @@ impl OfflineApprovalFixture {
                 "raw_total_bytes":1024,"decoded_total_bytes":1024,
                 "max_artifacts":6,"max_events":1,"max_depth":1},
             "manifest_sha256":manifest_hash,
-            "receipt_sha256":format!("{:x}",Sha256::digest(&receipt_bytes)),
+            "receipt_sha256":base16ct::lower::encode_string(&Sha256::digest(&receipt_bytes)),
             "approved_run_root":run,"runs":manifest["runs"],"source_files":manifest["source_files"]});
         std::fs::write(&approval_path, serde_json::to_vec(&approval).unwrap()).unwrap();
         Self { _directory: directory, run, manifest_path, approval_path, manifest, manifest_bytes }
@@ -88,6 +88,7 @@ impl OfflineApprovalFixture {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn offline_approval_package_self_authorization_rejected() {
     let fixture = OfflineApprovalFixture::new();
@@ -97,6 +98,7 @@ fn offline_approval_package_self_authorization_rejected() {
     assert!(fixture.import(&inside).is_err());
 }
 
+#[cfg(unix)]
 #[test]
 fn offline_approval_changed_source_rejected() {
     let fixture = OfflineApprovalFixture::new();
@@ -104,6 +106,7 @@ fn offline_approval_changed_source_rejected() {
     assert!(fixture.import(&fixture.approval_path).is_err());
 }
 
+#[cfg(unix)]
 #[test]
 fn offline_approval_changed_receipt_rejected() {
     let fixture = OfflineApprovalFixture::new();
@@ -111,6 +114,7 @@ fn offline_approval_changed_receipt_rejected() {
     assert!(fixture.import(&fixture.approval_path).is_err());
 }
 
+#[cfg(unix)]
 #[test]
 fn offline_approval_changed_manifest_bytes_rejected() {
     let fixture = OfflineApprovalFixture::new();
@@ -132,6 +136,7 @@ fn offline_approval_changed_manifest_bytes_rejected() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn offline_approval_missing_receipt_rejected() {
     let fixture = OfflineApprovalFixture::new();
@@ -139,6 +144,7 @@ fn offline_approval_missing_receipt_rejected() {
     assert!(fixture.import(&fixture.approval_path).is_err());
 }
 
+#[cfg(unix)]
 #[test]
 fn offline_approval_duplicate_json_keys_rejected() {
     let fixture = OfflineApprovalFixture::new();
@@ -160,6 +166,7 @@ fn offline_comparison_without_operator_approval_blocks() {
     assert!(error.to_string().contains("BlockedPrerequisite"));
 }
 
+#[cfg(unix)]
 #[test]
 fn offline_approval_exhausted_read_budget_rejected() {
     let fixture = OfflineApprovalFixture::new();
@@ -177,6 +184,7 @@ fn offline_approval_exhausted_read_budget_rejected() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn offline_comparison_without_run_records_blocks() {
     let fixture = OfflineApprovalFixture::new();
@@ -194,6 +202,7 @@ fn offline_comparison_without_run_records_blocks() {
     assert!(error.to_string().contains("BlockedPrerequisite"));
 }
 
+#[cfg(unix)]
 #[test]
 fn offline_cli_missing_receipt_reports_blocked_prerequisite() {
     let fixture = OfflineApprovalFixture::new();
@@ -205,6 +214,7 @@ fn offline_cli_missing_receipt_reports_blocked_prerequisite() {
     assert_eq!(report["result"], "BlockedPrerequisite");
 }
 
+#[cfg(unix)]
 #[test]
 fn offline_cli_wrong_approved_manifest_hash_fails_input() {
     let fixture = OfflineApprovalFixture::new();
@@ -216,4 +226,17 @@ fn offline_cli_wrong_approved_manifest_hash_fails_input() {
     assert!(!output.status.success());
     assert!(output.stdout.is_empty(), "invalid input cannot publish a compatibility report");
     assert!(String::from_utf8_lossy(&output.stderr).contains("manifest"));
+}
+
+#[cfg(not(unix))]
+#[test]
+fn offline_cli_without_secure_open_fails_before_publishing_report() {
+    let fixture = OfflineApprovalFixture::new();
+    let import_error = fixture.import(&fixture.approval_path).unwrap_err();
+    assert!(matches!(import_error, xtask::runner::StepError::Input(_)));
+    assert!(import_error.to_string().contains("no-follow"));
+    let output = fixture.run_cli();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("no-follow"));
 }

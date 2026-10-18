@@ -7,6 +7,23 @@ Current outcomes and verification limits are maintained in
 
 ## [Unreleased]
 
+### Stable dependencies and CI repair (2026-10-19)
+- Update all direct registry dependencies to the reviewed latest stable
+  releases, including Wasmtime 49.0.3, rusqlite 0.40.2, Rowan 0.17.0,
+  RustCrypto SHA-1/SHA-2 0.11, Criterion 0.8.2, signal-hook 0.4.5,
+  lzma-rust2 0.23.0 and zstd 0.14.3. Preserve the fixed Isabelle2025 source.
+- Preserve digest encodings with `base16ct` outside the TCB and retain checked
+  unsigned SQLite conversions through `fallible_uint`.
+- Optimize only development-profile SHA-256 after measuring executable
+  hashing as the worker startup bottleneck; retain identity checks and deadlines.
+- Repair Linux/Unix reference compilation boundaries and reject unsupported
+  secure offline imports without a less-safe file-access fallback.
+- Update CI action and security-tool versions, retain full advisory scope,
+  and share a fail-closed Linux namespace prerequisite check.
+- Read launcher diagnostics through a retained descriptor so worker log
+  replacement cannot block supervision or disclose a symlink target.
+  Local, remote and compatibility results remain separate in Project Status.
+
 ### Engineering quality repair (2026-10-19)
 - Upgrade the xtask ZIP dependency to locked `9.0.5` for
   RUSTSEC-2026-0367, RUSTSEC-2026-0368 and RUSTSEC-2026-0369; retain

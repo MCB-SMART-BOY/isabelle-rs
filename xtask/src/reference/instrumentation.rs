@@ -1,7 +1,10 @@
 //! Construct a run-private B/P/R snapshot from attested original and fixed patch bytes.
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::{self, OpenOptions};
+use std::fs;
+#[cfg(unix)]
+use std::fs::OpenOptions;
 use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
@@ -113,6 +116,15 @@ fn apply_hunks(original: &[u8], patch: &str) -> Result<Vec<u8>, StepError> {
     Ok(result)
 }
 
+#[cfg(not(unix))]
+fn write_patched(path: &Path, _bytes: &[u8]) -> Result<(), StepError> {
+    Err(StepError::Input(format!(
+        "secure reference overlay patching requires Unix no-follow opening: {}",
+        path.display()
+    )))
+}
+
+#[cfg(unix)]
 fn write_patched(path: &Path, bytes: &[u8]) -> Result<(), StepError> {
     let original_mode = fs::metadata(path)
         .map_err(|source| io_error(format!("stat overlay {}", path.display()), source))?
@@ -155,6 +167,24 @@ fn patch_snapshot(
         "patched_sha256":approved.patched_sha256,"patch_sha256":patch_sha256}))
 }
 
+#[cfg(unix)]
+fn create_observer_file(path: &Path) -> Result<fs::File, StepError> {
+    OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|source| io_error(format!("create isolated observer {}", path.display()), source))
+}
+
+#[cfg(not(unix))]
+fn create_observer_file(path: &Path) -> Result<fs::File, StepError> {
+    Err(StepError::Input(format!(
+        "secure reference observer creation requires Unix private file modes: {}",
+        path.display()
+    )))
+}
+
 fn write_new_observer(
     root: &Path,
     approved: &super::approved_identity::ApprovedPatch,
@@ -168,12 +198,7 @@ fn write_new_observer(
         "new observer source is not preapproved",
     )?;
     let path = root.join(path);
-    let mut file = OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .mode(0o600)
-        .open(&path)
-        .map_err(|source| io_error("create approved overlay observer", source))?;
+    let mut file = create_observer_file(&path)?;
     file.write_all(bytes).map_err(|source| io_error("write approved overlay observer", source))?;
     Ok(json!({"path":approved.path,"original_sha256":Value::Null,
         "patched_sha256":approved.patched_sha256,"patch_sha256":approved.patch_sha256}))
@@ -308,12 +333,7 @@ fn copy_session_sources(
                 && seen.insert(path.clone()),
             format!("observer source differs from approval: {path}"),
         )?;
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .mode(0o600)
-            .open(destination.join(name))
-            .map_err(|source| io_error("create isolated observer source", source))?;
+        let mut file = create_observer_file(&destination.join(name))?;
         file.write_all(&bytes)
             .map_err(|source| io_error("write isolated observer source", source))?;
         patches.push(json!({"path":path,"original_sha256":Value::Null,

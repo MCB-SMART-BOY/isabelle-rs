@@ -1,4 +1,8 @@
-use std::{path::Path, sync::Arc};
+use std::{
+    path::Path,
+    process::{Command, Stdio},
+    sync::Arc,
+};
 
 use isabelle_rs::{
     fleche::engine::RealExecutor,
@@ -55,4 +59,15 @@ fn session_unavailable_compute_executable_reports_uri_and_can_retry() {
     }
     assert!(matches!(session.proof_state(uri, 0), Err(SessionError::Compute { .. })));
     session.shutdown().unwrap();
+}
+
+#[test]
+fn compute_worker_closed_stdin_exits_without_demo_output() {
+    let output = Command::new(env!("CARGO_BIN_EXE_isabelle-rs"))
+        .arg("--compute-worker")
+        .stdin(Stdio::null())
+        .output()
+        .expect("start compute worker with closed input");
+    assert!(!output.status.success(), "a worker without a handshake must fail");
+    assert!(output.stdout.is_empty(), "worker mode must not run the demo or LSP server");
 }

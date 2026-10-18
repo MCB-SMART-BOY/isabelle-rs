@@ -1,4 +1,4 @@
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 pub(super) mod v2;
 
 use std::ffi::OsString;

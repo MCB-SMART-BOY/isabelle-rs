@@ -224,7 +224,7 @@ impl GraphBuilder<'_> {
                 declared: header.name,
             });
         }
-        let sha256 = format!("{:x}", Sha256::digest(text.as_bytes()));
+        let sha256 = base16ct::lower::encode_string(&Sha256::digest(text.as_bytes()));
         let parents = Vec::with_capacity(header.imports.len());
         Ok(SourceTheory { name: name.to_owned(), path, header, parents, sha256, text })
     }

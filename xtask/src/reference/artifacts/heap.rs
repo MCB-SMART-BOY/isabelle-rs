@@ -84,7 +84,7 @@ pub fn pure_heap_sha256(build: &Path) -> Result<String, StepError> {
         tree.update(size.to_be_bytes());
         tree.update(hash);
     }
-    Ok(format!("{:x}", tree.finalize()))
+    Ok(base16ct::lower::encode_string(&tree.finalize()))
 }
 
 pub fn stage_pure_heap(build: &Path, inventory: &Path) -> Result<String, StepError> {
@@ -149,5 +149,5 @@ pub fn heap_tree_sha256(root: &Path) -> Result<String, StepError> {
         tree.update(size.to_be_bytes());
         tree.update(leaf);
     }
-    Ok(format!("{:x}", tree.finalize()))
+    Ok(base16ct::lower::encode_string(&tree.finalize()))
 }

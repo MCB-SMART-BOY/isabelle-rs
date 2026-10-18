@@ -11,7 +11,7 @@ fn write_git_object(root: &Path, kind: &str, body: &[u8]) -> [u8; 20] {
     let mut bytes = format!("{kind} {}\0", body.len()).into_bytes();
     bytes.extend_from_slice(body);
     let digest = Sha1::digest(&bytes);
-    let hex = format!("{digest:x}");
+    let hex = base16ct::lower::encode_string(&digest);
     let directory = root.join(".git/objects").join(&hex[..2]);
     fs::create_dir_all(&directory).unwrap();
     let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());

@@ -1,10 +1,13 @@
 //! Compare native observations against frozen reference evidence, without accepting proofs.
+#[cfg(unix)]
 use rustix::fs::{CWD, FileType, Mode, OFlags, fstat, openat};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{Read, Write};
-use std::path::{Component, Path};
+#[cfg(unix)]
+use std::path::Component;
+use std::path::Path;
 
 use super::{
     approved_identity,
@@ -55,7 +58,7 @@ pub(super) fn digest_budgeted_file(
             .read(&mut buffer)
             .map_err(|source| io_error(format!("hash reference {}", path.display()), source))?;
         if count == 0 {
-            return Ok(format!("{:x}", hash.finalize()));
+            return Ok(base16ct::lower::encode_string(&hash.finalize()));
         }
         require(count as u64 <= *remaining, "reference total byte budget exceeded")?;
         *remaining -= count as u64;
@@ -74,7 +77,7 @@ pub(super) fn digest_checked_file(path: &Path, limit: u64) -> Result<String, Ste
             .read(&mut buffer)
             .map_err(|source| io_error(format!("hash reference {}", path.display()), source))?;
         if count == 0 {
-            return Ok(format!("{:x}", hash.finalize()));
+            return Ok(base16ct::lower::encode_string(&hash.finalize()));
         }
         total += count as u64;
         require(total <= limit, format!("reference hash exceeded limit: {}", path.display()))?;
@@ -126,6 +129,15 @@ pub(super) fn read_checked_bytes(path: &Path, limit: u64) -> Result<Vec<u8>, Ste
     Ok(content)
 }
 
+#[cfg(not(unix))]
+pub(super) fn open_checked_file(path: &Path, _limit: u64) -> Result<File, StepError> {
+    Err(StepError::Input(format!(
+        "secure reference file reads require Unix descriptor-relative no-follow opening: {}",
+        path.display()
+    )))
+}
+
+#[cfg(unix)]
 pub(super) fn open_checked_file(path: &Path, limit: u64) -> Result<File, StepError> {
     let absolute = if path.is_absolute() {
         path.to_path_buf()
@@ -453,6 +465,7 @@ mod tests {
         let limits = ObservationLimits { max_artifacts: 2, ..limits };
         assert!(plan_offline_artifacts(&records, limits).is_err());
     }
+    #[cfg(unix)]
     #[test]
     fn read_exact_budgeted_artifact_wrong_declared_length_rejects_before_copy() {
         let directory = tempfile::tempdir().unwrap();
@@ -461,6 +474,28 @@ mod tests {
         let mut remaining = 10;
         assert!(read_exact_budgeted_artifact(&artifact, 2, &mut remaining).is_err());
         assert_eq!(remaining, 10);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_checked_bytes_symlinked_parent_rejects_without_following() {
+        let directory = tempfile::tempdir().unwrap();
+        let real = directory.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        std::fs::write(real.join("artifact.json"), b"private").unwrap();
+        std::os::unix::fs::symlink(&real, directory.path().join("link")).unwrap();
+        assert!(read_checked_bytes(&directory.path().join("link/artifact.json"), 7).is_err());
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn read_checked_bytes_without_secure_open_rejects_explicitly() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("artifact.json");
+        std::fs::write(&path, b"private").unwrap();
+        let error = read_checked_bytes(&path, 7).unwrap_err();
+        assert!(matches!(error, StepError::Input(_)));
+        assert!(error.to_string().contains("no-follow"));
     }
 
     #[test]

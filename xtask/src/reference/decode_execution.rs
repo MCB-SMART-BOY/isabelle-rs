@@ -162,7 +162,7 @@ fn decode_file(node: &Node, source_root: &Path, name: &str) -> Result<Value, Ste
         read_fixed_file(path, source_root, &format!("{name}: resolved ML file input"))?;
     require(valid_hash(expected, 40), format!("{name}: invalid resource SHA1"))?;
     require(
-        format!("{:x}", Sha1::digest(&bytes)) == expected,
+        base16ct::lower::encode_string(&Sha1::digest(&bytes)) == expected,
         format!("{name}: resource SHA1 drift at {relative}"),
     )?;
     Ok(json!({"path":relative,"sha1":expected,"sha256":digest_bytes(&bytes)}))

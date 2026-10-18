@@ -36,24 +36,30 @@ wasm = []
 [dependencies]
 isabelle-kernel = { path = "crates/kernel" }
 isabelle-evidence = { path = "crates/evidence" }
+base16ct = { version = "1", features = ["alloc"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "io-util", "io-std"] }
-rowan = "0.15"
-wasmtime = { version = "36.0.16", default-features = false, features = ["runtime", "cranelift", "std"] }
-rusqlite = { version = "0.32", features = ["bundled"] }
+rowan = "0.17"
+wasmtime = { version = "49.0.3", default-features = false, features = ["runtime", "cranelift", "std"] }
+rusqlite = { version = "0.40.2", features = ["bundled", "fallible_uint"] }
 clap = { version = "4", features = ["derive"] }
-sha1 = "0.10"
-sha2 = "0.10"
-lzma-rust2 = { version = "=0.22.0", default-features = false, features = ["std", "encoder", "xz"] }
-zstd = { version = "=0.14.2", default-features = false }
+sha1 = "0.11"
+sha2 = "0.11.1"
+lzma-rust2 = { version = "=0.23.0", default-features = false, features = ["std", "encoder", "xz"] }
+zstd = { version = "=0.14.3", default-features = false }
 
 [dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8.2", features = ["html_reports"] }
 proptest = "1"
+
+# Worker identity hashes scan debug executables twice; keep SHA-256 fast without
+# changing product debug checks, cancellation, or pre-spawn authentication.
+[profile.dev.package.sha2]
+opt-level = 3
 
 [[bench]]
 name = "kernel_benchmarks"

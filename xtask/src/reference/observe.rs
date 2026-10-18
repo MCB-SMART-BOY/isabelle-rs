@@ -1,7 +1,9 @@
 //! Package actual same-version reference observations without claiming unobserved fields.
 use std::collections::BTreeMap;
+#[cfg(unix)]
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
+#[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
@@ -234,6 +236,21 @@ fn read_executed_sources(run: &Path) -> Result<Value, StepError> {
     Ok(Value::Object(hashes))
 }
 
+#[cfg(unix)]
+fn create_merged_observer_file(path: &Path) -> Result<std::fs::File, StepError> {
+    OpenOptions::new().write(true).create_new(true).mode(0o600).open(path).map_err(|source| {
+        io_error(format!("create merged observer bytes {}", path.display()), source)
+    })
+}
+
+#[cfg(not(unix))]
+fn create_merged_observer_file(path: &Path) -> Result<std::fs::File, StepError> {
+    Err(StepError::Input(format!(
+        "secure reference observer creation requires Unix private file modes: {}",
+        path.display()
+    )))
+}
+
 fn merge_observer_raw(build_run: &Path, run: &Path) -> Result<Vec<u8>, StepError> {
     let first = read_bytes(&build_run.join("inventory/observer-raw"))?;
     let second = read_bytes(&run.join("inventory/observer-raw"))?;
@@ -247,10 +264,7 @@ fn merge_observer_raw(build_run: &Path, run: &Path) -> Result<Vec<u8>, StepError
     merged.extend_from_slice(&first);
     merged.extend_from_slice(&second);
     let path = run.join("inventory/observer-raw.merged");
-    let mut file =
-        OpenOptions::new().write(true).create_new(true).mode(0o600).open(&path).map_err(
-            |source| io_error(format!("create merged observer bytes {}", path.display()), source),
-        )?;
+    let mut file = create_merged_observer_file(&path)?;
     file.write_all(&merged).map_err(|source| {
         io_error(format!("write original merged observer bytes {}", path.display()), source)
     })?;

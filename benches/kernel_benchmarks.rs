@@ -10,8 +10,9 @@
 //! 4. **Proof checking** — proof term validation
 //! 5. **Net operations** — discrimination net lookup
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use isabelle_rs::core::*;
+use std::hint::black_box;
 
 // =========================================================================
 // Kernel operation benchmarks

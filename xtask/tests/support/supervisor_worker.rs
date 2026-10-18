@@ -24,6 +24,10 @@ fn run_barrier() -> ! {
         let error = Command::new(real).arg("--version").exec();
         panic!("exec real unshare version: {error}");
     }
+    if env::var_os("PROFILE_DENY_NAMESPACE").is_some() {
+        eprintln!("unshare: unshare failed: Operation not permitted");
+        process::exit(1);
+    }
     let entered = env::var("PROFILE_START_BARRIER").expect("barrier path");
     let released = env::var("PROFILE_START_RELEASE").expect("release path");
     fs::write(&entered, b"ready").expect("record launcher entry");
@@ -36,12 +40,29 @@ fn run_barrier() -> ! {
     panic!("exec real unshare: {error}");
 }
 
+fn replace_timeout_log() -> ! {
+    let path = env::var("PROFILE_TIMEOUT_LOG").expect("launcher log path");
+    fs::remove_file(&path).expect("remove original launcher log");
+    match env::var("PROFILE_LOG_REPLACEMENT").as_deref() {
+        Ok("fifo") => {
+            assert!(Command::new("mkfifo").arg(&path).status().unwrap().success());
+        },
+        Ok("symlink") => {
+            let target = env::var("PROFILE_LOG_TARGET").expect("symlink target");
+            std::os::unix::fs::symlink(target, &path).expect("replace log with symlink");
+        },
+        mode => panic!("unknown log replacement: {mode:?}"),
+    }
+    process::exit(1);
+}
+
 fn main() {
     if env::args_os().next().as_deref().and_then(|path| Path::new(path).file_name()) == Some(std::ffi::OsStr::new("unshare")) {
         run_barrier();
     }
     match env::var("SUPERVISOR_WORKER_MODE").as_deref() {
         Ok("success") => {},
+        Ok("replace-timeout-log") => replace_timeout_log(),
         Ok("failure") => {
             eprintln!("worker failure");
             process::exit(env::var("SUPERVISOR_WORKER_EXIT").unwrap().parse().unwrap());

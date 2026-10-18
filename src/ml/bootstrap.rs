@@ -191,7 +191,7 @@ impl Vm {
     /// Compile exactly the bytes supplied by the leased restricted host, preserving source attribution.
     pub fn evaluate_source_file(&mut self, path: &str) -> Result<LoadedMlSource, MlError> {
         let bytes = self.read_bootstrap_source(path)?;
-        let digest = format!("{:x}", Sha256::digest(&bytes));
+        let digest = base16ct::lower::encode_string(&Sha256::digest(&bytes));
         let text = std::str::from_utf8(&bytes).map_err(|error| {
             self.error(MlErrorKind::Syntax, "decode ML source", format!("{path}: {error}"))
         })?;
@@ -220,7 +220,7 @@ impl Vm {
         })?;
         let source = LoadedMlSource {
             path: path.to_owned(),
-            sha256: format!("{:x}", Sha256::digest(bytes)),
+            sha256: base16ct::lower::encode_string(&Sha256::digest(bytes)),
             executable_sha256: None,
         };
         let evidence = (source, expected, length);
@@ -383,7 +383,7 @@ impl Vm {
             error: Box::new(error),
         };
         let bytes = self.read_bootstrap_source(&path).map_err(fail)?;
-        let source_sha256 = format!("{:x}", Sha256::digest(&bytes));
+        let source_sha256 = base16ct::lower::encode_string(&Sha256::digest(&bytes));
         let text = std::str::from_utf8(&bytes).map_err(|cause| {
             fail(self.error(
                 MlErrorKind::Syntax,
@@ -410,10 +410,9 @@ impl Vm {
         Ok(RootContextProgress {
             remaining_files: prefix.remaining_files[1..].to_vec(),
             context_source_sha256: source_sha256,
-            replacement_structure_sha256: format!(
-                "{:x}",
-                Sha256::digest(replacement_structure().as_bytes())
-            ),
+            replacement_structure_sha256: base16ct::lower::encode_string(&Sha256::digest(
+                replacement_structure().as_bytes(),
+            )),
             prefix,
         })
     }
@@ -429,7 +428,7 @@ impl Vm {
             remaining_files: Vec::new(),
             error: Box::new(error),
         })?;
-        let sha256 = format!("{:x}", Sha256::digest(&bytes));
+        let sha256 = base16ct::lower::encode_string(&Sha256::digest(&bytes));
         let text = std::str::from_utf8(&bytes).map_err(|cause| RootPrefixFailure {
             loaded_files: loaded_files.to_vec(),
             failed_source: path.to_owned(),

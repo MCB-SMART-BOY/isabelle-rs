@@ -3,7 +3,7 @@
 #[path = "support/supervisor.rs"]
 mod support;
 
-use std::{fs, path::Path, time::Instant};
+use std::{fs, os::unix::fs::FileTypeExt, path::Path, time::Instant};
 use support::{
     CANCEL_LIMIT, Fixture, LOG_BYTES, assert_process_reaped, read_report, set_barrier_env,
     set_permissive_umask, signal_process, wait_for_exit, wait_for_file, wait_for_pid_file,
@@ -13,14 +13,62 @@ use support::{
 fn supervisor_worker_errors_preserve_ordinary_and_timeout_like_codes() {
     let fixture = Fixture::create();
     let worker = fixture.worker();
-    for code in [42, 124, 137] {
+    for code in [1, 42, 124, 137] {
         let output = fixture.root.join(format!("failed-{code}"));
         let mut command = fixture.command(&worker, &output, "failure");
         command.env("SUPERVISOR_WORKER_EXIT", code.to_string());
-        assert_eq!(wait_for_exit(&mut command.spawn().unwrap()).code(), Some(code));
+        let result = command.output().unwrap();
+        assert_eq!(result.status.code(), Some(code));
+        assert!(!String::from_utf8_lossy(&result.stderr).contains("namespace launcher failed"));
         assert_eq!(read_report(&output)["status"], "error");
         assert_eq!(read_report(&output)["exit_code"], code);
     }
+}
+
+#[test]
+fn supervisor_namespace_denial_reports_prerequisite_without_running_worker() {
+    let fixture = Fixture::create();
+    let worker = fixture.worker();
+    let output = fixture.root.join("namespace-denied");
+    let (bin_dir, barrier, release) = fixture.install_barrier_unshare(&worker);
+    let mut command = fixture.command(&worker, &output, "normal-descendant");
+    set_barrier_env(&mut command, bin_dir, &barrier, &release);
+    let result = command.env("PROFILE_DENY_NAMESPACE", "1").output().unwrap();
+    assert_eq!(result.status.code(), Some(1));
+    let diagnostic = String::from_utf8_lossy(&result.stderr);
+    assert!(diagnostic.contains("user/PID namespace launcher failed"), "{diagnostic}");
+    assert!(diagnostic.contains("Operation not permitted"), "{diagnostic}");
+    assert_eq!(read_report(&output)["status"], "error");
+    assert_eq!(read_report(&output)["exit_code"], 1);
+    assert!(!fixture.root.join("worker-pid").exists());
+}
+
+#[test]
+fn supervisor_replaced_launcher_log_preserves_exit_without_following_path() {
+    let fixture = Fixture::create();
+    let worker = fixture.worker();
+    let target = fixture.root.join("unrelated.txt");
+    let marker = "unshare: unshare failed: unrelated-file-marker";
+    fs::write(&target, marker).unwrap();
+    for replacement in ["fifo", "symlink"] {
+        let output = fixture.root.join(replacement);
+        let stderr_path = fixture.root.join(format!("{replacement}-stderr.log"));
+        let mut command = fixture.command(&worker, &output, "replace-timeout-log");
+        command
+            .env("PROFILE_TIMEOUT_LOG", output.join("timeout.log"))
+            .env("PROFILE_LOG_REPLACEMENT", replacement)
+            .env("PROFILE_LOG_TARGET", &target)
+            .stderr(fs::File::create(&stderr_path).unwrap());
+        assert_eq!(wait_for_exit(&mut command.spawn().unwrap()).code(), Some(1));
+        let file_type = fs::symlink_metadata(output.join("timeout.log")).unwrap().file_type();
+        let is_expected_type =
+            if replacement == "fifo" { file_type.is_fifo() } else { file_type.is_symlink() };
+        assert!(is_expected_type, "worker must execute the {replacement} replacement");
+        assert_eq!(read_report(&output)["status"], "error");
+        assert_eq!(read_report(&output)["exit_code"], 1);
+        assert!(!fs::read_to_string(stderr_path).unwrap().contains(marker));
+    }
+    assert_eq!(fs::read_to_string(target).unwrap(), marker);
 }
 
 #[test]

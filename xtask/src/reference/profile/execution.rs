@@ -171,7 +171,7 @@ pub(super) fn catalog_commands(
                         "ML file binding identity mismatch: {relative} resolves to {canonical}"
                     ),
                 )?;
-                let sha1 = format!("{:x}", Sha1::digest(&bytes));
+                let sha1 = base16ct::lower::encode_string(&Sha1::digest(&bytes));
                 require(
                     file["sha256"] == digest_bytes(&bytes) && file["sha1"] == sha1,
                     format!("ML file binding hash mismatch: {relative}"),

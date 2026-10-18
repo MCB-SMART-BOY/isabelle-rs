@@ -94,7 +94,7 @@ fn add_file_command(fixture: &mut Fixture, name: &str, relative: &str, position:
         .find(|theory| theory["name"] == name)
         .unwrap();
     let source = theory["source"].as_str().unwrap().to_owned();
-    let sha1 = format!("{:x}", Sha1::digest(bytes.as_bytes()));
+    let sha1 = base16ct::lower::encode_string(&Sha1::digest(bytes.as_bytes()));
     theory["commands"].as_array_mut().unwrap().insert(
         2,
         command(

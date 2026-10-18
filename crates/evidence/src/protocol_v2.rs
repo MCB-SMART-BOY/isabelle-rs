@@ -61,7 +61,7 @@ pub struct ApprovedObserverIdentity {
 }
 
 fn digest(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    base16ct::lower::encode_string(&Sha256::digest(bytes))
 }
 
 fn sha<'a>(value: &'a Value, context: &str) -> Result<&'a str, EvidenceError> {

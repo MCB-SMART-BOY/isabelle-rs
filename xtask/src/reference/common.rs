@@ -70,7 +70,7 @@ pub fn open_regular(path: &Path) -> Result<File, StepError> {
 }
 
 pub fn digest_bytes(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    base16ct::lower::encode_string(&Sha256::digest(bytes))
 }
 
 pub fn digest_file(path: &Path) -> Result<String, StepError> {
@@ -82,7 +82,7 @@ pub fn digest_file(path: &Path) -> Result<String, StepError> {
             io_error(format!("hash reference file {}", path.display()), source)
         })?;
         if count == 0 {
-            return Ok(format!("{:x}", hasher.finalize()));
+            return Ok(base16ct::lower::encode_string(&hasher.finalize()));
         }
         hasher.update(&buffer[..count]);
     }

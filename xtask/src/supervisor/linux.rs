@@ -2,7 +2,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, Write},
     os::unix::{
-        fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt},
+        fs::{DirBuilderExt, FileExt, OpenOptionsExt, PermissionsExt},
         process::ExitStatusExt,
     },
     path::{Path, PathBuf},
@@ -26,6 +26,7 @@ const MAX_MEMORY_MIB: u64 = 65_536;
 const MAX_AUTO_LIMIT: u64 = 10_000;
 const MIB: u64 = 1024 * 1024;
 const LOG_BYTES: u64 = 8 * MIB;
+const LAUNCHER_DIAGNOSTIC_BYTES: usize = 1024;
 const KILL_GRACE_SECS: u64 = 2;
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
@@ -196,9 +197,16 @@ fn make_output(options: &mut Options) -> Result<(File, File, File), StepError> {
     options.output_dir = path.canonicalize().map_err(|source| {
         io_error(format!("canonicalize output directory {}", path.display()), source)
     })?;
+    let timeout_log = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(options.output_dir.join("timeout.log"))
+        .map_err(|source| io_error("create namespace launcher log", source))?;
     Ok((
         open_new(&options.output_dir.join("events.jsonl"))?,
-        open_new(&options.output_dir.join("timeout.log"))?,
+        timeout_log,
         open_new(&options.output_dir.join("stderr.log"))?,
     ))
 }
@@ -296,6 +304,9 @@ fn supervise(
     let mut signals = Signals::new([SIGINT, SIGTERM])
         .map_err(|source| io_error("register supervisor cancellation signals", source))?;
     let (events, timeout_log, stderr_log) = make_output(&mut options)?;
+    let timeout_reader = timeout_log
+        .try_clone()
+        .map_err(|source| io_error("retain namespace launcher log reader", source))?;
     let mut child = match launch(working_dir, worker, &options, events, timeout_log, stderr_log) {
         Ok(child) => child,
         Err(error) => {
@@ -323,13 +334,39 @@ fn supervise(
     };
     write_report(&options, classification, code)?;
     if code == 0 {
-        Ok(())
-    } else {
-        Err(StepError::Exit {
-            operation: format!("supervise {}", worker.display()),
-            status: ExitStatus::from_raw(code << 8),
-        })
+        return Ok(());
     }
+    let mut operation = format!("supervise {}", worker.display());
+    match read_launcher_failure(&timeout_reader, &options.output_dir, code) {
+        Ok(Some(diagnostic)) => operation.push_str(&format!(
+            " (user/PID namespace launcher failed: {diagnostic}; check runner user namespace and AppArmor policy)"
+        )),
+        Ok(None) => {},
+        Err(error) => eprintln!("{error}"),
+    }
+    Err(StepError::Exit { operation, status: ExitStatus::from_raw(code << 8) })
+}
+
+fn read_launcher_failure(
+    file: &File,
+    output_dir: &Path,
+    code: i32,
+) -> Result<Option<String>, StepError> {
+    if code != 1 {
+        return Ok(None);
+    }
+    let path = output_dir.join("timeout.log");
+    let mut bytes = [0; LAUNCHER_DIAGNOSTIC_BYTES];
+    let count = file.read_at(&mut bytes, 0).map_err(|source| {
+        io_error(format!("read namespace launcher log {}", path.display()), source)
+    })?;
+    let message = String::from_utf8_lossy(&bytes[..count]);
+    let Some(line) =
+        message.lines().next().filter(|line| line.starts_with("unshare: unshare failed:"))
+    else {
+        return Ok(None);
+    };
+    Ok(Some(format!("{line:?}")))
 }
 
 fn launch(
