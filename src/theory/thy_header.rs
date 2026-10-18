@@ -81,11 +81,30 @@ impl Parser {
     }
 
     fn skip_whitespace(&mut self) {
-        while let Some(c) = self.peek() {
-            if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
+        loop {
+            while self.peek().is_some_and(char::is_whitespace) {
                 self.advance();
+            }
+            if !self.chars[self.pos..].starts_with(&['(', '*']) {
+                return;
+            }
+            self.skip_comment();
+        }
+    }
+
+    fn skip_comment(&mut self) {
+        self.pos += 2;
+        let mut depth = 1;
+        while !self.eof() && depth > 0 {
+            let remaining = &self.chars[self.pos..];
+            if remaining.starts_with(&['(', '*']) {
+                depth += 1;
+                self.pos += 2;
+            } else if remaining.starts_with(&['*', ')']) {
+                depth -= 1;
+                self.pos += 2;
             } else {
-                break;
+                self.advance();
             }
         }
     }
@@ -93,23 +112,15 @@ impl Parser {
     /// Check if the given keyword appears at the current position.
     /// A keyword must be followed by whitespace, a special char, or EOF.
     fn is_keyword_at(&self, word: &str) -> bool {
-        let word_chars: Vec<char> = word.chars().collect();
-        let wlen = word_chars.len();
-        if self.pos + wlen > self.chars.len() {
+        let wlen = word.chars().count();
+        if !self.chars[self.pos..].iter().copied().take(wlen).eq(word.chars()) {
             return false;
-        }
-        for (i, &wc) in word_chars.iter().enumerate() {
-            if self.chars[self.pos + i] != wc {
-                return false;
-            }
         }
         // Must be a whole word: followed by whitespace, special char, or EOF
         let next = self.chars.get(self.pos + wlen).copied();
         match next {
             None => true, // EOF
-            Some(c) => {
-                c.is_whitespace() || c == ':' || c == '=' || c == '(' || c == ')' || c == '"'
-            },
+            Some(c) => c.is_whitespace() || matches!(c, ':' | '=' | '(' | ')' | '"' | '‹' | '\\'),
         }
     }
 
@@ -156,6 +167,11 @@ impl Parser {
             }
         }
         Ok(self.chars[start..self.pos].iter().copied().collect())
+    }
+
+    fn parse_name(&mut self) -> Result<String, String> {
+        self.skip_whitespace();
+        if self.peek() == Some('"') { self.parse_string() } else { self.parse_identifier() }
     }
 
     /// Parse a double-quoted string, handling Isabelle escapes `\<...>`.
@@ -211,6 +227,93 @@ impl Parser {
             }
         }
         Ok(result)
+    }
+
+    fn consume_text(&mut self, text: &str) -> bool {
+        let count = text.chars().count();
+        if self.chars[self.pos..].iter().copied().take(count).eq(text.chars()) {
+            self.pos += count;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn skip_document_source(&mut self) -> Result<(), String> {
+        self.skip_whitespace();
+        if self.peek() == Some('"') {
+            return self.skip_quoted_document();
+        }
+        if !self.consume_text(r"\<open>") && !self.consume_text("‹") {
+            return Err(format!("Expected document source at position {}", self.pos));
+        }
+        let mut depth = 1;
+        while !self.eof() {
+            if self.consume_text(r"\<open>") || self.consume_text("‹") {
+                depth += 1;
+            } else if self.consume_text(r"\<close>") || self.consume_text("›") {
+                depth -= 1;
+                if depth == 0 {
+                    return Ok(());
+                }
+            } else if self.consume_text(r"\<") {
+                self.skip_document_symbol()?;
+            } else {
+                self.advance();
+            }
+        }
+        Err(format!("Unterminated document source at position {}", self.pos))
+    }
+
+    fn skip_document_symbol(&mut self) -> Result<(), String> {
+        let start = self.pos;
+        while self.peek().is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '^') {
+            self.advance();
+        }
+        if self.pos == start || self.advance() != Some('>') {
+            return Err(format!("Malformed document symbol at position {start}"));
+        }
+        Ok(())
+    }
+
+    fn skip_quoted_document(&mut self) -> Result<(), String> {
+        self.advance();
+        while let Some(character) = self.advance() {
+            if character == '"' {
+                return Ok(());
+            }
+            if character != '\\' {
+                continue;
+            }
+            if self.consume_text("<") {
+                self.skip_document_symbol()?;
+            } else if self.advance().is_none() {
+                break;
+            }
+        }
+        Err(format!("Unterminated document source at position {}", self.pos))
+    }
+
+    fn skip_document_headings(&mut self) -> Result<(), String> {
+        const HEADINGS: &[&str] = &[
+            "chapter",
+            "section",
+            "subsection",
+            "subsubsection",
+            "paragraph",
+            "subparagraph",
+            "text",
+            "txt",
+            "text_raw",
+        ];
+        loop {
+            self.skip_whitespace();
+            let Some(heading) = HEADINGS.iter().find(|heading| self.is_keyword_at(heading)) else {
+                return Ok(());
+            };
+            self.expect_keyword(heading)?;
+            self.skip_document_source()?;
+        }
     }
 
     /// Parse a parenthesized tag list: (tag1, tag2, ...)
@@ -287,7 +390,7 @@ impl Parser {
             self.parse_tags()
         } else {
             // It's a load command: ("name"). Discard it.
-            let _load_name = self.parse_identifier()?;
+            let _load_name = self.parse_name()?;
             self.skip_whitespace();
             if self.advance() != Some(')') {
                 return Err(format!("Expected ')' closing load command at position {}", self.pos));
@@ -299,8 +402,16 @@ impl Parser {
 
     /// Parse a keyword specification: kind [load_command] [tags]
     fn parse_keyword_spec(&mut self) -> Result<(String, Vec<String>), String> {
-        let kind = self.parse_identifier()?;
-        let tags = self.parse_post_spec_parens()?;
+        let kind = self.parse_name()?;
+        let mut tags = self.parse_post_spec_parens()?;
+        loop {
+            self.skip_whitespace();
+            if self.peek() != Some('%') {
+                break;
+            }
+            self.advance();
+            tags.push(self.parse_name()?);
+        }
         Ok((kind, tags))
     }
 
@@ -399,6 +510,14 @@ impl Parser {
             ));
         }
 
+        const MAX_ABBREV_PAIRS: usize = 4096;
+        if lhs_strings
+            .len()
+            .checked_mul(rhs_strings.len())
+            .is_none_or(|count| count > MAX_ABBREV_PAIRS)
+        {
+            return Err("Too many theory abbreviation pairs".into());
+        }
         // Cross-product of LHS × RHS (matching Isabelle's map_product behavior)
         let mut result = Vec::new();
         for lhs in &lhs_strings {
@@ -433,6 +552,51 @@ impl Parser {
 // Public API
 // =========================================================================
 
+fn parse_header_prefix(parser: &mut Parser) -> Result<(String, Vec<String>), String> {
+    parser.skip_document_headings()?;
+    parser.expect_keyword("theory")?;
+    let name = parser.parse_identifier()?;
+    parser.skip_whitespace();
+    if !parser.is_keyword_at("imports") {
+        return if parser.is_keyword_at("keywords")
+            || parser.is_keyword_at("abbrevs")
+            || parser.is_keyword_at("begin")
+        {
+            Ok((name, Vec::new()))
+        } else {
+            Err(format!(
+                "Expected 'imports', 'keywords', 'abbrevs' or 'begin' after theory name at position {}",
+                parser.pos
+            ))
+        };
+    }
+    parser.expect_keyword("imports")?;
+    let mut imports = Vec::new();
+    loop {
+        parser.skip_whitespace();
+        if parser.eof()
+            || parser.is_keyword_at("keywords")
+            || parser.is_keyword_at("abbrevs")
+            || parser.is_keyword_at("begin")
+        {
+            return Ok((name, imports));
+        }
+        let import = if parser.peek() == Some('"') {
+            parser.parse_string()?
+        } else {
+            parser.parse_identifier()?
+        };
+        imports.push(import);
+    }
+}
+
+pub(crate) fn has_header_declarations(source: &str) -> Result<bool, String> {
+    let mut parser = Parser::new(source);
+    parse_header_prefix(&mut parser)?;
+    parser.skip_whitespace();
+    Ok(parser.is_keyword_at("keywords") || parser.is_keyword_at("abbrevs"))
+}
+
 /// Parse a theory header from source text.
 ///
 /// Returns a `TheoryHeader` on success, or an error message on parse failure.
@@ -440,73 +604,34 @@ impl Parser {
 /// # Examples
 ///
 /// ```
-/// use crate::theory::thy_header::parse_header;
+/// use isabelle_rs::theory::thy_header::parse_header;
 ///
 /// let header = parse_header("theory Foo imports Bar begin").unwrap();
 /// assert_eq!(header.name, "Foo");
 /// assert_eq!(header.imports, vec!["Bar"]);
 /// ```
 pub fn parse_header(source: &str) -> Result<TheoryHeader, String> {
-    let mut p = Parser::new(source);
-
-    // Parse "theory Name"
-    p.skip_whitespace();
-    p.expect_keyword("theory")?;
-    let name = p.parse_identifier()?;
-
-    // Parse imports (optional for Pure, but we require "imports" for simplicity)
-    // Check if there's an imports keyword
-    p.skip_whitespace();
-    let imports = if p.is_keyword_at("imports") {
-        p.expect_keyword("imports")?;
-        let mut imports = Vec::new();
-        loop {
-            p.skip_whitespace();
-            // Stop if we hit keywords, abbrevs, or begin
-            if p.eof()
-                || p.is_keyword_at("keywords")
-                || p.is_keyword_at("abbrevs")
-                || p.is_keyword_at("begin")
-            {
-                break;
-            }
-            let name = p.parse_identifier()?;
-            imports.push(name);
-        }
-        imports
-    } else if p.is_keyword_at("begin") {
-        // No imports section (like Pure)
-        Vec::new()
-    } else {
-        return Err(format!(
-            "Expected 'imports' or 'begin' after theory name at position {}",
-            p.pos
-        ));
-    };
-
-    // Optional keywords block
-    p.skip_whitespace();
-    let keywords = if p.is_keyword_at("keywords") {
-        p.expect_keyword("keywords")?;
-        p.parse_keyword_decls()?
+    let mut parser = Parser::new(source);
+    let (name, imports) = parse_header_prefix(&mut parser)?;
+    parser.skip_whitespace();
+    let keywords = if parser.is_keyword_at("keywords") {
+        parser.expect_keyword("keywords")?;
+        parser.parse_keyword_decls()?
     } else {
         Vec::new()
     };
-
-    // Optional abbrevs block
-    p.skip_whitespace();
-    let abbrevs = if p.is_keyword_at("abbrevs") {
-        p.expect_keyword("abbrevs")?;
-        p.parse_abbrevs()?
+    parser.skip_whitespace();
+    let abbrevs = if parser.is_keyword_at("abbrevs") {
+        parser.expect_keyword("abbrevs")?;
+        parser.parse_abbrevs()?
     } else {
         Vec::new()
     };
-
-    // Expect "begin"
-    p.skip_whitespace();
-    p.expect_keyword("begin")?;
-
-    Ok(TheoryHeader { name, imports, keywords, abbrevs, body_begin_position: p.pos })
+    parser.skip_whitespace();
+    parser.expect_keyword("begin")?;
+    let body_begin_position =
+        source.char_indices().nth(parser.pos).map_or(source.len(), |(offset, _)| offset);
+    Ok(TheoryHeader { name, imports, keywords, abbrevs, body_begin_position })
 }
 
 // =========================================================================
@@ -529,6 +654,13 @@ mod tests {
         assert!(header.keywords.is_empty());
         assert!(header.abbrevs.is_empty());
         assert!(header.body_begin_position > 0);
+    }
+
+    #[test]
+    fn parse_header_unicode_prefix_returns_byte_offset() {
+        let source = "theory Foo imports Pure keywords \"α\" :: thy_decl begin\nlemma TrueI: True";
+        let header = parse_header(source).unwrap();
+        assert_eq!(&source[header.body_begin_position..], "\nlemma TrueI: True");
     }
 
     #[test]
@@ -604,6 +736,26 @@ mod tests {
     }
 
     #[test]
+    fn parse_header_percent_tags_without_imports_preserves_keyword_metadata() {
+        let source = "theory Root keywords \"ML_file\" :: thy_load % \"ML\" % proof begin";
+        let header = parse_header(source).unwrap();
+        assert!(header.imports.is_empty());
+        assert_eq!(
+            header.keywords,
+            vec![KeywordSpec {
+                name: "ML_file".into(),
+                kind: "thy_load".into(),
+                tags: vec!["ML".into(), "proof".into()],
+            }]
+        );
+    }
+
+    #[test]
+    fn parse_header_percent_tag_missing_name_rejects() {
+        assert!(parse_header("theory Root keywords \"ML_file\" :: thy_load %").is_err());
+    }
+
+    #[test]
     fn test_keywords_multiple_names_one_spec() {
         // "a" "b" :: thy_decl — two names share the same kind
         let header =
@@ -649,6 +801,13 @@ mod tests {
             parse_header("theory Foo imports Bar abbrevs \"a\" \"b\" = \"c\" \"d\" begin").unwrap();
         // Cross product: (a,c), (a,d), (b,c), (b,d)
         assert_eq!(header.abbrevs.len(), 4);
+    }
+
+    #[test]
+    fn parse_header_oversized_abbrev_product_is_rejected() {
+        let side = std::iter::repeat_n("\"x\"", 65).collect::<Vec<_>>().join(" ");
+        let source = format!("theory Foo abbrevs {side} = {side} begin");
+        assert!(parse_header(&source).is_err());
     }
 
     // -----------------------------------------------------------------

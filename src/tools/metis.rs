@@ -50,9 +50,11 @@
 //! - **Paramodulation**: Substitute equals using `subst_premise`. From `s = t` and `P[s]`, derive
 //!   `P[t]`.
 
+#![allow(dead_code)]
+
 use std::{
     cmp::Ordering,
-    collections::{BinaryHeap, HashMap, HashSet, VecDeque},
+    collections::{BinaryHeap, HashMap, HashSet},
     sync::Arc,
 };
 
@@ -61,10 +63,10 @@ use crate::core::{
     logic::Pure,
     term::Term,
     thm::{CTerm, Thm, ThmKernel},
-    types::Typ,
     unify,
 };
 use crate::hol::hologic;
+use crate::isar::proof_result::validate_proof_result;
 
 // =========================================================================
 // Clause representation
@@ -254,10 +256,7 @@ impl ClauseSignature {
 
 /// Simple structural hash for a term (not cryptographically secure).
 fn hash_term(term: &Term) -> u64 {
-    use std::{
-        collections::hash_map::DefaultHasher,
-        hash::{Hash, Hasher},
-    };
+    use std::{collections::hash_map::DefaultHasher, hash::Hasher};
     let mut hasher = DefaultHasher::new();
     hash_term_into(term, &mut hasher);
     hasher.finish()
@@ -358,72 +357,55 @@ impl MetisProver {
     ///
     /// Returns `Some(thm)` where `thm` is a proof of the goal if successful.
     pub fn prove(&mut self, goal: &Thm) -> Option<Arc<Thm>> {
-        // Get the goal proposition
         let goal_prop = goal.prop().term().clone();
-
-        // Negate the goal and clausify it.
-        // Complex goals (A ==> B) ==> False need to be broken into multiple clauses.
-        let false_const = hologic::false_const();
-
-        // Clausify the negated goal: (goal ==> False)
-        // For a simple goal A, this gives clause [A, False] meaning "A and not False" → "A".
-        // For goal A ==> C, (A ==> C) ==> False → break into A and (C ==> False).
-        let negated_goal_term = Pure::mk_implies(goal_prop.clone(), false_const.clone());
+        if let Some(fact) = self
+            .clauses
+            .iter()
+            .find(|entry| validate_proof_result(&goal_prop, &entry.thm, &[]).is_ok())
+        {
+            return Some(Arc::clone(&fact.thm));
+        }
+        let negated_goal_term = Pure::mk_implies(goal_prop.clone(), hologic::false_const());
         let negated_clauses = to_cnf(&negated_goal_term);
-
-        let mut neg_ids = Vec::new();
+        let mut has_negated_clause = false;
         for clause_lits in &negated_clauses {
-            // Build a Pure theorem from the clause literals.
-            // Clause [l1, l2, ..., ln] means: l1 ==> l2 ==> ... ==> ln ==> False
-            // Actually, in Pure the literals are already in negation/implication form.
             if let Some(clause_thm) = Self::clause_to_thm(clause_lits) {
-                let id = self.add_clause(Arc::new(clause_thm), ClauseOrigin::NegatedGoal, true);
-                neg_ids.push(id);
+                self.add_clause(Arc::new(clause_thm), ClauseOrigin::NegatedGoal, true);
+                has_negated_clause = true;
             }
         }
-
-        if neg_ids.is_empty() {
-            // Fallback: add as single clause
-            let neg_ct = CTerm::certify(negated_goal_term);
-            let neg_thm = ThmKernel::assume(neg_ct);
+        if !has_negated_clause {
+            let neg_thm = ThmKernel::assume_compat(CTerm::certify(negated_goal_term));
             self.add_clause(Arc::new(neg_thm), ClauseOrigin::NegatedGoal, true);
         }
-
-        // Run the given-clause algorithm
-        let contradiction = self.given_clause_loop();
-
-        contradiction?;
-
-        // If we derived a contradiction, extract the proof of the original goal.
-        let contra_clause =
-            self.clauses.iter().find(|e| e.is_contradiction()).map(|e| Arc::clone(&e.thm));
-
-        let contra_thm = contra_clause?;
-
-        // Discharge the negated goal from the contradiction
-        let false_c = hologic::false_const();
-        let neg_goal_prop = Pure::mk_implies(goal_prop.clone(), false_c);
-        let neg_goal_ct = CTerm::certify(neg_goal_prop);
-
-        if contra_thm.hyps().contains(&neg_goal_ct)
-            && let Ok(discharged) = ThmKernel::implies_intr(&neg_goal_ct, &contra_thm)
-        {
-            return Some(Arc::new(discharged));
+        self.given_clause_loop()?;
+        let contra_thm = self
+            .clauses
+            .iter()
+            .find(|entry| entry.is_contradiction())
+            .map(|entry| Arc::clone(&entry.thm))?;
+        let neg_goal_ct =
+            CTerm::certify(Pure::mk_implies(goal_prop.clone(), hologic::false_const()));
+        let mut candidates = Vec::new();
+        if contra_thm.hyps().contains(&neg_goal_ct) {
+            candidates.push(neg_goal_ct);
         }
-
-        // Try each negated goal sub-clause
         for clause_lits in &negated_clauses {
             if let Some(clause_thm) = Self::clause_to_thm(clause_lits) {
                 let ct = CTerm::certify(clause_thm.prop().term().clone());
-                if contra_thm.hyps().contains(&ct)
-                    && let Ok(discharged) = ThmKernel::implies_intr(&ct, &contra_thm)
-                {
-                    return Some(Arc::new(discharged));
+                if contra_thm.hyps().contains(&ct) {
+                    candidates.push(ct);
                 }
             }
         }
-
-        Some(contra_thm)
+        for hypothesis in candidates {
+            if let Ok(discharged) = ThmKernel::implies_intr(&hypothesis, &contra_thm)
+                && validate_proof_result(&goal_prop, &discharged, &[]).is_ok()
+            {
+                return Some(Arc::new(discharged));
+            }
+        }
+        None
     }
 
     /// Convert a clause (list of literals) to a Pure theorem.
@@ -440,7 +422,7 @@ impl MetisProver {
             term = Pure::mk_implies(lit.clone(), term);
         }
         let ct = CTerm::certify(term);
-        Some(ThmKernel::assume(ct))
+        Some(ThmKernel::assume_compat(ct))
     }
 
     /// The given-clause algorithm: repeatedly select a passive clause
@@ -529,8 +511,14 @@ impl MetisProver {
                 unify::unifiers(&env, &[(concl1.clone(), prem2.clone())], &config)
             {
                 // Instantiate both clauses with the unifier
-                let thm1_inst = Arc::new(ThmKernel::instantiate(&unifier, &entry1.thm));
-                let thm2_inst = Arc::new(ThmKernel::instantiate(&unifier, &entry2.thm));
+                let (Ok(thm1_inst), Ok(thm2_inst)) = (
+                    ThmKernel::instantiate_checked(&unifier, &entry1.thm),
+                    ThmKernel::instantiate_checked(&unifier, &entry2.thm),
+                ) else {
+                    continue;
+                };
+                let thm1_inst = Arc::new(thm1_inst);
+                let thm2_inst = Arc::new(thm2_inst);
 
                 // Use bicompose to perform the resolution step
                 if let Some(resolvent) = ThmKernel::bicompose(true, &thm1_inst, &thm2_inst, i) {
@@ -575,7 +563,9 @@ impl MetisProver {
                 if let Some(unifier) =
                     unify::unifiers(&env, &[(prems[i].clone(), prems[j].clone())], &config)
                 {
-                    let thm_inst = ThmKernel::instantiate(&unifier, &entry.thm);
+                    let Ok(thm_inst) = ThmKernel::instantiate_checked(&unifier, &entry.thm) else {
+                        continue;
+                    };
 
                     // To factor: from A ==> A ==> B, derive A ==> B
                     // 1. Assume A (call it hyp)
@@ -589,7 +579,7 @@ impl MetisProver {
 
                     let prem_a = prems_inst[i].clone();
                     let ct_a = CTerm::certify(prem_a.clone());
-                    let assume_a = ThmKernel::assume(ct_a.clone());
+                    let assume_a = ThmKernel::assume_compat(ct_a.clone());
 
                     // Apply the clause to the assumption
                     let mut current = Arc::new(thm_inst.clone());
@@ -626,7 +616,7 @@ impl MetisProver {
         let target_entry = &self.clauses[target_cl_id].clone();
 
         // Check if eq_entry contains an equality premise
-        for (eq_idx, eq_prem) in eq_entry.premises.iter().enumerate() {
+        for eq_prem in &eq_entry.premises {
             self.steps += 1;
             if self.steps > self.max_steps {
                 return;
@@ -638,7 +628,7 @@ impl MetisProver {
             if eq_pair.is_none() {
                 continue;
             }
-            let (lhs, rhs) = eq_pair.unwrap();
+            let (lhs, _rhs) = eq_pair.unwrap();
 
             // For each premise of the target clause, try to substitute
             for (tgt_idx, tgt_prem) in target_entry.premises.iter().enumerate() {
@@ -650,8 +640,12 @@ impl MetisProver {
                 if let Some(unifier) =
                     unify::unifiers(&env, &[(lhs.clone(), tgt_prem.clone())], &config)
                 {
-                    let eq_inst = ThmKernel::instantiate(&unifier, &eq_entry.thm);
-                    let tgt_inst = ThmKernel::instantiate(&unifier, &target_entry.thm);
+                    let (Ok(eq_inst), Ok(tgt_inst)) = (
+                        ThmKernel::instantiate_checked(&unifier, &eq_entry.thm),
+                        ThmKernel::instantiate_checked(&unifier, &target_entry.thm),
+                    ) else {
+                        continue;
+                    };
 
                     // Use subst_premise: replace the i-th premise with the RHS
                     if let Some(paramodulated) =
@@ -871,12 +865,7 @@ impl SatSolver {
     /// Choose an unassigned variable for decision.
     /// Uses a simple heuristic: pick the first unassigned variable.
     fn decide(&mut self) -> Option<usize> {
-        for v in 1..self.assignments.len() {
-            if self.assignments[v].is_none() {
-                return Some(v);
-            }
-        }
-        None
+        (1..self.assignments.len()).find(|&var| self.assignments[var].is_none())
     }
 
     /// Check if all tracked variables are assigned.
@@ -1527,103 +1516,34 @@ fn dest_hol_not(term: &Term) -> Option<&Term> {
 // =========================================================================
 // Proof reconstruction from ATP output
 // =========================================================================
-/// This function:
-/// 1. Parses TSTP output from the ATP
-/// 2. Uses the Metis prover to verify each resolution/paramodulation step
-/// 3. Returns the final LCF-certified theorem
-///
-/// The key guarantee: if this function returns `Some(thm)`, the proof
-/// has been fully replayed through the LCF kernel.
+/// Replay the supplied TSTP steps against numbered `p0`, `p1`, ... premises.
+/// A status line, an empty proof, or a failed step never triggers local search.
 pub fn reconstruct_atp_proof(
     atp_output: &str,
     premises: &[Arc<Thm>],
     goal: &Thm,
 ) -> Option<Arc<Thm>> {
-    use crate::tools::reconstruct::{ProofReconstructor, ProofStep};
-
-    // 1. Parse TSTP steps
-    let steps = ProofReconstructor::parse_tstp(atp_output);
-    if steps.is_empty() {
-        // Fall back to Metis-based proof search directly
-        let mut prover = MetisProver::new();
-        prover.add_premises(premises);
-        return prover.prove(goal);
-    }
-
-    // 2. Try reconstructing each step using bicompose
-    let mut prover = MetisProver::new();
-    prover.add_premises(premises);
-
-    // Add negated goal
-    let goal_prop = goal.prop().term().clone();
-    let false_const = hologic::false_const();
-    let negated = Pure::mk_implies(goal_prop, false_const);
-    let neg_ct = CTerm::certify(negated);
-    let neg_thm = ThmKernel::assume(neg_ct);
-    prover.add_clause(Arc::new(neg_thm), ClauseOrigin::NegatedGoal, true);
-
-    // 3. Run the given-clause loop to verify the proof
-    prover.given_clause_loop()?;
-
-    // 4. Extract the proof of the original goal
-    find_contradiction_and_prove(&prover, goal)
+    let named = premises
+        .iter()
+        .enumerate()
+        .map(|(index, thm)| (format!("p{index}"), Arc::clone(thm)))
+        .collect();
+    crate::tools::reconstruct::reconstruct_from_atp(atp_output, named, goal)
 }
 
-/// Helper: find a contradiction in the prover's clause set and extract
-/// the proof of the original goal.
-fn find_contradiction_and_prove(prover: &MetisProver, goal: &Thm) -> Option<Arc<Thm>> {
-    // Find the contradiction clause
-    let mut contra: Option<Arc<Thm>> = None;
-    for entry in &prover.clauses {
-        if entry.is_contradiction() {
-            contra = Some(Arc::clone(&entry.thm));
-            break;
-        }
-    }
-
-    let contra_thm = contra?;
-
-    // Discharge the negated goal from the contradiction
-    let goal_prop = goal.prop().term().clone();
-    let false_c = hologic::false_const();
-    let neg_goal_prop = Pure::mk_implies(goal_prop, false_c);
-    let neg_goal_ct = CTerm::certify(neg_goal_prop);
-
-    if contra_thm.hyps().contains(&neg_goal_ct)
-        && let Ok(discharged) = ThmKernel::implies_intr(&neg_goal_ct, &contra_thm)
-    {
-        return Some(Arc::new(discharged));
-    }
-
-    Some(contra_thm)
-}
-
-/// The main sledgehammer entry point with real LCF proof reconstruction.
-///
-/// This function:
-/// 1. Runs the ATP (sledgehammer) to get a TSTP proof
-/// 2. Parses the TSTP output
-/// 3. Replays each inference step through the LCF kernel using the Metis prover
-/// 4. Returns the certified theorem (or None if reconstruction fails)
+/// Run an external search and independently try kernel-derived local search.
+/// ATP status is a hint only: this runner currently does not return proof bytes.
+/// Only a strict, checked proof of the complete goal may be returned.
 pub fn sledgehammer_prove_lcf(goal: &Thm, premises: &[(String, Arc<Thm>)]) -> Option<Arc<Thm>> {
     use crate::tools::sledgehammer::{AtpResult, Sledgehammer};
 
     let hammer = Sledgehammer::new();
     let premise_thms: Vec<Thm> = premises.iter().map(|(_, thm)| (**thm).clone()).collect();
-
-    let result = hammer.run(goal, &premise_thms);
-
-    match result {
+    match hammer.run(goal, &premise_thms) {
         Some((_atp, AtpResult::Theorem)) => {
-            // ATP found a proof. Since we don't currently capture the
-            // full ATP output for TSTP parsing in `Sledgehammer::run`,
-            // we fall back to Metis-based proof search using the premises.
-            let premise_arcs: Vec<Arc<Thm>> =
-                premises.iter().map(|(_, thm)| Arc::clone(thm)).collect();
-
-            let mut prover = MetisProver::new();
-            prover.add_premises(&premise_arcs);
-            prover.prove(goal)
+            // A status line is only a search hint; no proof bytes are returned.
+            // Independent local search still needs a complete strict derivation.
+            crate::tools::reconstruct::reconstruct_with_metis(premises.to_vec(), goal)
         },
         _ => None,
     }
@@ -1655,207 +1575,38 @@ pub fn sledgehammer_prove_lcf(goal: &Thm, premises: &[(String, Arc<Thm>)]) -> Op
 ///  │ Replay steps      │  For each step, apply the kernel rule
 ///  └───────┬──────────┘  corresponding to the inference
 ///          │
-///          ▼
-///  ┌──────────────────┐
-///  │ Validate goal     │  Check that the final clause implies the goal
+///  │ Validate goal     │  Match the full proposition and discharge all hyps
 ///  └──────────────────┘
 /// ```
 pub struct MetisReplay {
-    /// The original goal theorem.
     goal: Arc<Thm>,
-    /// Named premises available for the proof.
     premises: Vec<(String, Arc<Thm>)>,
-    /// Map from step name to its certified theorem.
-    proven_steps: HashMap<String, Arc<Thm>>,
 }
 
 impl MetisReplay {
-    /// Create a new MetisReplay instance.
-    pub fn new(goal: &Thm, premises: &[(String, Arc<Thm>)]) -> Self {
-        let mut proven = HashMap::new();
-        for (name, thm) in premises {
-            proven.insert(name.clone(), Arc::clone(thm));
-        }
-        MetisReplay {
-            goal: Arc::new(goal.clone()),
-            premises: premises.to_vec(),
-            proven_steps: proven,
-        }
+    /// Reject duplicate input names, including identical duplicate facts.
+    pub fn new(
+        goal: &Thm,
+        premises: &[(String, Arc<Thm>)],
+    ) -> Result<Self, crate::tools::reconstruct::AtpProofParseError> {
+        crate::tools::reconstruct::initial_proof_steps(premises).ok_or_else(|| {
+            crate::tools::reconstruct::AtpProofParseError {
+                line: 0,
+                detail: "duplicate or empty input premise name".to_owned(),
+            }
+        })?;
+        Ok(Self { goal: Arc::new(goal.clone()), premises: premises.to_vec() })
     }
 
-    /// Replay an ATP proof from TSTP steps.
-    ///
-    /// Returns `Some(thm)` where `thm` proves the goal, or `None` if
-    /// replay fails.
     pub fn replay(&mut self, steps: &[crate::tools::reconstruct::ProofStep]) -> Option<Arc<Thm>> {
-        let mut last_thm: Option<Arc<Thm>> = None;
-
+        let mut proven = crate::tools::reconstruct::initial_proof_steps(&self.premises)?;
+        let mut last = None;
         for step in steps {
-            let thm = self.replay_step(step)?;
-            self.proven_steps.insert(step.name.clone(), Arc::clone(&thm));
-            last_thm = Some(thm);
+            last = Some(crate::tools::reconstruct::replay_checked_step(&mut proven, step)?);
         }
-
-        // Check if the last theorem implies the goal
-        last_thm.and_then(|thm| {
-            let goal_term = self.goal.prop().term();
-            let (prems, concl) = Pure::strip_imp_prems(thm.prop().term());
-            if *concl == *goal_term {
-                Some(thm)
-            } else if prems.iter().any(|p| **p == *goal_term) {
-                Some(thm)
-            } else {
-                // Try to match via resolution with the goal
-                self.validate_against_goal(&thm)
-            }
-        })
-    }
-
-    /// Replay a single proof step through the LCF kernel.
-    fn replay_step(&self, step: &crate::tools::reconstruct::ProofStep) -> Option<Arc<Thm>> {
-        // Look up premises
-        let prem_thms: Vec<Arc<Thm>> =
-            step.premises.iter().filter_map(|name| self.proven_steps.get(name).cloned()).collect();
-
-        match step.rule.as_str() {
-            "resolution" | "binary_resolution" => {
-                if prem_thms.len() >= 2 {
-                    self.resolution(&prem_thms[0], &prem_thms[1])
-                } else {
-                    prem_thms.first().cloned()
-                }
-            },
-
-            "factoring" => {
-                if let Some(thm) = prem_thms.first() {
-                    self.factoring(thm)
-                } else {
-                    None
-                }
-            },
-
-            "paramodulation" | "superposition" => {
-                if prem_thms.len() >= 2 {
-                    self.paramodulation(&prem_thms[0], &prem_thms[1])
-                } else {
-                    prem_thms.first().cloned()
-                }
-            },
-
-            "equality_resolution" => {
-                // From s != s, derive contradiction
-                prem_thms.first().cloned()
-            },
-
-            "assumption" | "axiom" | "negated_conjecture" => prem_thms.first().cloned(),
-
-            "cnf" | "clausify" | "negation" | "skolemization" => {
-                // Trust the ATP's CNF conversion (validated by clause structure)
-                prem_thms.first().cloned()
-            },
-
-            _ => {
-                // Unknown rule: trust the first premise
-                prem_thms.first().cloned()
-            },
-        }
-    }
-
-    /// Perform a resolution step between two clauses.
-    ///
-    /// From `A ==> B` and `C ==> D` where `B` unifies with `C`,
-    /// derive `(A ∪ C\{C_unified}) ==> D[subst]`.
-    fn resolution(&self, clause1: &Arc<Thm>, clause2: &Arc<Thm>) -> Option<Arc<Thm>> {
-        let (prems1, concl1) = Pure::strip_imp_prems(clause1.prop().term());
-        let (prems2, _concl2) = Pure::strip_imp_prems(clause2.prop().term());
-
-        // Try to resolve concl1 with each premise of clause2
-        for (i, prem2) in prems2.iter().enumerate() {
-            if let Some(resolvent) = ThmKernel::bicompose(true, clause1, clause2, i) {
-                return Some(Arc::new(resolvent));
-            }
-        }
-
-        // Try the other direction: concl2 with premise of clause1
-        for (i, prem1) in prems1.iter().enumerate() {
-            if let Some(resolvent) = ThmKernel::bicompose(true, clause2, clause1, i) {
-                return Some(Arc::new(resolvent));
-            }
-        }
-
-        None
-    }
-
-    /// Perform factoring on a clause.
-    ///
-    /// From `A ==> A ==> B`, derive `A ==> B`.
-    fn factoring(&self, clause: &Arc<Thm>) -> Option<Arc<Thm>> {
-        let (prems, _concl) = Pure::strip_imp_prems(clause.prop().term());
-
-        if prems.len() < 2 {
-            return None;
-        }
-
-        // Try to factor duplicate premises
-        for i in 0..prems.len() {
-            for j in (i + 1)..prems.len() {
-                // Try bicompose: resolve clause with itself at premise j
-                // using premise i as the matching point
-                if let Some(resolvent) = ThmKernel::bicompose(true, clause, clause, j) {
-                    return Some(Arc::new(resolvent));
-                }
-            }
-        }
-
-        None
-    }
-
-    /// Perform paramodulation (equality substitution).
-    ///
-    /// From `s = t` and `P[s]`, derive `P[t]`.
-    fn paramodulation(&self, eq_clause: &Arc<Thm>, target: &Arc<Thm>) -> Option<Arc<Thm>> {
-        let (eq_prems, eq_concl) = Pure::strip_imp_prems(eq_clause.prop().term());
-        let (tgt_prems, _tgt_concl) = Pure::strip_imp_prems(target.prop().term());
-
-        // Check if eq_concl or any eq premise is an equality (Pure.eq or HOL.eq)
-        for eq_term in std::iter::once(eq_concl).chain(eq_prems.iter().copied()) {
-            if Pure::dest_equals(eq_term).is_some()
-                || crate::hol::hologic::dest_hol_equals(eq_term).is_some()
-            {
-                // Try subst_premise on each premise of target
-                for i in 0..tgt_prems.len() {
-                    if let Some(result) = ThmKernel::subst_premise(eq_clause, target, i) {
-                        return Some(Arc::new(result));
-                    }
-                }
-            }
-        }
-
-        None
-    }
-
-    /// Validate that a theorem implies the goal.
-    fn validate_against_goal(&self, thm: &Arc<Thm>) -> Option<Arc<Thm>> {
-        let goal_term = self.goal.prop().term();
-        let (prems, concl) = Pure::strip_imp_prems(thm.prop().term());
-
-        // Try: if goal is among premises, derive by discharging others
-        for prem in prems.iter() {
-            if **prem == *goal_term {
-                let ct = CTerm::certify(goal_term.clone());
-                let goal_assume = ThmKernel::assume(ct);
-                if let Ok(result) = ThmKernel::implies_elim(thm, &goal_assume) {
-                    return Some(Arc::new(result));
-                }
-            }
-        }
-
-        // Try: if conclusion matches goal
-        if *concl == *goal_term {
-            return Some(Arc::clone(thm));
-        }
-
-        None
+        let result = last?;
+        validate_proof_result(self.goal.prop().term(), &result, &[]).ok()?;
+        Some(result)
     }
 }
 
@@ -1886,7 +1637,7 @@ mod tests {
     /// Helper: create a theorem by assuming a proposition.
     fn assume_prop(name: &str) -> Thm {
         let ct = CTerm::certify(prop_const(name));
-        ThmKernel::assume(ct)
+        ThmKernel::assume_compat(ct)
     }
 
     // =================================================================
@@ -1984,8 +1735,8 @@ mod tests {
         let ct1 = CTerm::certify(clause1);
         let ct2 = CTerm::certify(clause2);
 
-        let thm1 = ThmKernel::assume(ct1);
-        let thm2 = ThmKernel::assume(ct2);
+        let thm1 = ThmKernel::assume_compat(ct1);
+        let thm2 = ThmKernel::assume_compat(ct2);
 
         let mut prover = MetisProver::with_limits(100);
         let id1 = prover.add_clause(Arc::new(thm1), ClauseOrigin::Premise(0), false);
@@ -2021,8 +1772,8 @@ mod tests {
         let ct1 = CTerm::certify(clause1);
         let ct2 = CTerm::certify(clause2);
 
-        let thm1 = ThmKernel::assume(ct1);
-        let thm2 = ThmKernel::assume(ct2);
+        let thm1 = ThmKernel::assume_compat(ct1);
+        let thm2 = ThmKernel::assume_compat(ct2);
 
         let result = ThmKernel::implies_elim(&thm2, &thm1);
         assert!(result.is_ok());
@@ -2038,7 +1789,7 @@ mod tests {
 
         let clause = imp(a.clone(), imp(a.clone(), b.clone()));
         let ct = CTerm::certify(clause);
-        let thm = ThmKernel::assume(ct);
+        let thm = ThmKernel::assume_compat(ct);
 
         let mut prover = MetisProver::with_limits(100);
         let id = prover.add_clause(Arc::new(thm.clone()), ClauseOrigin::Premise(0), false);
@@ -2058,26 +1809,11 @@ mod tests {
     // =================================================================
 
     #[test]
-    fn test_metis_trivial() {
-        // Prove A ==> A
-        let a = prop_const("A");
-        let goal_term = imp(a.clone(), a.clone());
-        let goal_ct = CTerm::certify(goal_term);
-        let _goal = ThmKernel::assume(goal_ct);
-
-        let _prover = MetisProver::with_limits(1000);
-        // No premises needed — the negated goal should lead to contradiction immediately
-
-        // Actually, we can't prove A ==> A from nothing with just resolution.
-        // We need the kernel's `trivial` rule for that. The Metis prover
-        // works on the clause level with premises.
-        //
-        // A more realistic test: provide premise A and try to prove A.
-        let goal2 = assume_prop("A");
-        let mut prover2 = MetisProver::with_limits(1000);
-        prover2.add_premises(&[Arc::new(goal2.clone())]);
-        let result = prover2.prove(&goal2);
-        assert!(result.is_some(), "Should prove A from A");
+    fn metis_compat_premise_cannot_prove_goal() {
+        let goal = assume_prop("A");
+        let mut prover = MetisProver::with_limits(1000);
+        prover.add_premises(&[Arc::new(goal.clone())]);
+        assert!(prover.prove(&goal).is_none());
     }
 
     #[test]
@@ -2095,14 +1831,14 @@ mod tests {
         let ct2 = CTerm::certify(prem2);
         let ct_goal = CTerm::certify(goal_term);
 
-        let thm1 = ThmKernel::assume(ct1);
-        let thm2 = ThmKernel::assume(ct2);
-        let goal = ThmKernel::assume(ct_goal);
+        let thm1 = ThmKernel::assume_compat(ct1);
+        let thm2 = ThmKernel::assume_compat(ct2);
+        let goal = ThmKernel::assume_compat(ct_goal);
 
         let mut prover = MetisProver::with_limits(1000);
         prover.add_premises(&[Arc::new(thm1), Arc::new(thm2)]);
         let result = prover.prove(&goal);
-        assert!(result.is_some(), "Should prove syllogism: A==>B, B==>C ⊢ A==>C");
+        assert!(result.is_none(), "compat premises cannot certify a complete syllogism");
     }
 
     #[test]
@@ -2116,15 +1852,14 @@ mod tests {
         let ct_not_a = CTerm::certify(not_a);
         let ct_b = CTerm::certify(b.clone());
 
-        let thm_a = ThmKernel::assume(ct_a);
-        let thm_not_a = ThmKernel::assume(ct_not_a);
-        let goal = ThmKernel::assume(ct_b);
+        let thm_a = ThmKernel::assume_compat(ct_a);
+        let thm_not_a = ThmKernel::assume_compat(ct_not_a);
+        let goal = ThmKernel::assume_compat(ct_b);
 
         let mut prover = MetisProver::with_limits(1000);
         prover.add_premises(&[Arc::new(thm_a), Arc::new(thm_not_a)]);
         let result = prover.prove(&goal);
-        // From A and ~A (A ==> False), we can derive False, and thus B
-        assert!(result.is_some(), "Should prove explosion: A, ~A ⊢ B");
+        assert!(result.is_none(), "compat facts cannot certify explosion");
     }
 
     #[test]
@@ -2132,7 +1867,7 @@ mod tests {
         // Check that false is correctly detected as contradiction
         let false_term = hologic::false_const();
         let ct = CTerm::certify(false_term.clone());
-        let thm = ThmKernel::assume(ct);
+        let thm = ThmKernel::assume_compat(ct);
 
         let entry = ClauseEntry::from_thm(0, Arc::new(thm), ClauseOrigin::Premise(0));
         assert!(entry.is_contradiction());
@@ -2164,26 +1899,19 @@ fof(f3, plain, q, inference(resolution, [], [f1, f2])).
         let q = prop_const("Q");
         let goal_term = imp(p.clone(), q.clone());
         let goal_ct = CTerm::certify(goal_term.clone());
-        let goal = ThmKernel::assume(goal_ct);
+        let goal = ThmKernel::assume_compat(goal_ct);
 
         // Create premises matching the TSTP steps
         let ct_p = CTerm::certify(p.clone());
-        let thm_p = ThmKernel::assume(ct_p);
+        let thm_p = ThmKernel::assume_compat(ct_p);
 
         let pq_term = imp(p, q.clone());
         let ct_pq = CTerm::certify(pq_term);
-        let thm_pq = ThmKernel::assume(ct_pq);
+        let thm_pq = ThmKernel::assume_compat(ct_pq);
 
         let premises: Vec<Arc<Thm>> = vec![Arc::new(thm_p), Arc::new(thm_pq)];
 
-        let result = reconstruct_atp_proof(tstp_output, &premises, &goal);
-        // Reconstruction should either succeed or fail gracefully
-        // (TSTP parsing might be limited for this test format)
-        if let Some(_thm) = result {
-            // Success is good
-        }
-        // If it fails, that's OK for this test — the fallback Metis search
-        // may or may not work depending on the exact term format.
+        assert!(reconstruct_atp_proof(tstp_output, &premises, &goal).is_none());
     }
 
     #[test]
@@ -2287,7 +2015,7 @@ fof(f3, plain, q, inference(resolution, [], [f1, f2])).
         let b = Term::const_("B", Typ::base("prop"));
         let imp = Pure::mk_implies(a, b);
         let clauses = hol_to_cnf(&imp);
-        assert!(clauses.len() >= 1);
+        assert!(!clauses.is_empty());
     }
 
     #[test]

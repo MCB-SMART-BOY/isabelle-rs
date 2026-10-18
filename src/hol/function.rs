@@ -126,7 +126,7 @@ impl FunDef {
     /// - Recursive cases generate step premises with induction hypotheses
     ///
     /// Example for `append`:
-    /// ```
+    /// ```text
     /// [| !!ys. P [] ys; !!x xs ys. P xs ys ==> P (x#xs) ys |] ==> P xs ys
     /// ```
     fn gen_induction_rule(&self) -> Option<Term> {
@@ -137,7 +137,7 @@ impl FunDef {
         let mut induct_premises: Vec<Term> = Vec::new();
 
         for (_label, lhs, rhs) in &self.equations {
-            let premise = self.make_induct_premise(lhs, rhs);
+            let premise = self.make_induct_premise(lhs, rhs)?;
             induct_premises.push(premise);
         }
 
@@ -156,10 +156,9 @@ impl FunDef {
     }
 
     /// Create a single induction premise from one equation.
-    fn make_induct_premise(&self, lhs: &str, rhs: &str) -> Term {
-        // Parse the LHS to extract the pattern variables
-        let lhs_term = crate::isar::term_parser::parse_term(lhs)
-            .unwrap_or_else(|| Term::const_("True", Typ::base("prop")));
+    fn make_induct_premise(&self, lhs: &str, rhs: &str) -> Option<Term> {
+        // Malformed source cannot supply an induction premise.
+        let lhs_term = crate::isar::term_parser::parse_term(lhs)?;
 
         // Collect variable names from the LHS
         let mut vars: Vec<String> = Vec::new();
@@ -189,11 +188,11 @@ impl FunDef {
             for ih in ihs.iter().rev() {
                 result = crate::core::logic::Pure::mk_implies(ih.clone(), result);
             }
-            result
+            Some(result)
         } else {
             // Base case: just P(lhs)
             let p_var = Term::var("?P", 0, Typ::dummy());
-            Term::app(p_var, lhs_term)
+            Some(Term::app(p_var, lhs_term))
         }
     }
 
@@ -269,15 +268,14 @@ pub fn fundef_to_lemmas(def: &FunDef) -> Vec<crate::hol::hol_loader::ParsedLemma
     let theorems = def.generate_theorems();
 
     for (name, term, attrs) in theorems {
-        let thm = ThmKernel::assume(CTerm::certify(term));
-        lemmas.push(crate::hol::hol_loader::ParsedLemma {
+        let thm = ThmKernel::assume_compat(CTerm::certify(term));
+        lemmas.push(crate::hol::hol_loader::ParsedLemma::new_synthetic(
             name,
-            attributes: attrs,
-            theorem: Arc::new(thm),
-            proof_script: None,
-            alias_for: None,
-            source_loc: None,
-        });
+            attrs,
+            Arc::new(thm),
+            None,
+            None,
+        ));
     }
 
     lemmas

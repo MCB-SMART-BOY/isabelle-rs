@@ -269,12 +269,29 @@ pub struct ServerInfo {
     pub version: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 pub enum TextDocumentSyncKind {
     None = 0,
     Full = 1,
     Incremental = 2,
+}
+
+impl Serialize for TextDocumentSyncKind {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_u8(*self as u8)
+    }
+}
+
+impl<'de> Deserialize<'de> for TextDocumentSyncKind {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        match u8::deserialize(deserializer)? {
+            0 => Ok(Self::None),
+            1 => Ok(Self::Full),
+            2 => Ok(Self::Incremental),
+            _ => Err(serde::de::Error::custom("unsupported text document sync kind")),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -316,6 +333,14 @@ pub struct TextDocumentContentChangeEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub range_length: Option<u32>,
     pub text: String,
+}
+
+/// Return the final complete text only when every change is a full replacement.
+pub fn extract_latest_full_content(changes: &[TextDocumentContentChangeEvent]) -> Option<&str> {
+    if changes.iter().any(|change| change.range.is_some()) {
+        return None;
+    }
+    changes.last().map(|change| change.text.as_str())
 }
 
 /// `textDocument/didClose` notification params.

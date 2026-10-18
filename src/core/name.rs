@@ -38,7 +38,7 @@ pub fn bound_name(n: usize) -> String {
     if n < 1000 {
         format!(":{:03}", n)
     } else {
-        format!(":{}{}", bound_name(n / 1000), format!("{:03}", n % 1000))
+        format!(":{}{:03}", bound_name(n / 1000), n % 1000)
     }
 }
 
@@ -241,18 +241,8 @@ impl NameContext {
         self.declared.get(&clean)
     }
 
-    /// Get the latest name in the renaming chain.
+    /// Return the original spelling; this borrowed API does not resolve renaming chains.
     pub fn latest_name<'a>(&self, name: &'a str) -> &'a str {
-        let mut cur = clean_name(name).to_string();
-        loop {
-            match self.declared.get(&cur) {
-                Some(Some(next)) => cur = next.clone(),
-                _ => break,
-            }
-        }
-        // We need to return a reference, but since we own it, we return
-        // the original if not found. This is slightly imperfect but functional.
-        // In practice, we use this via `variant` which handles chains properly.
         name
     }
 

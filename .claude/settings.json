@@ -1,10 +1,10 @@
 {
   "project": {
     "name": "isabelle-rs",
-    "description": "Rust reimplementation of the Isabelle proof assistant kernel",
+    "description": "Rust research prototype of an Isabelle/Pure-inspired LCF kernel",
     "language": "rust",
-    "buildCommand": "cargo build",
-    "testCommand": "cargo test",
+    "buildCommand": "cargo +stable xtask build",
+    "testCommand": "cargo +stable xtask test",
     "stackRequirement": "RUST_MIN_STACK=268435456"
   },
 
@@ -14,7 +14,7 @@
       "Bash:cargo bench",
       "Bash:cargo check",
       "Bash:cargo test",
-      "Bash:cargo run --bin isabelle-build",
+      "Bash:cargo run",
       "Bash:cargo clippy",
       "Bash:cargo fmt",
       "Bash:cargo fix",
@@ -37,7 +37,7 @@
       "Bash:git push",
       "Bash:gh pr create",
       "Bash:gh release create",
-      "Bash:RUST_MIN_STACK=* cargo test test_verify_all_core_files"
+      "Bash:cargo +stable xtask core"
     ]
   },
 
@@ -47,17 +47,15 @@
   },
 
   "strategy": {
-    "active": "Route A — Stability First",
-    "description": "Fix bugs before adding features: tests → OOM → Tier2 → attributes → docs",
+    "active": "P1-designed native P2/P3/P4 closure implementation resumed; compatibility acceptance outstanding",
+    "description": "Current project status, trust metrics, blockers and dated Isabelle2025 reference results are owned by docs/status/PROJECT_STATUS.md and docs/status/TRUST.md; local official reference prepare/build/inventory is disabled under the JVM-free policy, leaving offline compare only. This metadata is not execution authorization or an acceptance gate.",
     "priorities": [
-      "Fix 5 failing tests",
-      "Fix OOM/stack overflow root causes",
-      "Expand Tier2 verification (6→100+ files)",
-      "Complete attribute system integration",
-      "Full documentation sync"
+      "Keep the frozen official Isabelle2025 observations differential-only; use offline reference compare, never a production proof fallback or local JVM execution",
+      "Maintain exact-owner Rust kernel replay and distinguish legacy search/diagnostics from acceptance",
+      "Report failed and unrun project and independent global quality gates without reclassifying them as passes"
     ],
-    "noNewFeatures": true,
-    "why": "Core kernel is solid (125/125). Focus on making existing verification work, not adding new features."
+    "noNewFeatures": false,
+    "why": "ROADMAP A-H is an approved long-term program, not implemented compatibility. P2/P3/P4 work has resumed under P1 contracts; narrow Rust THM consumer evidence is not complete ML THM, ROOT/HOL or nine-root acceptance. Preserve historical evidence without treating metadata as proof of completion."
   },
 
   "commitRules": {
@@ -69,7 +67,7 @@
 
   "sessionRules": {
     "updateClaudeDir": true,
-    "description": "At end of every conversation, update .claude/rules/README.md, .claude/rules/post-session.md, and CLAUDE.md with current state. The user should never need to repeat preferences."
+    "description": "Keep AGENTS.md and canonical trust/status docs synchronized when semantics change; do not churn every file after every session."
   },
 
   "hooks": {
@@ -79,7 +77,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo \"Editing file: $CLAUDE_TOOL_FILE_PATH\""
+            "command": "cargo +stable xtask hook pre-edit"
           }
         ]
       }
@@ -90,7 +88,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'EDITED=\"$CLAUDE_TOOL_FILE_PATH\"; if echo \"$EDITED\" | grep -q \"^src/\"; then SRC_CHANGES=$(git diff --name-only HEAD -- src/ 2>/dev/null | wc -l); if [ \"$SRC_CHANGES\" -gt 10 ]; then echo \"[doc-sync] ⚠ $SRC_CHANGES src files changed. Docs may be stale. Use /sync-docs to update docs/ and .claude/\"; fi; fi'"
+            "command": "cargo +stable xtask hook post-edit"
           }
         ]
       }
@@ -126,16 +124,20 @@
 
   "commands": {
     "verifyAll": {
-      "command": "RUST_MIN_STACK=268435456 cargo test test_verify_all_core_files -- --nocapture",
-      "description": "Run full core verification (5 files, needs 256MB stack)"
+      "command": "cargo +stable xtask verify",
+      "description": "Run deterministic repository verification, including full workspace tests; independent global security and workstation gates remain separate."
     },
-    "benchAll": {
-      "command": "RUST_MIN_STACK=268435456 cargo test --lib",
-      "description": "Run all lib tests with required stack"
+    "coreSnapshot": {
+      "command": "cargo +stable xtask core",
+      "description": "Run the exact 125-theorem sampled core snapshot with the maintained stack."
     },
-    "quickTest": {
-      "command": "cargo test --lib core::thm core::unify tools::metis",
-      "description": "Fast kernel + metis tests (32MB stack)"
+    "libraryTests": {
+      "command": "cargo +stable xtask lib",
+      "description": "Run the separate stack-sensitive root library suite; this is not all workspace tests or a benchmark."
+    },
+    "quickCheck": {
+      "command": "cargo +stable xtask fast",
+      "description": "Run stable formatting and locked compilation."
     }
   }
 }

@@ -10,7 +10,10 @@
 //! - Applications respect function types
 //! - Propositions have type `prop`
 
-use std::collections::HashMap;
+use std::{
+    collections::{HashMap, hash_map::Entry},
+    sync::{Arc, OnceLock},
+};
 
 use super::{
     term::Term,
@@ -28,29 +31,53 @@ pub enum TypeDecl {
     Nonterminal,
 }
 
+/// A user-fixable conflict in the legacy type namespace.
+#[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+pub enum TypeDeclarationError {
+    /// An inherited or local type already owns this name.
+    #[error("type constructor `{name}` is already declared")]
+    Duplicate { name: String },
+}
+
+/// Conflicting declarations from independent legacy theory branches.
+#[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+pub enum SignatureMergeError {
+    /// A name denotes distinct declarations, even when their shapes coincide.
+    #[error("conflicting {namespace} declaration `{name}` in imported theories")]
+    Declaration { namespace: &'static str, name: Symbol },
+}
+
 // =========================================================================
 // Type Signature
 // =========================================================================
 
 #[derive(Clone, Debug)]
 pub struct TypeSignature {
-    types: HashMap<Symbol, TypeDecl>,
+    types: HashMap<Symbol, Arc<TypeDecl>>,
     algebra: ClassAlgebra,
-    #[allow(dead_code)]
-    logical_types: Vec<Symbol>,
 }
 
 impl TypeSignature {
     pub fn empty() -> Self {
-        TypeSignature {
-            types: HashMap::new(),
-            algebra: ClassAlgebra::empty(),
-            logical_types: Vec::new(),
-        }
+        TypeSignature { types: HashMap::new(), algebra: ClassAlgebra::empty() }
     }
 
     pub fn add_type(&mut self, name: impl Into<Symbol>, decl: TypeDecl) {
-        self.types.insert(name.into(), decl);
+        self.types.insert(name.into(), Arc::new(decl));
+    }
+
+    /// Add a fresh type without overwriting an inherited declaration.
+    pub fn try_add_type(
+        &mut self,
+        name: impl Into<Symbol>,
+        decl: TypeDecl,
+    ) -> Result<(), TypeDeclarationError> {
+        let name = name.into();
+        if self.types.contains_key(&name) {
+            return Err(TypeDeclarationError::Duplicate { name: name.to_string() });
+        }
+        self.types.insert(name, Arc::new(decl));
+        Ok(())
     }
 
     /// Simple boolean check: is the type well-formed against this signature?
@@ -58,7 +85,7 @@ impl TypeSignature {
         match typ {
             Typ::Type { name, args } => {
                 if let Some(decl) = self.types.get(name) {
-                    let expected = match decl {
+                    let expected = match decl.as_ref() {
                         TypeDecl::Logical { arity } => *arity,
                         _ => args.len(),
                     };
@@ -78,7 +105,7 @@ impl TypeSignature {
                 if !self.types.contains_key(name) {
                     return Err(format!("Undeclared type constructor: {}", name.as_ref()));
                 }
-                let expected_arity = match self.types.get(name) {
+                let expected_arity = match self.types.get(name).map(Arc::as_ref) {
                     Some(TypeDecl::Logical { arity }) => *arity,
                     Some(TypeDecl::Abbreviation { .. }) => 0,
                     Some(TypeDecl::Nonterminal) => 0,
@@ -108,11 +135,17 @@ impl TypeSignature {
 
 impl Default for TypeSignature {
     fn default() -> Self {
-        let mut tsig = TypeSignature::empty();
-        tsig.add_type("fun", TypeDecl::Logical { arity: 2 });
-        tsig.add_type("prop", TypeDecl::Logical { arity: 0 });
-        tsig.add_type("bool", TypeDecl::Logical { arity: 0 });
-        tsig
+        // Immutable bootstrap declarations share identity across independently created contexts.
+        static BUILTINS: OnceLock<TypeSignature> = OnceLock::new();
+        BUILTINS
+            .get_or_init(|| {
+                let mut signature = TypeSignature::empty();
+                signature.add_type("fun", TypeDecl::Logical { arity: 2 });
+                signature.add_type("prop", TypeDecl::Logical { arity: 0 });
+                signature.add_type("bool", TypeDecl::Logical { arity: 0 });
+                signature
+            })
+            .clone()
     }
 }
 
@@ -132,7 +165,7 @@ pub struct ConstDecl {
 
 #[derive(Clone, Debug)]
 pub struct Signature {
-    consts: HashMap<Symbol, ConstDecl>,
+    consts: HashMap<Symbol, Arc<ConstDecl>>,
     tsig: TypeSignature,
 }
 
@@ -144,21 +177,31 @@ impl Signature {
     }
 
     pub fn pure() -> Self {
-        let mut sig = Signature::empty();
-        let prop = Typ::base("prop");
-        let a = Typ::free("'a", Sort::singleton("type"));
-        sig.declare("Pure.all", Typ::arrow(Typ::arrow(a, prop.clone()), prop.clone()));
-        sig.declare("Pure.imp", Typ::arrow(prop.clone(), Typ::arrow(prop.clone(), prop.clone())));
-        let a = Typ::free("'a", Sort::singleton("type"));
-        sig.declare("Pure.eq", Typ::arrow(a.clone(), Typ::arrow(a, prop)));
-        sig
+        // These immutable declarations are the one legacy Pure bootstrap, not proof authority.
+        static PURE: OnceLock<Signature> = OnceLock::new();
+        PURE.get_or_init(|| {
+            let mut signature = Signature::empty();
+            let prop = Typ::base("prop");
+            let alpha = Typ::free("'a", Sort::singleton("type"));
+            signature.declare(
+                "Pure.all",
+                Typ::arrow(Typ::arrow(alpha.clone(), prop.clone()), prop.clone()),
+            );
+            signature.declare(
+                "Pure.imp",
+                Typ::arrow(prop.clone(), Typ::arrow(prop.clone(), prop.clone())),
+            );
+            signature.declare("Pure.eq", Typ::arrow(alpha.clone(), Typ::arrow(alpha, prop)));
+            signature
+        })
+        .clone()
     }
 
     // ── Constants ──
 
     pub fn declare(&mut self, name: impl Into<Symbol>, typ: Typ) {
         let n = name.into();
-        self.consts.insert(n.clone(), ConstDecl { name: n, typ });
+        self.consts.insert(n.clone(), Arc::new(ConstDecl { name: n, typ }));
     }
 
     pub fn const_type(&self, name: &str) -> Option<&Typ> {
@@ -173,12 +216,17 @@ impl Signature {
         &self.tsig
     }
 
+    /// Declare a fresh type constructor in this signature.
+    pub fn declare_type(&mut self, name: &str, arity: usize) -> Result<(), TypeDeclarationError> {
+        self.tsig.try_add_type(name, TypeDecl::Logical { arity })
+    }
+
     pub fn extend(&self) -> Signature {
         self.clone()
     }
 
     pub fn consts(&self) -> impl Iterator<Item = &ConstDecl> {
-        self.consts.values()
+        self.consts.values().map(Arc::as_ref)
     }
 
     pub fn const_count(&self) -> usize {
@@ -196,6 +244,12 @@ impl Signature {
             new_sig.tsig.add_type(name, decl);
         }
         new_sig
+    }
+
+    /// Merge inherited declarations by origin, never by name or type shape alone.
+    pub(crate) fn merge(&mut self, other: &Self) -> Result<(), SignatureMergeError> {
+        merge_declarations(&mut self.consts, &other.consts, "constant")?;
+        merge_declarations(&mut self.tsig.types, &other.tsig.types, "type")
     }
 
     // ── Term Certification ──
@@ -321,6 +375,25 @@ impl Default for Signature {
     fn default() -> Self {
         Self::pure()
     }
+}
+
+fn merge_declarations<T>(
+    target: &mut HashMap<Symbol, Arc<T>>,
+    incoming: &HashMap<Symbol, Arc<T>>,
+    namespace: &'static str,
+) -> Result<(), SignatureMergeError> {
+    for (name, declaration) in incoming {
+        match target.entry(Arc::clone(name)) {
+            Entry::Vacant(entry) => {
+                entry.insert(Arc::clone(declaration));
+            },
+            Entry::Occupied(entry) if Arc::ptr_eq(entry.get(), declaration) => {},
+            Entry::Occupied(_) => {
+                return Err(SignatureMergeError::Declaration { namespace, name: Arc::clone(name) });
+            },
+        }
+    }
+    Ok(())
 }
 
 // =========================================================================

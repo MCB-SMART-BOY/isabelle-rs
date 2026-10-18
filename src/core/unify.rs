@@ -156,9 +156,17 @@ fn unify_dpairs_iter(
             },
 
             // ── Same head atoms ──
-            (Term::Const { name: n1, .. }, Term::Const { name: n2, .. }) if n1 == n2 => continue,
+            (Term::Const { name: n1, typ: t1 }, Term::Const { name: n2, typ: t2 })
+                if n1 == n2 && known_types_compatible(t1, t2) =>
+            {
+                continue;
+            },
             (Term::Bound(i1), Term::Bound(i2)) if i1 == i2 => continue,
-            (Term::Free { name: n1, .. }, Term::Free { name: n2, .. }) if n1 == n2 => continue,
+            (Term::Free { name: n1, typ: t1 }, Term::Free { name: n2, typ: t2 })
+                if n1 == n2 && known_types_compatible(t1, t2) =>
+            {
+                continue;
+            },
 
             // ── Flex-App vs non-App (identity/projection cases) ──
             (Term::App { func, arg }, obj)
@@ -308,8 +316,8 @@ fn match_pattern_iter(mut env: Envir, initial_pat: &Term, initial_obj: &Term) ->
                     _ => return None,
                 }
             },
-            Term::Abs { body: b1, .. } => match &obj {
-                Term::Abs { body: b2, .. } => {
+            Term::Abs { typ: t1, body: b1, .. } => match &obj {
+                Term::Abs { typ: t2, body: b2, .. } if known_types_compatible(t1, t2) => {
                     frames.push(Frame { pat: b1.as_ref().clone(), obj: b2.as_ref().clone() });
                 },
                 _ => return None,
@@ -423,6 +431,22 @@ fn term_eq_notypes(a: &Term, b: &Term) -> bool {
         }
     }
     true
+}
+
+fn known_types_compatible(t1: &Typ, t2: &Typ) -> bool {
+    if t1.is_dummy() || t2.is_dummy() {
+        return true;
+    }
+    match (t1, t2) {
+        (Typ::Type { name: n1, args: a1 }, Typ::Type { name: n2, args: a2 }) => {
+            n1 == n2
+                && a1.len() == a2.len()
+                && a1.iter().zip(a2.iter()).all(|(a, b)| known_types_compatible(a, b))
+        },
+        // Type variables/frees are schema-level unknowns here, not concrete
+        // contradictions.
+        _ => true,
+    }
 }
 
 #[cfg(test)]

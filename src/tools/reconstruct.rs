@@ -41,7 +41,6 @@
 //!
 //! - **[`ProofStep`]** — A single inference in the ATP's proof: a name, the inferred formula, the
 //!   inference rule, and references to earlier steps.
-//! - **[`ReconstructedProof`]** — An ordered list of [`ProofStep`]s along with a `validated` flag.
 //! - **[`ProofReconstructor`]** — The engine that parses TSTP output, looks up premises, and
 //!   replays each step through the kernel.
 //!
@@ -65,10 +64,9 @@
 //! ```rust
 //! use isabelle_rs::tools::reconstruct::ProofReconstructor;
 //!
-//! let output = "fof(f1, plain, p(a), inference(resolution, [], [f0])).";
-//! let steps = ProofReconstructor::parse_tstp(output);
-//! assert_eq!(steps.len(), 1);
-//! assert_eq!(steps[0].rule, "resolution");
+//! let output = "fof(f1, plain, p, inference(assumption, [], [f0])).";
+//! let steps = ProofReconstructor::parse_tstp(output).unwrap();
+//! assert_eq!(steps[0].rule, "assumption");
 //! ```
 
 use std::{collections::HashMap, sync::Arc};
@@ -76,9 +74,10 @@ use std::{collections::HashMap, sync::Arc};
 use crate::core::{
     logic::Pure,
     term::Term,
-    thm::{CTerm, Thm, ThmKernel},
+    thm::{Thm, ThmKernel},
     types::Typ,
 };
+use crate::isar::proof_result::validate_proof_result;
 
 // =========================================================================
 // Proof step
@@ -97,242 +96,234 @@ pub struct ProofStep {
     pub premises: Vec<String>,
 }
 
-/// A reconstructed proof: a list of steps that build from axioms.
-#[derive(Debug, Clone)]
-pub struct ReconstructedProof {
-    /// The proof steps in order
-    pub steps: Vec<ProofStep>,
-    /// Whether the proof was successfully validated
-    pub validated: bool,
-}
-
 // =========================================================================
 // Proof reconstruction engine
 // =========================================================================
 
 /// Reconstructs Isabelle proofs from ATP output.
 pub struct ProofReconstructor {
-    /// Named theorems available as premises
     premises: Vec<(String, Arc<Thm>)>,
-    /// Steps already proven (name → theorem)
-    proven_steps: HashMap<String, Arc<Thm>>,
+}
+
+/// A malformed proof-bearing ATP line (user-fixable untrusted input).
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("invalid ATP proof at line {line}: {detail}")]
+pub struct AtpProofParseError {
+    pub line: usize,
+    pub detail: String,
+}
+
+/// Reject ambiguous input names before either replay engine builds its table.
+pub(crate) fn initial_proof_steps(
+    premises: &[(String, Arc<Thm>)],
+) -> Option<HashMap<String, Arc<Thm>>> {
+    let mut proven = HashMap::with_capacity(premises.len());
+    for (name, thm) in premises {
+        if name.is_empty() || proven.insert(name.clone(), Arc::clone(thm)).is_some() {
+            return None;
+        }
+    }
+    Some(proven)
+}
+
+fn matches_step_formula(candidate: Thm, formula: &Term) -> Option<Arc<Thm>> {
+    crate::core::thm::Hyps::kernel_alpha_eq(candidate.prop().term(), formula)
+        .then(|| Arc::new(candidate))
+}
+
+/// A single guard for both ATP replay entry points: never silently omit names,
+/// replace an earlier result, or accept a formula not actually inferred.
+pub(crate) fn replay_checked_step(
+    proven: &mut HashMap<String, Arc<Thm>>,
+    step: &ProofStep,
+) -> Option<Arc<Thm>> {
+    if step.name.is_empty() || proven.contains_key(&step.name) {
+        return None;
+    }
+    let inputs =
+        step.premises.iter().map(|name| proven.get(name).cloned()).collect::<Option<Vec<_>>>()?;
+    let derived = match (step.rule.as_str(), inputs.as_slice()) {
+        ("assumption" | "axiom", [fact]) => Arc::clone(fact),
+        ("resolution" | "binary_resolution", [first, second]) => {
+            let (left, _) = Pure::strip_imp_prems(first.prop().term());
+            let (right, _) = Pure::strip_imp_prems(second.prop().term());
+            right
+                .iter()
+                .enumerate()
+                .find_map(|(i, _)| {
+                    ThmKernel::bicompose(false, first, second, i)
+                        .and_then(|thm| matches_step_formula(thm, &step.formula))
+                })
+                .or_else(|| {
+                    left.iter().enumerate().find_map(|(i, _)| {
+                        ThmKernel::bicompose(false, second, first, i)
+                            .and_then(|thm| matches_step_formula(thm, &step.formula))
+                    })
+                })?
+        },
+        ("paramodulation" | "superposition", [equality, target]) => {
+            (0..target.nprems()).find_map(|i| {
+                ThmKernel::subst_premise(equality, target, i)
+                    .and_then(|thm| matches_step_formula(thm, &step.formula))
+            })?
+        },
+        ("factoring", [clause]) => {
+            let (prems, _) = Pure::strip_imp_prems(clause.prop().term());
+            prems.iter().enumerate().find_map(|(i, _)| {
+                ThmKernel::bicompose(false, clause, clause, i)
+                    .and_then(|thm| matches_step_formula(thm, &step.formula))
+            })?
+        },
+        _ => return None,
+    };
+    if !crate::core::thm::Hyps::kernel_alpha_eq(derived.prop().term(), &step.formula) {
+        return None;
+    }
+    proven.insert(step.name.clone(), Arc::clone(&derived));
+    Some(derived)
+}
+
+fn is_identifier(name: &str) -> bool {
+    let mut chars = name.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Split comma-separated fields only at depth zero; reject malformed delimiters.
+fn split_fields(input: &str) -> Option<Vec<&str>> {
+    let mut fields = Vec::new();
+    let mut start = 0;
+    let mut depth = 0usize;
+    for (i, byte) in input.bytes().enumerate() {
+        match byte {
+            b'(' | b'[' => depth += 1,
+            b')' | b']' => depth = depth.checked_sub(1)?,
+            b',' if depth == 0 => {
+                fields.push(input[start..i].trim());
+                start = i + 1;
+            },
+            _ => {},
+        }
+    }
+    if depth != 0 {
+        return None;
+    }
+    fields.push(input[start..].trim());
+    Some(fields)
+}
+
+/// Only atomic proposition names and parenthesized Pure implications are
+/// currently losslessly mapped. Unsupported TPTP formulas fail closed.
+fn parse_tstp_formula(input: &str) -> Option<Term> {
+    let text = input.trim();
+    if is_identifier(text) && text.starts_with(|c: char| c.is_ascii_lowercase()) {
+        return Some(Term::const_(text, Typ::base("prop")));
+    }
+    let inner = text.strip_prefix('(')?.strip_suffix(')')?;
+    let mut depth = 0usize;
+    for (i, byte) in inner.bytes().enumerate() {
+        match byte {
+            b'(' => depth += 1,
+            b')' => depth = depth.checked_sub(1)?,
+            b'=' if depth == 0 && inner[i..].starts_with("=>") => {
+                let lhs = parse_tstp_formula(&inner[..i])?;
+                let rhs = parse_tstp_formula(&inner[i + 2..])?;
+                return Some(Pure::mk_implies(lhs, rhs));
+            },
+            _ => {},
+        }
+    }
+    if depth != 0 {
+        return None;
+    }
+    parse_tstp_formula(inner)
+}
+
+fn parse_tstp_step(line: &str) -> Option<ProofStep> {
+    let fields = split_fields(line.strip_prefix("fof(")?.strip_suffix(").")?)?;
+    let [name, role, formula, inference] = fields.as_slice() else {
+        return None;
+    };
+    if !is_identifier(name) || !matches!(*role, "plain" | "axiom" | "lemma" | "conjecture") {
+        return None;
+    }
+    let formula = parse_tstp_formula(formula)?;
+    let annotations = split_fields(inference.strip_prefix("inference(")?.strip_suffix(')')?)?;
+    let [rule, status, names] = annotations.as_slice() else {
+        return None;
+    };
+    if !is_identifier(rule) || *status != "[]" {
+        return None;
+    }
+    let refs = names.strip_prefix('[')?.strip_suffix(']')?;
+    let premises = if refs.is_empty() {
+        Vec::new()
+    } else {
+        let refs = split_fields(refs)?;
+        if refs.iter().any(|name| !is_identifier(name)) {
+            return None;
+        }
+        refs.into_iter().map(str::to_owned).collect()
+    };
+    Some(ProofStep { name: (*name).to_owned(), formula, rule: (*rule).to_owned(), premises })
 }
 
 impl ProofReconstructor {
-    /// Create a new reconstructor with the given premises.
-    pub fn new(premises: Vec<(String, Arc<Thm>)>) -> Self {
-        let mut proven = HashMap::new();
-        for (name, thm) in &premises {
-            proven.insert(name.clone(), Arc::clone(thm));
-        }
-        ProofReconstructor { premises, proven_steps: proven }
+    /// Duplicate input names are invalid, even if they carry the same theorem.
+    pub fn new(premises: Vec<(String, Arc<Thm>)>) -> Result<Self, AtpProofParseError> {
+        initial_proof_steps(&premises).ok_or_else(|| AtpProofParseError {
+            line: 0,
+            detail: "duplicate or empty input premise name".to_owned(),
+        })?;
+        Ok(Self { premises })
     }
 
-    /// Parse a TSTP proof output into proof steps.
-    pub fn parse_tstp(output: &str) -> Vec<ProofStep> {
+    /// Parse only the explicitly supported lossless FOF subset.
+    pub fn parse_tstp(output: &str) -> Result<Vec<ProofStep>, AtpProofParseError> {
         let mut steps = Vec::new();
-
-        for line in output.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('%') || line.starts_with('#') {
+        for (index, line) in output.lines().enumerate() {
+            let text = line.trim();
+            if text.is_empty() || text.starts_with('%') || text.starts_with('#') {
                 continue;
             }
-
-            // TSTP format: fof(name, type, formula, inference(rule, [premises])).
-            if let Some(step) = Self::parse_tstp_step(line) {
-                steps.push(step);
-            }
+            let step = parse_tstp_step(text).ok_or_else(|| AtpProofParseError {
+                line: index + 1,
+                detail: "unsupported or malformed FOF proof step".to_owned(),
+            })?;
+            steps.push(step);
         }
-
-        steps
+        Ok(steps)
     }
 
-    /// Parse a single TSTP step.
-    fn parse_tstp_step(line: &str) -> Option<ProofStep> {
-        let line = line.trim();
-        if !line.starts_with("fof(") {
-            return None;
-        }
-
-        let inner = line.strip_prefix("fof(")?.strip_suffix(").")?;
-
-        // Split into parts: name, role, formula, inference
-        // But formulas can contain commas inside parens, so we need careful parsing
-        let (name, rest) = Self::parse_tstp_name(inner)?;
-        let (_role, rest) = Self::parse_tstp_role(rest)?;
-        let (formula_str, inference_str) = Self::parse_tstp_formula_inference(rest)?;
-
-        // Parse the formula from TSTP syntax to internal Term
-        let formula = Self::parse_tstp_formula(formula_str);
-
-        // Parse the inference
-        let (rule, premises) = Self::parse_inference(inference_str);
-
-        Some(ProofStep { name: name.to_string(), formula, rule, premises })
-    }
-
-    /// Parse the name part: "f1" from "fof(f1, ..."
-    fn parse_tstp_name(s: &str) -> Option<(&str, &str)> {
-        let comma = s.find(',')?;
-        Some((s[..comma].trim(), s[comma + 1..].trim()))
-    }
-
-    /// Parse the role part: "axiom" or "plain" or "conjecture"
-    fn parse_tstp_role(s: &str) -> Option<(&str, &str)> {
-        let comma = s.find(',')?;
-        Some((s[..comma].trim(), s[comma + 1..].trim()))
-    }
-
-    /// Parse formula and inference: split at the last ", inference("
-    fn parse_tstp_formula_inference(s: &str) -> Option<(&str, &str)> {
-        // Find ", inference(" which separates formula from inference
-        let inf_pos = s.find(", inference(")?;
-        Some((s[..inf_pos].trim(), s[inf_pos + 2..].trim()))
-    }
-
-    /// Parse a TSTP formula into an Isabelle Term.
-    ///
-    /// Simplified parser: maps TSTP atoms to Isabelle constants.
-    fn parse_tstp_formula(s: &str) -> Term {
-        let s = s.trim();
-        // Map common TPTP symbols
-        let mapped = s
-            .replace("$true", "True")
-            .replace("$false", "False")
-            .replace("~", "¬")
-            .replace("|", " ∨ ")
-            .replace("&", " ∧ ");
-
-        // Try to parse as an Isabelle term
-        crate::isar::term_parser::parse_term(&mapped)
-            .unwrap_or_else(|| Term::const_(s, Typ::base("prop")))
-    }
-
-    /// Parse an inference annotation.
-    fn parse_inference(s: &str) -> (String, Vec<String>) {
-        // Format: inference(rule, status, [premises])
-        let s = s.trim();
-        if !s.starts_with("inference(") {
-            return ("unknown".to_string(), vec![]);
-        }
-
-        let inner = s.strip_prefix("inference(").unwrap_or(s);
-        let inner = inner.strip_suffix(')').unwrap_or(inner);
-        let parts: Vec<&str> = inner.splitn(3, ',').collect();
-
-        let rule = parts.first().map(|s| s.trim().to_string()).unwrap_or_default();
-
-        // Parse premises: [name1, name2, ...]
-        let premises_str = parts.last().unwrap_or(&"").trim();
-        let premises = if premises_str.starts_with('[') && premises_str.ends_with(']') {
-            let inner = &premises_str[1..premises_str.len() - 1];
-            inner.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
-        } else {
-            vec![]
-        };
-
-        (rule, premises)
-    }
-
-    /// Reconstruct an Isabelle proof from TSTP steps.
-    ///
-    /// Returns the final theorem if reconstruction succeeds AND the result
-    /// matches the expected goal.
+    /// Replay into a fresh local table; a failed run cannot affect a retry.
     pub fn reconstruct(&mut self, steps: &[ProofStep]) -> Option<Arc<Thm>> {
-        let mut last_thm: Option<Arc<Thm>> = None;
-
+        let mut proven = initial_proof_steps(&self.premises)?;
+        let mut last = None;
         for step in steps {
-            let thm = self.reconstruct_step(step)?;
-            self.proven_steps.insert(step.name.clone(), Arc::clone(&thm));
-            last_thm = Some(thm);
+            last = Some(replay_checked_step(&mut proven, step)?);
         }
-
-        last_thm
+        last
     }
 
-    /// Validate the proof: reconstruct and check against the goal.
     pub fn validate(&self, steps: &[ProofStep], goal: &Term) -> bool {
-        // Clone and reconstruct
-        let mut recon = ProofReconstructor {
-            premises: self.premises.clone(),
-            proven_steps: self.proven_steps.clone(),
-        };
-
-        if let Some(result) = recon.reconstruct(steps) {
-            // Check if the reconstructed theorem proves the goal
-            let (_, concl) = crate::core::logic::Pure::strip_imp_prems(result.prop().term());
-            concl == goal || result.prop().term() == goal
-        } else {
-            false
-        }
+        let mut replay = Self { premises: self.premises.clone() };
+        replay
+            .reconstruct(steps)
+            .is_some_and(|result| validate_proof_result(goal, &result, &[]).is_ok())
     }
 
-    /// Reconstruct a single proof step.
-    fn reconstruct_step(&self, step: &ProofStep) -> Option<Arc<Thm>> {
-        // Look up premises
-        let prem_thms: Vec<Arc<Thm>> =
-            step.premises.iter().filter_map(|name| self.proven_steps.get(name).cloned()).collect();
-
-        match step.rule.as_str() {
-            "resolution" | "binary_resolution" => {
-                // Resolution: from A ∨ B and ¬A ∨ C, derive B ∨ C
-                // In Isabelle terms: if we have A ==> B and C ==> A, we can get C ==> B
-                if prem_thms.len() >= 2 {
-                    // Try implies_elim on first two premises
-                    let imp = &prem_thms[0];
-                    let ante = &prem_thms[1];
-                    ThmKernel::implies_elim(imp, ante).ok().map(Arc::new)
-                } else {
-                    prem_thms.first().cloned()
-                }
-            },
-
-            "paramodulation" | "superposition" => {
-                // Equality resolution: from s = t and P[s], derive P[t]
-                // In Isabelle: subst_premise
-                if prem_thms.len() >= 2 {
-                    ThmKernel::subst_premise(&prem_thms[0], &prem_thms[1], 0).map(Arc::new)
-                } else {
-                    prem_thms.first().cloned()
-                }
-            },
-
-            "assumption" | "axiom" => {
-                // These are already in our premise set
-                prem_thms.first().cloned()
-            },
-
-            "negation" | "cnf" | "clausify" => {
-                // Clause normal form transformations — trust the ATP
-                prem_thms.first().cloned()
-            },
-
-            _ => {
-                // Unknown rule — try to use the first premise
-                prem_thms.first().cloned()
-            },
-        }
-    }
-
-    /// Minimize the proof: find the minimal set of premises needed.
     pub fn minimize(&self, steps: &[ProofStep], goal: &Term) -> Vec<String> {
-        let all_premises: Vec<String> = self.premises.iter().map(|(n, _)| n.clone()).collect();
-        let mut needed = all_premises.clone();
-
-        // Try removing each premise and see if the proof still validates
+        let mut needed: Vec<String> = self.premises.iter().map(|(name, _)| name.clone()).collect();
+        if !self.validate(steps, goal) {
+            return needed;
+        }
         for (name, _) in &self.premises {
-            let reduced: Vec<(String, Arc<Thm>)> =
-                self.premises.iter().filter(|(n, _)| n != name).cloned().collect();
-
-            if reduced.len() < needed.len() {
-                let mut recon = ProofReconstructor::new(reduced);
-                if let Some(result) = recon.reconstruct(steps) {
-                    let (_, concl) =
-                        crate::core::logic::Pure::strip_imp_prems(result.prop().term());
-                    if concl == goal {
-                        needed.retain(|n| n != name);
-                    }
-                }
+            let reduced =
+                self.premises.iter().filter(|(candidate, _)| candidate != name).cloned().collect();
+            if let Ok(replay) = Self::new(reduced)
+                && replay.validate(steps, goal)
+            {
+                needed.retain(|candidate| candidate != name);
             }
         }
         needed
@@ -351,36 +342,31 @@ pub fn reconstruct_from_atp(
     premises: Vec<(String, Arc<Thm>)>,
     goal: &Thm,
 ) -> Option<Arc<Thm>> {
-    let steps = ProofReconstructor::parse_tstp(atp_output);
-    if steps.is_empty() {
-        // Fall back to Metis-based proof search
-        return reconstruct_with_metis(premises, goal);
-    }
-
-    // Try MetisReplay for step-by-step kernel-certified reconstruction
-    let mut replay = crate::tools::metis::MetisReplay::new(goal, &premises);
-    if let Some(result) = replay.replay(&steps) {
-        return Some(result);
-    }
-
-    // Fall back to simpler reconstruction
-    let mut recon = ProofReconstructor::new(premises);
-    recon.reconstruct(&steps)
+    let steps = match ProofReconstructor::parse_tstp(atp_output) {
+        Ok(steps) if !steps.is_empty() => steps,
+        Ok(_) => return None,
+        Err(error) => {
+            eprintln!("ATP proof parse failed: {error}");
+            return None;
+        },
+    };
+    let mut replay = ProofReconstructor::new(premises).ok()?;
+    let result = replay.reconstruct(&steps)?;
+    validate_proof_result(goal.prop().term(), &result, &[]).ok()?;
+    Some(result)
 }
 
-/// Reconstruct a proof using Metis prover directly (fallback when TSTP parsing fails).
+/// Independent local search, not ATP proof reconstruction.
 pub fn reconstruct_with_metis(premises: Vec<(String, Arc<Thm>)>, goal: &Thm) -> Option<Arc<Thm>> {
-    let premise_arcs: Vec<Arc<Thm>> = premises.iter().map(|(_, thm)| Arc::clone(thm)).collect();
-
+    initial_proof_steps(&premises)?;
+    let premise_arcs: Vec<Arc<Thm>> = premises.into_iter().map(|(_, thm)| thm).collect();
     let mut prover = crate::tools::metis::MetisProver::with_limits(10000);
     prover.add_premises(&premise_arcs);
     prover.prove(goal)
 }
 
-/// Try to prove a goal using Sledgehammer and reconstruct the proof.
-///
-/// This is the main entry point for Sledgehammer integration.
-/// It first tries external ATPs, then falls back to Metis for proof reconstruction.
+/// Try an ATP and independently derive a fully validated result via local Metis
+/// search when the ATP status suggests a proof. Status itself is not evidence.
 pub fn sledgehammer_prove(goal: &Thm, premises: &[(String, Arc<Thm>)]) -> Option<Arc<Thm>> {
     // First try the Metis-based LCF reconstruction
     crate::tools::metis::sledgehammer_prove_lcf(goal, premises)
@@ -395,32 +381,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_tstp_step() {
-        let line = "fof(f1, plain, p(a), inference(resolution, [], [f0])).";
-        let step = ProofReconstructor::parse_tstp_step(line);
-        assert!(step.is_some());
-        let step = step.unwrap();
-        assert_eq!(step.name, "f1");
-        assert_eq!(step.rule, "resolution");
-        assert_eq!(step.premises, vec!["f0"]);
+    fn parse_tstp_unsupported_formula_returns_line_error() {
+        let text = "fof(f1, plain, p(a), inference(assumption, [], [p0])).";
+        assert_eq!(ProofReconstructor::parse_tstp(text).unwrap_err().line, 1);
     }
 
     #[test]
-    fn test_parse_tstp_empty() {
-        let output = "% This is a comment\n% Another comment\n";
-        let steps = ProofReconstructor::parse_tstp(output);
-        assert!(steps.is_empty());
-    }
-
-    #[test]
-    fn test_reconstruct_trivial() {
-        let a = Term::const_("A", Typ::base("prop"));
-        let ct = CTerm::certify(a);
-        let thm = ThmKernel::assume(ct);
-        let premises = vec![("p0".to_string(), Arc::new(thm))];
-
-        let recon = ProofReconstructor::new(premises);
-        let result = recon.proven_steps.get("p0");
-        assert!(result.is_some());
+    fn parse_tstp_comments_return_empty_proof() {
+        assert!(ProofReconstructor::parse_tstp("% status\n# comment").unwrap().is_empty());
     }
 }

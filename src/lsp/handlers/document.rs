@@ -14,7 +14,7 @@ pub fn handle_did_open(ctx: &mut HandlerContext, notif: JsonRpcNotification) {
     };
 
     let uri = &params.text_document.uri;
-    tracing::info!("Opened: {uri} (lang: {})", params.text_document.language_id);
+    tracing::info!("Opened document");
 
     let diags = ctx.fleche.open_file(uri, &params.text_document.text);
     ctx.publish_diagnostics(uri, &diags);
@@ -32,13 +32,11 @@ pub fn handle_did_change(ctx: &mut HandlerContext, notif: JsonRpcNotification) {
 
     let uri = &params.text_document.uri;
 
-    let new_text = if let Some(change) = params.content_changes.first() {
-        if change.range.is_none() { change.text.clone() } else { change.text.clone() }
-    } else {
+    let Some(new_text) = extract_latest_full_content(&params.content_changes) else {
+        tracing::warn!("didChange requires a complete full-sync snapshot");
         return;
     };
-
-    let diags = ctx.fleche.update_file(uri, &new_text);
+    let diags = ctx.fleche.update_file(uri, new_text);
     ctx.publish_diagnostics(uri, &diags);
 }
 
@@ -52,7 +50,7 @@ pub fn handle_did_close(ctx: &mut HandlerContext, notif: JsonRpcNotification) {
         },
     };
 
-    tracing::info!("Closed: {}", params.text_document.uri);
+    tracing::info!("Closed document");
     ctx.fleche.close_file(&params.text_document.uri);
 }
 

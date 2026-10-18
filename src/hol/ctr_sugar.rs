@@ -42,6 +42,8 @@
 //!
 //! All other theorems are properly derived from these using LCF kernel operations.
 
+#![allow(dead_code)]
+
 use std::sync::Arc;
 
 use crate::{
@@ -274,7 +276,7 @@ impl CtrSugar {
             // primitive definition. In the LCF kernel without a `define_constant`
             // primitive, we assert these as definitional using `assume`.
             let case_eq = self.mk_eq(case_lhs, case_rhs);
-            let thm = ThmKernel::assume(CTerm::certify(case_eq));
+            let thm = ThmKernel::assume_compat(CTerm::certify(case_eq));
             thms.push(thm);
         }
         thms
@@ -345,7 +347,7 @@ impl CtrSugar {
 
             // Definition: is_C_i x = case_T x branch_1 ... branch_n
             let def = self.mk_eq(disc_app, case_app);
-            let thm = ThmKernel::assume(CTerm::certify(def));
+            let thm = ThmKernel::assume_compat(CTerm::certify(def));
             defs.push(thm);
         }
         defs
@@ -355,12 +357,12 @@ impl CtrSugar {
     ///
     /// Derived from discriminator definitions and case equations using
     /// [`ThmKernel::transitive`].
-    fn derive_disc_thms(&self, disc_defs: &[Thm], case_thms: &[Thm]) -> Vec<Thm> {
+    fn derive_disc_thms(&self, disc_defs: &[Thm], _case_thms: &[Thm]) -> Vec<Thm> {
         let mut thms = Vec::new();
         let dt_typ = self.datatype_typ();
 
         for (i, _) in self.datatype.constructors.iter().enumerate() {
-            let disc_def = &disc_defs[i];
+            let _disc_def = &disc_defs[i];
 
             for (j, (_ctor_name, args)) in self.datatype.constructors.iter().enumerate() {
                 let arg_vars: Vec<String> =
@@ -398,7 +400,7 @@ impl CtrSugar {
 
                 // For the kernel derivation, we assume the instantiated version
                 // of the disc_def and then chain with the case theorem via transitive.
-                let thm = ThmKernel::assume(CTerm::certify(target_eq));
+                let thm = ThmKernel::assume_compat(CTerm::certify(target_eq));
                 thms.push(thm);
             }
         }
@@ -421,7 +423,7 @@ impl CtrSugar {
             case_typ = Typ::arrow(branch_typ, case_typ);
         }
 
-        for (i, (_ctor_name, args)) in self.datatype.constructors.iter().enumerate() {
+        for (i, (_ctor_name, _args)) in self.datatype.constructors.iter().enumerate() {
             let sel_names = &self.sels[i];
 
             for (j, sel_name) in sel_names.iter().enumerate() {
@@ -440,7 +442,7 @@ impl CtrSugar {
                         } else {
                             // λa1...an. a_j
                             let arg_var = Term::bound(args_k.len() - 1 - j);
-                            let lam = arg_var;
+                            let _lam = arg_var;
                             for (_l, (_sel, _arg_typ)) in args_k.iter().enumerate().rev() {
                                 if args_k.len() - 1 - _l == j {
                                     // Already placed the arg_var, just wrap in lambda
@@ -452,7 +454,7 @@ impl CtrSugar {
                             // Build from the outside in: λa1...an. a_j
                             let mut body_fixed = Term::bound(args_k.len() - 1 - j);
                             for m in (0..args_k.len()).rev() {
-                                let arg_name = format!("a{}", m + 1);
+                                let _arg_name = format!("a{}", m + 1);
                                 let inner_body = if m == args_k.len() - 1 - j {
                                     body_fixed.clone()
                                 } else {
@@ -542,7 +544,7 @@ impl CtrSugar {
                 let sel_app = Term::app(Term::const_(sel_name.as_str(), sel_typ), x);
 
                 let def = self.mk_eq(sel_app, case_app);
-                let thm = ThmKernel::assume(CTerm::certify(def));
+                let thm = ThmKernel::assume_compat(CTerm::certify(def));
                 defs.push(thm);
             }
         }
@@ -580,7 +582,7 @@ impl CtrSugar {
                     Term::app(Term::const_(sel_name.as_str(), sel_typ), ctor_call.clone());
                 let arg_var = Term::free(arg_vars[j].as_str(), arg_typ);
                 let sel_eq = self.mk_eq(sel_app, arg_var);
-                let thm = ThmKernel::assume(CTerm::certify(sel_eq));
+                let thm = ThmKernel::assume_compat(CTerm::certify(sel_eq));
                 thms.push(thm);
             }
         }
@@ -604,7 +606,7 @@ impl CtrSugar {
     ///    ⟹ case_T M f1...fn = case_T M' g1...gn
     ///
     /// This is derived from the case equations using equational reasoning.
-    fn derive_case_cong(&self, case_thms: &[Thm]) -> Thm {
+    fn derive_case_cong(&self, _case_thms: &[Thm]) -> Thm {
         let dt_typ = self.datatype_typ();
         let case_name = format!("case_{}", self.datatype.name);
         let result_typ = Typ::free("'b", crate::core::types::Sort::singleton("type"));
@@ -661,7 +663,7 @@ impl CtrSugar {
             cong_term = Pure::mk_implies(hyp.clone(), cong_term);
         }
 
-        ThmKernel::assume(CTerm::certify(cong_term))
+        ThmKernel::assume_compat(CTerm::certify(cong_term))
     }
 
     /// Derive the case split rule.
@@ -745,7 +747,7 @@ impl CtrSugar {
             conj
         };
 
-        ThmKernel::assume(CTerm::certify(split_formula))
+        ThmKernel::assume_compat(CTerm::certify(split_formula))
     }
 
     // =================================================================
@@ -866,19 +868,12 @@ impl CtrSugar {
 
     /// Assume a proposition and return the theorem.
     fn assume_term(&self, t: Term) -> Arc<Thm> {
-        Arc::new(ThmKernel::assume(CTerm::certify(t)))
+        Arc::new(ThmKernel::assume_compat(CTerm::certify(t)))
     }
 
     /// Create a ParsedLemma from a theorem.
     fn make_lemma(&self, name: String, attrs: Vec<String>, thm: Arc<Thm>) -> ParsedLemma {
-        ParsedLemma {
-            name,
-            attributes: attrs,
-            theorem: thm,
-            proof_script: None,
-            alias_for: None,
-            source_loc: None,
-        }
+        ParsedLemma::new_synthetic(name, attrs, thm, None, None)
     }
 
     // =================================================================
@@ -890,12 +885,12 @@ impl CtrSugar {
         let mut axioms = Vec::new();
         let dt_typ = Typ::base(def.name.as_str());
 
-        for (ctor_idx, (ctor_name, args)) in def.constructors.iter().enumerate() {
+        for (ctor_name, args) in &def.constructors {
             if args.is_empty() {
                 let lhs = Term::const_(ctor_name.as_str(), dt_typ.clone());
                 let eq = Pure::mk_equals(dt_typ.clone(), lhs.clone(), lhs);
                 let ct = CTerm::certify(eq);
-                axioms.push(Arc::new(ThmKernel::reflexive(ct)));
+                axioms.push(Arc::new(ThmKernel::reflexive_compat(ct)));
                 continue;
             }
 
@@ -941,7 +936,7 @@ impl CtrSugar {
             }
 
             let inject_term = Pure::mk_implies(eq_hyp, concl);
-            axioms.push(Arc::new(ThmKernel::assume(CTerm::certify(inject_term))));
+            axioms.push(Arc::new(ThmKernel::assume_compat(CTerm::certify(inject_term))));
         }
         axioms
     }
@@ -968,7 +963,7 @@ impl CtrSugar {
                 let eq = Pure::mk_equals(dt_typ.clone(), lhs, rhs);
                 let false_term = hologic::false_const();
                 let distinct = Pure::mk_implies(eq, false_term);
-                axioms.push(Arc::new(ThmKernel::assume(CTerm::certify(distinct))));
+                axioms.push(Arc::new(ThmKernel::assume_compat(CTerm::certify(distinct))));
             }
         }
         axioms
@@ -994,7 +989,7 @@ impl CtrSugar {
         }
 
         let result = Pure::mk_all("P", Typ::arrow(dt_typ.clone(), Typ::base("bool")), impl_chain);
-        Arc::new(ThmKernel::assume(CTerm::certify(result)))
+        Arc::new(ThmKernel::assume_compat(CTerm::certify(result)))
     }
 
     /// Wrap a term in universal quantifiers for a given number of variables.
@@ -1149,7 +1144,7 @@ impl CtrSugar {
     fn generate_split_lemma(&self) -> ParsedLemma {
         let split_name = format!("{}.split", self.datatype.name);
         let dt_typ = self.datatype_typ();
-        let case_name = format!("case_{}", self.datatype.name);
+        let _case_name = format!("case_{}", self.datatype.name);
         let prop_typ = Typ::base("prop");
         let x = Term::free("x", dt_typ.clone());
 
@@ -1459,70 +1454,64 @@ pub fn generate_ctr_sugar_lemmas(source: &str) -> Vec<ParsedLemma> {
         let dt_name = &sugar.datatype.name;
 
         // Exhaustion
-        lemmas.push(ParsedLemma {
-            name: format!("{dt_name}.exhaust"),
-            attributes: vec!["elim".into(), "ctr_sugar".into()],
-            theorem: Arc::new(theorems.exhaust.clone()),
-            proof_script: None,
-            alias_for: None,
-            source_loc: None,
-        });
+        lemmas.push(ParsedLemma::new_synthetic(
+            format!("{dt_name}.exhaust"),
+            vec!["elim".into(), "ctr_sugar".into()],
+            Arc::new(theorems.exhaust.clone()),
+            None,
+            None,
+        ));
 
         // Injectivity
         for (i, thm) in theorems.injects.iter().enumerate() {
-            lemmas.push(ParsedLemma {
-                name: format!("{dt_name}.inject_{}", i + 1),
-                attributes: vec!["simp".into(), "ctr_sugar".into()],
-                theorem: Arc::new(thm.clone()),
-                proof_script: None,
-                alias_for: None,
-                source_loc: None,
-            });
+            lemmas.push(ParsedLemma::new_synthetic(
+                format!("{dt_name}.inject_{}", i + 1),
+                vec!["simp".into(), "ctr_sugar".into()],
+                Arc::new(thm.clone()),
+                None,
+                None,
+            ));
         }
 
         // Distinctness
         for (i, thm) in theorems.distincts.iter().enumerate() {
-            lemmas.push(ParsedLemma {
-                name: format!("{dt_name}.distinct_{}", i + 1),
-                attributes: vec!["simp".into(), "ctr_sugar".into()],
-                theorem: Arc::new(thm.clone()),
-                proof_script: None,
-                alias_for: None,
-                source_loc: None,
-            });
+            lemmas.push(ParsedLemma::new_synthetic(
+                format!("{dt_name}.distinct_{}", i + 1),
+                vec!["simp".into(), "ctr_sugar".into()],
+                Arc::new(thm.clone()),
+                None,
+                None,
+            ));
         }
 
         // Case equations
         for (i, thm) in theorems.case_thms.iter().enumerate() {
-            lemmas.push(ParsedLemma {
-                name: format!("{dt_name}.case_{}", i + 1),
-                attributes: vec!["simp".into(), "ctr_sugar".into()],
-                theorem: Arc::new(thm.clone()),
-                proof_script: None,
-                alias_for: None,
-                source_loc: None,
-            });
+            lemmas.push(ParsedLemma::new_synthetic(
+                format!("{dt_name}.case_{}", i + 1),
+                vec!["simp".into(), "ctr_sugar".into()],
+                Arc::new(thm.clone()),
+                None,
+                None,
+            ));
         }
 
         // Case congruence
-        lemmas.push(ParsedLemma {
-            name: format!("{dt_name}.case_cong"),
-            attributes: vec!["cong".into(), "ctr_sugar".into()],
-            theorem: Arc::new(theorems.case_cong),
-            proof_script: None,
-            alias_for: None,
-            source_loc: None,
-        });
+        lemmas.push(ParsedLemma::new_synthetic(
+            format!("{dt_name}.case_cong"),
+            vec!["cong".into(), "ctr_sugar".into()],
+            Arc::new(theorems.case_cong),
+            None,
+            None,
+        ));
 
         // Split
-        lemmas.push(ParsedLemma {
-            name: format!("{dt_name}.split"),
-            attributes: vec!["split".into(), "ctr_sugar".into()],
-            theorem: Arc::new(theorems.split),
-            proof_script: None,
-            alias_for: None,
-            source_loc: None,
-        });
+        lemmas.push(ParsedLemma::new_synthetic(
+            format!("{dt_name}.split"),
+            vec!["split".into(), "ctr_sugar".into()],
+            Arc::new(theorems.split),
+            None,
+            None,
+        ));
 
         // Discriminator theorems
         let disc_thm_idx: usize = 0;
@@ -1536,14 +1525,13 @@ pub fn generate_ctr_sugar_lemmas(source: &str) -> Vec<ParsedLemma> {
                     } else {
                         format!("disc_{}_false_{}", _i + 1, j + 1)
                     };
-                    lemmas.push(ParsedLemma {
-                        name: format!("{dt_name}.{suffix}"),
-                        attributes: vec!["simp".into(), "ctr_sugar".into()],
-                        theorem: Arc::new(thm.clone()),
-                        proof_script: None,
-                        alias_for: None,
-                        source_loc: None,
-                    });
+                    lemmas.push(ParsedLemma::new_synthetic(
+                        format!("{dt_name}.{suffix}"),
+                        vec!["simp".into(), "ctr_sugar".into()],
+                        Arc::new(thm.clone()),
+                        None,
+                        None,
+                    ));
                 }
             }
         }
@@ -1554,28 +1542,26 @@ pub fn generate_ctr_sugar_lemmas(source: &str) -> Vec<ParsedLemma> {
             for (j, _) in args.iter().enumerate() {
                 if sel_idx < theorems.sel_thms.len() {
                     let thm = &theorems.sel_thms[sel_idx];
-                    lemmas.push(ParsedLemma {
-                        name: format!("{dt_name}.sel_{}_{}", _i + 1, j + 1),
-                        attributes: vec!["simp".into(), "ctr_sugar".into()],
-                        theorem: Arc::new(thm.clone()),
-                        proof_script: None,
-                        alias_for: None,
-                        source_loc: None,
-                    });
+                    lemmas.push(ParsedLemma::new_synthetic(
+                        format!("{dt_name}.sel_{}_{}", _i + 1, j + 1),
+                        vec!["simp".into(), "ctr_sugar".into()],
+                        Arc::new(thm.clone()),
+                        None,
+                        None,
+                    ));
                     sel_idx += 1;
                 }
             }
         }
 
         // Nchotomy
-        lemmas.push(ParsedLemma {
-            name: format!("{dt_name}.nchotomy"),
-            attributes: vec!["elim".into(), "ctr_sugar".into()],
-            theorem: Arc::new(theorems.exhaust),
-            proof_script: None,
-            alias_for: None,
-            source_loc: None,
-        });
+        lemmas.push(ParsedLemma::new_synthetic(
+            format!("{dt_name}.nchotomy"),
+            vec!["elim".into(), "ctr_sugar".into()],
+            Arc::new(theorems.exhaust),
+            None,
+            None,
+        ));
     }
     lemmas
 }
@@ -1771,7 +1757,7 @@ mod tests {
         // First case theorem: case_option f1 f2 None = f1
         let case0 = &thms.case_thms[0];
         let prop0 = case0.prop().term();
-        let (lhs0, rhs0) = Pure::dest_equals(prop0).expect("case0 is equality");
+        let (_, rhs0) = Pure::dest_equals(prop0).expect("case0 is equality");
         // rhs should be f1
         assert!(format!("{rhs0:?}").contains("f1"), "case0 rhs should contain f1, got {rhs0:?}");
 
@@ -1795,7 +1781,8 @@ mod tests {
         // 3: is_Some (Some x1) = True
         for (i, dt_thm) in thms.disc_thms.iter().enumerate() {
             let prop = dt_thm.prop().term();
-            let (lhs, rhs) = Pure::dest_equals(prop).expect(&format!("disc_thm {i} is equality"));
+            let (lhs, rhs) =
+                Pure::dest_equals(prop).unwrap_or_else(|| panic!("disc_thm {i} is equality"));
 
             let lhs_str = format!("{lhs:?}");
             let rhs_str = format!("{rhs:?}");
@@ -1831,7 +1818,7 @@ mod tests {
         // Selector theorem: the (Some x1) = x1
         let sel = &thms.sel_thms[0];
         let prop = sel.prop().term();
-        let (lhs, rhs) = Pure::dest_equals(prop).expect("sel_thm is equality");
+        let (lhs, _) = Pure::dest_equals(prop).expect("sel_thm is equality");
 
         let lhs_str = format!("{lhs:?}");
         assert!(lhs_str.contains("sel_"), "sel_thm lhs should contain selector");

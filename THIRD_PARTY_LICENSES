@@ -1,0 +1,121 @@
+Third-party material in Isabelle-rs
+==================================
+
+The project's Apache-2.0 declaration covers project-authored contributions,
+except where a file or component states otherwise. It does not replace the
+terms for the separately licensed materials identified below. This file
+records sources, scope and license texts; it is not a project-wide
+determination of copyright ownership or derivative-work status.
+
+1. Bundled Isabelle theories
+---------------------------
+
+Scope: theories/HOL/, theories/Pure/, and copies or excerpts of these source
+texts embedded in program binaries, tests or documentation. Preserve the
+individual author notices in the source files as well as this license.
+The bundled snapshot is separate from the fixed Isabelle2025 reference.
+Source: https://isabelle.in.tum.de/
+License: BSD-3-Clause. The following text is copied from theories/LICENSE.
+
+ISABELLE COPYRIGHT NOTICE, LICENCE AND DISCLAIMER.
+
+Copyright (c) 1986-2026,
+  University of Cambridge,
+  Technische Universitaet Muenchen,
+  and contributors.
+
+  All rights reserved.
+
+Redistribution and use in source and binary forms, with or without 
+modification, are permitted provided that the following conditions are 
+met:
+
+* Redistributions of source code must retain the above copyright 
+notice, this list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright 
+notice, this list of conditions and the following disclaimer in the 
+documentation and/or other materials provided with the distribution.
+
+* Neither the name of the University of Cambridge or the Technische
+Universitaet Muenchen nor the names of their contributors may be used
+to endorse or promote products derived from this software without
+specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS 
+IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED 
+TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A 
+PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT 
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, 
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT 
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, 
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY 
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT 
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE 
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+2. Fixed Isabelle2025 reference and upstream excerpts
+----------------------------------------------------
+
+Scope: the optional isabelle-source/ checkout, upstream source lines retained
+in scripts/reference/instrumentation/*.patch, and other copied or adapted
+material from that checkout. The patches contain project-authored observation
+changes to the indicated upstream files; the upstream material retains its
+applicable terms. Assess reference tools by their actual contents and sources,
+not merely by whether they call Isabelle APIs. Retain applicable upstream
+notices when copying or adapting files; this summary does not replace
+component-specific terms.
+Reference commit: 765fb2460a57eb46e8490283241ad46f1fac857f
+Source: https://github.com/isabelle-prover/mirror-isabelle
+License: BSD-3-Clause. The following text is copied from
+isabelle-source/COPYRIGHT at that reference commit.
+
+ISABELLE COPYRIGHT NOTICE, LICENCE AND DISCLAIMER.
+
+Copyright (c) 1986-2025,
+  University of Cambridge,
+  Technische Universitaet Muenchen,
+  and contributors.
+
+  All rights reserved.
+
+Redistribution and use in source and binary forms, with or without 
+modification, are permitted provided that the following conditions are 
+met:
+
+* Redistributions of source code must retain the above copyright 
+notice, this list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright 
+notice, this list of conditions and the following disclaimer in the 
+documentation and/or other materials provided with the distribution.
+
+* Neither the name of the University of Cambridge or the Technische
+Universitaet Muenchen nor the names of their contributors may be used
+to endorse or promote products derived from this software without
+specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS 
+IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED 
+TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A 
+PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT 
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, 
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT 
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, 
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY 
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT 
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE 
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+3. Cargo dependencies and native libraries
+-----------------------------------------
+
+Dependencies retain their own licenses and copyright notices. Cargo.lock
+records resolved Rust packages; deny.toml records the project's dependency
+license policy, not a replacement license or a redistribution notice bundle.
+Actual native library selection may also depend on build configuration.
+
+This file is not an exhaustive dependency license inventory. Before
+redistributing a binary, include the applicable license texts and notices
+for its actual dependencies and bundled native components. A successful
+cargo-deny check alone does not establish redistribution compliance.

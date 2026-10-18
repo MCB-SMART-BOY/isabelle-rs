@@ -1,0 +1,23 @@
+name: Require isolated Linux namespaces
+description: Verify the supervisor user/PID namespaces on the ephemeral Linux runner
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        for setting in kernel/apparmor_restrict_unprivileged_userns kernel/unprivileged_userns_clone user/max_user_namespaces; do
+          if [ -r "/proc/sys/$setting" ]; then
+            printf '%s: ' "$setting"
+            cat "/proc/sys/$setting"
+          fi
+        done
+        if unshare --user --map-current-user --pid --fork --forward-signals --kill-child -- true; then
+          exit 0
+        fi
+        if [ ! -r /proc/sys/kernel/apparmor_restrict_unprivileged_userns ] || [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)" != 1 ]; then
+          echo "User/PID namespaces unavailable; no AppArmor-specific runner setup applies" >&2
+          exit 1
+        fi
+        # Ubuntu permits one executable's userns profile without disabling host policy.
+        printf '%s\n' 'abi <abi/4.0>,' 'include <tunables/global>' '/usr/bin/unshare flags=(unconfined) {' '  userns,' '}' | sudo apparmor_parser -a
+        unshare --user --map-current-user --pid --fork --forward-signals --kill-child -- true

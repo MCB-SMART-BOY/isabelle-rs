@@ -1,207 +1,36 @@
 ---
-description: Concurrency and synchronization patterns. Arc, OnceLock, thread_local!, Send/Sync, tokio runtime, actor model.
+description: Concurrency rules for shared theorem databases and session infrastructure.
 globs: src/core/net.rs, src/hol/hol_loader.rs, src/session/**, src/server/**
 alwaysApply: false
-version: 1.0
-updated: 2026-05-29
+version: 2.1
+updated: 2026-10-07
 ---
-
 # Concurrency Rules
 
-> "Share memory by communicating; don't communicate by sharing memory." — Go proverb, applicable to Rust.
+Prefer immutable data and message passing. Keep lock scope explicit, never hold
+a lock across blocking work or `.await`, and make initialization deterministic.
+Pass a borrowed `&HolTheoremDb` through synchronous legacy search; only
+application roots may obtain the immutable process-wide database. Theory
+transactions and local verification own isolated search databases. Cached
+search rules must remain bound to the same database and declarations; never
+use thread-local pointer overrides or reinterpret search facts as trusted
+theorems.
 
-## 触发条件
+For built-in `RealExecutor` document checks and definition lookup, keep the
+single shared CPU queue but run legacy computation in a supervised
+`--compute-worker` child. The owner must cancel, kill and reap that child on
+close, replacement, timeout, and shutdown; a reply is committed only with the
+original document lifetime/revision or outstanding request token. IPC carries
+diagnostics and proof-state display data, never accepted theorem authority.
+Worker start, frame, or execution failure is unavailable/error, not a successful
+empty check. Custom `CommandExecutor` implementations still execute in-process
+with cooperative cancellation; their shutdown grace is not a hard guarantee.
 
-使用 `Arc`, `Mutex`, `RwLock`, `OnceLock`, `thread_local!`, `tokio::spawn` 或设计 actor 时应用。
+Use `extend`, `add_builtins`, or `insert_named_fact` to change a queried
+legacy DB; direct writes to its public search collections can leave cached
+rules stale. This limitation does not grant theorem authority.
 
-## 铁律
-
-1. **内核操作是单线程的** — `Thm`/`ThmKernel` 不跨线程共享可变状态
-2. **`Arc<Thm>` 是共享安全边界** — 定理通过 `Arc` 在线程间传递
-3. **`OnceLock` 用于惰性全局** — 优于 `lazy_static!` (标准库支持)
-4. **`thread_local!` 用于线程局部可变状态** — 如 DB override
-5. **Actor 模型用于会话管理** — tokio mpsc channel 通信
-
-## 模式 1: Arc<Thm> 共享
-
-```rust
-// ✅ 推荐: Arc<Thm> 用于跨线程定理共享
-pub struct HolTheoremDb {
-    pub by_name: HashMap<String, Arc<Thm>>,    // Arc 包装
-    pub intros: Vec<Arc<Thm>>,
-    pub elims: Vec<Arc<Thm>>,
-    // ...
-}
-
-// ❌ 避免: 裸 Thm 在线程间传递
-pub struct BadDb {
-    pub by_name: HashMap<String, Thm>,  // Thm 不是 Send (包含 Rc)
-}
-```
-
-## 模式 2: OnceLock 惰性初始化
-
-```rust
-// ✅ 推荐: OnceLock 惰性构建 Net
-use std::sync::OnceLock;
-
-pub struct HolTheoremDb {
-    intro_net: OnceLock<Net<Arc<Thm>>>,
-    elim_net: OnceLock<Net<Arc<Thm>>>,
-    safe_intro_net: OnceLock<Net<Arc<Thm>>>,
-    safe_elim_net: OnceLock<Net<Arc<Thm>>>,
-}
-
-impl HolTheoremDb {
-    pub fn intro_net(&self) -> &Net<Arc<Thm>> {
-        self.intro_net.get_or_init(|| {
-            let mut net = Net::new();
-            for thm in &self.intros {
-                let (_, concl) = Pure::strip_imp_prems(thm.prop().term());
-                net.insert(&concl, Arc::clone(thm));
-            }
-            net
-        })
-    }
-}
-
-// ❌ 避免: 加载时构建所有 nets (浪费启动时间)
-```
-
-## 模式 3: thread_local! DB Override
-
-```rust
-// ✅ 推荐: 线程局部可变状态
-thread_local! {
-    static DB_OVERRIDE: RefCell<Option<*const HolTheoremDb>> = const { RefCell::new(None) };
-}
-
-impl HolTheoremDb {
-    pub fn with_override<F, R>(db: &HolTheoremDb, f: F) -> R
-    where F: FnOnce() -> R
-    {
-        DB_OVERRIDE.with(|cell| {
-            let old = cell.replace(Some(db as *const _));
-            let result = f();
-            cell.replace(old);
-            result
-        })
-    }
-
-    pub fn get() -> &'static HolTheoremDb {
-        DB_OVERRIDE.with(|cell| {
-            if let Some(ptr) = *cell.borrow() {
-                unsafe { &*ptr }
-            } else {
-                GLOBAL_DB.get().expect("no DB initialized")
-            }
-        })
-    }
-}
-```
-
-## 模式 4: Actor 模型 (Session)
-
-```rust
-// ✅ 推荐: mpsc channel 通信
-use tokio::sync::mpsc;
-
-pub enum SessionMessage {
-    ProcessFile { path: PathBuf, reply: oneshot::Sender<Result<()>> },
-    Shutdown,
-}
-
-pub struct Session {
-    rx: mpsc::Receiver<SessionMessage>,
-    state: SessionState,
-    file_worker: FileWorker,
-}
-
-impl Session {
-    pub async fn run(&mut self) {
-        while let Some(msg) = self.rx.recv().await {
-            match msg {
-                SessionMessage::ProcessFile { path, reply } => {
-                    let result = self.process_file(&path);
-                    let _ = reply.send(result);
-                }
-                SessionMessage::Shutdown => break,
-            }
-        }
-    }
-}
-```
-
-## 模式 5: Send + Sync 边界
-
-```rust
-// ✅ 确保跨线程类型正确标记
-pub struct SessionBuilder {
-    graph: TheoryGraph,        // Send + Sync ✅
-    db: Arc<HolTheoremDb>,     // Send + Sync ✅ (Arc)
-    config: BuildConfig,       // Send + Sync ✅
-}
-
-// 检查: 所有字段必须是 Send + Sync
-// 如果包含 Rc → !Send, 需要换 Arc
-// 如果包含 RefCell → !Sync, 需要换 RwLock/Mutex
-```
-
-## 并发模型总结
-
-| 组件 | 并发模型 | 同步原语 |
-|------|---------|---------|
-| LCF 内核 | 单线程 | 无 |
-| HolTheoremDb | 只读共享 | `Arc` + `OnceLock` |
-| Net 索引 | 惰性构建 | `OnceLock` |
-| DB Override | 线程局部 | `thread_local!` + `RefCell` |
-| Session 管理 | Actor | `tokio::mpsc` |
-| LSP Server | 异步 I/O | `tokio` + `tower` |
-| WASM Runtime | Host 隔离 | `wasmtime::Store` |
-| TheoryProcessor | 顺序处理 | 无 (方法内状态) |
-
-## 模式 6: tmux 并行会话
-
-长时间任务（测试、构建、验证）应在 tmux 中运行，而非后台任务。tmux 允许随时 `attach` 查看进度，不会因 pipe 阻塞丢失输出。
-
-```bash
-# ✅ 推荐: tmux 会话跑长时间任务
-tmux new-session -d -s tier2 "RUST_MIN_STACK=268435456 cargo test --test tier2_verify -- --nocapture 2>&1; echo '=== DONE ==='; $SHELL"
-
-# 查看进度
-tmux capture-pane -t tier2 -p
-
-# 进入交互
-tmux attach -t tier2
-
-# 列表
-tmux ls
-
-# 杀掉
-tmux kill-session -t tier2
-```
-
-```bash
-# ❌ 避免: 后台任务 + pipe + tail (输出被缓冲，无法看进度)
-cargo test --test tier2_verify 2>&1 | tail -40 &
-```
-
-## 检查清单
-
-- [ ] 跨线程共享数据用 `Arc`，非 `Rc`
-- [ ] 可变全局状态用 `OnceLock`/`thread_local!`/`Mutex`/`RwLock`
-- [ ] Actor 通信用 `mpsc` channel，非共享内存
-- [ ] `unsafe` 代码有安全文档 (如 DB_OVERRIDE 的裸指针)
-- [ ] 无死锁风险 (锁获取顺序一致)
-- [ ] Tokio 任务有超时或取消机制
-
-## 反模式
-
-| ❌ | ✅ |
-|----|----|
-| `Rc<T>` 跨线程 | `Arc<T>` |
-| `RefCell<T>` 跨线程 | `RwLock<T>` 或 `Mutex<T>` |
-| `lazy_static!` | `OnceLock` (std) |
-| 共享可变 HashMap 无锁 | `RwLock<HashMap<...>>` |
-| 忙碌等待 (spin loop) | channel / Condvar |
-| `block_on` 在 async context | 纯 async 或纯 sync |
+Concurrency must not introduce alternative theorem construction paths. Add
+deterministic stress tests and run the relevant verification mode. Large
+reusable Rust examples belong in `scripts/templates/`; short local contract
+snippets may remain in Markdown.

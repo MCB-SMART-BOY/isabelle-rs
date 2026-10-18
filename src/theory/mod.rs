@@ -28,9 +28,11 @@
 pub mod cache;
 pub mod loader;
 pub mod local_theory;
+pub mod native;
 pub mod registry;
 pub mod session_builder;
 pub mod thy_header;
+pub mod trusted_loader;
 pub mod verify_classifier;
 
 use std::{collections::HashMap, path::PathBuf};

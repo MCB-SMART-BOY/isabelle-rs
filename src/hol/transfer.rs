@@ -31,9 +31,11 @@
 use std::sync::Arc;
 
 use crate::core::term::Term;
-use crate::core::thm::{CTerm, Thm, ThmKernel};
+use crate::core::thm::Thm;
 use crate::core::types::Typ;
-use crate::hol::hologic;
+
+#[cfg(test)]
+use crate::core::thm::{CTerm, ThmKernel};
 
 // =========================================================================
 // Transfer rule
@@ -139,7 +141,7 @@ impl QuotientType {
 /// Generate the relator for a type constructor based on its BNF structure.
 ///
 /// For example, for `'a list`:
-/// ```
+/// ```text
 /// rel_list R Nil Nil = True
 /// rel_list R (Cons x xs) (Cons y ys) = R x y ∧ rel_list R xs ys
 /// ```
@@ -176,7 +178,7 @@ mod tests {
             source: "map".to_string(),
             target: "map_transferred".to_string(),
             relation: Term::const_("R", Typ::base("prop")),
-            theorem: Arc::new(ThmKernel::assume(CTerm::certify(Term::const_(
+            theorem: Arc::new(ThmKernel::assume_compat(CTerm::certify(Term::const_(
                 "True",
                 Typ::base("prop"),
             )))),

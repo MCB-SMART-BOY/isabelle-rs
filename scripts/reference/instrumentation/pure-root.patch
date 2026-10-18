@@ -1,0 +1,11 @@
+--- a/src/Pure/ROOT.ML
++++ b/src/Pure/ROOT.ML
+@@ -11,6 +11,8 @@
+ 
+ chapter "Isabelle/Pure bootstrap";
+ 
++(* ROOT0 has installed the primordial recorder before its first ML_file. *)
++val _ = Reference_Observation.root_entry ();
+ ML_file "ML/ml_name_space.ML";
+ 
+ 

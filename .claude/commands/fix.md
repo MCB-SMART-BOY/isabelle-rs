@@ -5,8 +5,6 @@ category: maintenance
 ---
 # /fix
 
-自动修复常见代码问题。
-
-```bash
-cargo fix --allow-dirty && cargo fmt && cargo clippy --fix --allow-dirty && cargo check --lib
-```
+自动修复入口是 `cargo +stable xtask fix apply`；只检查不修改时使用
+`cargo +stable xtask fix check`。`apply` 会修改当前工作区，执行前必须确认
+已有变更都需保留。

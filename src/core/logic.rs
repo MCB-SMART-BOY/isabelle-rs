@@ -155,7 +155,7 @@ mod tests {
             Term::app(Term::const_("Pure.eq", Typ::dummy()), Term::free("a", Typ::dummy())),
             Term::free("b", Typ::dummy()),
         );
-        let (x, _y, typ) = Pure::dest_equals_with_type(&eq).unwrap();
+        let (_, _, typ) = Pure::dest_equals_with_type(&eq).unwrap();
         assert!(typ.is_dummy());
     }
 }

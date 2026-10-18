@@ -1,46 +1,31 @@
 ---
-name: run-isabelle-rs
-description: Build, run, test, or verify isabelle-rs
+name: Run Isabelle-rs
+description: Build, launch, test, or verify Isabelle-rs through maintained commands.
 category: development
-triggers: [run isabelle, build project, run demo, compile .thy, test change, verify kernel]
+version: 2.0.0
+triggers: [run, start, build, screenshot, demo, compile, launch, test change, verify kernel]
+permissions: [Bash:cargo build, Bash:cargo run, Bash:cargo test, Bash:RUST_MIN_STACK]
 ---
 # Run Isabelle-rs
 
-Build, run, test, and verify the isabelle-rs proof assistant.
+Use `cargo +stable xtask`; see [the command catalog](../../scripts/README.md#verification).
+`verify` aggregates deterministic repository checks including full workspace
+tests; `selftest` checks the automation independently. `fast` is only
+format/check; `strict` is a scoped trusted-boundary gate; `core` samples bundled
+theories, while `tier2`, `tier3`, `broad` and `all` are explicit report-only
+diagnostics, not full quality gates. `lib` is root-only; `test` runs the full
+workspace. Bare `cargo test` selects only the root default member. Independent
+security audits and the global validator remain separate. Report actual failures
+and unrun paths.
 
-## 常用命令
+Launch the research demo with `cargo +stable run --locked --bin isabelle-rs`;
+add `-- --lsp` for the experimental protocol server. Compile a narrowly
+supported checked theory with
+`cargo +stable run --locked --bin isabelle-build -- PATH.thy`; unsupported
+declarations, method scripts, or unfinished proofs fail rather than being
+reported as complete.
 
-```bash
-# 构建
-cargo build
-
-# 所有测试 (需要 256MB 栈)
-RUST_MIN_STACK=268435456 cargo test --lib
-
-# 内核测试 (快速, 32MB 栈)
-cargo test --lib core::thm
-
-# 核心验证
-RUST_MIN_STACK=268435456 cargo test test_verify_all_core_files -- --nocapture
-
-# Tier2 扩展验证 (建议用 tmux)
-tmux new-session -d -s tier2 "RUST_MIN_STACK=268435456 cargo test --test tier2_verify -- --nocapture 2>&1; exec bash"
-tmux attach -t tier2
-
-# 代码质量
-cargo clippy -- -D warnings
-cargo fmt -- --check
-```
-
-## 栈需求
-| 测试 | 栈 |
-|------|:--:|
-| Core kernel | 32MB |
-| Full lib | 256MB |
-| Core verification | 256MB |
-| Tier2 verification | 256MB |
-
-## 已知问题
-- Hilbert_Choice/Transitive_Closure: 超时 (需更深迭代化)
-- Fields/Num/Finite_Set: 结构化证明重放开销
-- Partial_Function: 内存爆炸 (深层 fixpoint)
+For screenshot or demo requests, launch the requested binary first and capture
+only an observed UI or terminal state. Report the exact command, observed result,
+and any stack-sensitive or skipped suite. The LSP and theory compiler remain
+partial prototypes, not Isabelle/PIDE compatibility claims.

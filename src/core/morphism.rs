@@ -35,6 +35,12 @@
 use std::sync::Arc;
 
 use super::{term::Term, theory::Theory, thm::Thm, types::Typ};
+/// Shared term, type, or theorem transformation.
+pub type MorphismFn<T> = Arc<dyn Fn(&T) -> T + Send + Sync>;
+/// Named fact lookup override.
+pub type FactMorphismFn = Arc<dyn Fn(&str) -> Option<Arc<Thm>> + Send + Sync>;
+/// Binding-name transformation.
+pub type BindingMorphismFn = Arc<dyn Fn(&str) -> String + Send + Sync>;
 
 // =========================================================================
 // Morphism
@@ -46,15 +52,15 @@ use super::{term::Term, theory::Theory, thm::Thm, types::Typ};
 #[derive(Clone)]
 pub struct Morphism {
     /// Term transformation: `Term → Term`.
-    pub term_fn: Option<Arc<dyn Fn(&Term) -> Term + Send + Sync>>,
+    pub term_fn: Option<MorphismFn<Term>>,
     /// Type transformation: `Typ → Typ`.
-    pub typ_fn: Option<Arc<dyn Fn(&Typ) -> Typ + Send + Sync>>,
+    pub typ_fn: Option<MorphismFn<Typ>>,
     /// Fact lookup override: `name → fact`.
-    pub fact_fn: Option<Arc<dyn Fn(&str) -> Option<Arc<Thm>> + Send + Sync>>,
+    pub fact_fn: Option<FactMorphismFn>,
     /// Theorem transformation: `Thm → Thm`.
-    pub thm_fn: Option<Arc<dyn Fn(&Thm) -> Thm + Send + Sync>>,
+    pub thm_fn: Option<MorphismFn<Thm>>,
     /// Binding name transformation.
-    pub binding_fn: Option<Arc<dyn Fn(&str) -> String + Send + Sync>>,
+    pub binding_fn: Option<BindingMorphismFn>,
 }
 
 impl std::fmt::Debug for Morphism {
@@ -210,9 +216,9 @@ impl Default for Morphism {
 
 /// Compose two optional functions: `g ∘ f` (f first, then g).
 fn compose_fn<T: 'static + Send + Sync>(
-    g: &Option<Arc<dyn Fn(&T) -> T + Send + Sync>>,
-    f: &Option<Arc<dyn Fn(&T) -> T + Send + Sync>>,
-) -> Option<Arc<dyn Fn(&T) -> T + Send + Sync>> {
+    g: &Option<MorphismFn<T>>,
+    f: &Option<MorphismFn<T>>,
+) -> Option<MorphismFn<T>> {
     match (g, f) {
         (None, None) => None,
         (Some(g), None) => Some(Arc::clone(g)),
@@ -227,9 +233,9 @@ fn compose_fn<T: 'static + Send + Sync>(
 
 /// Compose fact lookup functions: try `f` first, then `g`.
 fn compose_fact_fn(
-    g: &Option<Arc<dyn Fn(&str) -> Option<Arc<Thm>> + Send + Sync>>,
-    f: &Option<Arc<dyn Fn(&str) -> Option<Arc<Thm>> + Send + Sync>>,
-) -> Option<Arc<dyn Fn(&str) -> Option<Arc<Thm>> + Send + Sync>> {
+    g: &Option<FactMorphismFn>,
+    f: &Option<FactMorphismFn>,
+) -> Option<FactMorphismFn> {
     match (g, f) {
         (None, None) => None,
         (Some(g), None) => Some(Arc::clone(g)),
@@ -244,9 +250,9 @@ fn compose_fact_fn(
 
 /// Compose string functions.
 fn compose_str_fn(
-    g: &Option<Arc<dyn Fn(&str) -> String + Send + Sync>>,
-    f: &Option<Arc<dyn Fn(&str) -> String + Send + Sync>>,
-) -> Option<Arc<dyn Fn(&str) -> String + Send + Sync>> {
+    g: &Option<BindingMorphismFn>,
+    f: &Option<BindingMorphismFn>,
+) -> Option<BindingMorphismFn> {
     match (g, f) {
         (None, None) => None,
         (Some(g), None) => Some(Arc::clone(g)),
@@ -460,8 +466,10 @@ mod tests {
     fn test_fact_morphism() {
         use crate::core::thm::{CTerm, ThmKernel};
 
-        let fact_thm =
-            Arc::new(ThmKernel::assume(CTerm::certify(Term::const_("P", Typ::base("bool")))));
+        let fact_thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(Term::const_(
+            "P",
+            Typ::base("bool"),
+        ))));
 
         let m = Morphism::fact_morphism(move |name: &str| {
             if name == "my_fact" { Some(Arc::clone(&fact_thm)) } else { None }

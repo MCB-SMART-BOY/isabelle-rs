@@ -1,0 +1,7 @@
+session Reference_Execution = Pure +
+  options [document = false]
+  sessions HOL
+  theories Reference_Observer
+  theories
+    HOL.HOL HOL.Orderings HOL.Set HOL.Nat HOL.List
+    HOL.Fun HOL.Product_Type HOL.Sum_Type HOL.Option

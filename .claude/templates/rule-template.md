@@ -1,30 +1,6 @@
----
-description: <一句话描述规则触发场景>
-globs: <触发文件模式，如 src/core/thm.rs>
-alwaysApply: false
-version: 1.0
----
-# <规则标题>
+# Rule Template
 
-## 触发条件
-修改 `<触发文件>` 时应用此规则。
-
-## 铁律
-1. **<铁律1>** — <说明>
-2. **<铁律2>** — <说明>
-
-## 模式
-
-### ✅ DO
-| 做法 | 示例 |
-|------|------|
-| <正确做法> | `<代码示例>` |
-
-### ❌ DON'T
-| 做法 | 示例 |
-|------|------|
-| <错误做法> | `<代码示例>` |
-
-## 检查清单
-- [ ] <检查项1>
-- [ ] <检查项2>
+The maintained template is
+[`scripts/templates/claude-rule.md`](../../scripts/templates/claude-rule.md).
+Keep reusable templates under `scripts/templates/`; this compatibility pointer
+exists for older Claude configuration references.

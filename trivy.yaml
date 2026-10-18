@@ -1,0 +1,4 @@
+# For the repository's Rust verification; editor/VSIX release must audit without these exceptions.
+ignorefile: .trivyignore.yaml
+scan:
+  show-suppressed: true

@@ -1,34 +1,47 @@
 # Claude Code Hooks
 
-Custom hooks for isabelle-rs development automation.
+Documentation for hook declarations in this checkout, not a guarantee that
+this runtime consumes custom settings keys; runtime effectiveness was not verified.
 
 ## Available Hook Points
 
-| Hook | When | Use Case |
-|------|------|----------|
-| `PreToolUse` | Before a tool executes | Validate Edit/Write targets, enforce kernel rules |
-| `PostToolUse` | After a tool executes | Auto-run tests, check for regressions |
-| `Notification` | On system events | Alert on build failures |
-| `SessionStart` | When session begins | Restore environment, check git state |
-| `SessionEnd` | When session ends | Cleanup, auto-commit, generate summary |
+| Hook | Current configuration |
+|------|-----------------------|
+| `PreToolUse` | Calls `cargo +stable xtask hook pre-edit` to report `CLAUDE_TOOL_FILE_PATH` literally; not a kernel-rule guard. |
+| `PostToolUse` | Calls `cargo +stable xtask hook post-edit`; only paths beginning `src/` trigger a Git query and a reminder when more than 10 tracked source files differ from HEAD. Does not run tests. |
+| `Notification` | Empty hook list: no build alert. |
+| `SessionStart` / `SessionEnd` | Not registered; use the manual checklist below. |
 
-## Planned Hooks
+## Planned Hooks (not configured)
 
 ### Pre-Edit Kernel Guard
-Checks if Edit targets `src/core/thm.rs` and warns about kernel safety rules.
+Would warn for edits to trusted kernel paths; not a substitute for code review.
 
 ### Post-Test Regressions
-After `cargo test` completes, compares with baseline for regressions.
+Would compare an actual test run with its baseline; not installed.
 
 ### Pre-Commit Checklist
-Before `git commit`, runs `cargo check --lib` and `cargo fmt -- --check`.
+Not installed. Before a user-authorized commit, run applicable project and
+independent quality gates. No hook creates commits autonomously.
 
 ## Hook Configuration
 
 Hooks are configured in `../settings.json` under the `hooks` section.
-Individual hook scripts go in this directory.
+`post-session.md` is not wired to an event in the current configuration; run it
+manually before reporting completion.
+Implementation lives in `xtask/src/hooks.rs`, not embedded Shell scripts.
+The existing `CLAUDE_TOOL_FILE_PATH` contract is retained: a missing variable
+prints an empty pre-edit label and does not trigger a post-edit Git query; a
+non-Unicode value is an input error. Pre-edit prints the value literally.
+Only a value starting with relative `src/` triggers post-edit counting; absolute
+paths do not match. Git runs in the invocation directory, with NUL-separated
+names so newline-containing filenames count once. Git failures produce a
+nonzero exit, not a zero-change result. This counts tracked changes against
+HEAD, not untracked files or only edits made by the hook. Direct CLI behavior
+does not establish that a host supplies the variable or loads these
+declarations. Rust/Cargo and Git are prerequisites.
 
 ## Related
 
-- `.claude/settings.json` — Hook configuration
-- `.claude/rules/kernel.md` — Kernel safety rules for pre-edit guards
+- [`../settings.json`](../settings.json) — actual hook configuration
+- [`../rules/kernel.md`](../rules/kernel.md) — kernel rules for manual review

@@ -1,82 +1,25 @@
 ---
-name: bench
-description: Run the complete test matrix at correct stack sizes. Check suite pass/fail status and identify regressions.
+name: Run Benchmarks
+description: Run the selected repository verification mode and report failures, skips, and stack-sensitive scope exactly.
 category: meta
-version: 2.2.1
-triggers: [benchmark, performance, test all, regression test]
+version: 3.0.0
+triggers: [benchmark, performance, test all, regression test, run all tests]
 permissions: [Bash:cargo test, Bash:RUST_MIN_STACK]
 ---
-
 # Bench
 
-Run the complete test matrix to check for regressions and performance issues.
+Use [the command catalog](../../scripts/README.md#verification) for exact
+`cargo +stable xtask` entry points:
 
-## Test Matrix
+- `verify` for deterministic repository checks, including full workspace tests;
+  `selftest` separately for product-independent automation.
+- `strict` for the scoped trusted-kernel gate; `core` for sampled 125-theorem
+  outcomes. Historical `KernelTrustedClosed: 1/125` and
+  `TransitionalStrictClosed: 0/125` are not fresh results; CLI fixtures are separate.
+- `tier2`, `tier3`, `broad` or `all` only as explicit report-only diagnostics.
+- `lib` for root-library tests; `test` for full workspace tests. Bare `cargo test`
+  covers only the root default member.
 
-```bash
-# Tier 1: Fast kernel tests (32MB stack)
-cargo test --lib core::thm
-cargo test --lib core::unify
-cargo test --lib tools::metis
-cargo test --lib hol::hol_loader::lemma_tests
-
-# Tier 2: Medium tests (256MB stack)
-RUST_MIN_STACK=268435456 cargo test --lib
-
-# Tier 3: Verification (256MB stack, KNOWN OVERFLOWS)
-RUST_MIN_STACK=268435456 cargo test test_verify_all_core_files -- --nocapture
-RUST_MIN_STACK=268435456 cargo test --test tier2_verify -- --nocapture
-RUST_MIN_STACK=268435456 cargo test --test tier3_verify -- --nocapture
-
-# Tier 4: Integration tests
-cargo test --test bnf_tests
-cargo test --test comprehensive
-cargo test --test integration_tests
-cargo test --test proptest
-```
-
-## Expected Results (v2.2.1)
-
-| Suite | Expected | Notes |
-|-------|----------|-------|
-| `core::thm` | 12 pass | LCF kernel |
-| `cargo check --lib` | **0 warnings** | Required per SOP |
-| `test_verify_all_core_files` | **5/5 files, 125/125 (100%)** | Core verification |
-| `tier2_verify` | **97/97 files; 真实证明率 85.8% (3277/3821 proved, 544 admitted)** | 178s (3.0 min) |
-| `--lib` full | 700+ pass | 1 known skip (ctr_sugar) |
-
-## Quick Sanity Check
-
-After any change, run at minimum:
-```bash
-cargo test --lib core::thm core::unify tools::metis
-cargo test --lib hol::hol_loader::lemma_tests
-cargo test --lib isar::method
-```
-
-## Known Performance Baselines
-
-| Metric | Value |
-|--------|-------|
-| Kernel ops | 179ns–12μs (release, criterion) |
-| Core test suite | ~4.1s (release mode) |
-| Speedup from v0.4.0 | 24× |
-| Stack overflow threshold | 3 tests overflow at 1GB |
-
-## Stack Requirements
-
-| Suite | Minimum | Safe |
-|-------|:-------:|:----:|
-| Kernel tests | 32MB | 64MB |
-| Unify/Metis tests | 32MB | 64MB |
-| Lemma tests | 32MB | 64MB |
-| Full lib | 256MB | 512MB |
-| Core verification | 256MB | 512MB |
-| Batch scan | 256MB+ | **OVERFLOWS** |
-
-## Related
-
-- `.claude/skills/verify.md` — Verification-specific debugging
-- `.claude/skills/debug-overflow.md` — Stack overflow fixes
-- `.claude/rules/testing.md` — Full test rules
-- `.claude/rules/performance.md` — Optimization patterns
+`all`/`broad` do not replace `verify`, `selftest`, independent security audits
+or the global validator. Benchmark performance only with actual separately
+measured runs; report observed output, duration, failures, and unrun modes.

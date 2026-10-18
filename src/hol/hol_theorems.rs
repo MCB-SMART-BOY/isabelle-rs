@@ -105,7 +105,7 @@ impl HolTheory {
     }
 
     fn add(&mut self, name: &str, prop: &Term, kind: &str) {
-        let thm = ThmKernel::assume(CTerm::certify(prop.clone()));
+        let thm = ThmKernel::assume_compat(CTerm::certify(prop.clone()));
         self.theorems.push(NamedThm {
             name: name.to_string(),
             thm: Arc::new(thm),

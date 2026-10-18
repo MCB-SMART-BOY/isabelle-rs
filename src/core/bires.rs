@@ -25,7 +25,8 @@ pub fn biresolution(
     let env = Envir::init();
     unify::unifiers(&env, &[(_state.prop().term().clone(), _rule.prop().term().clone())], &config)?;
     // If they unify, the rule's hypotheses become subgoals
-    let subgoals: Vec<Thm> = _rule.hyps().iter().map(|h| ThmKernel::assume(h.clone())).collect();
+    let subgoals: Vec<Thm> =
+        _rule.hyps().iter().map(|h| ThmKernel::assume_compat(h.clone())).collect();
     Some(subgoals)
 }
 

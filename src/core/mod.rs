@@ -1,4 +1,4 @@
-//! Isabelle-rs core: the foundational data types and trusted kernel.
+//! Isabelle-rs legacy core data types and proof infrastructure.
 //!
 //! This module corresponds to `src/Pure/` in the Isabelle distribution.
 //!
@@ -12,7 +12,7 @@
 //! ├── sign.rs     — Signatures: constant table + type checking (sign.ML)
 //! ├── theory.rs   — Theories: signature + axioms + theorems (theory.ML)
 //! │                └── ProofContext: fix/assume (context.ML)
-//! └── thm.rs      — LCF trusted kernel (thm.ML)
+//! └── thm.rs      — Legacy theorem API (thm.ML)
 //! ```
 //!
 //! ## Isabelle Philosophy
@@ -21,6 +21,10 @@
 //! 2. **The LCF kernel is the only way to create theorems**
 //! 3. **Theories are immutable** — extension creates a new theory
 //! 4. **Pure is the minimal bootstrap** — no axioms, just inference rules
+
+// Compatibility-only translation from strict kernel types into legacy core.
+// This adapter is outside the strict trusted kernel.
+pub mod kernel_convert;
 
 pub mod bires;
 pub mod conjunction;

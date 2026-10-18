@@ -1,0 +1,19 @@
+[package]
+name = "my-project"
+version = "0.1.0"
+logic = "HOL"
+edition = "2026"
+
+[toolchain]
+isabelle-rs = "2.3.0"
+
+[dependencies]
+AFP = "2026.1"
+
+[build]
+parallel = true
+incremental = true
+deny_admit = true
+max_oracles = 0
+trust_report = true
+proof_certificates = true

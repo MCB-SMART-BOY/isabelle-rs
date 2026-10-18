@@ -1,7 +1,7 @@
 //! Handler for textDocument/completion.
 
 use super::HandlerContext;
-use crate::{hol::hol_loader::HolTheoremDb, server::lsp_types::*};
+use crate::{core::thm::Thm, hol::hol_loader::HolTheoremDb, server::lsp_types::*};
 
 /// Isabelle keywords for auto-completion.
 const KEYWORDS: &[(&str, &str)] = &[
@@ -103,28 +103,51 @@ pub fn handle_completion(ctx: &HandlerContext, req: JsonRpcRequest) {
     }
 
     // Add theorem names from the loaded DB (top 200 for performance)
-    let db = HolTheoremDb::get();
+    let db = HolTheoremDb::global();
     let mut count = 0;
     for (name, thm) in &db.by_name {
         if count >= 200 {
             break;
         }
-        let nprems = thm.nprems();
-        let detail = if nprems == 0 {
-            "theorem (unconditional)".into()
-        } else {
-            format!("theorem ({nprems} premises)")
-        };
-        items.push(CompletionItem {
-            label: name.clone(),
-            kind: Some(CompletionItemKind::Property),
-            detail: Some(detail),
-            documentation: None,
-            insert_text: Some(name.clone()),
-        });
+        items.push(db_completion_item(name, thm));
         count += 1;
     }
 
     let result = CompletionList { is_incomplete: count >= 200, items };
     ctx.send_result(req.id, serde_json::to_value(result).expect("Serialization failed"));
+}
+
+fn db_completion_item(name: &str, thm: &Thm) -> CompletionItem {
+    CompletionItem {
+        label: name.to_string(),
+        kind: Some(CompletionItemKind::Property),
+        detail: Some(format!("search fact ({})", super::hover::legacy_fact_status(thm))),
+        documentation: None,
+        insert_text: Some(name.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::{
+        term::Term,
+        thm::{CTerm, ThmKernel},
+        types::Typ,
+    };
+
+    #[test]
+    fn db_completion_item_admitted_and_open_facts_remain_searchable_without_proof_claims() {
+        let statement = CTerm::certify(Term::const_("P", Typ::base("prop")));
+        let admitted =
+            db_completion_item("admitted_P", &ThmKernel::admit(statement.clone(), "unproved"));
+        let open = db_completion_item("open_P", &ThmKernel::assume_compat(statement));
+
+        assert_eq!(admitted.label, "admitted_P");
+        assert_eq!(admitted.insert_text.as_deref(), Some("admitted_P"));
+        assert_eq!(admitted.detail.as_deref(), Some("search fact (legacy admitted/oracle)"));
+        assert_eq!(open.label, "open_P");
+        assert!(open.detail.as_deref().unwrap().contains("legacy open"));
+        assert!(!open.detail.as_deref().unwrap().contains("unconditional"));
+    }
 }

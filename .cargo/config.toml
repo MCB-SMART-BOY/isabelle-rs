@@ -1,0 +1,9 @@
+# Keep the full test suite within a bounded memory footprint. The legacy HOL
+# scale tests can otherwise overlap large theorem databases and be OOM-killed.
+# Caller-provided environment variables may override these defaults.
+[env]
+RUST_MIN_STACK = "268435456"
+RUST_TEST_THREADS = "1"
+
+[alias]
+xtask = "run --locked -p xtask --"

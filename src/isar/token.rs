@@ -200,6 +200,21 @@ pub fn is_keyword(s: &str) -> bool {
     COMMAND_KEYWORDS.contains(&s)
 }
 
+/// A malformed lexical unit, located at its starting byte in the original input.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LexError {
+    pub offset: usize,
+    pub detail: String,
+}
+
+impl fmt::Display for LexError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "byte {}: {}", self.offset, self.detail)
+    }
+}
+
+impl std::error::Error for LexError {}
+
 // =========================================================================
 // Lexer
 // =========================================================================
@@ -209,12 +224,13 @@ pub struct Lexer {
     input: Vec<char>,
     pos: usize,
     offset: usize,
+    first_error: Option<LexError>,
 }
 
 impl Lexer {
     /// Create a new lexer for the given input.
     pub fn new(input: &str) -> Self {
-        Lexer { input: input.chars().collect(), pos: 0, offset: 0 }
+        Lexer { input: input.chars().collect(), pos: 0, offset: 0, first_error: None }
     }
 
     /// Tokenize the entire input.
@@ -231,55 +247,59 @@ impl Lexer {
         tokens
     }
 
-    fn next_token(&mut self) -> Token {
-        self.skip_whitespace_and_comments();
+    /// Tokenize without accepting malformed units. Offsets refer to UTF-8 bytes.
+    pub fn tokenize_checked(&mut self) -> Result<Vec<Token>, LexError> {
+        let tokens = self.tokenize();
+        if let Some(error) = self.first_error.take() {
+            return Err(error);
+        }
+        if let Some(token) = tokens.iter().find(|token| token.kind == TokenKind::Error) {
+            return Err(LexError {
+                offset: token.offset,
+                detail: format!("unexpected token `{}`", token.source),
+            });
+        }
+        Ok(tokens)
+    }
 
-        if self.pos >= self.input.len() {
-            return Token::new(TokenKind::EOF, String::new(), self.offset);
+    pub(crate) fn next_token(&mut self) -> Token {
+        loop {
+            while self.pos < self.input.len() && self.peek().is_whitespace() {
+                self.advance();
+            }
+            if self.pos >= self.input.len() {
+                return Token::new(TokenKind::EOF, String::new(), self.offset);
+            }
+            if self.peek() == '(' && self.peek_n(1) == Some('*') {
+                if let Some(error) = self.skip_comment() {
+                    return error;
+                }
+                continue;
+            }
+            break;
         }
 
-        let _start = self.pos;
         let start_offset = self.offset;
         let ch = self.peek();
 
         match ch {
-            // Strings
             '"' => self.lex_string(),
-
-            // Comments: (* ... *)
-            '(' if self.peek_n(1) == Some('*') => {
-                self.skip_comment();
-                self.next_token()
-            },
-
+            '‹' => self.lex_cartouche(false),
+            '{' if self.peek_n(1) == Some('*') => self.lex_verbatim(),
+            '\\' if self.starts_with(r"\<open>") => self.lex_cartouche(true),
             // Semicolons
             ';' => {
                 self.advance();
                 Token::new(TokenKind::Semicolon, ";".into(), start_offset)
             },
 
-            // Isabelle symbol escapes: \<name> (e.g., \<in>, \<forall>, \<Longrightarrow>)
+            // Isabelle named symbols are indivisible; incomplete escapes are errors.
             '\\' if self.peek_n(1) == Some('<') => {
-                self.advance_by(2); // skip \<
-                let inner_start = self.pos;
-                while self.pos < self.input.len() {
-                    let c = self.peek();
-                    if c == '>' {
-                        break;
-                    }
-                    if c == '\n' {
-                        break;
-                    } // safety: don't cross lines
-                    if !c.is_alphanumeric() && c != '_' && c != '^' {
-                        break;
-                    }
-                    self.advance();
+                let start = self.pos;
+                if !self.scan_symbol_escape() {
+                    return self.error_token(start, start_offset, "malformed symbol escape");
                 }
-                let inner: String = self.input[inner_start..self.pos].iter().collect();
-                if self.pos < self.input.len() && self.peek() == '>' {
-                    self.advance(); // skip >
-                }
-                let text = format!("\\<{}>", inner);
+                let text: String = self.input[start..self.pos].iter().collect();
                 Token::new(TokenKind::Symbol(intern(&text)), text, start_offset)
             },
 
@@ -420,10 +440,16 @@ impl Lexer {
                 self.advance();
                 Token::new(TokenKind::Symbol(intern("`")), '`'.into(), start_offset)
             },
+            ',' | '!' | '*' | '?' => {
+                self.advance();
+                let symbol = ch.to_string();
+                Token::new(TokenKind::Symbol(intern(&symbol)), symbol, start_offset)
+            },
             // Error
             _ => {
+                let start = self.pos;
                 self.advance();
-                Token::new(TokenKind::Error, ch.to_string(), start_offset)
+                self.error_token(start, start_offset, "unrecognized character")
             },
         }
     }
@@ -468,8 +494,10 @@ impl Lexer {
             self.advance(); // second ' for ''a style
         }
 
-        // Eat the variable name
-        while self.pos < self.input.len() && self.peek().is_alphanumeric() {
+        if self.pos == self.input.len() || !self.peek().is_alphabetic() {
+            return self.error_token(start, start_offset, "type variable requires a name");
+        }
+        while self.pos < self.input.len() && (self.peek().is_alphanumeric() || self.peek() == '_') {
             self.advance();
         }
 
@@ -482,18 +510,120 @@ impl Lexer {
     fn lex_string(&mut self) -> Token {
         let start = self.pos;
         let start_offset = self.offset;
-        self.advance(); // opening "
-        while self.pos < self.input.len() && self.peek() != '"' {
+        self.advance();
+        while self.pos < self.input.len() {
+            if self.peek() == '"' {
+                self.advance();
+                return self.text_token(TokenKind::String, start, start_offset);
+            }
             if self.peek() == '\\' {
-                self.advance(); // skip escape
+                if self.peek_n(1) == Some('<') {
+                    let escape_offset = self.offset;
+                    if !self.scan_symbol_escape() {
+                        self.record_error(escape_offset, "malformed symbol escape in string");
+                        return self.text_token(TokenKind::Error, start, start_offset);
+                    }
+                    continue;
+                }
+                self.advance();
+                if self.pos >= self.input.len() {
+                    break;
+                }
             }
             self.advance();
         }
-        if self.pos < self.input.len() {
-            self.advance(); // closing "
+        self.error_token(start, start_offset, "unterminated string")
+    }
+
+    fn lex_cartouche(&mut self, escaped: bool) -> Token {
+        let start = self.pos;
+        let start_offset = self.offset;
+        self.advance_by(if escaped { r"\<open>".len() } else { 1 });
+        let mut depth = 1;
+        while self.pos < self.input.len() {
+            if self.starts_with(r"\<open>") {
+                self.advance_by(r"\<open>".len());
+                depth += 1;
+            } else if self.starts_with(r"\<close>") {
+                self.advance_by(r"\<close>".len());
+                depth -= 1;
+            } else if self.peek() == '‹' {
+                self.advance();
+                depth += 1;
+            } else if self.peek() == '›' {
+                self.advance();
+                depth -= 1;
+            } else if self.peek() == '\\' && self.peek_n(1) == Some('<') {
+                let escape_offset = self.offset;
+                if !self.scan_symbol_escape() {
+                    self.record_error(escape_offset, "malformed symbol escape in cartouche");
+                    return self.text_token(TokenKind::Error, start, start_offset);
+                }
+            } else {
+                self.advance();
+            }
+            if depth == 0 {
+                return self.text_token(TokenKind::String, start, start_offset);
+            }
         }
-        let text: String = self.input[start..self.pos].iter().collect();
-        Token::new(TokenKind::String, text, start_offset)
+        self.error_token(start, start_offset, "unterminated cartouche")
+    }
+
+    fn lex_verbatim(&mut self) -> Token {
+        let start = self.pos;
+        let start_offset = self.offset;
+        self.advance_by(2);
+        while self.pos < self.input.len() {
+            if self.peek() == '*' && self.peek_n(1) == Some('}') {
+                self.advance_by(2);
+                return self.text_token(TokenKind::String, start, start_offset);
+            }
+            if self.peek() == '\\' && self.peek_n(1) == Some('<') {
+                let escape_offset = self.offset;
+                if !self.scan_symbol_escape() {
+                    self.record_error(escape_offset, "malformed symbol escape in verbatim");
+                    return self.text_token(TokenKind::Error, start, start_offset);
+                }
+            } else {
+                self.advance();
+            }
+        }
+        self.error_token(start, start_offset, "unterminated verbatim")
+    }
+
+    fn text_token(&self, kind: TokenKind, start: usize, offset: usize) -> Token {
+        Token::new(kind, self.input[start..self.pos].iter().collect(), offset)
+    }
+
+    fn error_token(&mut self, start: usize, offset: usize, detail: &str) -> Token {
+        self.record_error(offset, detail);
+        self.text_token(TokenKind::Error, start, offset)
+    }
+
+    fn record_error(&mut self, offset: usize, detail: &str) {
+        if self.first_error.is_none() {
+            self.first_error = Some(LexError { offset, detail: detail.to_string() });
+        }
+    }
+
+    fn starts_with(&self, text: &str) -> bool {
+        text.chars().zip(self.input[self.pos..].iter().copied()).all(|(left, right)| left == right)
+            && self.input.len() - self.pos >= text.chars().count()
+    }
+
+    fn scan_symbol_escape(&mut self) -> bool {
+        self.advance_by(2);
+        let start = self.pos;
+        while matches!(self.peek(), c if c.is_alphanumeric() || c == '_' || c == '^')
+            && self.pos < self.input.len()
+        {
+            self.advance();
+        }
+        if self.pos == start || self.peek() != '>' {
+            return false;
+        }
+        self.advance();
+        true
     }
 
     fn lex_number(&mut self) -> Token {
@@ -510,11 +640,12 @@ impl Lexer {
         Token::new(TokenKind::Number, text, start_offset)
     }
 
-    fn skip_comment(&mut self) {
-        // Already saw `(*`
+    fn skip_comment(&mut self) -> Option<Token> {
+        let start = self.pos;
+        let start_offset = self.offset;
         self.advance_by(2);
         let mut depth = 1;
-        while self.pos < self.input.len() && depth > 0 {
+        while self.pos < self.input.len() {
             match self.peek() {
                 '(' if self.peek_n(1) == Some('*') => {
                     self.advance_by(2);
@@ -523,26 +654,21 @@ impl Lexer {
                 '*' if self.peek_n(1) == Some(')') => {
                     self.advance_by(2);
                     depth -= 1;
+                    if depth == 0 {
+                        return None;
+                    }
                 },
-                _ => {
-                    self.advance();
+                '\\' if self.peek_n(1) == Some('<') => {
+                    let escape_offset = self.offset;
+                    if !self.scan_symbol_escape() {
+                        self.record_error(escape_offset, "malformed symbol escape in comment");
+                        return Some(self.text_token(TokenKind::Error, start, start_offset));
+                    }
                 },
+                _ => self.advance(),
             }
         }
-    }
-
-    fn skip_whitespace_and_comments(&mut self) {
-        loop {
-            while self.pos < self.input.len() && self.peek().is_whitespace() {
-                self.advance();
-            }
-            // Check if we're at a comment
-            if self.peek() == '(' && self.peek_n(1) == Some('*') {
-                self.skip_comment();
-            } else {
-                break;
-            }
-        }
+        Some(self.error_token(start, start_offset, "unterminated comment"))
     }
 
     fn peek(&self) -> char {
@@ -555,8 +681,8 @@ impl Lexer {
 
     fn advance(&mut self) {
         if self.pos < self.input.len() {
+            self.offset += self.input[self.pos].len_utf8();
             self.pos += 1;
-            self.offset += 1;
         }
     }
 
@@ -649,5 +775,78 @@ mod tests {
         assert_eq!(tokens.len(), 2);
         assert_eq!(&tokens[0].source, "x");
         assert_eq!(&tokens[1].source, "y");
+    }
+
+    #[test]
+    fn tokenize_unicode_prefix_reports_byte_offsets() {
+        let tokens = tokenize(" lemma");
+        assert_eq!(tokens[0].offset, " ".len());
+        assert!(tokens[0].is_keyword("lemma"));
+    }
+
+    #[test]
+    fn tokenize_checked_method_punctuation_preserves_symbols() {
+        let tokens = Lexer::new(",!*?").tokenize_checked().unwrap();
+        for (token, symbol) in tokens.iter().zip([",", "!", "*", "?"]) {
+            assert!(matches!(&token.kind, TokenKind::Symbol(value) if value.as_ref() == symbol));
+            assert_eq!(token.source, symbol);
+        }
+        assert_eq!(tokens.last().unwrap().kind, TokenKind::EOF);
+    }
+
+    #[test]
+    fn tokenize_checked_malformed_suffix_reports_byte_offset_and_diagnostic_token() {
+        for (suffix, detail) in [
+            ("\"unfinished", "unterminated string"),
+            ("(* outer (* inner *)", "unterminated comment"),
+            ("‹unfinished", "unterminated cartouche"),
+            (r"\<open>unfinished", "unterminated cartouche"),
+            ("{*unfinished", "unterminated verbatim"),
+            (r"\<unfinished", "malformed symbol escape"),
+            ("\0", "unrecognized character"),
+        ] {
+            let source = format!(" end {suffix}");
+            let error = Lexer::new(&source).tokenize_checked().unwrap_err();
+            assert_eq!(error.offset, " end ".len(), "{suffix}");
+            assert!(error.detail.contains(detail), "{suffix}: {error}");
+            let diagnostic = Lexer::new(&source).tokenize();
+            assert_eq!(diagnostic[1].kind, TokenKind::Error, "{suffix}");
+        }
+    }
+
+    #[test]
+    fn tokenize_checked_malformed_escape_inside_string_reports_escape_offset() {
+        let source = "lemma x: \"P \\<bad!\"";
+        let error = Lexer::new(source).tokenize_checked().unwrap_err();
+        assert_eq!(error.offset, source.find(r"\<bad").unwrap());
+        assert!(error.detail.contains("symbol escape"));
+    }
+
+    #[test]
+    fn tokenize_checked_nested_quotations_hide_keywords_and_preserve_positions() {
+        let source = "lemma ‹by ‹end› by› (* by (* end *) *) \"end\" {* by *} end";
+        let tokens = Lexer::new(source).tokenize_checked().unwrap();
+        let sources = tokens.iter().map(|token| token.source.as_str()).collect::<Vec<_>>();
+        assert_eq!(sources, ["lemma", "‹by ‹end› by›", "\"end\"", "{* by *}", "end", ""]);
+        for token in &tokens[..tokens.len() - 1] {
+            assert_eq!(&source[token.offset..token.offset + token.source.len()], token.source);
+        }
+    }
+
+    #[test]
+    fn tokenize_checked_escaped_cartouche_does_not_create_inner_commands() {
+        let source = r"lemma \<open>by \<open>end\<close> by\<close> end";
+        let tokens = Lexer::new(source).tokenize_checked().unwrap();
+        assert_eq!(tokens[1].kind, TokenKind::String);
+        assert_eq!(tokens[1].source, r"\<open>by \<open>end\<close> by\<close>");
+        assert!(tokens[2].is_keyword("end"));
+    }
+
+    #[test]
+    fn tokenize_checked_comment_escape_error_reports_its_own_byte_offset() {
+        let source = "lemma x (* nested (* \\<bad! *) *) end";
+        let error = Lexer::new(source).tokenize_checked().unwrap_err();
+        assert_eq!(error.offset, source.find(r"\<bad").unwrap());
+        assert!(error.detail.contains("comment"));
     }
 }

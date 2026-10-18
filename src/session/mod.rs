@@ -1,26 +1,19 @@
-//! Session management — per-file worker actors.
+//! Session management for `.thy` documents.
 //!
-//! ## Architecture (V3)
-//!
-//! ```text
-//! Session
-//!   ├── FileWorker (per .thy file)
-//!   │   ├── Arena (isolated memory)
-//!   │   ├── Document (snapshot-based)
-//!   │   └── Toplevel (command loop)
-//!   └── Watchdog (health monitoring)
-//! ```
-//!
-//! Each file gets its own actor with an isolated Arena. This is the
-//! key V3 improvement over V1's `Mutex<Document>` bottleneck.
+//! A Session keeps independent document states behind a bounded, shared
+//! compute queue. Built-in RealExecutor checks require a trusted worker path
+//! passed to `Session::new_with_worker` and run in one reusable, killable child
+//! process owned by the queue's worker thread. Custom CommandExecutor
+//! implementations remain cooperative and in-process. Closing or reopening a
+//! document invalidates responses from its previous lifetime.
 
+mod actor;
 pub mod file_worker;
-pub mod session;
 pub mod watchdog;
 
 // Re-export document from existing location
+pub use actor::{Session, SessionError};
 pub use file_worker::FileWorker;
-pub use session::Session;
 pub use watchdog::Watchdog;
 
-pub use crate::document::document::Document;
+pub use crate::document::Document;

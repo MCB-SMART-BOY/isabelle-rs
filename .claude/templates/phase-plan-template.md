@@ -1,27 +1,6 @@
-# Phase <N>: <标题>
+# Phase Plan Template
 
-> **目标**: <一句话目标>
-> **起点**: <前置条件>
-
----
-
-## 问题
-<当前问题描述>
-
-## 方案
-<实现方案>
-
-### 改动点
-| 文件 | 变更 | 行数 |
-|------|------|:--:|
-| `<file>` | <变更描述> | ~N |
-
-## 验证
-```bash
-<验证命令>
-```
-
-## 风险
-| 风险 | 缓解 |
-|------|------|
-| <风险> | <缓解措施> |
+The maintained template is
+[`scripts/templates/phase-plan.md`](../../scripts/templates/phase-plan.md).
+Keep reusable templates under `scripts/templates/`; this compatibility pointer
+exists for older Claude configuration references.

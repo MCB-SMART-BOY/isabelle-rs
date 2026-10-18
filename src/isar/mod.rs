@@ -17,6 +17,7 @@
 
 pub mod args;
 pub mod attrib;
+pub mod elaborator;
 pub mod keyword;
 pub mod linarith;
 pub mod method;
@@ -24,18 +25,17 @@ pub mod outer_syntax;
 pub mod parse;
 pub mod proof;
 pub mod proof_context;
+pub mod proof_result;
 pub mod proof_state;
 pub mod rule_cases;
+pub mod source_ast;
+pub mod source_parser;
 pub mod spec;
 pub mod term_parser;
 pub mod token;
 pub mod toplevel;
 
-#[cfg(test)]
-mod diag;
-
-#[cfg(test)]
-mod debug_tests;
+pub(crate) mod diag;
 
 #[cfg(test)]
 mod hol_diag;

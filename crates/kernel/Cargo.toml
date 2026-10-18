@@ -1,0 +1,11 @@
+[package]
+name = "isabelle-kernel"
+version = "0.1.0"
+edition = "2024"
+description = "Isabelle/Pure-inspired LCF proof kernel"
+license.workspace = true
+repository = "https://github.com/MCB-SMART-BOY/isabelle-rs"
+
+[dependencies]
+sha2 = "0.11.1"
+thiserror = "2"

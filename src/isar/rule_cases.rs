@@ -109,7 +109,7 @@ pub fn parse_consumes(attrs: &[String]) -> usize {
 /// Construct rule cases from an induction rule's premises.
 ///
 /// For `list.induct`:
-/// ```
+/// ```text
 /// [| P Nil; !!x xs. P xs ==> P (Cons x xs) |] ==> P xs
 /// ```
 /// Creates cases: `[Nil, Cons]`

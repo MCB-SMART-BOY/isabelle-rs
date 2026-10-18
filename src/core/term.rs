@@ -2,6 +2,7 @@
 //! Corresponds to src/Pure/term.ML.
 use std::fmt;
 
+use super::error::KernelError;
 use super::types::{Symbol, Typ};
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -134,8 +135,7 @@ impl Term {
 pub fn lambda(var: &Term, body: &Term) -> Term {
     // First increment existing bounds (we're adding an outer binder)
     let body_incr = incr_bound(0, body);
-    // Then replace var with Bound(0)
-    let body_subst = subst_var_bound(0, var, &body_incr);
+    let body_subst = subst_var_bound(0, var, &body_incr, false);
     let name = match var {
         Term::Free { name, .. } | Term::Var { name, .. } => name.clone(),
         Term::Const { name, .. } => name.clone(),
@@ -144,9 +144,36 @@ pub fn lambda(var: &Term, body: &Term) -> Term {
     Term::abs(name, Typ::dummy(), body_subst)
 }
 
+/// Bind precisely this Free (not a same-named schematic Var), preserving its
+/// declared type and the indices of binders already inside `body`.
+pub(crate) fn abstract_typed_free(name: &str, typ: &Typ, body: &Term) -> Result<Term, KernelError> {
+    let mut pending = vec![body];
+    while let Some(term) = pending.pop() {
+        match term {
+            Term::Free { name: free_name, typ: free_typ } if free_name.as_ref() == name => {
+                if free_typ != typ {
+                    return Err(KernelError::TypeMismatch {
+                        expected: typ.clone(),
+                        actual: free_typ.clone(),
+                    });
+                }
+            },
+            Term::Abs { body, .. } => pending.push(body),
+            Term::App { func, arg } => {
+                pending.push(func);
+                pending.push(arg);
+            },
+            _ => {},
+        }
+    }
+    let variable = Term::free(name, typ.clone());
+    let lifted = incr_bound(0, body);
+    Ok(Term::abs(name, typ.clone(), subst_var_bound(0, &variable, &lifted, true)))
+}
+
 /// Substitute all occurrences of `var` with `Bound(depth)`.
 /// Iterative implementation to avoid stack overflow on deeply nested terms.
-fn subst_var_bound(depth: usize, var: &Term, term: &Term) -> Term {
+fn subst_var_bound(depth: usize, var: &Term, term: &Term, is_typed_free_only: bool) -> Term {
     enum Frame {
         Process(usize, Term),
         BuildApp,
@@ -160,7 +187,16 @@ fn subst_var_bound(depth: usize, var: &Term, term: &Term) -> Term {
     while let Some(frame) = stack.pop() {
         match frame {
             Frame::Process(d, t) => {
-                if same_var(&var, &t) {
+                if (is_typed_free_only
+                    && matches!(
+                        (&var, &t),
+                        (
+                            Term::Free { name: left_name, typ: left_type },
+                            Term::Free { name: right_name, typ: right_type }
+                        ) if left_name == right_name && left_type == right_type
+                    ))
+                    || (!is_typed_free_only && same_var(&var, &t))
+                {
                     results.push(Term::Bound(d));
                     continue;
                 }

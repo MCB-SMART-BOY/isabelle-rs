@@ -89,7 +89,7 @@ impl TheoryCache {
     pub fn hash_source(source: &str) -> String {
         let mut hasher = Sha256::new();
         hasher.update(source.as_bytes());
-        format!("{:x}", hasher.finalize())
+        base16ct::lower::encode_string(&hasher.finalize())
     }
 
     /// Look up a cached theory by path + hash.

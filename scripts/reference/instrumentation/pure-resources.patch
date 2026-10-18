@@ -1,0 +1,34 @@
+--- a/src/Pure/Build/resources.ML
++++ b/src/Pure/Build/resources.ML
+@@ -309,6 +309,8 @@
+       (case find_theory_file thy_name of
+         SOME path => check_file Path.current path
+       | NONE => check_file dir (thy_path (Path.basic thy_base_name)));
+-    val text = File.read master_file;
++    val text = Reference_Observation.with_load (File.standard_path master_file)
++      (Reference_Observation.run_phase ()) thy_name
++      (fn () => File.read master_file) I;
+ 
+     val {name = (name, pos), imports, keywords} =
+@@ -330,18 +332,16 @@
+     fun read_local () =
+       let
+         val path = File.check_file (File.full_path master_dir src_path);
+-        val text = File.read path;
++        val text = Reference_Observation.with_load (File.standard_path path)
++          (Reference_Observation.run_phase ()) "" (fn () => File.read path) I;
+         val file_pos = Position.file (File.symbolic_path path);
+       in (text, file_pos) end;
+ 
+     fun read_remote () =
+-      let
+-        val text = Bytes.content (Isabelle_System.download file_node);
+-        val file_pos = Position.file file_node;
+-      in (text, file_pos) end;
++      error ("Reference observation forbids remote source: " ^ file_node);
+ 
+     val (text, file_pos) =
+       (case try Url.explode file_node of
+         NONE => read_local ()
+       | SOME (Url.File _) => read_local ()
+       | _ => read_remote ());

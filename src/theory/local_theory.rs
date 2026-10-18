@@ -16,9 +16,9 @@
 use std::sync::Arc;
 
 use crate::core::{
-    sign::Signature,
+    sign::{Signature, TypeDeclarationError},
     term::Term,
-    theory::Theory,
+    theory::{Definition, Theory, TheoryMergeError},
     thm::{CTerm, Thm, ThmKernel},
     types::Typ,
 };
@@ -30,52 +30,37 @@ use crate::core::{
 /// Incrementally built theory state.
 #[derive(Clone)]
 pub struct LocalTheory {
-    /// The parent theory (immutable base).
-    parent: Arc<Theory>,
-    /// The theory name.
-    name: String,
-    /// Accumulated new constant declarations.
-    new_consts: Vec<(String, Typ)>,
-    /// Accumulated new type declarations.
-    new_types: Vec<(String, usize)>,
-    /// Accumulated new axioms.
-    new_axioms: Vec<(String, Term)>,
-    /// Accumulated new definitions.
-    new_definitions: Vec<(String, Term)>,
+    /// Private staged theory; no parent or registry is mutated before publication.
+    theory: Theory,
+    /// Number of declarations issued in this transaction.
+    new_const_count: usize,
     /// Accumulated new theorems (lemmas that have been proved).
     new_theorems: Vec<(String, Arc<Thm>)>,
-    /// Current signature (extended from parent).
-    signature: Signature,
 }
 
 impl LocalTheory {
-    /// Begin a new theory extending the given parent.
-    pub fn begin(parent: Arc<Theory>, name: &str) -> Self {
-        LocalTheory {
-            signature: parent.signature().clone(),
-            parent,
-            name: name.to_string(),
-            new_consts: Vec::new(),
-            new_types: Vec::new(),
-            new_axioms: Vec::new(),
-            new_definitions: Vec::new(),
+    /// Begin a private transaction over all validated, canonicalized parents.
+    pub fn begin(parents: Vec<Arc<Theory>>, name: &str) -> Result<Self, TheoryMergeError> {
+        Ok(LocalTheory {
+            theory: Theory::begin(name, parents)?,
+            new_const_count: 0,
             new_theorems: Vec::new(),
-        }
+        })
     }
 
     /// The theory name.
     pub fn name(&self) -> &str {
-        &self.name
+        self.theory.name()
     }
 
     /// The current signature.
     pub fn signature(&self) -> &Signature {
-        &self.signature
+        self.theory.signature()
     }
 
     /// Number of new constants declared so far.
     pub fn const_count(&self) -> usize {
-        self.new_consts.len()
+        self.new_const_count
     }
 
     /// Number of new theorems so far.
@@ -86,14 +71,14 @@ impl LocalTheory {
     // ── Declaration commands ──
 
     /// `typedecl name` — declare a new type constructor.
-    pub fn declare_type(&mut self, name: &str, arity: usize) {
-        self.new_types.push((name.to_string(), arity));
+    pub fn declare_type(&mut self, name: &str, arity: usize) -> Result<(), TypeDeclarationError> {
+        self.theory.declare_type(name, arity)
     }
 
     /// `consts name :: typ` — declare a new constant.
     pub fn declare_const(&mut self, name: &str, typ: Typ) {
-        self.new_consts.push((name.to_string(), typ.clone()));
-        self.signature.declare(name, typ);
+        self.theory.declare_const(name, typ);
+        self.new_const_count += 1;
     }
 
     /// `definition name :: typ where "name = rhs"` — define a constant.
@@ -113,20 +98,21 @@ impl LocalTheory {
             ),
             rhs,
         );
-        self.new_definitions.push((name.to_string(), eq.clone()));
-        self.new_axioms.push((format!("{name}_def"), eq.clone()));
+        self.theory
+            .add_definition(Definition { name: Arc::from(name), term: Arc::new(eq.clone()) });
+        self.theory.add_axiom(format!("{name}_def"), eq.clone());
         // Return the definition as a theorem
         let ct = CTerm::certify(eq);
-        let thm = ThmKernel::assume(ct);
+        let thm = ThmKernel::assume_compat(ct);
         Arc::new(thm)
     }
 
     /// `axiomatization where name: "prop"` — add an axiom.
     /// Returns the axiom as a theorem.
     pub fn axiomatize(&mut self, name: &str, prop: Term) -> Arc<Thm> {
-        self.new_axioms.push((name.to_string(), prop.clone()));
+        self.theory.add_axiom(name, prop.clone());
         let ct = CTerm::certify(prop);
-        let thm = ThmKernel::assume(ct);
+        let thm = ThmKernel::assume_compat(ct);
         Arc::new(thm)
     }
 
@@ -147,42 +133,18 @@ impl LocalTheory {
 
     // ── Finalization ──
 
-    /// Freeze the local theory into an immutable Theory.
-    /// The resulting theory extends the parent with all accumulated
-    /// declarations, axioms, definitions, and theorems.
-    pub fn finalize(self) -> Arc<Theory> {
-        let mut theory = Theory::begin(self.name.clone(), vec![self.parent.clone()]);
-
-        // Add new constants
-        for (name, typ) in &self.new_consts {
-            theory.declare_const(name.as_str(), typ.clone());
+    /// Publish the private transaction after all source commands have succeeded.
+    /// Declarations were already checked in the staged signature, preserving their origins.
+    pub fn finalize(mut self) -> Arc<Theory> {
+        for (name, thm) in self.new_theorems {
+            self.theory.add_theorem(name, thm.as_ref().clone());
         }
-
-        // Add axioms
-        for (name, axiom) in &self.new_axioms {
-            theory.add_axiom(name.as_str(), axiom.clone());
-        }
-
-        // Add theorems
-        for (name, thm) in &self.new_theorems {
-            theory.add_theorem(name.as_str(), thm.as_ref().clone());
-        }
-
-        // Add definitions
-        for (name, def_term) in &self.new_definitions {
-            let def = crate::core::theory::Definition {
-                name: Arc::from(name.as_str()),
-                term: Arc::new(def_term.clone()),
-            };
-            theory.add_definition(def);
-        }
-
-        Arc::new(theory)
+        Arc::new(self.theory)
     }
 
-    /// Get the parent theory.
-    pub fn parent(&self) -> &Arc<Theory> {
-        &self.parent
+    /// Get the canonical imported theories in source order.
+    pub fn parents(&self) -> &[Arc<Theory>] {
+        self.theory.parents()
     }
 
     /// Get all new theorems accumulated.
@@ -213,7 +175,7 @@ mod tests {
     #[test]
     fn test_begin_empty() {
         let pure = Theory::pure();
-        let lthy = LocalTheory::begin(pure, "Test");
+        let lthy = LocalTheory::begin(vec![pure], "Test").unwrap();
         assert_eq!(lthy.name(), "Test");
         assert_eq!(lthy.const_count(), 0);
         assert_eq!(lthy.theorem_count(), 0);
@@ -222,7 +184,7 @@ mod tests {
     #[test]
     fn test_declare_const() {
         let pure = Theory::pure();
-        let mut lthy = LocalTheory::begin(pure, "Test");
+        let mut lthy = LocalTheory::begin(vec![pure], "Test").unwrap();
         lthy.declare_const("foo", Typ::base("nat"));
         assert_eq!(lthy.const_count(), 1);
         assert!(lthy.signature().is_declared("foo"));
@@ -231,18 +193,21 @@ mod tests {
     #[test]
     fn test_axiomatize() {
         let pure = Theory::pure();
-        let mut lthy = LocalTheory::begin(pure, "Test");
+        let mut lthy = LocalTheory::begin(vec![pure], "Test").unwrap();
         let thm = lthy.axiomatize("my_axiom", Term::const_("P", Typ::base("prop")));
-        assert!(Arc::ptr_eq(&thm, &thm)); // just check it's valid
+        assert!(!thm.is_strict_closed_proved());
         assert_eq!(lthy.theorem_count(), 0); // axioms are not theorems
     }
 
     #[test]
     fn test_note_theorem() {
         let pure = Theory::pure();
-        let mut lthy = LocalTheory::begin(pure, "Test");
-        let true_ct = CTerm::certify(Term::const_("True", Typ::base("prop")));
-        let thm = Arc::new(ThmKernel::trivial(true_ct).unwrap());
+        let mut lthy = LocalTheory::begin(vec![pure], "Test").unwrap();
+        let prop = Term::const_("P", Typ::base("prop"));
+        let mut environment = crate::core::types::TypeEnv::new();
+        environment.declare_const("P", Typ::base("prop"));
+        let checked = CTerm::certify_checked(prop, &environment).unwrap();
+        let thm = Arc::new(ThmKernel::trivial(checked).unwrap());
         lthy.note_theorem("my_lemma", Arc::clone(&thm));
         assert_eq!(lthy.theorem_count(), 1);
     }
@@ -250,14 +215,17 @@ mod tests {
     #[test]
     fn test_finalize() {
         let pure = Theory::pure();
-        let mut lthy = LocalTheory::begin(pure, "Test");
-        lthy.declare_const("foo", Typ::base("nat"));
-        // Create an unconditional theorem
-        let true_ct = CTerm::certify(Term::const_("True", Typ::base("prop")));
-        let trivial = ThmKernel::trivial(true_ct).unwrap();
-        lthy.note_theorem("trivial", Arc::new(trivial));
+        let mut lthy = LocalTheory::begin(vec![pure], "Test").unwrap();
+        let nat = Typ::base("nat");
+        lthy.declare_const("foo", nat.clone());
+        let mut env = crate::core::types::TypeEnv::new();
+        env.declare_const("foo", nat.clone());
+        let foo = CTerm::certify_checked(Term::const_("foo", nat), &env).unwrap();
+        let refl = ThmKernel::reflexive(foo).unwrap();
+        lthy.note_theorem("foo_refl", Arc::new(refl));
 
         let frozen = lthy.finalize();
         assert_eq!(frozen.name(), "Test");
+        assert!(frozen.lookup_theorem("foo_refl").is_some());
     }
 }

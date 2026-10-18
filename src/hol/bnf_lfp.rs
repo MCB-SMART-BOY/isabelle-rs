@@ -152,14 +152,13 @@ impl BnfLfp {
 
         // 1. Fixed point induction
         if let Some(induct) = self.prove_fp_induct() {
-            lemmas.push(ParsedLemma {
-                name: format!("{}.fp_induct", self.datatype.name),
-                attributes: vec!["induct".to_string(), "bnf_lfp".to_string()],
-                theorem: Arc::new(induct),
-                proof_script: None,
-                alias_for: None,
-                source_loc: None,
-            });
+            lemmas.push(ParsedLemma::new_synthetic(
+                format!("{}.fp_induct", self.datatype.name),
+                vec!["induct".to_string(), "bnf_lfp".to_string()],
+                Arc::new(induct),
+                None,
+                None,
+            ));
         }
 
         // 2. Constructor fold (catamorphism)
@@ -172,14 +171,13 @@ impl BnfLfp {
         if self.fixpoint == FixpointKind::Gfp {
             // 4. Fixed point coinduction
             if let Some(coinduct) = self.prove_fp_coinduct() {
-                lemmas.push(ParsedLemma {
-                    name: format!("{}.fp_coinduct", self.datatype.name),
-                    attributes: vec!["coinduct".to_string(), "bnf_lfp".to_string()],
-                    theorem: Arc::new(coinduct),
-                    proof_script: None,
-                    alias_for: None,
-                    source_loc: None,
-                });
+                lemmas.push(ParsedLemma::new_synthetic(
+                    format!("{}.fp_coinduct", self.datatype.name),
+                    vec!["coinduct".to_string(), "bnf_lfp".to_string()],
+                    Arc::new(coinduct),
+                    None,
+                    None,
+                ));
             }
 
             // 5. Constructor unfold (anamorphism)
@@ -197,26 +195,24 @@ impl BnfLfp {
 
         // 9. BNF relator
         if let Some(rel) = self.prove_rel() {
-            lemmas.push(ParsedLemma {
-                name: format!("{}.rel", self.datatype.name),
-                attributes: vec!["bnf".to_string()],
-                theorem: Arc::new(rel),
-                proof_script: None,
-                alias_for: None,
-                source_loc: None,
-            });
+            lemmas.push(ParsedLemma::new_synthetic(
+                format!("{}.rel", self.datatype.name),
+                vec!["bnf".to_string()],
+                Arc::new(rel),
+                None,
+                None,
+            ));
         }
 
         // 10. BNF predicator
         if let Some(pred) = self.prove_pred() {
-            lemmas.push(ParsedLemma {
-                name: format!("{}.pred", self.datatype.name),
-                attributes: vec!["bnf".to_string()],
-                theorem: Arc::new(pred),
-                proof_script: None,
-                alias_for: None,
-                source_loc: None,
-            });
+            lemmas.push(ParsedLemma::new_synthetic(
+                format!("{}.pred", self.datatype.name),
+                vec!["bnf".to_string()],
+                Arc::new(pred),
+                None,
+                None,
+            ));
         }
 
         lemmas
@@ -286,13 +282,13 @@ impl BnfLfp {
 
         // The induction rule is an axiom of the datatype. We certify it as an assumption.
         let cterm = CTerm::certify(result);
-        Some(ThmKernel::assume(cterm))
+        Some(ThmKernel::assume_compat(cterm))
     }
 
     /// Build one constructor's induction premise.
     ///
     /// For constructor C with args [a1,...,an, r1,...,rm] (recursive args at the end):
-    /// ```
+    /// ```text
     /// !!a1...an r1...rm. [| P r1; ...; P rm |] ==> P (C a1...an r1...rm)
     /// ```
     fn build_constructor_induct_premise(
@@ -380,14 +376,13 @@ impl BnfLfp {
             );
 
             let cterm = CTerm::certify(eq_term);
-            lemmas.push(ParsedLemma {
-                name: format!("{}.fold_{}", self.datatype.name, ctor_name),
-                attributes: vec!["simp".to_string(), "bnf_lfp".to_string()],
-                theorem: Arc::new(ThmKernel::assume(cterm)),
-                proof_script: None,
-                alias_for: None,
-                source_loc: None,
-            });
+            lemmas.push(ParsedLemma::new_synthetic(
+                format!("{}.fold_{}", self.datatype.name, ctor_name),
+                vec!["simp".to_string(), "bnf_lfp".to_string()],
+                Arc::new(ThmKernel::assume_compat(cterm)),
+                None,
+                None,
+            ));
         }
         lemmas
     }
@@ -526,14 +521,13 @@ impl BnfLfp {
             );
 
             let cterm = CTerm::certify(eq_term);
-            lemmas.push(ParsedLemma {
-                name: format!("{}.rec_{}", self.datatype.name, ctor_name),
-                attributes: vec!["simp".to_string(), "bnf_lfp".to_string()],
-                theorem: Arc::new(ThmKernel::assume(cterm)),
-                proof_script: None,
-                alias_for: None,
-                source_loc: None,
-            });
+            lemmas.push(ParsedLemma::new_synthetic(
+                format!("{}.rec_{}", self.datatype.name, ctor_name),
+                vec!["simp".to_string(), "bnf_lfp".to_string()],
+                Arc::new(ThmKernel::assume_compat(cterm)),
+                None,
+                None,
+            ));
         }
         lemmas
     }
@@ -588,13 +582,10 @@ impl BnfLfp {
         }
 
         // Create constructor argument variables
-        let mut var_counter: usize = 200;
         let mut arg_vars: Vec<Term> = Vec::new();
-        for (_, arg_type_str) in args {
+        for (var_counter, (_, arg_type_str)) in (200..).zip(args.iter()) {
             let arg_typ = parse_typ_string(arg_type_str);
-            let var = mk_var("a", var_counter, arg_typ);
-            var_counter += 1;
-            arg_vars.push(var);
+            arg_vars.push(mk_var("a", var_counter, arg_typ));
         }
 
         // Build LHS: rec_T f1...fk (C a1...an)
@@ -711,7 +702,7 @@ impl BnfLfp {
         );
 
         let cterm = CTerm::certify(result);
-        Some(ThmKernel::assume(cterm))
+        Some(ThmKernel::assume_compat(cterm))
     }
 
     /// Build one constructor case for the coinduction premise.
@@ -768,14 +759,13 @@ impl BnfLfp {
             let eq_term = self.build_generic_codata_eq(ctor_name, &dt_type, &seed_type, "unfold");
 
             let cterm = CTerm::certify(eq_term);
-            lemmas.push(ParsedLemma {
-                name: format!("{}.unfold_{}", self.datatype.name, ctor_name),
-                attributes: vec!["simp".to_string(), "bnf_lfp".to_string()],
-                theorem: Arc::new(ThmKernel::assume(cterm)),
-                proof_script: None,
-                alias_for: None,
-                source_loc: None,
-            });
+            lemmas.push(ParsedLemma::new_synthetic(
+                format!("{}.unfold_{}", self.datatype.name, ctor_name),
+                vec!["simp".to_string(), "bnf_lfp".to_string()],
+                Arc::new(ThmKernel::assume_compat(cterm)),
+                None,
+                None,
+            ));
         }
         lemmas
     }
@@ -789,14 +779,13 @@ impl BnfLfp {
             let eq_term = self.build_generic_codata_eq(ctor_name, &dt_type, &seed_type, "corec");
 
             let cterm = CTerm::certify(eq_term);
-            lemmas.push(ParsedLemma {
-                name: format!("{}.corec_{}", self.datatype.name, ctor_name),
-                attributes: vec!["simp".to_string(), "bnf_lfp".to_string()],
-                theorem: Arc::new(ThmKernel::assume(cterm)),
-                proof_script: None,
-                alias_for: None,
-                source_loc: None,
-            });
+            lemmas.push(ParsedLemma::new_synthetic(
+                format!("{}.corec_{}", self.datatype.name, ctor_name),
+                vec!["simp".to_string(), "bnf_lfp".to_string()],
+                Arc::new(ThmKernel::assume_compat(cterm)),
+                None,
+                None,
+            ));
         }
         lemmas
     }
@@ -818,8 +807,8 @@ impl BnfLfp {
         let eq = Pure::mk_equals(dt_type.clone(), lhs, rhs);
 
         // Wrap with universal quantifiers
-        let s = Term::var("s", 0, Typ::dummy());
-        let f = Term::var("f", 1, Typ::dummy());
+        let _s = Term::var("s", 0, Typ::dummy());
+        let _f = Term::var("f", 1, Typ::dummy());
         let mut result = eq;
         result = Pure::mk_all("s", Typ::dummy(), result);
         result = Pure::mk_all("f", Typ::dummy(), result);
@@ -839,39 +828,36 @@ impl BnfLfp {
         // map_T equations per constructor
         for (ctor_name, args) in &self.datatype.constructors {
             if let Some(eq) = self.prove_map_ctor(ctor_name, args) {
-                lemmas.push(ParsedLemma {
-                    name: format!("{}.map_{}", self.datatype.name, ctor_name),
-                    attributes: vec!["simp".to_string(), "bnf".to_string()],
-                    theorem: Arc::new(eq),
-                    proof_script: None,
-                    alias_for: None,
-                    source_loc: None,
-                });
+                lemmas.push(ParsedLemma::new_synthetic(
+                    format!("{}.map_{}", self.datatype.name, ctor_name),
+                    vec!["simp".to_string(), "bnf".to_string()],
+                    Arc::new(eq),
+                    None,
+                    None,
+                ));
             }
         }
 
         // map_id: map_T id = id
         if let Some(map_id) = self.prove_map_id() {
-            lemmas.push(ParsedLemma {
-                name: format!("{}.map_id", self.datatype.name),
-                attributes: vec!["simp".to_string(), "bnf".to_string()],
-                theorem: Arc::new(map_id),
-                proof_script: None,
-                alias_for: None,
-                source_loc: None,
-            });
+            lemmas.push(ParsedLemma::new_synthetic(
+                format!("{}.map_id", self.datatype.name),
+                vec!["simp".to_string(), "bnf".to_string()],
+                Arc::new(map_id),
+                None,
+                None,
+            ));
         }
 
         // map_comp: map_T (g o f) = map_T g o map_T f
         if let Some(map_comp) = self.prove_map_comp() {
-            lemmas.push(ParsedLemma {
-                name: format!("{}.map_comp", self.datatype.name),
-                attributes: vec!["simp".to_string(), "bnf".to_string()],
-                theorem: Arc::new(map_comp),
-                proof_script: None,
-                alias_for: None,
-                source_loc: None,
-            });
+            lemmas.push(ParsedLemma::new_synthetic(
+                format!("{}.map_comp", self.datatype.name),
+                vec!["simp".to_string(), "bnf".to_string()],
+                Arc::new(map_comp),
+                None,
+                None,
+            ));
         }
 
         lemmas
@@ -879,8 +865,8 @@ impl BnfLfp {
 
     /// Build map equation for a single constructor.
     fn prove_map_ctor(&self, ctor_name: &str, args: &[(Option<String>, String)]) -> Option<Thm> {
-        let dt_type = datatype_type(&self.datatype);
-        let dt_type2 = datatype_type(&self.datatype);
+        let _dt_type = datatype_type(&self.datatype);
+        let _dt_type2 = datatype_type(&self.datatype);
 
         // Build: map_T f (C a1 ... an) = C (f a1) ... (map_T f rec_arg) ...
         // Create type params for map_T
@@ -888,8 +874,7 @@ impl BnfLfp {
             .datatype
             .type_params
             .iter()
-            .enumerate()
-            .map(|(i, p)| {
+            .map(|p| {
                 let s = format!("'{}", p.trim_start_matches('\''));
                 Typ::free(s.as_str(), Sort::top())
             })
@@ -936,13 +921,10 @@ impl BnfLfp {
             .collect();
 
         // Create constructor arg variables
-        let mut var_counter: usize = 500;
         let mut arg_vars: Vec<Term> = Vec::new();
-        for (_, arg_type_str) in args {
+        for (var_counter, (_, arg_type_str)) in (500..).zip(args.iter()) {
             let arg_typ = parse_typ_string(arg_type_str);
-            let var = mk_var("a", var_counter, arg_typ);
-            var_counter += 1;
-            arg_vars.push(var);
+            arg_vars.push(mk_var("a", var_counter, arg_typ));
         }
 
         // Build LHS: map_T f1...fn (C a1...an)
@@ -995,7 +977,7 @@ impl BnfLfp {
             result = Pure::mk_all(&name, var_typ, result);
         }
 
-        Some(ThmKernel::assume(CTerm::certify(result)))
+        Some(ThmKernel::assume_compat(CTerm::certify(result)))
     }
 
     /// Prove: `map_T id = id`
@@ -1008,7 +990,7 @@ impl BnfLfp {
         let id_type = Typ::arrow(dt_type.clone(), dt_type.clone());
 
         // map_T id :: dt_type => dt_type
-        let map_id_type = Typ::arrow(dt_type.clone(), dt_type.clone());
+        let _map_id_type = Typ::arrow(dt_type.clone(), dt_type.clone());
         let map_const = Term::const_(format!("map_{}", self.datatype.name).as_str(), Typ::dummy());
 
         // Build: map_T (%x. x) = (%x. x)
@@ -1021,7 +1003,7 @@ impl BnfLfp {
         let rhs = id_abs;
 
         let eq = Pure::mk_equals(id_type, lhs, rhs);
-        Some(ThmKernel::assume(CTerm::certify(eq)))
+        Some(ThmKernel::assume_compat(CTerm::certify(eq)))
     }
 
     /// Prove: `map_T (g o f) = map_T g o map_T f`
@@ -1032,7 +1014,7 @@ impl BnfLfp {
 
         // map_T (g o f) :: dt_type => dt_type
         let dt_type = datatype_type(&self.datatype);
-        let comp_type = Typ::arrow(
+        let _comp_type = Typ::arrow(
             Typ::arrow(dt_type.clone(), dt_type.clone()),
             Typ::arrow(
                 Typ::arrow(dt_type.clone(), dt_type.clone()),
@@ -1087,7 +1069,7 @@ impl BnfLfp {
         result = Pure::mk_all("f", Typ::arrow(Typ::dummy(), Typ::dummy()), result);
         result = Pure::mk_all("g", Typ::arrow(Typ::dummy(), Typ::dummy()), result);
 
-        Some(ThmKernel::assume(CTerm::certify(result)))
+        Some(ThmKernel::assume_compat(CTerm::certify(result)))
     }
 
     // =================================================================
@@ -1101,14 +1083,13 @@ impl BnfLfp {
             // set_T (C a1 ... an) = {a1} ∪ ... ∪ {an}  (for type param args)
             let term = self.build_set_equation(ctor_name, args);
             let cterm = CTerm::certify(term);
-            lemmas.push(ParsedLemma {
-                name: format!("{}.set_{}", self.datatype.name, ctor_name),
-                attributes: vec!["simp".to_string(), "bnf".to_string()],
-                theorem: Arc::new(ThmKernel::assume(cterm)),
-                proof_script: None,
-                alias_for: None,
-                source_loc: None,
-            });
+            lemmas.push(ParsedLemma::new_synthetic(
+                format!("{}.set_{}", self.datatype.name, ctor_name),
+                vec!["simp".to_string(), "bnf".to_string()],
+                Arc::new(ThmKernel::assume_compat(cterm)),
+                None,
+                None,
+            ));
         }
         lemmas
     }
@@ -1118,14 +1099,11 @@ impl BnfLfp {
         let set_type = Typ::arrow(dt_type.clone(), Typ::apply("set", vec![Typ::dummy()]));
         let set_const = Term::const_(format!("set_{}", self.datatype.name).as_str(), set_type);
 
-        let mut var_counter: usize = 600;
         let mut arg_vars: Vec<Term> = Vec::new();
 
-        for (_, arg_type_str) in args {
+        for (var_counter, (_, arg_type_str)) in (600..).zip(args.iter()) {
             let arg_typ = parse_typ_string(arg_type_str);
-            let var = mk_var("a", var_counter, arg_typ);
-            var_counter += 1;
-            arg_vars.push(var);
+            arg_vars.push(mk_var("a", var_counter, arg_typ));
         }
 
         let ctor_term = mk_ctor_app(ctor_name, &arg_vars, &dt_type);
@@ -1178,7 +1156,7 @@ impl BnfLfp {
         result = Pure::mk_all("x", Typ::dummy(), result);
         result = Pure::mk_all("R", Typ::dummy(), result);
 
-        Some(ThmKernel::assume(CTerm::certify(result)))
+        Some(ThmKernel::assume_compat(CTerm::certify(result)))
     }
 
     // =================================================================
@@ -1233,7 +1211,7 @@ impl BnfLfp {
         result = Pure::mk_all("x", Typ::dummy(), result);
         result = Pure::mk_all("P", Typ::dummy(), result);
 
-        Some(ThmKernel::assume(CTerm::certify(result)))
+        Some(ThmKernel::assume_compat(CTerm::certify(result)))
     }
 
     fn build_pred_case(
@@ -1242,15 +1220,12 @@ impl BnfLfp {
         args: &[(Option<String>, String)],
         p: &Term,
     ) -> Term {
-        let mut var_counter: usize = 700;
         let mut arg_vars: Vec<Term> = Vec::new();
         let mut p_applications: Vec<Term> = Vec::new();
 
-        for (_, arg_type_str) in args {
+        for (var_counter, (_, arg_type_str)) in (700..).zip(args.iter()) {
             let arg_typ = parse_typ_string(arg_type_str);
             let var = mk_var("a", var_counter, arg_typ);
-            var_counter += 1;
-
             // Apply P to type-param args
             let tp_index = self.datatype.type_params.iter().position(|tp| {
                 let with_quote = format!("'{}", tp.trim_start_matches('\''));
@@ -1779,21 +1754,15 @@ mod tests {
             while let Some((_, inner)) = Pure::dest_all(body) {
                 body = inner;
             }
-            match body {
-                Term::App { func, .. } => match func.as_ref() {
-                    Term::App { func: inner, .. } => match inner.as_ref() {
-                        Term::Const { name, .. } => {
-                            assert!(
-                                name.as_ref() == "Pure.eq" || name.as_ref().contains(".eq"),
-                                "Fold equation should be an equality, got: {}",
-                                name
-                            );
-                        },
-                        _ => {},
-                    },
-                    _ => {},
-                },
-                _ => {},
+            if let Term::App { func, .. } = body
+                && let Term::App { func: inner, .. } = func.as_ref()
+                && let Term::Const { name, .. } = inner.as_ref()
+            {
+                assert!(
+                    name.as_ref() == "Pure.eq" || name.as_ref().contains(".eq"),
+                    "Fold equation should be an equality, got: {}",
+                    name
+                );
             }
         }
     }

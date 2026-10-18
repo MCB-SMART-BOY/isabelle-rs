@@ -1,10 +1,18 @@
+[workspace]
+members = [".", "crates/kernel", "crates/evidence", "xtask"]
+default-members = ["."]
+resolver = "3"
+
+[workspace.package]
+license = "Apache-2.0"
+
 [package]
 name = "isabelle-rs"
-version = "2.2.1"
+version = "2.3.0"
 rust-version = "1.96.0"
 edition = "2024"
-description = "Isabelle proof assistant kernel and Isar proof engine, rewritten in Rust. LCF trusted kernel with oracle trust-footprint tracking (T3 de Bruijn honesty), 27 proof methods (Metis, Meson), Isar proof language. Honest real-proof-rate reporting."
-license = "Apache-2.0"
+description = "Rust research prototype of an Isabelle/Pure-inspired LCF kernel with explicit oracle footprints and partial Isar/HOL tooling."
+license.workspace = true
 repository = "https://github.com/MCB-SMART-BOY/isabelle-rs"
 documentation = "https://docs.rs/isabelle-rs"
 readme = "README.md"
@@ -26,22 +34,32 @@ lsp = []
 wasm = []
 
 [dependencies]
+isabelle-kernel = { path = "crates/kernel" }
+isabelle-evidence = { path = "crates/evidence" }
+base16ct = { version = "1", features = ["alloc"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "io-util", "io-std"] }
-rowan = "0.15"
-wasmtime = "29"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rowan = "0.17"
+wasmtime = { version = "49.0.3", default-features = false, features = ["runtime", "cranelift", "std"] }
+rusqlite = { version = "0.40.2", features = ["bundled", "fallible_uint"] }
 clap = { version = "4", features = ["derive"] }
-bincode = "1"
-sha2 = "0.10"
-proptest = "1"
+sha1 = "0.11"
+sha2 = "0.11.1"
+lzma-rust2 = { version = "=0.23.0", default-features = false, features = ["std", "encoder", "xz"] }
+zstd = { version = "=0.14.3", default-features = false }
 
 [dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8.2", features = ["html_reports"] }
+proptest = "1"
+
+# Worker identity hashes scan debug executables twice; keep SHA-256 fast without
+# changing product debug checks, cancellation, or pre-spawn authentication.
+[profile.dev.package.sha2]
+opt-level = 3
 
 [[bench]]
 name = "kernel_benchmarks"
@@ -54,3 +72,7 @@ path = "src/main.rs"
 [[bin]]
 name = "isabelle-build"
 path = "src/bin/isabelle-build.rs"
+
+[[bin]]
+name = "isabelle-profile-hol"
+path = "src/bin/isabelle-profile-hol.rs"

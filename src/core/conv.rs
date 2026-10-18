@@ -57,7 +57,7 @@ pub type Conv = Arc<dyn Fn(&Thm) -> Option<Thm> + Send + Sync>;
 pub fn all_conv() -> Conv {
     Arc::new(|thm: &Thm| {
         let ct = CTerm::certify(thm.concl());
-        Some(ThmKernel::reflexive(ct))
+        Some(ThmKernel::reflexive_compat(ct))
     })
 }
 
@@ -86,10 +86,7 @@ pub fn rewr_conv(rule: Thm) -> Conv {
             }
 
             // Try to instantiate the rule
-            if let Some(inst) = match_term(lhs, &t) {
-                let inst_rule = instantiate_rule(&rule, &inst);
-                return Some(inst_rule);
-            }
+            return match_term(lhs, &t).and_then(|inst| instantiate_rule(&rule, &inst));
         }
         None
     })
@@ -107,7 +104,7 @@ pub fn then_conv(c1: Conv, c2: Conv) -> Conv {
         // r1: ⊢ t ≡ u
         // Now apply c2 to the right-hand side of r1
         let u = rhs_of_conv(&r1)?;
-        let u_thm = ThmKernel::assume(CTerm::certify(u.clone()));
+        let u_thm = ThmKernel::assume_compat(CTerm::certify(u.clone()));
         let r2 = c2(&u_thm)?;
 
         // Combine: ⊢ t ≡ u  and  ⊢ u ≡ v  →  ⊢ t ≡ v
@@ -172,11 +169,11 @@ pub fn arg_conv(c: Conv) -> Conv {
         let t = thm.concl();
         match &t {
             Term::App { func, arg } => {
-                let arg_thm = ThmKernel::assume(CTerm::certify(arg.as_ref().clone()));
+                let arg_thm = ThmKernel::assume_compat(CTerm::certify(arg.as_ref().clone()));
                 let arg_eq = c(&arg_thm)?;
                 // arg_eq: ⊢ arg ≡ arg'
                 // Build: ⊢ f arg ≡ f arg' using combination
-                let fun_refl = ThmKernel::reflexive(CTerm::certify(func.as_ref().clone()));
+                let fun_refl = ThmKernel::reflexive_compat(CTerm::certify(func.as_ref().clone()));
                 ThmKernel::combination(&fun_refl, &arg_eq).ok()
             },
             _ => None,
@@ -191,10 +188,10 @@ pub fn fun_conv(c: Conv) -> Conv {
         let t = thm.concl();
         match &t {
             Term::App { func, arg } => {
-                let fun_thm = ThmKernel::assume(CTerm::certify(func.as_ref().clone()));
+                let fun_thm = ThmKernel::assume_compat(CTerm::certify(func.as_ref().clone()));
                 let fun_eq = c(&fun_thm)?;
                 // fun_eq: ⊢ func ≡ func'
-                let arg_refl = ThmKernel::reflexive(CTerm::certify(arg.as_ref().clone()));
+                let arg_refl = ThmKernel::reflexive_compat(CTerm::certify(arg.as_ref().clone()));
                 ThmKernel::combination(&fun_eq, &arg_refl).ok()
             },
             _ => None,
@@ -209,7 +206,7 @@ pub fn abs_conv(c: Conv) -> Conv {
         let t = thm.concl();
         match &t {
             Term::Abs { name, typ, body } => {
-                let body_thm = ThmKernel::assume(CTerm::certify(body.as_ref().clone()));
+                let body_thm = ThmKernel::assume_compat(CTerm::certify(body.as_ref().clone()));
                 let body_eq = c(&body_thm)?;
                 // body_eq: ⊢ body ≡ body'
                 // Build: ⊢ (λx. body) ≡ (λx. body') using abstraction
@@ -394,14 +391,14 @@ fn match_term(pattern: &Term, target: &Term) -> Option<Vec<(Term, Term)>> {
 }
 
 /// Instantiate a theorem by substituting variables with terms.
-fn instantiate_rule(rule: &Thm, inst: &[(Term, Term)]) -> Thm {
+fn instantiate_rule(rule: &Thm, inst: &[(Term, Term)]) -> Option<Thm> {
     let mut env = crate::core::envir::Envir::empty(rule.maxidx());
     for (var, replacement) in inst {
         if let Term::Var { name, index, typ } = var {
             env.update(name.clone(), *index, typ.clone(), replacement.clone());
         }
     }
-    ThmKernel::instantiate(&env, rule)
+    ThmKernel::instantiate_checked(&env, rule).ok()
 }
 
 // =========================================================================
@@ -459,7 +456,7 @@ mod tests {
     fn test_all_conv() {
         let c = all_conv();
         let t = Term::const_("P", prop_typ());
-        let thm = ThmKernel::assume(CTerm::certify(t.clone()));
+        let thm = ThmKernel::assume_compat(CTerm::certify(t.clone()));
         let result = c(&thm).unwrap();
         // result should be: ⊢ P ≡ P
         let concl = result.concl();
@@ -475,7 +472,7 @@ mod tests {
     fn test_no_conv() {
         let c = no_conv();
         let t = Term::const_("P", prop_typ());
-        let thm = ThmKernel::assume(CTerm::certify(t));
+        let thm = ThmKernel::assume_compat(CTerm::certify(t));
         assert!(c(&thm).is_none());
     }
 
@@ -486,7 +483,7 @@ mod tests {
         let c = orelse_conv(no, all);
 
         let t = Term::const_("P", prop_typ());
-        let thm = ThmKernel::assume(CTerm::certify(t));
+        let thm = ThmKernel::assume_compat(CTerm::certify(t));
         assert!(c(&thm).is_some());
     }
 
@@ -494,7 +491,7 @@ mod tests {
     fn test_try_conv() {
         let c = try_conv(no_conv());
         let t = Term::const_("P", prop_typ());
-        let thm = ThmKernel::assume(CTerm::certify(t.clone()));
+        let thm = ThmKernel::assume_compat(CTerm::certify(t.clone()));
         let result = c(&thm).unwrap();
         let concl = result.concl();
         if let Term::App { func: _, arg: rhs } = &concl {
@@ -512,7 +509,7 @@ mod tests {
         let c = then_conv(c1, c2);
 
         let t = Term::const_("P", prop_typ());
-        let thm = ThmKernel::assume(CTerm::certify(t.clone()));
+        let thm = ThmKernel::assume_compat(CTerm::certify(t.clone()));
         let result = c(&thm);
         assert!(result.is_some());
     }
@@ -522,7 +519,7 @@ mod tests {
         // The identity conversion should converge immediately
         let c = repeat_conv(all_conv());
         let t = Term::const_("P", prop_typ());
-        let thm = ThmKernel::assume(CTerm::certify(t.clone()));
+        let thm = ThmKernel::assume_compat(CTerm::certify(t.clone()));
         let result = c(&thm).unwrap();
         let concl = result.concl();
         if let Term::App { func: _, arg: rhs } = &concl {
@@ -536,7 +533,7 @@ mod tests {
         let f = Term::const_("f", Typ::arrow(prop_typ(), prop_typ()));
         let p = Term::const_("P", prop_typ());
         let fa = Term::app(f, p);
-        let thm = ThmKernel::assume(CTerm::certify(fa));
+        let thm = ThmKernel::assume_compat(CTerm::certify(fa));
         let c = arg_conv(all_conv());
         let result = c(&thm);
         assert!(result.is_some());
@@ -546,7 +543,7 @@ mod tests {
     fn test_abs_conv() {
         let p = Term::const_("P", prop_typ());
         let abs = Term::abs("x", prop_typ(), p);
-        let thm = ThmKernel::assume(CTerm::certify(abs));
+        let thm = ThmKernel::assume_compat(CTerm::certify(abs));
         let c = abs_conv(all_conv());
         let result = c(&thm);
         assert!(result.is_some());
@@ -557,7 +554,7 @@ mod tests {
         // Bottom-up conversion on a complex term
         let c = bottom_conv(all_conv());
         let t = Term::const_("P", prop_typ());
-        let thm = ThmKernel::assume(CTerm::certify(t.clone()));
+        let thm = ThmKernel::assume_compat(CTerm::certify(t.clone()));
         let result = c(&thm).unwrap();
         let concl = result.concl();
         if let Term::App { func: _, arg: rhs } = &concl {
@@ -570,10 +567,10 @@ mod tests {
         // Rewriting with refl: ⊢ t ≡ t should succeed on ⊢ t
         let t = Term::const_("P", prop_typ());
         let ct = CTerm::certify(t.clone());
-        let refl = ThmKernel::reflexive(ct);
+        let refl = ThmKernel::reflexive_compat(ct);
 
         let c = rewr_conv(refl);
-        let thm = ThmKernel::assume(CTerm::certify(t.clone()));
+        let thm = ThmKernel::assume_compat(CTerm::certify(t.clone()));
         let result = c(&thm);
         assert!(result.is_some());
     }

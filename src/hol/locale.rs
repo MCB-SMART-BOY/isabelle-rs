@@ -374,15 +374,14 @@ pub fn locale_to_lemmas(def: &LocaleDef) -> Vec<crate::hol::hol_loader::ParsedLe
     let theorems = def.generate_theorems();
 
     for (name, term, attrs) in theorems {
-        let thm = ThmKernel::assume(CTerm::certify(term));
-        lemmas.push(crate::hol::hol_loader::ParsedLemma {
+        let thm = ThmKernel::assume_compat(CTerm::certify(term));
+        lemmas.push(crate::hol::hol_loader::ParsedLemma::new_synthetic(
             name,
-            attributes: attrs,
-            theorem: Arc::new(thm),
-            proof_script: None,
-            alias_for: None,
-            source_loc: None,
-        });
+            attrs,
+            Arc::new(thm),
+            None,
+            None,
+        ));
     }
 
     lemmas

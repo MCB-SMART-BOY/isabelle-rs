@@ -249,8 +249,8 @@ mod tests {
         let linorder = sym("linorder");
 
         alg.add_class(&ord, &[sym("type")]);
-        alg.add_class(&order, &[ord.clone()]);
-        alg.add_class(&linorder, &[order.clone()]);
+        alg.add_class(&order, std::slice::from_ref(&ord));
+        alg.add_class(&linorder, std::slice::from_ref(&order));
 
         assert!(alg.class_le(&linorder, &ord));
         assert!(alg.class_le(&order, &ord));
@@ -265,7 +265,7 @@ mod tests {
         let order = sym("order");
 
         alg.add_class(&ord, &[sym("type")]);
-        alg.add_class(&order, &[ord.clone()]);
+        alg.add_class(&order, std::slice::from_ref(&ord));
 
         let s_order = Sort::singleton("order");
         let s_ord = Sort::singleton("ord");

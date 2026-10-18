@@ -1,29 +1,8 @@
-//! HOL Simplifier — conditional term rewriting for HOL.
+//! HOL simplifier backed by the core theorem-producing rewrite engine.
 //!
-//! Extends the kernel simplifier (`core/simplifier.rs`) with
-//! HOL-specific rewrite rules: boolean connectives, quantifier
-//! reasoning, arithmetic normalisation, and solver plugins for
-//! conditional rewriting.
-//!
-//! ## Architecture
-//!
-//! ```text
-//! HolSimplifier
-//! ├── kernel: Simplifier (rewrite engine)
-//! │   ├── rules: Vec<RewriteRule>    (user + HOL built-in rules)
-//! │   ├── conversions: Vec<Conv>     (beta, eta)
-//! │   └── condition_solver           (delegated from HolSimplifier)
-//! ├── solvers: Vec<Arc<dyn Solver>>  (decision procedures)
-//! └── conditional_depth: usize       (max depth for proving conditions)
-//! ```
-//!
-//! ## Conditional Rewriting
-//!
-//! Given a rule `P ⟹ (A = B)`, the simplifier only rewrites `A → B` if
-//! `P` can be proved. The proof can come from:
-//! 1. Trivial true detection
-//! 2. Recursive simplification of `P`
-//! 3. Registered solver plugins (ArithSolver, AsmSolver, etc.)
+//! Only closed unconditional equality theorems can authorize rewrites.
+//! Search solvers and conditional candidates are retained as compatibility
+//! data, but a Boolean solver answer is not proof of a rewrite condition.
 //!
 //! ## Built-in HOL Rules
 //!
@@ -50,14 +29,14 @@ use std::sync::Arc;
 use crate::{
     core::{
         logic::Pure,
-        simplifier::{RewriteRule, Simplifier},
+        simplifier::{RewriteRule, Simplifier, beta_simp},
         tactic::TacticFn,
         term::Term,
         thm::{CTerm, Thm, ThmKernel},
         types::Typ,
     },
-    hol::hologic,
-    isar::linarith,
+    hol::{hol_loader::HolTheoremDb, hologic},
+    isar::{linarith, proof_result::validate_proof_result},
 };
 
 // =========================================================================
@@ -65,11 +44,11 @@ use crate::{
 // =========================================================================
 
 /// A solver is a decision procedure that can prove a subgoal (condition)
-/// during conditional rewriting. Returns `Some(thm)` if the goal is proved,
-/// or `None` if the solver cannot handle it.
+/// against an explicit theorem database. Returns `Some(thm)` if the goal is
+/// proved, or `None` if the solver cannot handle it.
 pub trait Solver: Send + Sync {
     /// Try to prove `goal`. `context` contains the current assumptions.
-    fn solve(&self, goal: &Term, context: &[Thm]) -> Option<Thm>;
+    fn solve(&self, goal: &Term, context: &[Thm], db: &HolTheoremDb) -> Option<Thm>;
 }
 
 // =========================================================================
@@ -77,18 +56,23 @@ pub trait Solver: Send + Sync {
 // =========================================================================
 
 /// Solver for arithmetic subgoals using the `linarith` module.
+/// Returns only checked legacy evidence for the complete goal, with hypotheses
+/// supplied by `context`; unsupported inputs and unproved goals return `None`.
+/// This solver does not construct a strict-kernel accepted token.
 pub struct ArithSolver;
 
 impl Solver for ArithSolver {
-    fn solve(&self, goal: &Term, context: &[Thm]) -> Option<Thm> {
-        // Use the linarith module to try proving the goal.
-        // We create a proof state with the goal and try the arith tactic.
-        let goal_ct = CTerm::certify(goal.clone());
-        let state = ThmKernel::assume(goal_ct);
+    fn solve(&self, goal: &Term, context: &[Thm], db: &HolTheoremDb) -> Option<Thm> {
+        // Certification/rule rejection means this optional solver cannot prove
+        // the request. An assumption of the goal is not a solved obligation.
+        let goal_ct = CTerm::certify_checked(goal.clone(), &db.type_env).ok()?;
+        let state = ThmKernel::trivial(goal_ct).ok()?;
         let premises: Vec<Arc<Thm>> = context.iter().map(|t| Arc::new(t.clone())).collect();
-        let results = linarith::arith_tac(&state, &premises);
-        // If arith_tac closed the goal (0 premises), we have a proof
-        results.into_iter().find(|r| r.nprems() == 0)
+        let allowed_hypotheses: Vec<CTerm> =
+            context.iter().flat_map(|fact| fact.hyps().iter().cloned()).collect();
+        linarith::arith_tac(&state, &premises, db)
+            .into_iter()
+            .find(|result| validate_proof_result(goal, result, &allowed_hypotheses).is_ok())
     }
 }
 
@@ -100,10 +84,10 @@ impl Solver for ArithSolver {
 pub struct AsmSolver;
 
 impl Solver for AsmSolver {
-    fn solve(&self, goal: &Term, _context: &[Thm]) -> Option<Thm> {
+    fn solve(&self, goal: &Term, _context: &[Thm], _db: &HolTheoremDb) -> Option<Thm> {
         // Check if the goal is trivially true
         if is_trivial_true(goal) {
-            return Some(ThmKernel::reflexive(CTerm::certify(goal.clone())));
+            return Some(ThmKernel::reflexive_compat(CTerm::certify(goal.clone())));
         }
         None
     }
@@ -113,8 +97,8 @@ impl Solver for AsmSolver {
 // HOL Simplifier
 // =========================================================================
 
-/// The HOL simplifier: extends the kernel simplifier with HOL-specific
-/// rewrite rules and solver plugins for conditional rewriting.
+/// HOL rewrite facade; only the core simplifier produces equality certificates.
+/// Registered solvers remain search hints, not rewrite evidence.
 pub struct HolSimplifier {
     kernel: Simplifier,
     solvers: Vec<Arc<dyn Solver>>,
@@ -138,21 +122,12 @@ impl HolSimplifier {
 
     /// Create a HOL simplifier with beta-reduction only.
     pub fn with_beta() -> Self {
-        let mut hs = HolSimplifier::new();
-        // Add beta conversion via the kernel
-        let beta_conv: crate::core::simplifier::Conv = Arc::new(|t: &Term| {
-            use crate::core::term_subst;
-            let reduced = term_subst::beta_norm(t);
-            if &reduced == t { None } else { Some(ThmKernel::reflexive(CTerm::certify(reduced))) }
-        });
-        hs.kernel.add_conv(beta_conv);
-        hs
+        HolSimplifier { kernel: beta_simp(), solvers: Vec::new(), conditional_depth: 3 }
     }
 
-    /// Create a HOL simplifier from the theorem database, loading all
-    /// `[simp]`-annotated rules and built-in HOL connective rules.
-    pub fn from_db() -> Self {
-        let db = crate::hol::hol_loader::HolTheoremDb::get();
+    /// Create a HOL simplifier from `db`, loading all `[simp]`-annotated
+    /// rules and built-in HOL connective rules.
+    pub fn from_db(db: &crate::hol::hol_loader::HolTheoremDb) -> Self {
         let mut rules: Vec<RewriteRule> = Vec::new();
 
         // Load DB simps
@@ -163,7 +138,7 @@ impl HolSimplifier {
         }
 
         // Add built-in HOL rewrite rules
-        rules.extend(Self::builtin_rules());
+        rules.extend(Self::builtin_rules(db));
 
         let mut hs = HolSimplifier {
             kernel: Simplifier::new(rules),
@@ -175,9 +150,6 @@ impl HolSimplifier {
         hs.register_solver(Arc::new(ArithSolver));
         hs.register_solver(Arc::new(AsmSolver));
 
-        // Wire the condition solver callback
-        hs.wire_condition_solver();
-
         hs
     }
 
@@ -186,193 +158,20 @@ impl HolSimplifier {
         self.solvers.push(solver);
     }
 
-    /// Set the maximum depth for proving conditions.
+    /// Set the legacy search depth (not a rewrite authorization).
     pub fn set_conditional_depth(&mut self, depth: usize) {
         self.conditional_depth = depth;
     }
 
-    /// Wire the condition solver callback into the kernel simplifier.
-    /// This must be called after adding/removing solvers.
-    fn wire_condition_solver(&mut self) {
-        // We can't capture `self` in the closure, so we pre-compute
-        // a combined solver function. Since solvers are trait objects,
-        // we use a different approach: create a wrapper that calls all solvers.
-        let solver_count = self.solvers.len();
-        // Build a combined condition solver that tries each registered solver.
-        // Unfortunately we can't move solvers into the closure, so we'll
-        // use the prove_condition_with_solvers method instead.
-        // The condition_solver callback is a simple delegate.
-        let _ = solver_count;
-        // We'll override the entire rewrite flow instead.
-    }
-
-    /// Try to prove a condition using all registered solvers and
-    /// recursive simplification.
-    fn prove_condition_with_solvers(&self, cond: &Term, depth: usize) -> bool {
-        if depth > self.conditional_depth {
-            return false;
-        }
-
-        // Trivial true
-        if let Term::Const { name, .. } = cond
-            && (name.as_ref() == "True" || name.as_ref() == "HOL.True")
-        {
-            return true;
-        }
-
-        // Try reflexive equality (t = t)
-        if is_trivial_true(cond) {
-            return true;
-        }
-
-        // Try each registered solver
-        for solver in &self.solvers {
-            if solver.solve(cond, &[]).is_some() {
-                return true;
-            }
-        }
-
-        // Try kernel simplification
-        if let Some((result, _)) = self.kernel.rewrite(cond)
-            && &result != cond
-        {
-            return self.prove_condition_with_solvers(&result, depth + 1);
-        }
-
-        // Try deep rewriting
-        if let Some((result, _)) = self.kernel.rewrite_deep(cond)
-            && &result != cond
-        {
-            return self.prove_condition_with_solvers(&result, depth + 1);
-        }
-
-        false
-    }
-
-    /// Rewrite a term using all HOL rules and solvers.
-    /// Returns the rewritten term and the proof of equality.
+    /// Rewrite only when the underlying rule proves an unconditional equality.
+    /// Solver hints cannot discharge rewrite conditions without a kernel proof.
     pub fn hol_rewrite(&self, term: &Term) -> Option<(Term, Thm)> {
-        // Try conversions first (beta, eta)
-        for rule in self.kernel.rules() {
-            if let Some((result, thm)) = self.try_hol_rule(term, rule) {
-                return Some((result, thm));
-            }
-        }
-        // Also try the kernel rewrite for rules that don't need special handling
         self.kernel.rewrite(term)
     }
 
-    /// Try to apply a HOL rule to a term, with solver-based condition proving.
-    fn try_hol_rule(&self, term: &Term, rule: &RewriteRule) -> Option<(Term, Thm)> {
-        use crate::core::{
-            envir::Envir,
-            simplifier::{compute_maxidx, generalize_term_for_match},
-            unify,
-        };
-
-        let config = crate::core::unify::UnifyConfig::default();
-
-        // Compute the max variable index from the pattern to initialize env properly
-        let maxidx = compute_maxidx(&rule.lhs);
-        let env = Envir::empty(maxidx);
-
-        // Match the LHS pattern against the term
-        let env = unify::matchers(&env, &rule.lhs, term, &config);
-        // If direct matching fails, try Var-based generalization
-        let env = env.or_else(|| {
-            let gen_lhs = generalize_term_for_match(&rule.lhs);
-            let maxidx2 = compute_maxidx(&gen_lhs);
-            let env2 = Envir::empty(maxidx2);
-            unify::matchers(&env2, &gen_lhs, term, &config)
-        })?;
-
-        // Check condition if present — use solver-based proving
-        if let Some(cond) = &rule.condition {
-            let cond_inst = env.norm_term(cond);
-            if !self.prove_condition_with_solvers(&cond_inst, 0) {
-                return None;
-            }
-        }
-
-        // Instantiate the RHS
-        let rhs_inst = env.norm_term(&rule.rhs);
-        Some((rhs_inst, (*rule.thm).clone()))
-    }
-
-    /// Bottom-up deep rewriting with HOL rules.
-    /// Returns the rewritten term and a proof of equality.
+    /// Bottom-up rewriting shares the core certificate composition path.
     pub fn hol_rewrite_deep(&self, term: &Term) -> Option<(Term, Thm)> {
-        self.rewrite_deep_iter(term)
-    }
-
-    /// Iterative deep rewriting using an explicit work stack.
-    /// Avoids recursion for deeply nested terms.
-    fn rewrite_deep_iter(&self, term: &Term) -> Option<(Term, Thm)> {
-        // Use the kernel's deep rewriting (which does bottom-up),
-        // but with our HOL-aware rewriting at the top level.
-        let (inner_term, inner_thm_opt) = self.rewrite_subterms_iter(term);
-
-        // Try top-level rewrite
-        if let Some((result, thm)) = self.hol_rewrite(&inner_term)
-            && result != inner_term
-        {
-            let composed = match inner_thm_opt {
-                Some(ref first) => {
-                    ThmKernel::transitive(first, &thm).unwrap_or_else(|_| thm.clone())
-                },
-                None => thm,
-            };
-            return Some((result, composed));
-        }
-
-        // No top-level rewrite — return subterm result if changed
-        inner_thm_opt.map(|thm| {
-            let (_, rhs) = Pure::dest_equals(thm.prop().term())
-                .expect("rewrite_subterms returned non-equality");
-            (rhs.clone(), thm)
-        })
-    }
-
-    /// Rewrite immediate subterms iteratively.
-    /// Returns the new term and an optional equality proof.
-    fn rewrite_subterms_iter(&self, term: &Term) -> (Term, Option<Thm>) {
-        match term {
-            Term::App { func, arg } => {
-                let (new_func, func_thm) = self.rewrite_subterms_iter(func);
-                let (new_arg, arg_thm) = self.rewrite_subterms_iter(arg);
-
-                if func_thm.is_none() && arg_thm.is_none() {
-                    (term.clone(), None)
-                } else {
-                    let new_term = Term::app(new_func, new_arg);
-                    let f_thm = func_thm.unwrap_or_else(|| {
-                        ThmKernel::reflexive(CTerm::certify(func.as_ref().clone()))
-                    });
-                    let a_thm = arg_thm.unwrap_or_else(|| {
-                        ThmKernel::reflexive(CTerm::certify(arg.as_ref().clone()))
-                    });
-                    if let Ok(comb_thm) = ThmKernel::combination(&f_thm, &a_thm) {
-                        (new_term, Some(comb_thm))
-                    } else {
-                        (term.clone(), None)
-                    }
-                }
-            },
-            Term::Abs { name, typ, body } => {
-                let (new_body, body_thm) = self.rewrite_subterms_iter(body);
-                if let Some(thm) = body_thm {
-                    let new_term = Term::abs(Arc::clone(name), typ.clone(), new_body);
-                    if let Ok(abs_thm) = ThmKernel::abstraction(name, typ.clone(), &thm) {
-                        (new_term, Some(abs_thm))
-                    } else {
-                        (term.clone(), None)
-                    }
-                } else {
-                    (term.clone(), None)
-                }
-            },
-            _ => (term.clone(), None),
-        }
+        self.kernel.rewrite_deep(term)
     }
 
     /// Produce a tactic from this simplifier.
@@ -422,11 +221,11 @@ impl HolSimplifier {
 
     /// Generate built-in HOL rewrite rules for boolean connectives,
     /// quantifiers, and conditionals.
-    pub fn builtin_rules() -> Vec<RewriteRule> {
+    pub fn builtin_rules(db: &crate::hol::hol_loader::HolTheoremDb) -> Vec<RewriteRule> {
         let mut rules = Vec::new();
 
-        // First try to get rules from the theorem DB
-        if let Some(db_rules) = Self::builtin_rules_from_db() {
+        // First try to get rules from the selected theorem DB
+        if let Some(db_rules) = Self::builtin_rules_from_db(db) {
             rules.extend(db_rules);
         }
 
@@ -437,8 +236,9 @@ impl HolSimplifier {
     }
 
     /// Get built-in rules from the theorem database by name.
-    fn builtin_rules_from_db() -> Option<Vec<RewriteRule>> {
-        let db = crate::hol::hol_loader::HolTheoremDb::get();
+    fn builtin_rules_from_db(
+        db: &crate::hol::hol_loader::HolTheoremDb,
+    ) -> Option<Vec<RewriteRule>> {
         let mut rules = Vec::new();
 
         let names = [
@@ -527,7 +327,7 @@ impl HolSimplifier {
             let lhs = mk_conj(&conj_c, true_c.clone(), p.clone());
             let rhs = p.clone();
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -540,7 +340,7 @@ impl HolSimplifier {
             let lhs = mk_conj(&conj_c, false_c.clone(), p);
             let rhs = false_c.clone();
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -553,7 +353,7 @@ impl HolSimplifier {
             let lhs = mk_conj(&conj_c, p.clone(), true_c.clone());
             let rhs = p.clone();
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -566,7 +366,7 @@ impl HolSimplifier {
             let lhs = mk_conj(&conj_c, p, false_c.clone());
             let rhs = false_c.clone();
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -579,7 +379,7 @@ impl HolSimplifier {
             let lhs = mk_disj(&disj_c, true_c.clone(), p);
             let rhs = true_c.clone();
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -592,7 +392,7 @@ impl HolSimplifier {
             let lhs = mk_disj(&disj_c, false_c.clone(), p.clone());
             let rhs = p.clone();
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -605,7 +405,7 @@ impl HolSimplifier {
             let lhs = mk_disj(&disj_c, p, true_c.clone());
             let rhs = true_c.clone();
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -618,7 +418,7 @@ impl HolSimplifier {
             let lhs = mk_disj(&disj_c, p.clone(), false_c.clone());
             let rhs = p.clone();
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -631,7 +431,7 @@ impl HolSimplifier {
             let lhs = mk_imp(&imp_const, true_c.clone(), p.clone());
             let rhs = p.clone();
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -644,7 +444,7 @@ impl HolSimplifier {
             let lhs = mk_imp(&imp_const, false_c.clone(), p);
             let rhs = true_c.clone();
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -657,7 +457,7 @@ impl HolSimplifier {
             let lhs = mk_imp(&imp_const, p, true_c.clone());
             let rhs = true_c.clone();
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -670,7 +470,7 @@ impl HolSimplifier {
             let lhs = mk_imp(&imp_const, p.clone(), false_c.clone());
             let rhs = mk_not(&not_c, p.clone());
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -681,7 +481,7 @@ impl HolSimplifier {
             let lhs = mk_not(&not_c, true_c.clone());
             let rhs = false_c.clone();
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -692,7 +492,7 @@ impl HolSimplifier {
             let lhs = mk_not(&not_c, false_c.clone());
             let rhs = true_c.clone();
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -708,7 +508,7 @@ impl HolSimplifier {
             let lhs = Term::apps(if_c.clone(), [true_c.clone(), a.clone(), b.clone()]);
             let rhs = a.clone();
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -724,7 +524,7 @@ impl HolSimplifier {
             let lhs = Term::apps(if_c, [false_c.clone(), a.clone(), b.clone()]);
             let rhs = b.clone();
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -738,7 +538,7 @@ impl HolSimplifier {
             let lhs = Term::app(all_c.clone(), Term::abs(x_name, dummy_typ.clone(), body));
             let rhs = true_c.clone();
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -752,7 +552,7 @@ impl HolSimplifier {
             let lhs = Term::app(ex_c.clone(), Term::abs(x_name, dummy_typ, body));
             let rhs = false_c.clone();
             let stmt = mk_eq(&eq_const, lhs, rhs);
-            let thm = Arc::new(ThmKernel::assume(CTerm::certify(stmt)));
+            let thm = Arc::new(ThmKernel::assume_compat(CTerm::certify(stmt)));
             if let Some(rule) = RewriteRule::from_thm(thm) {
                 rules.push(rule);
             }
@@ -803,12 +603,8 @@ fn is_trivial_true(term: &Term) -> bool {
 mod tests {
     use super::*;
 
-    fn prop_typ() -> Typ {
-        Typ::base("prop")
-    }
-
-    fn bool_typ() -> Typ {
-        Typ::base("bool")
+    fn global_builtin_rules() -> Vec<RewriteRule> {
+        HolSimplifier::builtin_rules(crate::hol::hol_loader::HolTheoremDb::global())
     }
 
     #[test]
@@ -825,15 +621,16 @@ mod tests {
     }
 
     #[test]
-    fn test_builtin_rules_created() {
-        let rules = HolSimplifier::builtin_rules();
-        // Should have many rules (boolean connectives, quantifiers, conditionals)
-        assert!(rules.len() >= 10, "Expected at least 10 builtin rules, got {}", rules.len());
+    fn test_builtin_rules_require_closed_theorem_sources() {
+        let rules = global_builtin_rules();
+        // Built-in HOL rewrite templates used to be admitted through
+        // `assume_compat`. They now require real closed theorem sources.
+        assert!(rules.is_empty(), "unproved built-in rewrite templates must not be rules");
     }
 
     #[test]
     fn test_builtin_rules_valid() {
-        let rules = HolSimplifier::builtin_rules();
+        let rules = global_builtin_rules();
         for rule in &rules {
             // Each rule should have a valid theorem
             let prop = rule.thm.prop().term();
@@ -848,7 +645,7 @@ mod tests {
 
     #[test]
     fn test_hol_rewrite_conj_true() {
-        let hs = HolSimplifier::with_rules(HolSimplifier::builtin_rules());
+        let hs = HolSimplifier::with_rules(global_builtin_rules());
         // Construct: True ∧ P
         let conj_c = hologic::conj_const();
         let true_c = hologic::true_const();
@@ -856,113 +653,94 @@ mod tests {
         let term = Term::app(Term::app(conj_c, true_c), p.clone());
 
         let result = hs.hol_rewrite(&term);
-        assert!(result.is_some(), "Should rewrite True ∧ P");
-        let (rewritten, _thm) = result.unwrap();
-        assert_eq!(rewritten, p, "True ∧ P should rewrite to P");
+        assert!(result.is_none(), "True ∧ P needs a closed rewrite theorem source");
     }
 
     #[test]
     fn test_hol_rewrite_conj_false() {
-        let hs = HolSimplifier::with_rules(HolSimplifier::builtin_rules());
+        let hs = HolSimplifier::with_rules(global_builtin_rules());
         let conj_c = hologic::conj_const();
         let false_c = hologic::false_const();
         let p = Term::free("P", Typ::dummy());
         let term = Term::app(Term::app(conj_c, false_c.clone()), p);
 
         let result = hs.hol_rewrite(&term);
-        assert!(result.is_some(), "Should rewrite False ∧ P");
-        let (rewritten, _thm) = result.unwrap();
-        assert_eq!(rewritten, false_c, "False ∧ P should rewrite to False");
+        assert!(result.is_none(), "False ∧ P needs a closed rewrite theorem source");
     }
 
     #[test]
     fn test_hol_rewrite_disj_true() {
-        let hs = HolSimplifier::with_rules(HolSimplifier::builtin_rules());
+        let hs = HolSimplifier::with_rules(global_builtin_rules());
         let disj_c = hologic::disj_const();
         let true_c = hologic::true_const();
         let p = Term::free("P", Typ::dummy());
         let term = Term::app(Term::app(disj_c, true_c.clone()), p);
 
         let result = hs.hol_rewrite(&term);
-        assert!(result.is_some(), "Should rewrite True ∨ P");
-        let (rewritten, _thm) = result.unwrap();
-        assert_eq!(rewritten, true_c, "True ∨ P should rewrite to True");
+        assert!(result.is_none(), "True ∨ P needs a closed rewrite theorem source");
     }
 
     #[test]
     fn test_hol_rewrite_disj_false() {
-        let hs = HolSimplifier::with_rules(HolSimplifier::builtin_rules());
+        let hs = HolSimplifier::with_rules(global_builtin_rules());
         let disj_c = hologic::disj_const();
         let false_c = hologic::false_const();
         let p = Term::free("P", Typ::dummy());
         let term = Term::app(Term::app(disj_c, false_c), p.clone());
 
         let result = hs.hol_rewrite(&term);
-        assert!(result.is_some(), "Should rewrite False ∨ P");
-        let (rewritten, _thm) = result.unwrap();
-        assert_eq!(rewritten, p, "False ∨ P should rewrite to P");
+        assert!(result.is_none(), "False ∨ P needs a closed rewrite theorem source");
     }
 
     #[test]
     fn test_hol_rewrite_not_true() {
-        let hs = HolSimplifier::with_rules(HolSimplifier::builtin_rules());
+        let hs = HolSimplifier::with_rules(global_builtin_rules());
         let not_c = hologic::not_const();
         let true_c = hologic::true_const();
-        let false_c = hologic::false_const();
         let term = Term::app(not_c, true_c);
 
         let result = hs.hol_rewrite(&term);
-        assert!(result.is_some(), "Should rewrite ¬True");
-        let (rewritten, _thm) = result.unwrap();
-        assert_eq!(rewritten, false_c, "¬True should rewrite to False");
+        assert!(result.is_none(), "¬True needs a closed rewrite theorem source");
     }
 
     #[test]
     fn test_hol_rewrite_not_false() {
-        let hs = HolSimplifier::with_rules(HolSimplifier::builtin_rules());
+        let hs = HolSimplifier::with_rules(global_builtin_rules());
         let not_c = hologic::not_const();
         let false_c = hologic::false_const();
-        let true_c = hologic::true_const();
         let term = Term::app(not_c, false_c);
 
         let result = hs.hol_rewrite(&term);
-        assert!(result.is_some(), "Should rewrite ¬False");
-        let (rewritten, _thm) = result.unwrap();
-        assert_eq!(rewritten, true_c, "¬False should rewrite to True");
+        assert!(result.is_none(), "¬False needs a closed rewrite theorem source");
     }
 
     #[test]
     fn test_hol_rewrite_imp_true() {
-        let hs = HolSimplifier::with_rules(HolSimplifier::builtin_rules());
+        let hs = HolSimplifier::with_rules(global_builtin_rules());
         let imp_c = hologic::imp_const();
         let true_c = hologic::true_const();
         let p = Term::free("P", Typ::dummy());
         let term = Term::app(Term::app(imp_c, true_c), p.clone());
 
         let result = hs.hol_rewrite(&term);
-        assert!(result.is_some(), "Should rewrite True → P");
-        let (rewritten, _thm) = result.unwrap();
-        assert_eq!(rewritten, p, "True → P should rewrite to P");
+        assert!(result.is_none(), "True → P needs a closed rewrite theorem source");
     }
 
     #[test]
     fn test_hol_rewrite_imp_false() {
-        let hs = HolSimplifier::with_rules(HolSimplifier::builtin_rules());
+        let hs = HolSimplifier::with_rules(global_builtin_rules());
         let imp_c = hologic::imp_const();
         let false_c = hologic::false_const();
-        let true_c = hologic::true_const();
         let p = Term::free("P", Typ::dummy());
         let term = Term::app(Term::app(imp_c, false_c), p);
 
         let result = hs.hol_rewrite(&term);
-        assert!(result.is_some(), "Should rewrite False → P");
-        let (rewritten, _thm) = result.unwrap();
-        assert_eq!(rewritten, true_c, "False → P should rewrite to True");
+        assert!(result.is_none(), "False → P needs a closed rewrite theorem source");
     }
 
     #[test]
     fn test_hol_rewrite_deep_nested() {
-        let hs = HolSimplifier::with_rules(HolSimplifier::builtin_rules());
+        let hs = HolSimplifier::with_rules(global_builtin_rules());
         let conj_c = hologic::conj_const();
         let true_c = hologic::true_const();
         let false_c = hologic::false_const();
@@ -973,9 +751,7 @@ mod tests {
         let term = Term::app(Term::app(conj_c.clone(), inner), false_c.clone());
 
         let result = hs.hol_rewrite_deep(&term);
-        assert!(result.is_some(), "Should deep-rewrite nested conjunction");
-        let (rewritten, _thm) = result.unwrap();
-        assert_eq!(rewritten, false_c, "Nested rewrite should result in False");
+        assert!(result.is_none(), "nested HOL rewrite needs closed theorem sources");
     }
 
     #[test]
@@ -988,29 +764,13 @@ mod tests {
             Typ::arrow(Typ::dummy(), Typ::arrow(Typ::dummy(), Typ::base("prop"))),
         );
         let goal = Term::app(Term::app(eq_const, t.clone()), t);
-        let result = solver.solve(&goal, &[]);
+        let result = solver.solve(&goal, &[], HolTheoremDb::global());
         assert!(result.is_some(), "AsmSolver should prove t = t");
     }
 
     #[test]
-    fn test_solver_arith_basic() {
-        let solver = ArithSolver;
-        // 0 = 0 (trivial arithmetic)
-        let zero = Term::const_("Groups.zero", Typ::dummy());
-        let eq_const = Term::const_(
-            "HOL.eq",
-            Typ::arrow(Typ::dummy(), Typ::arrow(Typ::dummy(), Typ::base("prop"))),
-        );
-        let goal = Term::app(Term::app(eq_const, zero.clone()), zero);
-        let result = solver.solve(&goal, &[]);
-        // arith_tac may or may not solve this depending on available rules
-        // This test validates the solver doesn't panic
-        let _ = result;
-    }
-
-    #[test]
     fn test_hol_simplifier_from_db() {
-        let hs = HolSimplifier::from_db();
+        let hs = HolSimplifier::from_db(crate::hol::hol_loader::HolTheoremDb::global());
         // Should have rules from DB + builtin
         let rule_count = hs.kernel.rules().len();
         assert!(rule_count > 0, "from_db should have at least some rules");
@@ -1018,7 +778,7 @@ mod tests {
 
     #[test]
     fn test_rewrite_all_terminates() {
-        let hs = HolSimplifier::with_rules(HolSimplifier::builtin_rules());
+        let hs = HolSimplifier::with_rules(global_builtin_rules());
         // A term that shouldn't loop
         let p = Term::free("P", Typ::base("prop"));
         let result = hs.rewrite_all(&p);
@@ -1028,12 +788,12 @@ mod tests {
 
     #[test]
     fn test_simp_tactic_produces_tactic() {
-        let hs = HolSimplifier::with_rules(HolSimplifier::builtin_rules());
+        let hs = HolSimplifier::with_rules(global_builtin_rules());
         let tac = hs.simp_tactic();
         // Create a simple proof state
         let true_c = hologic::true_const();
         let goal_ct = CTerm::certify(true_c);
-        let state = ThmKernel::assume(goal_ct);
+        let state = ThmKernel::assume_compat(goal_ct);
         let results = tac(&state);
         // Tactic should not panic
         let _ = results;
@@ -1041,7 +801,7 @@ mod tests {
 
     #[test]
     fn test_if_true_rewrite() {
-        let hs = HolSimplifier::with_rules(HolSimplifier::builtin_rules());
+        let hs = HolSimplifier::with_rules(global_builtin_rules());
         let if_c = hologic::if_const(Typ::dummy());
         let true_c = hologic::true_const();
         let a = Term::free("a", Typ::dummy());
@@ -1049,14 +809,12 @@ mod tests {
         let term = Term::apps(if_c, [true_c, a.clone(), b.clone()]);
 
         let result = hs.hol_rewrite(&term);
-        assert!(result.is_some(), "Should rewrite if True then A else B");
-        let (rewritten, _thm) = result.unwrap();
-        assert_eq!(rewritten, a, "if True then A else B should rewrite to A");
+        assert!(result.is_none(), "if True rewrite needs a closed theorem source");
     }
 
     #[test]
     fn test_if_false_rewrite() {
-        let hs = HolSimplifier::with_rules(HolSimplifier::builtin_rules());
+        let hs = HolSimplifier::with_rules(global_builtin_rules());
         let if_c = hologic::if_const(Typ::dummy());
         let false_c = hologic::false_const();
         let a = Term::free("a", Typ::dummy());
@@ -1064,42 +822,36 @@ mod tests {
         let term = Term::apps(if_c, [false_c, a.clone(), b.clone()]);
 
         let result = hs.hol_rewrite(&term);
-        assert!(result.is_some(), "Should rewrite if False then A else B");
-        let (rewritten, _thm) = result.unwrap();
-        assert_eq!(rewritten, b, "if False then A else B should rewrite to B");
+        assert!(result.is_none(), "if False rewrite needs a closed theorem source");
     }
 
     #[test]
     fn test_all_true_rewrite() {
-        let hs = HolSimplifier::with_rules(HolSimplifier::builtin_rules());
+        let hs = HolSimplifier::with_rules(global_builtin_rules());
         let all_c = hologic::all_const(Typ::dummy());
         let true_c = hologic::true_const();
         let body = true_c.clone();
         let term = Term::app(all_c, Term::abs("x", Typ::dummy(), body));
 
         let result = hs.hol_rewrite(&term);
-        assert!(result.is_some(), "Should rewrite ∀x. True");
-        let (rewritten, _thm) = result.unwrap();
-        assert_eq!(rewritten, true_c, "∀x. True should rewrite to True");
+        assert!(result.is_none(), "∀x. True rewrite needs a closed theorem source");
     }
 
     #[test]
     fn test_ex_false_rewrite() {
-        let hs = HolSimplifier::with_rules(HolSimplifier::builtin_rules());
+        let hs = HolSimplifier::with_rules(global_builtin_rules());
         let ex_c = hologic::exists_const(Typ::dummy());
         let false_c = hologic::false_const();
         let body = false_c.clone();
         let term = Term::app(ex_c, Term::abs("x", Typ::dummy(), body));
 
         let result = hs.hol_rewrite(&term);
-        assert!(result.is_some(), "Should rewrite ∃x. False");
-        let (rewritten, _thm) = result.unwrap();
-        assert_eq!(rewritten, false_c, "∃x. False should rewrite to False");
+        assert!(result.is_none(), "∃x. False rewrite needs a closed theorem source");
     }
 
     #[test]
     fn test_non_matching_term_returns_none() {
-        let hs = HolSimplifier::with_rules(HolSimplifier::builtin_rules());
+        let hs = HolSimplifier::with_rules(global_builtin_rules());
         // A free variable shouldn't match any rule
         let p = Term::free("P", Typ::dummy());
         let result = hs.hol_rewrite(&p);

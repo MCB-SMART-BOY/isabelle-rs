@@ -292,7 +292,7 @@ mod tests {
     #[test]
     fn test_import_export() {
         let t = Term::free("x", Typ::dummy());
-        let imported = import_terms(&[t.clone()]);
+        let imported = import_terms(std::slice::from_ref(&t));
         match &imported[0] {
             Term::Var { .. } => { /* ok */ },
             _ => panic!("expected Var after import"),

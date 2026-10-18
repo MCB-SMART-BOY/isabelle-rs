@@ -1,0 +1,14 @@
+--- a/src/Pure/ML/ml_context.ML
++++ b/src/Pure/ML/ml_context.ML
+@@ -213,7 +213,9 @@
+ (* derived versions *)
+ 
+ fun eval_file flags path =
+-  let val pos = Position.file (File.symbolic_path path)
+-  in eval flags pos (ML_Lex.read_text (File.read path, pos)) end;
++  let val pos = Position.file (File.symbolic_path path)
++  in Reference_Observation.with_load (File.standard_path path)
++       (Reference_Observation.run_phase ()) "" (fn () => File.read path)
++       (fn text => eval flags pos (ML_Lex.read_text (text, pos))) end;
+ 
+ fun eval_source flags source =
