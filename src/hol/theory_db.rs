@@ -125,14 +125,13 @@ mod tests {
     fn make_lemma(name: &str, proof: &str) -> ParsedLemma {
         let term = Term::const_(name, Typ::base("prop"));
         let thm = ThmKernel::assume_compat(CTerm::certify(term));
-        ParsedLemma {
-            name: name.to_string(),
-            attributes: vec![],
-            theorem: Arc::new(thm),
-            proof_script: Some(proof.to_string()),
-            alias_for: None,
-            source_loc: None,
-        }
+        ParsedLemma::new_synthetic(
+            name.to_string(),
+            vec![],
+            Arc::new(thm),
+            Some(proof.to_string()),
+            None,
+        )
     }
 
     #[test]

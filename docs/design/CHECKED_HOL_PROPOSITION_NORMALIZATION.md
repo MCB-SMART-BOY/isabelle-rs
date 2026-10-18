@@ -2,10 +2,14 @@
 
 ## Status
 
-The data-only source AST representation is implemented, but parser integration,
-declaration-aware elaboration, and normalization remain design-only. No
-production normalizer, theorem adapter, HOL substitution rule, or trusted
-primitive is implemented by this document.
+The data-only `source_ast` and a separate, narrow, fully consuming
+`source_parser` → declaration-aware `elaborator` → strict `CProp` path are
+implemented for the two standalone fixtures and the audited sampled
+`HOL::TrueI` projection. The general sampled-HOL normalizer described below
+(including polymorphic equality, source-role provenance, and `HOL::trans`)
+remains a design, not a production adapter. Neither the narrow source
+pipeline nor the sampled `TrueI` adapter implements general HOL/ATP
+elaboration or an additional trusted primitive.
 
 The targeted diagnostic case is the proposition of `HOL::trans`:
 
@@ -14,15 +18,20 @@ lemma trans: "\<lbrakk>r = s; s = t\<rbrakk> \<Longrightarrow> r = t"
   by (erule subst)
 ```
 
-This document defines a theorem-independent parser-to-checked-term boundary. It
-does not authorize a `try_strict_hol_trans` adapter or increase either
-`TransitionalStrictClosed: 1/125` or `KernelTrustedClosed: 0/125`. The first HOL
-trust milestone remains re-deriving `HOL::TrueI` through the new kernel; `trans`
-is an eventual reuse consumer after the wider theory/logic gates close.
+This document specifies the wider theorem-independent parser-to-checked-term
+boundary needed for other sampled HOL theorems. It does not authorize a
+`try_strict_hol_trans` adapter or count additional sampled theorem tokens.
+In the 2026-10-07 bundled-source sample, the audited `HOL::TrueI` projection
+alone reached `KernelTrustedClosed: 1/125` with
+`TransitionalStrictClosed: 0/125`. Standalone source-backed `TrueI` and Pure
+identity receive separate tokens outside that 125-lemma sample. The later
+P2/P3/P4 native closure implementation was resumed under the reviewed P1
+contracts, but has not rerun this sample or established broader HOL acceptance;
+see [PROJECT_STATUS.md](../status/PROJECT_STATUS.md) for current verification scope.
 
 `src/isar/source_ast.rs` deliberately stores raw names/syntax and diagnostic
-spans only. It does not yet distinguish Pure/HOL meanings, resolve namespaces,
-check types, insert judgments, carry trusted context, or produce `CProp`.
+spans only. The narrow elaborator resolves supported names and certifies
+`CProp`; the AST itself carries no trusted context or authority.
 
 ## Boundary
 
@@ -56,51 +65,33 @@ error.
 
 ### Current status/shape gate
 
-The transitional parser boundary now records both whether the legacy parser
-consumed all input presented to it and a deliberately narrow source shape:
+Two distinct consumers must not be conflated:
 
 ```text
-parse_term(input)
-  -> compatibility API; may return a parsed prefix
-
-parse_term_with_status(input)
-  -> (term, FullyConsumed | Incomplete)
-
-source loader
-  -> SourcePropositionStatus::{FullyConsumed, Incomplete, Unavailable}
-  -> SourcePropositionShape::{StandaloneHolTrueAlias, Other, Contextual, Unavailable}
+legacy parse_term(input) -> Some(term) only on FullyConsumed input
+legacy parse_term_with_status(input) -> (term, FullyConsumed | Incomplete)
+legacy HOL search loader -> SourcePropositionStatus and SourcePropositionShape
+strict source_parser + elaborator -> checked CProp for supported source syntax
 ```
 
-`ParsedLemma` retains both typed values with its source-location provenance;
-absence of source provenance makes both `Unavailable`. For the registered
-`TrueI` adapter with an explicit proof, only
-`FullyConsumed + StandaloneHolTrueAlias` may reach proposition normalization
-or the adapter proof body. Every other combination becomes
-`Rejected(SourcePropositionUnverified { status, shape })` and is recorded as
-`admitted:strict_adapter_source_prop_unverified`; they do not become
-`admitted:parser_gap` and do not enter legacy proof fallback.
+The legacy `ParsedLemma` retains the source status and shape metadata with
+diagnostic locations; absent source provenance yields `Unavailable`. The
+sampled `TrueI` adapter with an explicit proof requires
+`FullyConsumed + StandaloneHolTrueAlias`; other combinations are rejected as
+`SourcePropositionUnverified` and cannot become proof via a fallback. The
+shape accepts standalone `True` / `HOL.True`, optionally `:: bool`, but not
+contextual variants. Malformed input such as `True =` now fails the public
+`parse_term` instead of returning a success-shaped prefix; the diagnostic
+`parse_term_with_status` can still report `Incomplete`.
 
-The current accepted shape is limited to a standalone source `True` or
-`HOL.True`, optionally annotated `:: bool`. Parser recovery of malformed
-`True =` can still report `FullyConsumed`, but its shape is `Other`. A lemma
-with local `fixes` or `includes`, a locale qualifier, or an enclosing source
-context is `Contextual`, even if its parsed legacy term is the same canonical
-`HOL.True`.
-
-This is a transitional fail-closed guard, necessary but not sufficient for
-future trusted elaboration. `FullyConsumed` says only that the compatibility
-parser reached EOF after its converted input, and the shape enum is only a
-lexical/context classification for the current adapter. Neither proves that
-source conversion preserved every syntax role, resolves whether `True` is
-shadowed, or supplies a checked `CProp`. Both values are public metadata carried
-by the current `ParsedLemma` / `DefLocation` representation, not a
-name-resolved AST or unforgeable certification token. The source-aware AST and
-provenance contract below remains required.
-
-The current `TransitionalStrictClosed: 1/125` value is a migration metric over legacy
-`core::Thm` plus `ThmTrust::Strict`. A successful legacy
-`CTerm::certify_checked` normalization would improve that migration boundary,
-but it would not yet be a new-kernel `CProp` or `TrustedTheorem`.
+These shape/status fields are a transitional, forgeable classification, not a
+checked source proposition. The strict compiler parses and elaborates
+supported syntax against `ProofContext`; the sampled `TrueI` projection
+audits the required bundled source declarations and proof before owner replay.
+Neither path executes unrelated HOL/ML commands or implements the general
+HOL equality implication-chain normalization below. The historical
+2026-10-03 `TransitionalStrictClosed: 1/125` was a legacy `core::Thm` metric,
+never a strict-kernel `TrustedTheorem`.
 
 ## Targeted `HOL::trans` Diagnostic
 
@@ -112,8 +103,8 @@ Source declarations:
   `['a, 'a] => bool`.
 - `theories/HOL/HOL.thy:274-275` declares and proves `trans`.
 
-The current parser produces this raw skeleton, with no `HOL.Trueprop`
-applications:
+The historical legacy parsed-term diagnostic produced this raw skeleton,
+without `HOL.Trueprop` applications:
 
 ```text
 Pure.imp
@@ -130,7 +121,7 @@ The exact debug form is:
   ((Pure.imp ((HOL.eq s) t)) ((HOL.eq r) t)))
 ```
 
-Current type state:
+Legacy diagnostic type state (not a strict source fixture):
 
 | Node class | Count | Current annotation |
 |---|---:|---|
@@ -142,7 +133,7 @@ There are 9 dummy-bearing nodes and 12 dummy type leaves. The top-level legacy
 CTerm reports type `prop`, compatibility certification, and residual dummy
 types.
 
-Failure sequence:
+Historical diagnostic failure sequence:
 
 1. `Term::type_annotate` reports no change. It only replaces an annotation
    which is wholly `Typ::dummy()`; it does not instantiate dummy leaves inside
@@ -246,56 +237,49 @@ A successful future API result must satisfy all of the following:
 - a recorded skeleton-preservation check;
 - no theorem value, oracle, admission, hypothesis, or proof outcome produced.
 
-The targeted legacy diagnostic established checked type `prop` and absence of
-dummy annotations. It did not establish the stronger future requirement that
-every Free and type variable be registered in an explicit checked context;
-current legacy `core::CTerm::certify_checked` does not enforce that for every
-fully annotated Free.
+The historical `HOL::trans` diagnostic established checked legacy type `prop`
+and absence of dummy annotations only after manual declaration/embedding. It
+did not establish registered source Free/type-variable identity or a general
+sampled-HOL elaborator. The strict `ProofContext` does validate declared types,
+constants and local frees; its separate narrow elaborator does not infer the
+polymorphic equality chain described here.
 
 ## Proposed Typed API
 
 The names are design placeholders, not current production APIs. Their
 design-only standalone Rust skeleton is maintained in
-[checked_hol_proposition_normalization.rs](../scripts/templates/checked_hol_proposition_normalization.rs);
+[checked_hol_proposition_normalization.rs](../../scripts/templates/checked_hol_proposition_normalization.rs);
 compilation does not validate it against production types or trust semantics.
 
 The operation is deliberately not named `normalize_trans_prop`.
 
 The same template contains the proposed typed failure enum. Control flow must
-depend only on its variants and fields.
-
-Control flow depends only on variants and fields. `KernelError` and display
-messages are diagnostic payloads; no caller may classify an error by matching
-message text.
+depend only on its variants and fields; `KernelError` and display messages are
+diagnostic payloads, not strings for branching.
 
 ## Required Parser and Signature Work
 
-Before this normalizer can be implemented safely, the parser/signature boundary
-must provide:
+Before a general sampled-HOL normalizer can be implemented safely, its
+source/parser/signature boundary must:
 
-1. connect mandatory full-consumption provenance to the implemented
-   `SourceProposition` data model;
-2. resolve raw `SourceSyntax` under the active syntax tables so meta
-   connectives and HOL formulas remain distinguishable after elaboration;
+1. connect fully consuming source parsing to the sampled theorem's exact
+   proposition and proof, without treating forgeable `SourceId`/spans as trust;
+2. resolve raw source syntax under the applicable theory's syntax tables so
+   meta connectives and HOL formulas remain distinguishable;
 3. resolve exact source symbol identity and scope for Const, Free, Var, and
-   Bound nodes;
-4. preserve and check explicit source type annotations instead of discarding
-   `::` syntax;
-5. extract checked `judgment` declarations, beginning with
-   `HOL.Trueprop : bool => prop`;
-6. solve polymorphic constraints deterministically from checked constant
-   schemes and emit a source-to-normalized provenance record.
+   Bound nodes, with full type-annotation preservation;
+4. load checked `judgment` declarations, including
+   `HOL.Trueprop : bool => prop`, from that source theory;
+5. solve polymorphic constraints deterministically from checked constant
+   schemes and emit verifiable source-to-normalized roles.
 
-The proposed API must not accept a theorem name, proof script, search fact, or
-`HolTheoremDb` fact as type or name-resolution evidence. The legacy parsed
-theorem may be cross-checked for migration diagnostics, but cannot repair the
-source representation.
-
-The current strict `src/kernel` also needs an explicit design for polymorphic
-type schemes and logic-extension context before the eventual result can flow
-as a new-kernel proposition. A legacy `core::CTerm::certify_checked` success is
-useful migration evidence, but it is not by itself the final
-`src/kernel::TrustedTheorem` boundary.
+The existing strict signature already has polymorphic constant schemes,
+explicit constructor declarations/arity and declaration-aware certification;
+the standalone HOL fixture installs a minimal `refl` basis and a conservative
+`True_def`. Those do not supply the general source-theory reconstruction or
+`HOL::trans` proof. The proposed API must not accept a theorem name, proof
+script, search fact or `HolTheoremDb` fact as resolution evidence. A legacy
+parsed theorem may be compared for diagnostics, but cannot repair lost syntax.
 
 ## Future Tests
 
@@ -330,7 +314,8 @@ This design does not implement:
 - resolution, lifting, freshening, or broad unification;
 - a theorem-name normalization table;
 - a new `src/core` or `src/kernel` primitive;
-- a workspace or module migration.
+- a proof-runtime module/crate migration (the A-package Cargo workspace/xtask
+  does not implement this design).
 
 The future trusted object-logic boundary is proposed separately in
-[ADR-0003-hol-logic-trusted-extension.md](ADR-0003-hol-logic-trusted-extension.md).
+[ADR-0003-hol-logic-trusted-extension.md](../adr/ADR-0003-hol-logic-trusted-extension.md).

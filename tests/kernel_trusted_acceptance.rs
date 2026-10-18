@@ -1,6 +1,6 @@
 use isabelle_rs::kernel::{
-    ContextStamp, InstEntry, KernelError, KernelRules, Name, ProofContext, RawTerm, SearchFact,
-    Signature, TrustedTheory, Ty, accept_closed_theorem,
+    InstEntry, KernelError, KernelRules, Name, ProofContext, RawTerm, SearchFact, Signature,
+    TrustedTheory, Ty, accept_closed_theorem,
 };
 
 fn prop(name: &str) -> RawTerm {
@@ -17,10 +17,14 @@ fn theory(name: &str, props: &[&str]) -> TrustedTheory {
     TrustedTheory::root(name, signature_with_props(props))
 }
 
+fn make_context(theory: &TrustedTheory) -> ProofContext {
+    ProofContext::new(theory.snapshot().clone())
+}
+
 fn implication_identity(theory: &TrustedTheory, name: &str) -> isabelle_rs::kernel::ClosedThm {
     let context = ProofContext::new(theory.snapshot().clone());
     let proposition = context.certify_prop(prop(name)).unwrap();
-    let assumed = KernelRules::assume(proposition.clone()).into_kernel();
+    let assumed = KernelRules::assume(proposition.clone()).unwrap().into_kernel();
     KernelRules::implies_intr(&proposition, &assumed).unwrap().try_close().unwrap()
 }
 
@@ -36,7 +40,7 @@ fn pure_implication_acceptance_is_atomic_and_context_bound() {
     assert_eq!(parent.id(), parent_id);
     assert_eq!(parent.len(), 0);
     assert_eq!(child.len(), 1);
-    assert_eq!(child.parent().unwrap().id(), parent_id);
+    assert_eq!(child.parents()[0].id(), parent_id);
     assert_eq!(accepted.proved_context(), parent_stamp);
     assert_eq!(accepted.proved_in(), parent_id);
     assert_eq!(accepted.prop().context(), parent_stamp);
@@ -144,7 +148,7 @@ fn accepted_parent_proposition_is_not_retagged_for_the_child() {
         accept_closed_theorem(&parent, "imp_identity", implication_identity(&parent, "A")).unwrap();
     let child_context = ProofContext::new(child.snapshot().clone());
     let child_a = child_context.certify_prop(prop("A")).unwrap();
-    let parent_assumption = KernelRules::assume(accepted.prop().clone()).into_kernel();
+    let parent_assumption = KernelRules::assume(accepted.prop().clone()).unwrap().into_kernel();
 
     assert!(matches!(
         KernelRules::implies_intr(&child_a, &parent_assumption),
@@ -240,7 +244,13 @@ fn unused_same_stamp_free_substitution_is_rejected() {
     local.declare_free("ghost", Ty::prop());
     let ghost = local.certify_term(RawTerm::free("ghost", Ty::prop())).unwrap();
     let substitution = InstEntry::new("P", 0, Ty::prop(), ghost);
-    let instantiated = KernelRules::instantiate(candidate.as_kernel(), &[substitution]).unwrap();
+    let instantiated = KernelRules::instantiate(
+        &local,
+        candidate.as_kernel(),
+        &isabelle_rs::kernel::TypeInstantiation::empty(),
+        &[substitution],
+    )
+    .unwrap();
     assert_eq!(instantiated.prop(), &expected);
 
     assert!(matches!(
@@ -255,7 +265,10 @@ fn unused_same_stamp_free_substitution_is_rejected() {
 
 #[test]
 fn vacuous_forall_payload_with_same_stamp_free_is_rejected() {
-    let parent = theory("Pure", &["A"]);
+    let parent = TrustedTheory::root(
+        "Pure",
+        signature_with_props(&["A"]).extend_type_constructor("nat", 0).unwrap(),
+    );
     let candidate = implication_identity(&parent, "A");
     let nat = Ty::base("nat").unwrap();
     let mut local = ProofContext::new(parent.snapshot().clone());
@@ -335,4 +348,41 @@ fn descendant_can_use_ancestor_accepted_token() {
     assert_eq!(alias.dependencies().len(), 1);
     assert_eq!(alias.proved_in(), grandchild.id());
     assert_eq!(alias.accepted_in(), gc_with_fact.id());
+}
+
+#[test]
+fn accept_abstraction_local_free_replays_without_owner_leak() {
+    let owner = theory("Pure", &[]);
+    let mut local = make_context(&owner);
+    local.declare_free("x", Ty::prop());
+    let x = local.certify_term(RawTerm::free("x", Ty::prop())).unwrap();
+    let reflexive = KernelRules::reflexive(x);
+    let abstraction = KernelRules::abstraction("x".into(), Ty::prop(), reflexive.as_kernel())
+        .unwrap()
+        .try_close()
+        .unwrap();
+    let (child, token) = accept_closed_theorem(&owner, "identity_refl", abstraction).unwrap();
+    let identity = RawTerm::abs("x", Ty::prop(), RawTerm::bound(0));
+    let expected =
+        make_context(&owner).certify_prop(RawTerm::eq(identity.clone(), identity)).unwrap();
+    assert_eq!(token.prop(), &expected);
+    assert!(token.dependencies().is_empty());
+    assert!(matches!(
+        make_context(&child).certify_term(RawTerm::free("x", Ty::prop())),
+        Err(KernelError::UndeclaredFree(_))
+    ));
+}
+
+#[test]
+fn abstraction_variable_in_hypothesis_rejects() {
+    let owner = theory("Pure", &[]);
+    let mut local = make_context(&owner);
+    local.declare_free("x", Ty::prop());
+    let x = RawTerm::free("x", Ty::prop());
+    let equality = local.certify_prop(RawTerm::eq(x.clone(), x)).unwrap();
+    let assumed = KernelRules::assume(equality).unwrap().into_kernel();
+    assert!(matches!(
+        KernelRules::abstraction("x".into(), Ty::prop(), &assumed),
+        Err(KernelError::FreeVarInHypotheses { .. })
+    ));
 }

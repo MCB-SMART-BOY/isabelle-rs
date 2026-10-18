@@ -1,0 +1,9 @@
+--- a/src/Pure/ROOT0.ML
++++ b/src/Pure/ROOT0.ML
+@@ -1,4 +1,7 @@
+ (*** Isabelle/Pure bootstrap: initial setup ***)
+ 
++PolyML.use "reference_observation.ML";
++val ML_file = Reference_Observation.bootstrap_file ML_file;
++
+ ML_file "ML/ml_statistics.ML";

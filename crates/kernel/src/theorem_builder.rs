@@ -10,14 +10,14 @@ pub fn axiom_theorem(
     prop_term: RawTerm,
 ) -> Result<KernelThm, KernelError> {
     let schema = basis.get_axiom(&axiom_name).ok_or_else(|| {
-        KernelError::Invariant(format!("axiom `{axiom_name}` not found in logic basis").into())
+        KernelError::Invariant(format!("axiom `{axiom_name}` not found in logic basis"))
     })?;
+    ctx.validate_type_instantiation(&type_inst)?;
     // Independently instantiate the schema
     let typed = crate::term::subst_types(&schema.prop, &type_inst)?;
-    let expected = crate::term::instantiate_schema_binders(&typed, &term_inst)?;
+    let expected_prop = crate::term::instantiate_schema_binders(ctx, typed, &term_inst)?;
     // Certify both — must produce the same proposition
     let supplied = ctx.certify_prop(prop_term)?;
-    let expected_prop = ctx.certify_prop(expected)?;
     if supplied.term() != expected_prop.term() {
         return Err(KernelError::Invariant(
             "supplied proposition does not match instantiated axiom schema".into(),
@@ -53,5 +53,5 @@ pub fn close_thm(thm: KernelThm) -> Result<ClosedThm, KernelError> {
     if thm.is_open() {
         return Err(KernelError::TheoremNotClosed { hypotheses: thm.hyps().len() });
     }
-    Ok(ClosedThm::new(thm))
+    thm.try_close()
 }

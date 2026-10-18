@@ -2,26 +2,37 @@
 
 ## Status
 
-Accepted.
-
-Accepted as a target architecture, not as an implementation-complete or
-near-term-work claim. Workspace/session/APP/LSP/plugin/compute expansion remains
-deferred until the context-bound trusted theorem loop in
-[ROADMAP.md](ROADMAP.md) closes.
+Accepted as a historical target architecture; its detailed layer ordering was
+superseded by [ADR-0004](ADR-0004-layered-platform-architecture-v2.md).
+The independent TCB crate exists at `crates/kernel/`; the Cargo workspace has
+root, `isabelle-kernel`, `isabelle-evidence`, and `xtask` members (root-only
+default members). `isabelle-evidence` handles offline evidence, not theorem
+authority. This workspace does **not** implement the proposed session, protocol,
+compute, or multi-crate product runtime. The pre-cutover bundled sample's audited
+`HOL::TrueI` projection reached `KernelTrustedClosed: 1/125`
+(`TransitionalStrictClosed: 0/125`); resumed native P2/P3/P4 work has not
+rerun that sample or completed HOL theory compilation. The WASM plugin model
+below is a historical proposal: the separately approved direction is
+compile-time-linked Rust native plugins, still under implementation, not ISIP
+conformance or complete native-build acceptance. See
+[PROJECT_STATUS.md](../status/PROJECT_STATUS.md#jvm-free-architecture-direction-2026-10-16),
+[ROADMAP.md](../status/ROADMAP.md), and the
+[engineering workflow](../guides/DEVELOPMENT.md#engineering-workflow).
 
 ## Context
 
-ADR-0001 established the strangler-pattern kernel reset: `src/kernel/` as the
-new strict TCB nucleus with no dummy type, no compat certification, and
-`ProofObligation ≠ Thm`. That decision was about *how* to build the kernel.
+ADR-0001 established the strangler-pattern kernel reset: the strict nucleus
+now lives in `crates/kernel/` and `src/kernel/mod.rs` re-exports it. That
+decision was about *how* to build the kernel.
 
 This ADR addresses *what comes after the kernel* — the overall system
 architecture that the strict kernel nucleus enables.
 
-The current codebase is a single monolithic crate with internal modules
-(`core`, `hol`, `isar`, `theory`, `tools`, `session`, `lsp`, `server`, `wasm`,
-`syntax`, `kernel`). While functional as a research prototype, this structure
-will not scale to:
+At the time of this decision, the codebase was largely a monolithic crate with
+internal modules (`core`, `hol`, `isar`, `theory`, `tools`, `session`, `lsp`,
+`server`, `wasm`, `syntax`, `kernel`). The TCB has since moved to its own crate;
+most other platform layers remain in the root crate. The original structure
+motivated work on:
 
 - Independent verification of the TCB size.
 - Structured compatibility measurement against Isabelle/HOL.
@@ -86,15 +97,19 @@ depend on upper layers):
 └─────────────────────────────────────────────────────┘
 ```
 
-Two cross-cutting systems span all layers:
+Two proposed cross-cutting systems span the target layers (not current
+implementations of these responsibilities):
 
 ```text
-isabelle-build     project scaffolding, dependency resolution,
+isabelle-build     proposed project scaffolding, dependency resolution,
                    lockfile, toolchain pinning, CI integration
 
 isabelle-plugin    WASM/Rust plugin API, capability-based sandbox,
                    proof-script-only return boundary
 ```
+
+The existing `isabelle-build` binary is instead a narrow source-backed fixture
+compiler; `xtask` orchestrates repository builds/checks, not sessions/projects.
 
 ### Layer 1: `isabelle-kernel` — Trusted Computing Base
 
@@ -108,9 +123,8 @@ type / term / cterm / theorem
 primitive inference rules
 certified substitution
 unification checking
-oracle footprint
-proof certificate hash
-invariant checking
+explicit logical-basis/axiom and definition dependencies
+invariant checking and exact-owner replay
 ```
 
 Explicitly excluded:
@@ -160,7 +174,7 @@ infrastructure for both LSP (human editing) and Agent protocol (machine proof
 search).
 
 A design-only standalone API skeleton is
-[proof_session.rs](../scripts/templates/proof_session.rs). Its standalone
+[proof_session.rs](../../scripts/templates/proof_session.rs). Its standalone
 compilation does not validate integration with the current session API.
 
 ### Layer 6: `isabelle-lsp` / `isabelle-agent` — Interface Protocols
@@ -176,12 +190,15 @@ Both share `isabelle-session` but expose different protocol semantics.
 Lake-style project scaffolding:
 
 The proposed manifest is maintained as
-[isabelle-project.toml](../scripts/templates/isabelle-project.toml).
+[isabelle-project.toml](../../scripts/templates/isabelle-project.toml).
 
-### Layer 8: `isabelle-plugin` — Extensibility
+### Layer 8: `isabelle-plugin` — Historical Extensibility Proposal
 
-WASM-sandboxed plugins with capability restrictions. Plugins return proof
-scripts, not theorems.
+The original proposal specified WASM-sandboxed plugins returning proof scripts,
+but that platform layer was not implemented. The approved native direction
+instead uses compile-time-linked Rust plugins with explicit registration and
+host capability gates; in-process plugin code is trusted, not a WASM sandbox.
+This authorization does not establish full native ROOT/HOL or ISIP delivery.
 
 ## Design Principles
 
@@ -204,9 +221,8 @@ established by ADR-0001:
 | Phase | Deliverable | Depends on |
 |-------|-----------|------------|
 | **P0** | Stabilize strict kernel nucleus and `resolve1_match` prototype | ADR-0001 |
-| **P0** | Strict-kernel compatibility matrix and adapter boundaries | P0 kernel |
-| **P1** | Extract `isabelle-kernel` as first independent crate | P0 kernel |
-| **P1** | Structured compatibility matrix (Core → Tier2 → AFP smoke) | P0 kernel |
+| **P1 (implemented)** | Extract `isabelle-kernel` as first independent crate | P0 kernel |
+| **P1 (planned)** | Structured compatibility matrix (Core → Tier2 → AFP smoke) | P0 kernel |
 | **P1/P2 parallel** | HPC symbolic compute design and CPU baseline outside the kernel | P0 kernel + compatibility matrix |
 | **P2** | Session incremental engine (snapshot/rollback/cache) | P1 kernel crate |
 | **P2** | `isabelle.toml` project system | P1 kernel crate |
@@ -217,24 +233,24 @@ established by ADR-0001:
 
 ## Consequences
 
-- The strict kernel nucleus (`src/kernel/`) remains the top priority. Do not
-  start workspace splitting, session redesign, or Agent protocol work before
-  the strict-kernel prototype has stable rule contracts, invariant checks,
-  attack tests, firewall checks, and adapter-boundary documentation.
-- The legacy `src/core/` is frozen. New features go into the appropriate
-  target layer, not into the monolithic crate.
-- The first workspace split extracts `isabelle-kernel` only. Other crates
-  follow only when their dependency boundaries are clear.
+- The strict kernel nucleus has been extracted into `crates/kernel/`. Cargo's
+  workspace also contains root, the offline `isabelle-evidence` crate and
+  `xtask`, with root-only default members; it does not split
+  runtime/session/product layers. Agent protocol and runtime work remain
+  gated by the current staged roadmap.
+- The legacy `src/core/` remains migration/quarantine code. Necessary
+  correctness repairs there do not grant it new trusted theorem authority.
+- Further runtime crate splits follow only when their dependency boundaries
+  are clear; neither extraction nor workspace automation proves the complete
+  sampled HOL theorem loop.
 - The high-performance symbolic compute layer is an untrusted acceleration
-  layer. It must not be implemented by adding GPU dependencies to the kernel or
-  by letting candidate generation bypass kernel replay/check.
-- "Compatibility" becomes a measurable CI metric, not an anecdotal claim.
-- Documentation and `.codex`/`.claude` references must track which layer a
-  change belongs to.
+  layer. It must not add GPU dependencies to the kernel or bypass replay.
+- Compatibility must have explicit measured evidence, not anecdotal claims.
+- Documentation and the existing `.claude` adapter must track layer ownership.
 
 ## Related
 
 - [ADR-0001](ADR-0001-kernel-core-rewrite.md) — Strangler-pattern kernel reset.
-- [KERNEL_PRIMITIVES.md](KERNEL_PRIMITIVES.md) — Strict kernel rule contracts.
-- [ROADMAP.md](ROADMAP.md) — Current phase plan.
-- [PROJECT_STATUS.md](PROJECT_STATUS.md) — Canonical status.
+- [KERNEL_PRIMITIVES.md](../kernel/KERNEL_PRIMITIVES.md) — Strict kernel rule contracts.
+- [ROADMAP.md](../status/ROADMAP.md) — Current phase plan.
+- [PROJECT_STATUS.md](../status/PROJECT_STATUS.md) — Canonical status.

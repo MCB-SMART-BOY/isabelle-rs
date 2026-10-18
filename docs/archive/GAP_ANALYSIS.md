@@ -1,10 +1,25 @@
 # Gap Analysis: Isabelle-rs vs Isabelle
 
-This document gives an honest comparison between Isabelle-rs and full
-Isabelle/HOL. It is intentionally conservative.
-
-Read root [AGENTS.md](../AGENTS.md), then
-[PROJECT_STATUS.md](PROJECT_STATUS.md), first.
+> Historical gap analysis. Completion percentages and proof/admission counts
+> below are subjective estimates or superseded snapshot outputs, **not**
+> current proof success rates or limits on the approved native compatibility
+> program (including future Isabelle/ML and PIDE work). For current sampled
+> results, trust boundaries, and priorities read [AGENTS.md](../../AGENTS.md),
+> [PROJECT_STATUS.md](../status/PROJECT_STATUS.md),
+> [TRUST.md](../status/TRUST.md), and
+> [ROADMAP.md](../status/ROADMAP.md). For separately observed automation
+> results see [xtask cutover](../status/PROJECT_STATUS.md#xtask-automation-cutover-2026-10-11);
+> current commands are in [engineering workflow](../guides/DEVELOPMENT.md#engineering-workflow).
+> In particular, the replay "missing coverage" list below belongs to this
+> checkpoint: current Rust kernel variable transformations and finite checked
+> composition are documented in
+> [KERNEL_PRIMITIVES.md](../kernel/KERNEL_PRIMITIVES.md) and
+> [NATIVE_THM_INTERFACE_INVENTORY.md](../status/NATIVE_THM_INTERFACE_INVENTORY.md);
+> those partial APIs do not establish full Isabelle/ML compatibility.
+> The conservative `bicompose` wrapper mentioned below is also historical:
+> the current crate exposes `resolve1_match` and the separate finite
+> `bicompose_candidate` checker, not that alias. Residual wrapper source and
+> its tests outside the current module tree are not active coverage.
 
 ## Executive Summary
 
@@ -22,11 +37,12 @@ Compared with complete Isabelle/HOL + Isar + PIDE + AFP, the project is still
 early. Compared with the narrower research goal of a Rust LCF kernel and trust
 boundary experiment, it is meaningful and already useful.
 
-## Relative Completion Estimates
+## Relative Completion Estimates (Historical, Subjective)
 
-These are semantic and engineering estimates, not line-count percentages.
+These were semantic and engineering impressions, not reproducible measurements
+or proof-success rates. Do not use the percentages as current status.
 
-| Layer / scope | Current estimate | Comment |
+| Layer / scope | Historical estimate | Comment at the time |
 |---|---:|---|
 | Full Isabelle/HOL + Isar + PIDE + AFP ecosystem | 15%-25% | Isabelle's ecosystem, libraries, tools, PIDE, and AFP are far larger. |
 | Isabelle/Pure-inspired Rust kernel research slice | 45%-60% | Core theorem type and several primitive rules exist, but not full `thm.ML` equivalence. |
@@ -89,13 +105,15 @@ All three predicates above inspect legacy `core::Thm`; even
 Final acceptance requires a context-bound `src/kernel::TrustedTheorem` over
 `CProp : prop`, immutable theory/logic provenance, and the selected replay gate.
 
-Recent verification diagnostics made this distinction stricter. Proof-method
-results with ambient hypotheses are no longer returned as oracle-free accepted
-lemmas: they must be exported by legal `implies_intr` discharge of known
-context assumptions, or admitted with `admitted:goal_export_*` /
-`admitted:proof_engine_failed`. This removes the misleading `OPEN_HAS_HYPS`
-runtime bucket, but it does not improve proof coverage:
-
+The following is an older diagnostic snapshot, superseded by the
+[current sampled result](../status/PROJECT_STATUS.md). In the 2026-10-03
+core run, `KernelTrustedClosed` was `0/125` and
+`TransitionalStrictClosed` was `1/125`. The accompanying narrative recorded
+`CompatClosedOracleFree` `0`, parser_gap `2`, datatype_stub `2`, and
+proof_engine_failed `120`, while the preserved output excerpt below differs
+for several of those secondary figures. These historical figures exclude the
+two independent strict source-backed fixtures; do not infer current counts
+from this internally inconsistent excerpt.
 ```text
 TransitionalStrictClosed: 1/125
 KernelTrustedClosed:      0/125
@@ -107,12 +125,20 @@ Admitted(parser_gap): 3
 Admitted(datatype_stub): 2
 ```
 
-Immutable theory/signature identity, exact-owner acceptance, exclusive outcome
-classification, and a data-only unresolved source AST are now implemented. The
-next trust-critical sequence is parser integration plus checked declaration and
-proposition elaboration, followed by authorized HOL basis schemas and generic
-conservative definitions. Admitted-reason reduction remains useful but must not
-reclassify transitional or compatibility results as trusted proofs.
+The next paragraphs and proposed work list reflect that superseded 2026-10-03
+checkpoint, not the 2026-10-07 bundled sample (`TransitionalStrictClosed: 0/125`,
+`KernelTrustedClosed: 1/125` for audited `HOL::TrueI` alone). Checked
+declarations, basis validation, definition replay, and the independent source
+fixtures have since been implemented; the fixtures themselves do not enter the
+sampled batch. Other HOL/ML commands remain unexecuted by the audited path.
+
+At that earlier checkpoint, immutable theory/signature identity, exact-owner
+acceptance, exclusive outcome classification, and a data-only unresolved source
+AST had been implemented. The then-proposed next sequence was parser integration,
+checked declaration and proposition elaboration, followed by authorized HOL basis
+schemas and generic conservative definitions. Those milestones and priorities
+are historical; use the linked roadmap for the remaining work. Admitted-reason
+reduction must not reclassify transitional or compatibility results as trusted proofs.
 
 `RewriteRule::from_thm` now rejects theorem hyps, oracle/admitted footprints,
 unresolved `tpairs`, and Pure-premise conditional rewrites. This prevents open
@@ -123,15 +149,20 @@ closed theorem sources. A follow-up subtype diagnostic still left
 simp-to-auto/blast fallback path rather than rewrite-rule admission as the next
 target.
 
-### Strict Kernel vs Legacy Core Firewall
+### Strict Kernel vs Legacy Core Firewall (Historical and Current Navigation)
 
-The strict `src/kernel/` nucleus is enforced by automated checks:
-- `scripts/check-kernel-firewall.sh` validates no legacy dependencies or forbidden patterns.
-- `pub(in crate::kernel)` visibility gating prevents upper-layer modules (`src/core/`, `src/isar/`, `src/tools/`) from bypassing certified-origin constructors.
-- `scripts/dev-check.sh strict` runs the maintained full gate: formatting,
-  compilation, firewall, current attack/boundary suites, strict inline suites,
-  and legacy `core::` compatibility tests. The script output is authoritative
-  for test counts.
+The then-strict `src/kernel/` nucleus was checked by:
+- `scripts/check-kernel-firewall.sh` for legacy dependencies and forbidden patterns.
+- `pub(in crate::kernel)` visibility gating against upper-layer modules (`src/core/`, `src/isar/`, `src/tools/`) bypassing certified-origin constructors.
+
+These earlier checks and counts are not xtask output. The later isolated kernel
+is in `crates/kernel/`; consult the
+[dated native xtask evidence](../status/PROJECT_STATUS.md#native-rust-automation-verification-2026-10-14)
+for actually observed automation and global-gate outcomes and
+[engineering workflow](../guides/DEVELOPMENT.md#engineering-workflow)
+for current invocations. That record does not report a new passing `strict`,
+`core`, or full workspace test: compilation was blocked. A passing project
+gate never implies the independent global gate passed.
 
 ### Attack-Test-Driven Kernel Work
 
@@ -162,24 +193,25 @@ Isabelle/ML + Scala:
 
 ## Major Remaining Gaps
 
-### Theory Identity, Acceptance, And HOL Authorization
+### Theory Identity, Acceptance, And HOL Authorization (Historical Checkpoint)
 
-Immutable identity and Pure-only acceptance are implemented for the current
-strict monomorphic kernel. `CTerm`, `CProp`, `KernelThm`, and
-`TrustedTheorem` carry exact `TheoryId` / `SignatureId` stamps; rules reject
-mixed contexts before logical matching; and `accept_closed_theorem` owns
-recursive recertification/replay, replay-derived theorem dependencies,
-duplicate-safe immutable insertion, and token sealing.
+At this earlier checkpoint, immutable identity and Pure-only acceptance had
+been implemented for the strict monomorphic kernel. `CTerm`, `CProp`,
+`KernelThm`, and `TrustedTheorem` carried exact `TheoryId` / `SignatureId`
+stamps; rules rejected mixed contexts before logical matching; and
+`accept_closed_theorem` owned recursive recertification/replay,
+replay-derived theorem dependencies, duplicate-safe immutable insertion,
+and token sealing.
 
-The largest immediate gap is now source-aware elaboration into an authorized
-object-logic theory. The current root/signature can express synthetic Pure
-contexts, but it has no checked polymorphic declaration pipeline,
-`LogicBasisId`, installed HOL axiom schemas, or conservative definition
-certificates. Those layers must exist before any sampled HOL theorem can use the
-implemented acceptance gate.
+The then-largest gap was source-aware elaboration into an authorized
+object-logic theory. The root/signature could express synthetic Pure
+contexts but lacked a checked polymorphic declaration pipeline,
+`LogicBasisId`, installed HOL axiom schemas, and conservative definition
+certificates. This is an archived prerequisite statement, not a claim that
+the later `HOL::TrueI` sampled token is missing or that it proves full HOL.
 
-See
-[KERNEL_TRUSTED_ACCEPTANCE_GAPS.md](KERNEL_TRUSTED_ACCEPTANCE_GAPS.md).
+For the implementation and remaining migration boundaries, see
+[KERNEL_TRUSTED_ACCEPTANCE_GAPS.md](../kernel/KERNEL_TRUSTED_ACCEPTANCE_GAPS.md).
 
 ### Term / Type / Certification Boundary
 
@@ -301,7 +333,7 @@ Feature-complete Isabelle/HOL in Rust
 Drop-in replacement for Isabelle
 ```
 
-## Next Work With Highest Research Value
+## Next Work Proposed At This Historical Checkpoint
 
 1. Keep immutable `SignatureId` / `TheoryId` and mixed-context rejection stable.
 2. Keep exact-owner theorem acceptance and mutually exclusive

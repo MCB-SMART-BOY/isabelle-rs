@@ -22,10 +22,13 @@
 //!
 //! All other theories (HOL, FOL, ZF) are built on top of Pure.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{Arc, OnceLock},
+};
 
 use super::{
-    sign::Signature,
+    sign::{Signature, SignatureMergeError, TypeDeclarationError},
     term::Term,
     thm::Thm,
     types::{Symbol, Typ},
@@ -40,6 +43,23 @@ use super::{
 pub struct Definition {
     pub name: Symbol,
     pub term: Arc<Term>, // the definiens (right-hand side)
+}
+
+/// User-fixable parent graph or inherited declaration conflict.
+#[derive(Clone, Debug, thiserror::Error)]
+pub enum TheoryMergeError {
+    /// Only the fixed Pure bootstrap may have no parents.
+    #[error("theory `{name}` requires at least one imported theory")]
+    MissingParents { name: Symbol },
+    /// Independently constructed theories cannot claim one imported name.
+    #[error("distinct imported theories claim the name `{name}`")]
+    IdentityConflict { name: Symbol },
+    /// Two imported declarations do not have the same origin.
+    #[error(transparent)]
+    Signature(#[from] SignatureMergeError),
+    /// Named facts or definitions from separate branches conflict.
+    #[error("conflicting imported {namespace} `{name}`")]
+    ItemConflict { namespace: &'static str, name: Symbol },
 }
 
 /// A theory: a name, a signature, axioms, and theorems.
@@ -71,38 +91,42 @@ impl Theory {
     /// This is the minimal bootstrap theory: no parents, no axioms,
     /// only the Pure signature with the three meta-logic constants.
     pub fn pure() -> Arc<Theory> {
-        Arc::new(Theory {
-            name: Arc::from("Pure"),
-            parents: Vec::new(),
-            signature: Signature::pure(),
-            axioms: HashMap::new(),
-            definitions: HashMap::new(),
-            theorems: HashMap::new(),
-        })
+        // One immutable bootstrap identity allows independent registries to share Pure ancestry.
+        static PURE: OnceLock<Arc<Theory>> = OnceLock::new();
+        Arc::clone(PURE.get_or_init(|| {
+            Arc::new(Theory {
+                name: Arc::from("Pure"),
+                parents: Vec::new(),
+                signature: Signature::pure(),
+                axioms: HashMap::new(),
+                definitions: HashMap::new(),
+                theorems: HashMap::new(),
+            })
+        }))
     }
 
     /// Create a new theory extending existing theories.
     ///
     /// The new theory inherits all declarations and theorems from its parents.
-    pub fn begin(name: impl Into<Symbol>, parents: Vec<Arc<Theory>>) -> Theory {
-        // Build the extended signature by inheriting from parents
-        let sig = if let Some(first) = parents.first() {
-            first.signature.extend()
-        } else {
-            Signature::pure()
-        };
-
-        // In a real implementation, we'd merge signatures from all parents.
-        // For now, just use the first parent's signature.
-
-        Theory {
-            name: name.into(),
+    pub fn begin(
+        name: impl Into<Symbol>,
+        parents: Vec<Arc<Theory>>,
+    ) -> Result<Theory, TheoryMergeError> {
+        let name = name.into();
+        let parents = canonicalize_parents(&name, parents)?;
+        let mut signature = parents[0].signature.extend();
+        for parent in &parents[1..] {
+            signature.merge(&parent.signature)?;
+        }
+        validate_imported_items(&parents)?;
+        Ok(Theory {
+            name,
             parents,
-            signature: sig,
+            signature,
             axioms: HashMap::new(),
             definitions: HashMap::new(),
             theorems: HashMap::new(),
-        }
+        })
     }
 
     // =================================================================
@@ -174,6 +198,11 @@ impl Theory {
         self.signature.declare(name, typ);
     }
 
+    /// Declare a fresh type constructor without shadowing a parent type.
+    pub fn declare_type(&mut self, name: &str, arity: usize) -> Result<(), TypeDeclarationError> {
+        self.signature.declare_type(name, arity)
+    }
+
     // =================================================================
     // Lookup
     // =================================================================
@@ -190,23 +219,102 @@ impl Theory {
         None
     }
 
-    /// Collect all axiom names (including from parents).
+    /// Collect each inherited axiom name once, including shared diamond ancestors.
     pub fn all_axiom_names(&self) -> Vec<&str> {
-        let mut names: Vec<&str> = self.axioms.keys().map(|n| n.as_ref()).collect();
-        for parent in &self.parents {
-            names.extend(parent.all_axiom_names());
-        }
-        names
+        self.collect_names(|theory| theory.axioms.keys())
     }
 
-    /// Collect all theorem names (including from parents).
+    /// Collect each inherited theorem name once, including shared diamond ancestors.
     pub fn all_theorem_names(&self) -> Vec<&str> {
-        let mut names: Vec<&str> = self.theorems.keys().map(|n| n.as_ref()).collect();
-        for parent in &self.parents {
-            names.extend(parent.all_theorem_names());
-        }
-        names
+        self.collect_names(|theory| theory.theorems.keys())
     }
+
+    fn collect_names<'a, V: 'a>(
+        &'a self,
+        names: impl Fn(&'a Theory) -> std::collections::hash_map::Keys<'a, Symbol, V>,
+    ) -> Vec<&'a str> {
+        let mut collected = std::collections::BTreeSet::new();
+        let mut visited = HashSet::new();
+        let mut pending = vec![self];
+        while let Some(theory) = pending.pop() {
+            if visited.insert(std::ptr::from_ref(theory)) {
+                collected.extend(names(theory).map(AsRef::as_ref));
+                pending.extend(theory.parents.iter().map(Arc::as_ref));
+            }
+        }
+        collected.into_iter().collect()
+    }
+}
+
+fn canonicalize_parents(
+    name: &Symbol,
+    mut parents: Vec<Arc<Theory>>,
+) -> Result<Vec<Arc<Theory>>, TheoryMergeError> {
+    if parents.is_empty() {
+        return Err(TheoryMergeError::MissingParents { name: Arc::clone(name) });
+    }
+    let mut identities = HashMap::new();
+    let mut covered = HashSet::new();
+    let mut pending: Vec<_> = parents.iter().map(|parent| (parent.as_ref(), false)).collect();
+    while let Some((theory, is_ancestor)) = pending.pop() {
+        let identity = std::ptr::from_ref(theory);
+        if is_ancestor {
+            covered.insert(identity);
+        }
+        if let Some(previous) = identities.insert(&theory.name, identity) {
+            if previous != identity {
+                return Err(TheoryMergeError::IdentityConflict { name: Arc::clone(&theory.name) });
+            }
+            continue;
+        }
+        if &theory.name == name {
+            return Err(TheoryMergeError::IdentityConflict { name: Arc::clone(name) });
+        }
+        pending.extend(theory.parents.iter().map(|parent| (parent.as_ref(), true)));
+    }
+    let mut seen = HashSet::new();
+    parents.retain(|parent| {
+        let identity = Arc::as_ptr(parent);
+        !covered.contains(&identity) && seen.insert(identity)
+    });
+    Ok(parents)
+}
+
+fn validate_imported_items(parents: &[Arc<Theory>]) -> Result<(), TheoryMergeError> {
+    let mut visited = HashSet::new();
+    let mut pending: Vec<_> = parents.iter().map(Arc::as_ref).collect();
+    let mut axioms = HashMap::new();
+    let mut definitions = HashMap::new();
+    let mut theorems = HashMap::new();
+    while let Some(theory) = pending.pop() {
+        if !visited.insert(std::ptr::from_ref(theory)) {
+            continue;
+        }
+        validate_item_origins(&mut axioms, theory.axioms.iter(), "axiom")?;
+        validate_item_origins(
+            &mut definitions,
+            theory.definitions.iter().map(|(name, definition)| (name, &definition.term)),
+            "definition",
+        )?;
+        validate_item_origins(&mut theorems, theory.theorems.iter(), "theorem")?;
+        pending.extend(theory.parents.iter().map(Arc::as_ref));
+    }
+    Ok(())
+}
+
+fn validate_item_origins<'a, T: 'a>(
+    known: &mut HashMap<&'a Symbol, *const T>,
+    incoming: impl Iterator<Item = (&'a Symbol, &'a Arc<T>)>,
+    namespace: &'static str,
+) -> Result<(), TheoryMergeError> {
+    for (name, item) in incoming {
+        if let Some(previous) = known.insert(name, Arc::as_ptr(item))
+            && previous != Arc::as_ptr(item)
+        {
+            return Err(TheoryMergeError::ItemConflict { namespace, name: Arc::clone(name) });
+        }
+    }
+    Ok(())
 }
 
 // =========================================================================
@@ -292,7 +400,7 @@ mod tests {
     #[test]
     fn test_theory_extension() {
         let pure = Theory::pure();
-        let mut my_theory = Theory::begin("MyTheory", vec![Arc::clone(&pure)]);
+        let mut my_theory = Theory::begin("MyTheory", vec![Arc::clone(&pure)]).unwrap();
         my_theory.declare_const("MyTheory.foo", Typ::base("prop"));
 
         assert!(my_theory.is_declared("Pure.imp")); // inherited
@@ -302,7 +410,7 @@ mod tests {
     #[test]
     fn test_add_theorem() {
         let pure = Theory::pure();
-        let mut my_theory = Theory::begin("MyTheory", vec![Arc::clone(&pure)]);
+        let mut my_theory = Theory::begin("MyTheory", vec![Arc::clone(&pure)]).unwrap();
 
         // Prove A ==> A in this theory through the strict kernel boundary.
         let mut env = TypeEnv::new();

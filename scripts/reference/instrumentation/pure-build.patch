@@ -1,0 +1,17 @@
+--- a/src/Pure/Build/build.ML
++++ b/src/Pure/Build/build.ML
+@@ -35,7 +35,14 @@
+   val hooks = Synchronized.var "Build.hooks" ([]: hook list);
+ in
+ 
+-fun add_hook hook = Synchronized.change hooks (cons hook);
++fun add_hook hook =
++  let
++    val owner = (case Context.get_generic_context () of
++      SOME context => Context.theory_long_name (Context.theory_of context)
++    | NONE => Context.PureN);
++    val _ = Synchronized.change hooks (cons hook);
++  in Reference_Observation.emit_registration "MLHook" "Build.add_hook"
++    owner "register" end;
+ 
+ fun apply_hooks qualifier loaded_theories =

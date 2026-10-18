@@ -2,38 +2,31 @@
 
 ## Status
 
-Narrow legacy bridge implemented. `HOL::TrueI` is the first existing core-file
-`TransitionalStrictClosed` slice, not a new-kernel trusted theorem.
+Historical record of the removed legacy `try_strict_hol_refl` /
+`try_strict_hol_true_i` bridges. On 2026-10-03 the sampled core-file
+`HOL::TrueI` produced a bool-valued `core::Thm` with
+`TransitionalStrictClosed: 1/125` and `KernelTrustedClosed: 0/125`; this
+legacy theorem had no immutable owner or installed HOL logic-basis dependency.
 
-Current implementation status:
+On 2026-10-07 the audited bundled-source `HOL::TrueI` projection instead
+produces the sole sampled exact-owner token (`KernelTrustedClosed: 1/125`,
+`TransitionalStrictClosed: 0/125`). The independent source-backed
+`TrustedTrueI.thy` fixture also produces a token outside the sample. Neither
+path executes unrelated HOL/ML commands or implements general HOL equality
+reasoning; see [PROJECT_STATUS.md](../status/PROJECT_STATUS.md) and
+[ADR-0003-hol-logic-trusted-extension.md](../adr/ADR-0003-hol-logic-trusted-extension.md).
 
-```text
-HOL.eq term/type diagnostic: done
-try_strict_hol_refl: implemented
-checked-definition transport/fold-back to True: implemented for checked True_def
-try_strict_hol_true_i: implemented as a narrow TrueI-only adapter
-core batch TransitionalStrictClosed: 1/125
-KernelTrustedClosed: 0/125
-```
+The historical tests of the removed bridge checked:
 
-This bridge produces a bool-valued legacy `core::Thm`, has no immutable theory
-or logic-extension identity, and cannot enter `KernelTrustedClosed`. It must not
-be generalized with additional HOL primitives in `src/core`; the target
-replacement boundary is proposed in
-[ADR-0003-hol-logic-trusted-extension.md](ADR-0003-hol-logic-trusted-extension.md).
+- `HOL.eq` declared in the checked `TypeEnv` as `'a => 'a => bool`;
+- checked application `HOL.eq HOL.True HOL.True` with result type `bool`;
+- a checked, reflexive `True_def` RHS;
+- `Pure.eq` distinct from `HOL.eq`.
 
-The current tests in `src/hol/hol_loader.rs` establish:
-
-- `HOL.eq` is declared in the checked `TypeEnv` as `'a => 'a => bool`.
-- A checked application `HOL.eq HOL.True HOL.True` has result type `bool`.
-- The checked `True_def` RHS is reflexive `HOL.eq` over `bool => bool`.
-- `Pure.eq` remains distinguishable from `HOL.eq` and must not be accepted as
-  an object-equality bridge input.
-- `try_strict_hol_refl` accepts only checked input terms and checked `HOL.eq`
-  declarations, and rejects missing/dummy `HOL.eq` and compatibility inputs.
-
-This document records the transitional experiment used by the first existing
-core-file `TransitionalStrictClosed` slice:
+The legacy `True_def` payload and `true_def_transport` fold-back supplied
+only a bool-valued `HOL.True`. The current audited source projection uses
+the strict kernel's basis, conservative definition, Pure transport and owner
+replay instead. The sections below document the superseded experiment:
 
 ```text
 HOL::TrueI:
@@ -41,14 +34,11 @@ HOL::TrueI:
   unfolding True_def by (rule refl)
 ```
 
-`True_def` is already available as a checked definition source in
-`HolTheoremDb::checked_definitions`, but it is not a theorem and does not count
-as proof progress. `try_strict_hol_refl` can prove the unfolded reflexive HOL
-object equality, and `true_def_transport` can fold that exact checked RHS back
-to `HOL.True`. `HOL::TrueI` remains unsafe to accept until a narrow adapter
-checks the theorem name, parsed proposition, proof shape, checked definition,
-RHS proof, and final `TransitionalStrictClosed` result. Those checks do not supply
-`HOL.Trueprop`, a theory context, or new-kernel theorem provenance.
+Historically `True_def` was available as non-theorem legacy input. The
+legacy bridge proved its reflexive object-equality RHS and
+`true_def_transport` folded it back to bool-valued `HOL.True`. The former
+`try_strict_hol_true_i` checked the narrow name/proposition/proof shape,
+but supplied neither `HOL.Trueprop` nor an immutable theorem owner.
 
 ## Problem
 
@@ -73,9 +63,8 @@ It does not prove:
 |- HOL.eq t t
 ```
 
-The current searchable `refl` facts in the HOL database are compatibility facts,
-not transitional strict-closed theorem sources. They must not be reused to
-produce `ProofOutcome::TransitionalStrictClosed`.
+Searchable `refl` facts in the legacy HOL database are not strict
+accepted theorem evidence; they cannot produce `KernelTrustedClosed`.
 
 ## Non-Goals
 
@@ -84,12 +73,12 @@ produce `ProofOutcome::TransitionalStrictClosed`.
 - Do not implement a broad HOL proof engine.
 - Do not treat `Pure.eq` and `HOL.eq` as interchangeable.
 - Do not use compat, open, admitted, or searchable-only `refl` facts.
-- Do not modify `try_strict_hol_true_i` to bypass checked `True_def`
-  transport, proof-shape checks, or final strict-closed validation.
+- Do not revive `try_strict_hol_true_i` to bypass audited source/definition
+  provenance, proof-shape checks, or exact-owner kernel acceptance.
 
 ## Term Shape
 
-The implemented bridge only concerns terms with this object-logic shape:
+The former bridge concerned only terms with this object-logic shape:
 
 ```text
 HOL.eq t t
@@ -102,15 +91,15 @@ HOL.eq : α => α => bool
 t      : α
 ```
 
-The current result is the boolean term `HOL.eq t t : bool`; it is not lifted
-through `HOL.Trueprop` and therefore is not a valid `CProp` for final kernel
-acceptance. It must not be represented as Pure meta-equality either. A future
-HOL elaborator must construct `HOL.Trueprop (HOL.eq t t) : prop` from the source
-judgment position before kernel certification.
+Its result was the boolean term `HOL.eq t t : bool`, not lifted through
+`HOL.Trueprop` and therefore not a valid `CProp` for final kernel acceptance.
+It must not be represented as Pure meta-equality either. The audited sampled
+projection now checks `HOL.Trueprop (HOL.True) : prop` through the strict
+kernel; general HOL equality elaboration remains open.
 
 ## Trust Decision
 
-The bridge is treated only as a named legacy migration derivation:
+The removed bridge was treated only as a named legacy migration derivation:
 
 ```text
 try_strict_hol_refl(t)
@@ -120,20 +109,15 @@ try_strict_hol_refl(t)
     legacy TransitionalStrictClosed theorem for HOL.eq t t : bool
 ```
 
-This expands the transitional `src/core` trusted surface but is not part of the
-target Pure kernel or HOL logic extension. It is not derived from Pure
-reflexivity alone and is ineligible for `KernelTrustedClosed`. While it remains,
-the bridge must be:
-
-- explicitly named;
-- documented in `TRUST.md`;
-- represented in derivation/proof metadata, not hidden as a compat theorem;
-- covered by attack tests;
-- limited to reflexive object equality only.
+This expanded the transitional `src/core` trusted surface but was not part of
+the target Pure kernel or HOL logic extension. It was not derived from Pure
+reflexivity alone and was ineligible for `KernelTrustedClosed`. The historical
+requirements while it existed were explicit naming, trust documentation,
+derivation metadata, attack coverage, and reflexive-only scope.
 
 ## Acceptance Conditions
 
-`try_strict_hol_refl(t)` succeeds only if all conditions hold:
+The removed `try_strict_hol_refl(t)` required all these conditions:
 
 - `HOL.eq` is declared in the checked type environment.
 - `HOL.eq` has type compatible with `α => α => bool`.
@@ -149,7 +133,7 @@ the bridge must be:
 
 ## Rejection Conditions
 
-The bridge must reject:
+The removed bridge had to reject:
 
 - missing `HOL.eq`;
 - dummy-typed `HOL.eq`;
@@ -161,7 +145,7 @@ The bridge must reject:
 
 ## `HOL::TrueI` Dependency
 
-`HOL::TrueI` is implemented only by the narrow path:
+The former transitional `HOL::TrueI` path was:
 
 ```text
 1. recognize theorem name `HOL::TrueI`;
@@ -174,13 +158,14 @@ The bridge must reject:
 8. classify the final legacy theorem as `TransitionalStrictClosed` only.
 ```
 
-The transport step is documented separately in
-[CHECKED_DEFINITION_TRANSPORT.md](CHECKED_DEFINITION_TRANSPORT.md). It is
-deliberately restricted to checked `True_def`, not arbitrary definitions.
+The historical transport step is documented separately in
+[CHECKED_DEFINITION_TRANSPORT.md](CHECKED_DEFINITION_TRANSPORT.md). It was
+restricted to checked `True_def`, not arbitrary definitions.
 
-## First Tests
+## Legacy Regression Coverage
 
-The first implementation must add tests equivalent to:
+These names document historical tests of the removed legacy bridge; they
+are not current executable test names:
 
 ```text
 hol_refl_bridge_accepts_checked_term
@@ -191,7 +176,7 @@ hol_refl_bridge_rejects_pure_eq_substitution
 hol_refl_bridge_produces_strict_closed_hol_eq
 ```
 
-`HOL::TrueI` tests separately check:
+The historical `HOL::TrueI` tests separately checked:
 
 ```text
 strict_hol_true_i_accepts_checked_true_def_refl_path
@@ -204,22 +189,16 @@ strict_hol_true_i_rejects_compat_refl_path
 proof_outcome_counts_hol_true_i_as_transitional_strict_closed
 ```
 
-The checked-definition transport attack tests live next to the HOL loader and
-proofterm replay tests and include `true_def_transport_*` coverage.
+The historical checked-definition transport tests included
+`true_def_transport_*`; current attack coverage for the sampled projection
+is in [`tests/sampled_true_i.rs`](../../tests/sampled_true_i.rs).
 
 ## Implementation Boundary
 
-The bridge remains quarantined outside `src/kernel` and must not be copied into
-the future HOL object-logic layer. The target path installs explicit HOL axiom
-schemas and conservative definitions in an immutable context, then derives a
-`CProp` using generic kernel operations.
-
-Do not expand this bridge into general equality reasoning. The completed
-milestone is:
-
-```text
-TransitionalStrictClosed: 0/125 -> 1/125
-KernelTrustedClosed:      0/125
-```
-
-and the only current consumer is the `HOL::TrueI` slice.
+The removed bridge must not be restored in the strict kernel. The sampled
+`HOL::TrueI` projection now audits only the necessary bundled source
+declarations and proof, installs a minimal logic basis and conservative
+definition in an immutable owner, and derives a checked `CProp` via Pure
+transport. The current milestone is `TransitionalStrictClosed: 0/125`,
+`KernelTrustedClosed: 1/125`; broader source-theory compilation and general
+object-equality reasoning remain open.

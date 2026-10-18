@@ -306,11 +306,11 @@ fn occurs_in(var: &Symbol, typ: &Typ) -> bool {
     }
 }
 
-/// Infer the principal type of a term using the global HOL theorem database.
+/// Infer the principal type of a term using only its embedded types.
 ///
-/// This is the primary entry point for type inference outside of the kernel.
-/// It looks up constant types from the `HolTheoremDb` type environment and
-/// runs Hindley-Milner inference to determine the most general type of `term`.
+/// Dummy-typed constants remain unconstrained type variables unless another
+/// part of the term determines their type. For declared constants, callers
+/// can construct [`TypeInfer::with_env`] with an explicit type environment.
 ///
 /// # Returns
 ///
@@ -330,23 +330,21 @@ fn occurs_in(var: &Symbol, typ: &Typ) -> bool {
 /// ```rust
 /// use isabelle_rs::core::{term::Term, type_infer::infer_type, types::Typ};
 ///
-/// // Infer type of a constant application: `¬ True`
-/// let not_true =
-///     Term::app(Term::const_("HOL.Not", Typ::dummy()), Term::const_("HOL.True", Typ::dummy()));
-/// let typ = infer_type(&not_true);
-/// assert!(typ.is_some());
+/// // Embedded types, not ambient declarations, constrain the application.
+/// let not_true = Term::app(
+///     Term::const_("HOL.Not", Typ::arrow(Typ::base("bool"), Typ::base("bool"))),
+///     Term::const_("HOL.True", Typ::base("bool")),
+/// );
+/// assert_eq!(infer_type(&not_true), Some(Typ::base("bool")));
 /// ```
 pub fn infer_type(term: &Term) -> Option<Typ> {
-    let env = crate::hol::hol_loader::HolTheoremDb::get().type_env.clone();
-    let mut infer = TypeInfer::with_env(env);
-    infer.infer(term)
+    TypeInfer::new().infer(term)
 }
 
-/// Infer types for all sub-terms of `term` and return a fully-annotated copy.
+/// Infer a term's type and return a copy with the current substitution applied.
 ///
-/// This is a convenience wrapper that first calls [`infer_type`] to compute
-/// the principal type, then returns a new [`Term`] where every sub-term
-/// carries its inferred type (replacing any [`Typ::dummy`] placeholders).
+/// Unknown dummy-typed constants still require an explicit environment;
+/// this helper never consults a process-wide database.
 ///
 /// # Errors
 ///
@@ -358,13 +356,14 @@ pub fn infer_type(term: &Term) -> Option<Typ> {
 /// ```rust
 /// use isabelle_rs::core::{term::Term, type_infer::infer_and_annotate, types::Typ};
 ///
-/// let f_x = Term::app(Term::free("f", Typ::dummy()), Term::free("x", Typ::dummy()));
-/// let annotated = infer_and_annotate(&f_x).unwrap();
-/// // The annotated term should no longer contain dummy types.
+/// let f_x = Term::app(
+///     Term::free("f", Typ::arrow(Typ::base("bool"), Typ::base("bool"))),
+///     Term::free("x", Typ::base("bool")),
+/// );
+/// assert!(infer_and_annotate(&f_x).is_some());
 /// ```
 pub fn infer_and_annotate(term: &Term) -> Option<Term> {
-    let env = crate::hol::hol_loader::HolTheoremDb::get().type_env.clone();
-    let mut infer = TypeInfer::with_env(env);
+    let mut infer = TypeInfer::new();
     let _typ = infer.infer(term)?;
     Some(infer.apply_to_term(term))
 }

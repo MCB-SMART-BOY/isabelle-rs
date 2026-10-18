@@ -1,14 +1,18 @@
-//! Linear arithmetic decision procedure for `nat` and `int`.
+//! Legacy linear-arithmetic search and diagnostic entailment for `nat`.
 //!
 //! Implements Fourier-Motzkin variable elimination for Presburger
-//! arithmetic over natural numbers and integers.
+//! arithmetic over natural numbers.
 //!
-//! Handles:
+//! The constraint layer models:
 //! - Linear equations: `x + y = z`, `Suc x = y`
 //! - Linear inequalities: `x + y < z`, `x <= y`
 //! - Simple contradictions: `0 = Suc n`, `Suc n < 0`
 //! - Transitive chains: `x < y`, `y < z` |- `x < z`
 //! - Monotonicity: `x <= y` |- `x + z <= y + z`
+//!
+//! Constraint entailment is not a proof certificate. Tactic candidates still
+//! require complete-goal and trust validation; this module grants no accepted
+//! strict-kernel token.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -17,7 +21,6 @@ use std::{
 
 use crate::{
     core::{
-        simplifier::RewriteRule,
         term::Term,
         thm::{CTerm, Thm, ThmKernel},
         types::Typ,
@@ -27,7 +30,7 @@ use crate::{
 };
 
 #[cfg(test)]
-use crate::{core::logic::Pure, hol::hologic, tools::simp::HolSimplifier};
+use crate::hol::hologic;
 
 // =========================================================================
 // Arithmetic type
@@ -36,11 +39,10 @@ use crate::{core::logic::Pure, hol::hologic, tools::simp::HolSimplifier};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ArithType {
     Nat,
-    Int,
 }
 
 // =========================================================================
-// Linear Expression over nat/int
+// Linear Expression over nat
 // =========================================================================
 
 /// A linear expression over numbers: sum of variables + constant.
@@ -53,6 +55,7 @@ pub(crate) struct LinExpr {
 }
 
 impl LinExpr {
+    #[cfg(test)]
     fn zero() -> Self {
         LinExpr { constant: 0, vars: Vec::new() }
     }
@@ -63,16 +66,6 @@ impl LinExpr {
 
     fn var(name: String) -> Self {
         LinExpr { constant: 0, vars: vec![(name, 1)] }
-    }
-
-    /// Normalize: sort variables and merge duplicates.
-    fn normalize(&mut self) {
-        let mut map: HashMap<String, i64> = HashMap::new();
-        for (v, c) in self.vars.drain(..) {
-            *map.entry(v).or_insert(0) += c;
-        }
-        self.vars = map.into_iter().filter(|(_, c)| *c != 0).collect();
-        self.vars.sort_by(|a, b| a.0.cmp(&b.0));
     }
 
     /// Add two linear expressions
@@ -100,6 +93,7 @@ impl LinExpr {
     }
 
     /// Multiply by a constant scalar
+    #[cfg(test)]
     fn scale(&self, k: i64) -> LinExpr {
         if k == 0 {
             return LinExpr::zero();
@@ -173,16 +167,6 @@ impl NormalizedConstraint {
             constant: expr.constant,
             is_strict: false,
             strict_count: 0,
-        }
-    }
-
-    /// Create a strict constraint: expr < 0
-    fn lt_zero(expr: &LinExpr) -> Self {
-        NormalizedConstraint {
-            coeffs: expr.vars.clone(),
-            constant: expr.constant,
-            is_strict: true,
-            strict_count: 1,
         }
     }
 
@@ -445,12 +429,13 @@ impl LinArithSolver {
         goal: &Atom,
         typ: ArithType,
         state: &Thm,
+        db: &HolTheoremDb,
     ) -> Option<Thm> {
         let entailed = self.check_entailment(premise_atoms, goal, typ);
         if !entailed {
             return None;
         }
-        self.prove_entailment(state, premise_atoms, goal, typ)
+        self.prove_entailment(state, premise_atoms, goal, typ, db)
     }
 
     // =================================================================
@@ -476,13 +461,11 @@ impl LinArithSolver {
         let all_vars = self.collect_variables(&constraints);
 
         // Eliminate variables one by one
-        let mut step_count = 0;
-        for var in &all_vars {
+        for (step_count, var) in all_vars.iter().enumerate() {
             if step_count >= self.max_steps {
                 return false;
             }
             constraints = self.eliminate_var(&constraints, var);
-            step_count += 1;
         }
 
         // Check for contradiction in variable-free constraints
@@ -515,8 +498,8 @@ impl LinArithSolver {
     ///
     /// ~(a = b) -> (a < b) or (b < a): a+1-b <= 0  or  b+1-a <= 0
     /// ~(a < b) -> b <= a: b - a <= 0
-    /// ~(a <= b) -> b < a: b + 1 - a <= 0 (nat) / a - b < 0 (int)
-    fn negate_goal(&self, goal: &Atom, typ: ArithType) -> Vec<NormalizedConstraint> {
+    /// ~(a <= b) -> b < a: b + 1 - a <= 0
+    fn negate_goal(&self, goal: &Atom, _typ: ArithType) -> Vec<NormalizedConstraint> {
         match goal {
             Atom::Eq(a, b) => {
                 // ~(a=b) -> a != b -> a+1 <= b or b+1 <= a
@@ -529,13 +512,8 @@ impl LinArithSolver {
                 vec![NormalizedConstraint::le_zero(&b.sub(a))]
             },
             Atom::Le(a, b) => {
-                if typ == ArithType::Nat {
-                    // ~(a <= b) -> b < a -> b + 1 <= a -> b + 1 - a <= 0
-                    vec![NormalizedConstraint::le_zero(&b.add(&LinExpr::constant(1)).sub(a))]
-                } else {
-                    // ~(a <= b) -> b < a -> a - b < 0
-                    vec![NormalizedConstraint::lt_zero(&a.sub(b))]
-                }
+                // ~(a <= b) -> b < a -> b + 1 <= a -> b + 1 - a <= 0
+                vec![NormalizedConstraint::le_zero(&b.add(&LinExpr::constant(1)).sub(a))]
             },
         }
     }
@@ -725,6 +703,7 @@ impl LinArithSolver {
         _premise_atoms: &[Atom],
         goal: &Atom,
         typ: ArithType,
+        db: &HolTheoremDb,
     ) -> Option<Thm> {
         // Strategy 1: Reflexive equality
         if let Atom::Eq(a, b) = goal
@@ -736,12 +715,12 @@ impl LinArithSolver {
         }
 
         // Strategy 2: Transitivity (x < y, y < z |- x < z)
-        if let Some(thm) = self.try_transitivity(state, goal, typ) {
+        if let Some(thm) = self.try_transitivity(state, goal, typ, db) {
             return Some(thm);
         }
 
         // Strategy 3: Additive monotonicity
-        if let Some(thm) = self.try_add_mono(state, goal, typ) {
+        if let Some(thm) = self.try_add_mono(state, goal, typ, db) {
             return Some(thm);
         }
 
@@ -753,7 +732,7 @@ impl LinArithSolver {
         }
 
         // Strategy 5: Resolution-based proof
-        if let Some(thm) = self.try_resolution_proof(state, goal, typ) {
+        if let Some(thm) = self.try_resolution_proof(state, goal, typ, db) {
             return Some(thm);
         }
 
@@ -789,9 +768,13 @@ impl LinArithSolver {
     }
 
     /// Try to prove using transitivity.
-    fn try_transitivity(&self, state: &Thm, goal: &Atom, _typ: ArithType) -> Option<Thm> {
-        let db = HolTheoremDb::get();
-
+    fn try_transitivity(
+        &self,
+        state: &Thm,
+        goal: &Atom,
+        _typ: ArithType,
+        db: &HolTheoremDb,
+    ) -> Option<Thm> {
         let trans_name = match goal {
             Atom::Lt(_, _) => "less_trans",
             Atom::Le(_, _) => "le_trans",
@@ -810,7 +793,7 @@ impl LinArithSolver {
                     return Some(result);
                 }
                 // Try recursive resolution
-                if let Some(final_result) = self.try_resolution_proof(&result, goal, _typ) {
+                if let Some(final_result) = self.try_resolution_proof(&result, goal, _typ, db) {
                     return Some(final_result);
                 }
             }
@@ -820,9 +803,13 @@ impl LinArithSolver {
     }
 
     /// Try to prove using additive monotonicity.
-    fn try_add_mono(&self, state: &Thm, goal: &Atom, _typ: ArithType) -> Option<Thm> {
-        let db = HolTheoremDb::get();
-
+    fn try_add_mono(
+        &self,
+        state: &Thm,
+        goal: &Atom,
+        _typ: ArithType,
+        db: &HolTheoremDb,
+    ) -> Option<Thm> {
         let mono_name = match goal {
             Atom::Le(_, _) => "add_le_mono",
             Atom::Lt(_, _) => "add_less_mono",
@@ -854,9 +841,13 @@ impl LinArithSolver {
     }
 
     /// Try a general resolution-based proof using library theorems.
-    fn try_resolution_proof(&self, state: &Thm, _goal: &Atom, _typ: ArithType) -> Option<Thm> {
-        let db = HolTheoremDb::get();
-
+    fn try_resolution_proof(
+        &self,
+        state: &Thm,
+        _goal: &Atom,
+        _typ: ArithType,
+        db: &HolTheoremDb,
+    ) -> Option<Thm> {
         let rule_names = [
             "refl",
             "trans",
@@ -912,43 +903,22 @@ impl LinArithSolver {
 
 /// Main entry point for the `arith` tactic.
 ///
+/// Failure may return the unchanged obligation. Neither a nonempty result nor
+/// zero premises alone proves the requested goal; callers must validate the
+/// complete proposition, checked construction, and authorized hypotheses.
+///
 /// Algorithm:
 /// 1. Extract linear constraints from premises and goal
-/// 2. Simplify using arithmetic rewrite rules
-/// 3. Run Fourier-Motzkin elimination to check entailment
-/// 4. If entailed, construct proof through the LCF kernel
-/// 5. If FM fails, fall back to simplification -> auto -> blast
-pub fn arith_tac(state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
+/// 2. Run Fourier-Motzkin elimination to check entailment
+/// 3. If entailed, attempt legacy theorem construction
+/// 4. If FM fails, try auto then blast
+pub fn arith_tac(state: &Thm, premises: &[Arc<Thm>], db: &HolTheoremDb) -> Vec<Thm> {
     // Phase 0: Already solved
     if state.nprems() == 0 {
         return vec![state.clone()];
     }
 
-    // Phase 1: Build arithmetic simp rules
-    let db = HolTheoremDb::get();
-    let mut simp_rules: Vec<RewriteRule> = Vec::new();
-    for name in &[
-        "add_0_right",
-        "add_Suc_right",
-        "add_0",
-        "add_Suc",
-        "mult_0",
-        "mult_Suc",
-        "add_assoc",
-        "add_commute",
-        "Suc_eq_add_numeral_1_left",
-        "less_Suc_eq",
-        "Suc_less_eq",
-        "le_refl",
-    ] {
-        if let Some(thm) = db.by_name.get(*name)
-            && let Some(rule) = RewriteRule::from_thm(Arc::clone(thm))
-        {
-            simp_rules.push(rule);
-        }
-    }
-
-    // Phase 2: Extract linear atoms from goal
+    // Extract linear atoms from goal
     let goal_term = match state.prem(0) {
         Some(t) => t,
         None => return vec![state.clone()],
@@ -956,7 +926,7 @@ pub fn arith_tac(state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
 
     let goal_atom = term_to_atom(&goal_term);
 
-    // Phase 3: Try FM solver if we have a linear goal
+    // Try FM solver if we have a linear goal
     if let Some(ref goal_atom) = goal_atom {
         // Collect premise atoms from state
         let mut premise_atoms: Vec<Atom> = Vec::new();
@@ -970,93 +940,26 @@ pub fn arith_tac(state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
         }
 
         let solver = LinArithSolver::new();
-        if let Some(result) = solver.solve(&premise_atoms, goal_atom, ArithType::Nat, state)
+        if let Some(result) = solver.solve(&premise_atoms, goal_atom, ArithType::Nat, state, db)
             && result.nprems() == 0
         {
             return vec![result];
         }
     }
 
-    // Phase 4: Fallback - simplification
-    // FIXME: HolSimplifier not yet defined — skip this phase
-    if false { // disabled: simp rule injection
-        // let simp = HolSimplifier::with_rules(simp_rules.clone());
-        // let simp_results = crate::isar::method::Method::Simp(simp).execute(state, premises);
-        // if simp_results.iter().any(|r| r.nprems() == 0) {
-        // return simp_results;
-        // }
-    }
-
-    // Phase 5: Try auto
-    let auto_results = Method::Auto.execute(state, premises);
+    // Fallback: try auto
+    let auto_results = Method::Auto.execute(state, premises, db);
     if auto_results.iter().any(|r| r.nprems() == 0) {
         return auto_results;
     }
 
-    // Phase 6: Try blast
-    let blast_results = Method::Blast.execute(state, premises);
+    // Finally try blast
+    let blast_results = Method::Blast.execute(state, premises, db);
     if blast_results.iter().any(|r| r.nprems() == 0) {
         return blast_results;
     }
 
-    // Phase 7: Deep rewrite with arithmetic rules
-    // FIXME: HolSimplifier not yet defined — skip this phase
-    if false { // disabled: simp rule injection
-        // let simp = HolSimplifier::with_rules(simp_rules);
-        // if let Some(goal) = state.prem(0) {
-        // if let Some((_simplified, eq_thm)) = simp.hol_rewrite_deep(&goal) {
-        // if let Some(new_state) = ThmKernel::subst_premise(&eq_thm, state, 0) {
-        // if new_state.nprems() == 0 {
-        // return vec![new_state];
-        // }
-        // if let Some(prem) = new_state.prem(0) {
-        // if is_trivial_false(&prem) {
-        // return vec![new_state];
-        // }
-        // }
-        // return vec![new_state];
-        // }
-        // }
-        // }
-    }
-
     vec![state.clone()]
-}
-
-// =========================================================================
-// Triviality checks
-// =========================================================================
-
-fn is_trivial_false(term: &Term) -> bool {
-    if let Term::App { func, arg: rhs } = term
-        && let Term::App { func: eq_c, arg: lhs } = func.as_ref()
-        && is_hol_eq(eq_c)
-    {
-        return (is_zero(lhs) && is_suc(rhs)) || (is_suc(lhs) && is_zero(rhs));
-    }
-    false
-}
-
-fn is_zero(term: &Term) -> bool {
-    match term {
-        Term::Const { name, .. } => {
-            name.as_ref() == "0" || name.as_ref() == "HOL.zero" || name.as_ref() == "Groups.zero"
-        },
-        _ => false,
-    }
-}
-
-fn is_suc(term: &Term) -> bool {
-    match term {
-        Term::App { func, .. } => {
-            if let Term::Const { name, .. } = func.as_ref() {
-                name.as_ref() == "HOL.Suc" || name.as_ref() == "Nat.Suc"
-            } else {
-                false
-            }
-        },
-        _ => false,
-    }
 }
 
 // =========================================================================
@@ -1070,11 +973,6 @@ mod tests {
     // Helper to create a nat-typed free variable term
     fn nat_var(name: &str) -> Term {
         Term::free(name, Typ::base("nat"))
-    }
-
-    // Helper to create a nat constant term
-    fn nat_const(n: u64) -> Term {
-        Term::const_(format!("{}", n), Typ::base("nat"))
     }
 
     // Helper: x + y
@@ -1372,87 +1270,6 @@ mod tests {
         let goal = Atom::Le(x.add(&z), y.add(&z));
         let entailed = solver.check_entailment(&[prem], &goal, ArithType::Nat);
         assert!(entailed, "x <= y should entail x + z <= y + z");
-    }
-
-    // =================================================================
-    // End-to-end tactic tests
-    // =================================================================
-
-    #[test]
-    fn test_solve_simple_eq() {
-        let n = nat_var("n");
-        let goal_term = mk_hol_eq(n.clone(), n);
-        let goal_cterm = CTerm::certify(goal_term);
-        let state = ThmKernel::assume_compat(goal_cterm);
-        let result = arith_tac(&state, &[]);
-        assert_eq!(result.len(), 1);
-    }
-
-    #[test]
-    fn test_solve_ineq_trans() {
-        let _db = HolTheoremDb::get();
-        let x = nat_var("x");
-        let y = nat_var("y");
-        let z = nat_var("z");
-        let goal = mk_less(x.clone(), z.clone());
-        let prem1 = mk_less(x, y.clone());
-        let prem2 = mk_less(y, z);
-        let stmt = Pure::mk_implies(prem1, Pure::mk_implies(prem2, goal));
-        let state = ThmKernel::assume_compat(CTerm::certify(stmt));
-        let result = arith_tac(&state, &[]);
-        assert!(!result.is_empty());
-    }
-
-    #[test]
-    fn test_contradiction() {
-        let n = nat_var("n");
-        let zero = nat_const(0);
-        let suc_n = mk_suc(n);
-        let false_prem = mk_hol_eq(zero, suc_n);
-        let goal = Term::const_("False", Typ::base("prop"));
-        let stmt = Pure::mk_implies(false_prem, goal);
-        let state = ThmKernel::assume_compat(CTerm::certify(stmt));
-        let result = arith_tac(&state, &[]);
-        assert!(!result.is_empty());
-    }
-
-    #[test]
-    fn test_nat_05() {
-        let x = nat_var("x");
-        let y = nat_var("y");
-        let three = nat_const(3);
-        let one = nat_const(1);
-        let x_plus_3 = mk_plus(x.clone(), three);
-        let x_plus_1 = mk_plus(x, one);
-        let goal = Term::const_("False", Typ::base("prop"));
-        let prem1 = mk_less(x_plus_3, y.clone());
-        let prem2 = mk_less(y, x_plus_1);
-        let stmt = Pure::mk_implies(prem1, Pure::mk_implies(prem2, goal));
-        let state = ThmKernel::assume_compat(CTerm::certify(stmt));
-        let result = arith_tac(&state, &[]);
-        assert!(!result.is_empty());
-    }
-
-    #[test]
-    fn test_suc_injectivity() {
-        let n = nat_var("n");
-        let m = nat_var("m");
-        let goal = mk_hol_eq(n.clone(), m.clone());
-        let prem = mk_hol_eq(mk_suc(n), mk_suc(m));
-        let stmt = Pure::mk_implies(prem, goal);
-        let state = ThmKernel::assume_compat(CTerm::certify(stmt));
-        let result = arith_tac(&state, &[]);
-        assert!(!result.is_empty());
-    }
-
-    #[test]
-    fn test_zero_less_suc() {
-        let n = nat_var("n");
-        let zero = nat_const(0);
-        let goal = mk_less(zero, mk_suc(n));
-        let state = ThmKernel::assume_compat(CTerm::certify(goal));
-        let result = arith_tac(&state, &[]);
-        assert!(!result.is_empty());
     }
 
     #[test]

@@ -4,12 +4,10 @@
 use isabelle_rs::{
     core::{
         term::Term,
-        theory::Theory,
         thm::{CTerm, ThmKernel},
         types::{Typ, TypeEnv},
     },
     hol::hol_loader::*,
-    theory::loader::TheoryProcessor,
 };
 
 fn declare_term(term: &Term, env: &mut TypeEnv) {
@@ -92,33 +90,6 @@ fn test_kernel_15_ops() {
 }
 
 #[test]
-#[ignore = "known-failure: Pure theory lacks nat/True declarations; requires HOL type inference + judgment elaboration (Phase 4-5)"]
-fn test_theory_processor_pipeline() {
-    let source = r#"theory Test imports Pure begin
-
-definition foo :: "nat" where "foo = 0"
-
-lemma test: "True"
-  by auto
-
-end"#;
-
-    let parent = Theory::pure();
-    let mut proc = TheoryProcessor::with_parent(parent, "Test");
-    let _theory = proc.process_source(source);
-
-    let errors = proc.errors();
-    if !errors.is_empty() {
-        eprintln!("TheoryProcessor errors: {:?}", errors);
-    }
-
-    let thm_count = proc.theorem_count();
-    eprintln!("Test theory: {} theorems, {} errors", thm_count, errors.len());
-
-    assert!(errors.is_empty(), "TheoryProcessor should not report errors: {errors:?}");
-}
-
-#[test]
 fn test_typedef_record_parsing() {
     use isabelle_rs::hol::typedef_record::*;
 
@@ -162,7 +133,7 @@ fn test_datatype_parsing() {
 
     // Generate theorems
     let lemmas = generate_datatype_lemmas(&defs[0]);
-    assert!(lemmas.len() >= 1, "datatype should generate at least 1 lemma");
+    assert!(!lemmas.is_empty(), "datatype should generate at least 1 lemma");
 }
 
 #[test]

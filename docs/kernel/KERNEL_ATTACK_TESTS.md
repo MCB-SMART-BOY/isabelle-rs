@@ -1,12 +1,23 @@
 # Kernel Attack Tests
 
-This is the regression matrix for trusted-kernel soundness attacks. Default
-tests must pass in normal CI. Ignored tests document known holes that should
-start failing loudly once the parser/type boundary work begins.
+This regression matrix separates legacy `src/core` behavior from the strict
+TCB in `crates/kernel` (re-exported by `src/kernel/mod.rs`). The historical
+attack rows remain useful, but the current declaration, source, loader,
+proof-result, and automation boundaries also have dedicated contract suites.
+Passing those tests does not mean full Isabelle/HOL or TPTP compatibility or a
+successful official Isabelle runtime differential. Among the bundled
+125-case sample, only the audited `HOL::TrueI` projection reaches a kernel
+token (`KernelTrustedClosed: 1/125`); the separate Rust THM consumers are
+outside that sample. The complete HOL theory and unrelated HOL/ML commands
+are not checked by the projection.
 
-This matrix is scoped to the current Rust Isabelle/Pure-inspired kernel
-prototype. Passing these tests does not mean full Isabelle compatibility or full
-proofterm checking; it means the listed trusted-boundary regressions are covered.
+The 125-case result is a dated bundled-source observation, not a rerun after
+the automation migration. P2/P3/P4 implementation has resumed, and external
+Rust THM consumers have narrow executed closure evidence, but no full native
+compatibility acceptance; check the [current delivery state](../status/PROJECT_STATUS.md#current-delivery-state)
+and [Rust variable consumer record](../status/PROJECT_STATUS.md#rust-thm-type-and-variable-transformations-2026-10-19).
+This matrix names intended regression tests, not the outcome of a current full
+workspace test.
 
 ## Default Tests
 
@@ -36,40 +47,33 @@ proofterm checking; it means the listed trusted-boundary regressions are covered
 | Certify a proof goal with an ill-typed application despite declared names | rejected by context-based checked certification with `KernelError::TypeMismatch` | `src/isar/proof_state.rs::proof_state_checked_goal_rejects_ill_typed_application` |
 | Construct fake subgoals through compatibility theorem scaffolding | checked subgoal scaffolding preserves `ThmTrust::Strict` and passes strict invariants while remaining open | `src/isar/proof_state.rs::checked_subgoal_scaffolding_preserves_strict_trust` |
 | Let the new strict kernel accept legacy compatibility states | rejected by construction: no dummy type, undeclared Const/Free rejected, `ProofObligation` is not a theorem, `SearchFact` cannot convert to `TrustedTheorem` | `tests/kernel_rewrite_soundness.rs` |
-| Let strict matcher substitution ordering depend on `HashMap` iteration order | rejected by deterministic `(name, index, type)` sorting before `InstEntry` construction | `src/kernel/unify.rs::match_terms_multiple_distinct_vars_are_sorted`; `src/kernel/rules.rs::match_terms_certified_multiple_distinct_vars_are_sorted` |
-| Treat `resolve1_match` as full Isabelle `bicompose` | impossible by API contract; current rule is conservative one-way matching without lifting/freshening/flex-flex | `src/kernel/rules.rs::{resolve1_rejects_variable_collision_without_lifting,resolve1_rejects_goal_var_namespace_collision_without_lifting,resolve1_invariant_with_multiple_bindings_is_deterministic}` |
-| Produce a `resolve1_match` theorem when the rule conclusion does not match the selected goal subgoal | rejected by the strict matcher before theorem construction | `src/kernel/rules.rs::resolve1_rejects_match_failure` |
-| Interpret `selected_subgoal_index` as a rule-premise index instead of a goal-subgoal index | rejected/covered by selecting a nonmatching goal subgoal at index 0 and a matching one at index 1 | `src/kernel/rules.rs::resolve1_selected_index_is_goal_subgoal_not_rule_premise` |
-| Forget to apply the matching substitution to rule premises inserted into the goal | result proposition must contain substituted rule premises | `src/kernel/rules.rs::resolve1_applies_substitution_to_rule_premises` |
-| Silently apply a rule-side substitution to a same-namespace goal-side schematic Var | rejected with `RequiresLifting` instead of merging rule and goal Var namespaces | `src/kernel/rules.rs::resolve1_rejects_goal_var_namespace_collision_without_lifting` |
-| Forget to apply the matching substitution to theorem hypotheses | result burdens must contain substituted hypotheses, not stale schematic hypotheses | `src/kernel/rules.rs::resolve1_applies_substitution_to_hypotheses` |
-| Let `resolve1_match` drift from the implication-chain subgoal replacement helper | result proposition is built through `Term::replace_subgoal_with_premises` and checked against the helper semantics | `src/kernel/rules.rs::resolve1_matches_replace_subgoal_helper_semantics` |
-| Forge an empty-premise `resolve1_match` result that keeps the solved subgoal | invariant replay recomputes the selected-subgoal deletion and rejects theorem fields that still contain the solved premise | `src/kernel/rules.rs::resolve1_empty_rule_premises_tamper_kept_subgoal_rejected` |
-| Tamper a strict `resolve1_match` result or recorded substitution | invariant replay recomputes the strict match and rejects mismatched theorem fields/substitution | `src/kernel/rules.rs::{resolve1_invariant_check_passes,resolve1_tampered_result_rejected,resolve1_invariant_with_multiple_bindings_is_deterministic}` |
-| Treat strict `bicompose` as full Isabelle `bicompose` | impossible by API contract; v1 is a thin wrapper over `resolve1_match`, records `Derivation::Resolve1Match`, and rejects Free/Var namespace collisions | `src/kernel/rules.rs::{bicompose_basic_no_vars,bicompose_basic_with_rule_var_match,bicompose_rejects_free_collision_without_lifting,bicompose_rejects_var_namespace_collision_without_lifting,bicompose_invariant_check_passes}`; `tests/kernel_rewrite_soundness.rs::{bicompose_wrapper_basic_no_vars,bicompose_wrapper_rejects_var_namespace_collision,bicompose_wrapper_rejects_match_failure}` |
-| Make strict `bicompose` Var collision rejection too broad | same-name/different-index and non-overlapping goal-side schematic Vars succeed without `RequiresLifting`; only overlapping `(name,index)` pairs are rejected | `src/kernel/rules.rs::{bicompose_allows_same_var_name_different_index_without_lifting,bicompose_allows_non_overlapping_goal_side_var}` |
-| Interpret strict `bicompose` index as a rule-premise index instead of a goal-subgoal index | rejected/covered by selecting a nonmatching goal subgoal at index 0 and a matching one at index 1 | `src/kernel/rules.rs::bicompose_selected_index_is_goal_subgoal` |
-| Drop or misorder premises through strict `bicompose` wrapper | shared `replace_subgoal_with_premises` path replaces the selected goal subgoal with substituted rule premises | `src/kernel/rules.rs::{bicompose_replaces_selected_subgoal,bicompose_applies_substitution_to_rule_premises}` |
-| Silently substitute a same-namespace schematic Var in remaining goal subgoals through strict `bicompose` | rejected with `RequiresLifting` until lifting/freshening exists | `src/kernel/rules.rs::bicompose_rejects_goal_remaining_subgoal_substitution_without_lifting` |
-| Treat strict `subst_premise` as object-equality rewriting | rejected with `KernelError::NotProposition` before theorem construction | `src/kernel/rules.rs::subst_premise_rejects_object_equality`; `tests/kernel_rewrite_soundness.rs::subst_premise_rejects_object_equality` |
-| Let strict `subst_premise` rewrite in the symmetric rhs-to-lhs direction automatically | rejected with `KernelError::AntecedentMismatch`; callers must supply an explicit symmetric equality theorem in a future extension | `src/kernel/rules.rs::subst_premise_rejects_symmetric_direction`; `tests/kernel_rewrite_soundness.rs::subst_premise_rejects_symmetric_direction` |
-| Interpret strict `subst_premise` index as part of the equality theorem instead of the goal subgoal chain | rejected/covered by selecting a nonmatching goal subgoal at index 0 and a matching one at index 1 | `src/kernel/rules.rs::subst_premise_selected_index_is_goal_subgoal`; `tests/kernel_rewrite_soundness.rs::subst_premise_selected_index_is_goal_subgoal` |
-| Rewrite a missing or mismatched strict `subst_premise` subgoal | missing index returns `SubgoalIndexOutOfRange`; mismatch returns `AntecedentMismatch` | `src/kernel/rules.rs::{subst_premise_rejects_out_of_range,subst_premise_rejects_mismatch}`; `tests/kernel_rewrite_soundness.rs::{subst_premise_rejects_out_of_range,subst_premise_rejects_mismatch}` |
-| Drop unrelated goal subgoals or hypotheses through strict `subst_premise` | non-selected subgoals are preserved and equality/goal hypotheses are unioned | `src/kernel/rules.rs::{subst_premise_preserves_other_subgoals,subst_premise_preserves_hypotheses}`; `tests/kernel_rewrite_soundness.rs::subst_premise_preserves_other_subgoals_and_hypotheses` |
-| Tamper a strict `subst_premise` result | invariant replay recomputes the premise replacement and rejects forged theorem fields | `src/kernel/rules.rs::{subst_premise_invariant_check_passes,subst_premise_tampered_result_rejected}` |
-| Count `accept_all` / proof-skipped theory processing as a transitional closed theorem | rejected by `TheoryProcessor::process_source_verified`; indexed as admitted but not registered in the legacy transitional `Theory` table | `src/theory/loader.rs::test_accept_all_is_admitted_not_closed_verified` |
-| Report `accept_all` theory files as transitionally verified because they produced index entries | rejected by `SessionBuilder`; build/classifier report zero transitional closed theorems | `src/theory/session_builder.rs::test_accept_all_does_not_report_session_verified_theorems`; `src/theory/session_builder.rs::test_accept_all_classifier_is_not_full_success` |
+| Let strict matcher substitution ordering depend on `HashMap` iteration order | rejected by deterministic `(name, index, type)` sorting before `InstEntry` construction | `crates/kernel/src/unify.rs::match_terms_multiple_distinct_vars_are_sorted`; `crates/kernel/src/rules.rs::match_terms_certified_multiple_distinct_vars_are_sorted` |
+| Treat `resolve1_match` as full Isabelle `bicompose` | conservative one-way matching without lifting/freshening/flex-flex | `crates/kernel/src/rules.rs::{resolve1_rejects_variable_collision_without_lifting,resolve1_rejects_goal_var_namespace_collision_without_lifting,resolve1_invariant_with_multiple_bindings_is_deterministic}` |
+| Produce a `resolve1_match` theorem when the rule conclusion does not match the selected goal subgoal | strict matcher rejects before construction | `crates/kernel/src/rules.rs::resolve1_rejects_match_failure` |
+| Interpret `selected_subgoal_index` as a rule-premise index instead of a goal-subgoal index | selects a goal subgoal, not a rule premise | `crates/kernel/src/rules.rs::resolve1_selected_index_is_goal_subgoal_not_rule_premise` |
+| Forget the matching substitution on inserted rule premises | result proposition contains substituted premises | `crates/kernel/src/rules.rs::resolve1_applies_substitution_to_rule_premises` |
+| Substitute a same-namespace goal-side schematic Var silently | `RequiresLifting` instead of merging namespaces | `crates/kernel/src/rules.rs::resolve1_rejects_goal_var_namespace_collision_without_lifting` |
+| Drop rigid hypotheses during resolution | rigid hypotheses remain present after matching | `crates/kernel/src/rules.rs::resolve1_preserves_rigid_hypotheses_after_matching` |
+| Misorder retained and inserted subgoals during resolution | full substituted proposition preserves subgoal order | `crates/kernel/src/rules.rs::resolve1_multiple_bindings_preserve_subgoal_order` |
+| Forge empty-premise resolution while keeping solved subgoal | replay recomputes deletion and rejects tamper | `crates/kernel/src/rules.rs::resolve1_empty_rule_premises_tamper_kept_subgoal_rejected` |
+| Tamper resolution result or substitution | replay recomputes strict match | `crates/kernel/src/rules.rs::{resolve1_invariant_check_passes,resolve1_tampered_result_rejected,resolve1_invariant_with_multiple_bindings_is_deterministic}` |
+| Treat strict `subst_premise` as object-equality rewriting | `NotProposition` | `crates/kernel/src/rules.rs::subst_premise_rejects_object_equality`; `tests/kernel_rewrite_soundness.rs::subst_premise_rejects_object_equality` |
+| Rewrite rhs-to-lhs automatically | `AntecedentMismatch` without explicit symmetry | `crates/kernel/src/rules.rs::subst_premise_rejects_symmetric_direction`; `tests/kernel_rewrite_soundness.rs::subst_premise_rejects_symmetric_direction` |
+| Interpret strict `subst_premise` index as equality-side index | index addresses goal subgoal | `crates/kernel/src/rules.rs::subst_premise_selected_index_is_goal_subgoal`; `tests/kernel_rewrite_soundness.rs::subst_premise_selected_index_is_goal_subgoal` |
+| Rewrite missing or mismatched goal subgoal | `SubgoalIndexOutOfRange` / `AntecedentMismatch` | `crates/kernel/src/rules.rs::{subst_premise_rejects_out_of_range,subst_premise_rejects_mismatch}`; `tests/kernel_rewrite_soundness.rs::{subst_premise_rejects_out_of_range,subst_premise_rejects_mismatch}` |
+| Drop unrelated goal subgoals or hypotheses | non-selected subgoals preserved; burdens unioned | `crates/kernel/src/rules.rs::{subst_premise_preserves_other_subgoals,subst_premise_preserves_hypotheses}`; `tests/kernel_rewrite_soundness.rs::subst_premise_preserves_other_subgoals_and_hypotheses` |
+| Tamper strict `subst_premise` result | replay recomputes premise replacement | `crates/kernel/src/rules.rs::{subst_premise_invariant_check_passes,subst_premise_tampered_result_rejected}` |
+| Present `accept_all` / proof-skipped source processing as a complete theory | `TheoryProcessor::process_source_verified` rejects `accept_all` before processing and publishes no partial theory/index | `src/theory/loader.rs::process_complete_source`; `tests/theory_load_contract.rs::process_source_unimplemented_commands_never_publish_partial_theory` |
+| Report files with failed parents or incomplete proofs as successful session loads | `SessionBuilder` counts failures and blocks descendants; independent completed files may load | `tests/session_load_contract.rs::{build_missing_parent_and_cycle_only_schedule_independent_theory,classifier_matches_build_registry_for_runtime_failure_and_scan_failures}` |
 | Treat `HolTheoremDb` searchable facts as an accepted transitional table | DB exposes separate searchable and legacy closed-proved counts; neither is a final new-kernel `TrustedTheory` | `src/hol/hol_loader.rs::test_hol_theorem_db_distinguishes_searchable_from_closed_proved`; `src/hol/hol_loader.rs::test_hol_theorem_db_counts_closed_proved_facts_separately` |
-| Accept a proposition prefix after the legacy parser leaves source tokens unconsumed, or accept a synthetic lemma with no source provenance, through a registered explicit-proof adapter | compatibility `parse_term` still returns the prefix, but `parse_term_with_status` reports `FullyConsumed` / `Incomplete` and the loader retains `SourcePropositionStatus`; `Incomplete` / `Unavailable` fail the status half of the adapter gate as `admitted:strict_adapter_source_prop_unverified` before parser-gap and never enter legacy fallback | `src/isar/term_parser.rs::test_parse_term_reports_unconsumed_true_suffix`; `src/isar/method.rs::{strict_adapter_rejects_unconsumed_source_proposition_suffix,strict_adapter_rejects_true_i_without_source_provenance,verify_lemma_rejects_unconsumed_true_source_before_parser_gap}` |
-| Treat `FullyConsumed` as sufficient after parser recovery, or resolve a contextual surface `True` as global `HOL.True`, in the transitional `TrueI` adapter | the adapter additionally requires `SourcePropositionShape::StandaloneHolTrueAlias`; recovered `True =` is `FullyConsumed + Other`, while `fixes`, `includes`, `notes`, `if`, `when`, locale qualifiers, and enclosing contexts are `FullyConsumed + Contextual`. All reject as `admitted:strict_adapter_source_prop_unverified` before parser-gap. This lexical/context shape is a fail-closed guard, not a name-resolved AST | `src/isar/method.rs::{strict_adapter_rejects_recovered_true_source,strict_adapter_rejects_contextual_true_source,verify_lemma_rejects_recovered_and_contextual_true_sources_before_parser_gap}` |
+| Accept a source proposition prefix, or authorize synthetic source without provenance, through the registered sampled `TrueI` adapter | `parse_term` rejects incomplete input; `parse_term_with_status` preserves `Incomplete` only for explicit search diagnostics. The adapter rejects unverified status/shape as `admitted:strict_adapter_source_prop_unverified`, without entering legacy proof fallback or granting a token | `src/isar/term_parser.rs` full-consumption tests; `src/isar/method.rs::{strict_adapter_rejects_unconsumed_source_proposition_suffix,strict_adapter_rejects_true_i_without_source_provenance,strict_adapter_synthetic_metadata_cannot_borrow_source_token}` |
+| Recover a malformed `True` proposition into a candidate, or resolve contextual `True` as global `HOL.True` | malformed or mistyped `True =`, `True :: nat`, and `True :: prop` produce no lemma candidate. Parsed contextual input requires `StandaloneHolTrueAlias` and rejects before parser-gap; this shape is a fail-closed guard, not trusted source authority | `src/isar/method.rs::{strict_adapter_rejects_contextual_true_source,strict_adapter_forged_metadata_cannot_rebind_local_source}`; `tests/sampled_true_i.rs::sampled_true_i_local_statement_is_rejected` |
 | Treat a lemma or context terminator inside a comment/cartouche/string as active outer syntax | the source mask preserves line count but hides embedded text before command detection and nested-context tracking; commented-out `TrueI` is absent, and a commented `end` cannot escape a local context | `src/hol/hol_loader.rs::{commented_lemma_is_not_parsed_as_source_command,commented_end_cannot_escape_local_theorem_context}` |
 | Use a contextual, locale-qualified, commented, or cartouche-contained `True` definition as global checked `True_def`, or obtain `HOL.eq` from commented axiomatization text | checked definition/type evidence is restricted to visible top-level blocks; non-command and local definitions remain absent and commented declarations cannot populate the type environment | `src/hol/hol_loader.rs::{checked_true_def_requires_visible_top_level_definition,commented_axiomatization_cannot_supply_checked_source_types}` |
 | Treat a checked definition source as a theorem/fact or proof-progress entry | `True_def` is stored only in `HolTheoremDb::checked_definitions`, not `by_name`/`all`, and does not affect closed-proved counts | `src/hol/hol_loader.rs::{true_def_checked_source_exists,true_def_checked_source_rejects_dummy_or_compat,true_def_source_is_not_counted_as_theorem}` |
 | Silently overwrite checked-source type environment declarations while enabling checked definition sources | equal declarations merge, but conflicting constant or type declarations are rejected instead of replacing the existing verification environment | `src/hol/hol_loader.rs::{checked_source_env_merge_preserves_equal_declaration,checked_source_env_merge_rejects_conflicting_const_type,checked_source_env_merge_rejects_conflicting_type_decl}` |
-| Treat Pure reflexivity or compatibility `refl` as proof in the transitional HOL object-equality bridge | `try_strict_hol_refl` uses a separate legacy derivation, requires checked `HOL.eq` and input, and rejects Pure/compat substitutes; its bool-valued result remains ineligible for `KernelTrustedClosed` | `src/hol/hol_loader.rs::{hol_eq_type_env_declares_object_equality_shape,hol_eq_checked_application_has_bool_type_and_hol_shape,true_def_rhs_is_checked_reflexive_hol_eq_over_bool_function,pure_eq_is_not_accepted_as_hol_eq_shape,hol_refl_bridge_accepts_checked_term,hol_refl_bridge_rejects_missing_hol_eq,hol_refl_bridge_rejects_dummy_typed_hol_eq,hol_refl_bridge_rejects_compat_term,hol_refl_bridge_rejects_pure_eq_substitution}`; `src/core/proofterm.rs::{pure_reflexive_replay_rejects_hol_object_equality,hol_object_refl_replay_succeeds}` |
-| Treat the legacy checked-definition payload as a conservative definition, arbitrary rewrite rule, or source of kernel-trusted proof | `true_def_transport` is restricted to the exact transitional `True_def` payload and rejects compat/admitted/open/mismatched RHS values, but it has no conservative definition certificate or theory identity and cannot produce `KernelTrustedClosed` | `src/hol/hol_loader.rs::{true_def_transport_accepts_checked_true_def_rhs,true_def_transport_rejects_missing_true_def,true_def_transport_rejects_non_true_def,true_def_transport_rejects_rhs_mismatch,true_def_transport_rejects_compat_rhs_theorem,true_def_transport_rejects_admitted_rhs_theorem,true_def_transport_rejects_open_rhs_theorem,true_def_transport_rejects_dummy_tainted_definition,true_def_transport_produces_strict_closed_true}`; `src/core/proofterm.rs::{true_def_transport_replay_succeeds,true_def_transport_replay_rejects_wrong_rhs}` |
-| Accept `HOL::TrueI` through the transitional adapter with a direct special case, compat `refl`, wrong proof shape/name/proposition, dummy/free/compat parsed proposition, or mismatched `True_def` RHS | `try_strict_hol_true_i` accepts only the narrow checked legacy shape and classifies its bool-valued result as `TransitionalStrictClosed`; this remains ineligible for `KernelTrustedClosed` | `src/hol/hol_loader.rs::{strict_hol_true_i_accepts_checked_true_def_refl_path,strict_hol_true_i_rejects_missing_true_def,strict_hol_true_i_rejects_wrong_theorem_name,strict_hol_true_i_rejects_wrong_prop,strict_hol_true_i_rejects_wrong_proof_shape,strict_hol_true_i_rejects_rhs_mismatch,strict_hol_true_i_rejects_compat_refl_path,strict_hol_true_i_rejects_free_true_alias,strict_hol_true_i_rejects_dummy_typed_true,strict_hol_true_i_rejects_compat_parsed_prop}`; `src/isar/method.rs::{proof_outcome_counts_hol_true_i_as_transitional_strict_closed,core_batch_snapshot_reports_one_transitional_and_zero_kernel_trusted}` |
-| Scatter strict theorem adapters as direct `verify_lemma` branches, classify adapter rejection by matching `KernelError.message`, upgrade Free/dummy/mistyped True aliases, discard a conflicting explicit True type annotation, swallow a following source equality, or let parser-gap preempt a registered adapter | strict adapters route through `try_strict_adapter`, which distinguishes `NotApplicable`, strict `Proved`, and shape-hit `Rejected(reason)` outcomes; `StrictTrueIError` variants determine rejection control flow while error text is display-only; exact source True aliases are typed constants, annotations and following syntax remain visible, Free/dummy inputs and mismatched outer `CTerm` types reject, and explicit-proof adapters run before parser-gap; rejected shape hits become explicit `admitted:strict_adapter_*` results instead of silent legacy fallback; current registry contains only `HOL::TrueI` | `src/isar/term_parser.rs::{test_parse_true_aliases_as_typed_hol_constant,test_parse_true_alias_preserves_conflicting_explicit_type,test_parse_true_annotation_does_not_swallow_following_equality}`; `src/isar/method.rs::{strict_adapter_dispatches_true_i,strict_adapter_returns_not_applicable_for_unrelated_lemma,strict_adapter_returns_not_applicable_without_explicit_proof,strict_adapter_rejects_true_i_with_wrong_proof_shape,strict_adapter_rejects_true_i_with_missing_definition,strict_adapter_rejects_true_i_with_proposition_mismatch,strict_adapter_rejects_free_true_alias,strict_adapter_rejects_dummy_typed_true,strict_adapter_rejects_true_with_mismatched_cterm_type,strict_adapter_rejects_explicitly_mistyped_true_alias,strict_adapter_rejects_source_equality_after_true_annotation,strict_adapter_rejection_classification_ignores_error_text,verify_lemma_uses_strict_adapter_for_true_i,verify_lemma_records_strict_adapter_rejection_for_true_i,verify_lemma_does_not_normalize_free_true_into_hol_true,verify_lemma_does_not_normalize_dummy_true_into_hol_true,verify_lemma_does_not_normalize_mistyped_true_into_hol_true,verify_lemma_runs_strict_adapter_before_parser_gap_override,proof_outcome_still_counts_true_i_as_transitional_strict_closed}` |
+| Revive the removed legacy HOL object-reflexivity or `True_def` transport bridges as proof authority | Legacy bool-valued `HOL.eq` / `HOL.True` is not a strict `CProp`; the 2026-10-03 transitional bridge coverage was removed with those APIs | Current audited source projection: `tests/sampled_true_i.rs::{sampled_true_i_changed_equality_schema_is_rejected,sampled_true_i_changed_definition_is_rejected,sampled_true_i_changed_refl_schema_is_rejected}` |
+| Accept sampled `HOL::TrueI` from forged metadata, a changed declaration/proof, or a contextual source | The current `try_strict_adapter` binds the public candidate to audited complete source, returns an accepted exact-owner token only on verified projection, and rejects a shape hit without legacy proof fallback | `src/isar/method.rs::{strict_adapter_forged_metadata_cannot_rebind_local_source,strict_adapter_changed_source_invalidates_accepted_definition,strict_adapter_rejects_contextual_true_source}`; `tests/sampled_true_i.rs::{sampled_true_i_real_hol_source_returns_replayable_exact_token,sampled_true_i_changed_statement_is_rejected,sampled_true_i_changed_proof_is_rejected}` |
 | Let `Typ::dummy()` pass unnoticed at an explicit non-dummy boundary | rejected by `CTerm::require_non_dummy` | `tests/kernel_soundness.rs::dummy_type_is_detectable_at_kernel_boundaries` |
 | Treat a bool-valued HOL term as a new-kernel theorem proposition | `ProofContext::certify_prop` rejects plain `bool`, `HOL.True : bool`, and `HOL.eq a b : bool` with `NotProposition`; applying a declared `HOL.Trueprop : bool => prop` is required before CProp certification. This test covers only the current type-level boundary: it does not yet bind that declaration to immutable HOL theory/logic provenance. | `tests/kernel_rewrite_soundness.rs::{reject_bool_as_theorem_proposition,reject_hol_true_bool_without_trueprop,reject_hol_eq_bool_without_trueprop,declared_trueprop_wraps_hol_true_as_cprop}` |
 | Strictly certify a term whose type remains unresolved dummy | rejected by `CTerm::certify_checked` with `KernelError::DummyType` | `tests/kernel_soundness.rs::certify_checked_rejects_unresolved_dummy_type` |
@@ -133,22 +137,27 @@ legacy parser/loader paths can be isolated and audited explicitly.
 
 ## Immutable Context Identity Attacks
 
-`tests/kernel_context_identity.rs` now covers:
+`tests/kernel_context_identity.rs` and
+`tests/kernel_declaration_boundary.rs` cover:
 
-- deterministic, order-independent signature IDs and ancestry-sensitive theory
-  IDs with domain separation;
-- conflicting/duplicate declarations and immutable parent/sibling extension;
-- same text under the wrong signature or sibling ancestry;
-- mixed two-premise rules and mixed-context substitution before shape checks;
-- stale parent-certified objects used in a child context;
-- exact `TrustedTheorem::proved_in()` identity;
-- private ID constructors through compile-fail doctests;
-- untrusted signature payload digest mismatch and duplicate declarations.
+- deterministic, order-independent signature IDs, including type-constructor
+  names/arity; ancestry-sensitive theory IDs and domain separation;
+- duplicate declarations and immutable parent/sibling extensions;
+- unknown constructors, wrong arity under unused binders, bad schematic/free
+  annotations, and out-of-range type-variable indices;
+- same text under wrong signatures, sibling ancestry, or stale parents;
+- mixed two-premise rules and substitutions before logical shape checks;
+- untrusted signature snapshot digest mismatches and duplicate declarations;
+- installed basis rejection of undeclared, ill-scoped, mistyped, or
+  inconsistently polymorphic axiom schemas, before they can authorize proofs;
+- monomorphic conservative definitions reject hidden polymorphic RHS
+  annotations and accept valid definition dependencies.
 
 ## Trusted Acceptance Attacks
 
-`tests/kernel_trusted_acceptance.rs`, `src/kernel/theory.rs`, and
-`src/kernel/invariant.rs` now cover:
+`tests/kernel_trusted_acceptance.rs`,
+`crates/kernel/src/theory.rs`, and `crates/kernel/src/invariant.rs`
+cover strict owner replay and private-scope attacks:
 
 - wrong theory, wrong signature, stale parent, and sibling-token rejection;
 - forged closed candidates with hypotheses;
@@ -170,7 +179,9 @@ legacy parser/loader paths can be isolated and audited explicitly.
 - an independent fixed theorem-ID golden vector;
 - accepted-token precedence over legacy output and one exclusive statistics
   bucket;
-- preservation of `KernelTrustedClosed: 0/125` in the sampled HOL run.
+- preservation of the sole sampled `HOL::TrueI` kernel token and mutually
+  exclusive `KernelTrustedClosed: 1/125`, `TransitionalStrictClosed: 0/125`
+  counts; unrelated HOL/ML commands remain outside the audited projection.
 
 ## Source AST Boundary Attacks
 
@@ -185,26 +196,41 @@ legacy parser/loader paths can be isolated and audited explicitly.
 - absence of `ContextStamp` fields and direct conversions into `Term`, `CProp`,
   `ClosedThm`, `TrustedTheorem`, or `DependencySet`.
 
-These tests protect a data representation only. They do not prove parser
-integration, source authenticity, name resolution, type elaboration, or theorem
-acceptance.
+These tests protect a data representation only. The bounded strict parser
+and elaborator now consume it for two standalone source fixtures and the
+audited sampled `HOL::TrueI` projection; the AST alone proves neither source
+authenticity nor broad name resolution or acceptance.
 
-## Next Attack Tests To Add
+## Current Boundary Suites and Remaining Attack Work
 
-The next batches follow the remaining dependency order:
+Later Rust THM variable/scope and consumer boundaries are covered by
+`crates/kernel/tests/{variable_transformations,scope_export,native_thm_closure,native_thm_variables}.rs`
+and `crates/kernel/src/invariant/{variable_attacks,variable_scope_attacks}.rs`.
+They exercise owner replay, real-H and sort/flex obligations, typed-Free
+scope grants and rejection of tampered intermediate annotations. Their dated
+local execution evidence is in the
+[Rust variable consumer record](../status/PROJECT_STATUS.md#rust-thm-type-and-variable-transformations-2026-10-19),
+not in the bundled 125-case sample or a fresh run of this matrix.
 
-- parser-to-AST integration: missing provenance, Pure/HOL syntax confusion,
-  false aliases, binder/variable resolution changes, unconsumed source, invalid
-  spans, and display-text-independent typed errors;
-- checked elaboration: inconsistent polymorphic constraints, bad sorts,
-  missing/double `HOL.Trueprop`, and changed proposition skeletons;
-- HOL basis/definitions: uninstalled or mismatched manifests, forged basis IDs,
-  invalid schema instances, signature conflicts, axiom/definition dependency
-  tampering, definition self-reference, and replay in the wrong ancestry;
-- legacy replay and resolution debt only for focused soundness fixes:
-  `combination`/`abstraction`/`beta_conversion`/`forall_*`/`instantiate`,
-  `bicompose*`, burden propagation, and compatibility-equality attacks.
+- `tests/theory_load_contract.rs` and `tests/session_load_contract.rs` cover
+  complete-source rejection, persisted `typedecl`, duplicate/missing imports,
+  missing `end`, transactional failure, and per-build registry isolation.
+- `tests/legacy_proof_contract.rs` and `tests/legacy_pure_rule_contract.rs`
+  cover fresh-goal/mismatched-show/open-scope rejection, checked scoped
+  `A ==> A` completion, binder capture, exact result/hypothesis checks, and
+  Compat taint preservation. Logical implication premises do not themselves
+  mean unfinished tactic obligations.
+- `tests/automation_rewrite_contract.rs` and
+  `tests/automation_proof_contract.rs` cover rigid Free vs schematic Var
+  rewrites, tampered/conditional rules, App/Abs certificate endpoints,
+  rejected ATP step/formula/duplicate/missing evidence, and exact complete
+  Metis/Meson result checks. These legacy checks do not grant kernel tokens.
+- `src/theory/trusted_loader.rs` tests accept only the standalone Pure
+  `!!P::prop. PROP P ==> PROP P` by `assumption` (including supported renamed
+  binders/aliases); old `impI`, bare P, and malformed PROP fail without tokens.
 
-Other known debts remain typed rejection for trusted-boundary `Option<Thm>`
-paths and real derivation-producing attribute conversions. Neither should
-preempt source elaboration or add trusted power to legacy core.
+Future work extends the audited sampled `HOL::TrueI` source-to-exact-owner
+kernel integration to other HOL theorems, and broadens syntax/rules only with
+complete checked evidence. Typed diagnostics for legacy `Option<Thm>` and
+derivation-producing attributes remain separate debt; neither justifies new
+trusted power in `src/core`.

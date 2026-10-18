@@ -8,13 +8,18 @@ permissions: [Bash:cargo test, Bash:cargo check, Read, Edit]
 ---
 # Add Isar Command
 
-Broad Isar expansion is deferred until the implemented data-only source AST is
-integrated with checked `CProp`/`Trueprop` elaboration, then the explicit HOL
-basis and conservative-definition boundaries close. If a command is required
-for that migration, inspect `src/isar/proof.rs`, `src/isar/toplevel.rs`, and the
-existing dispatch tests before editing.
+Broad Isar support belongs to later stages of the approved A–H native
+compatibility program, not the current implementation. The standalone checked
+source compiler supports only narrow `TrueI` and Pure identity fixtures;
+the sampled HOL `TrueI` has its own audited source projection. The legacy
+complete-source loader supports a limited documented command allowlist.
+Inspect `src/isar/proof.rs`, `src/isar/proof_state.rs`,
+`src/isar/proof_result.rs`, `src/isar/toplevel.rs`, and relevant loader dispatch
+tests before editing.
 
-The command must preserve proof-mode invariants, return typed errors, and never
-turn parser or method failure into `assume`. Add focused tests, then run
-`scripts/dev-check.sh strict` and the relevant theory mode. Reusable Rust API
-sketches belong in `scripts/templates/`, not this skill.
+The command must fully consume its input, preserve proof-mode invariants,
+return typed errors, and never turn parser or method failure into `assume`.
+Only a real Strict/checked theorem of the entire statement may close a goal.
+Add focused tests, then run `cargo +stable xtask strict` and the relevant
+theory mode. Reusable Rust API sketches belong in `scripts/templates/`, not
+this skill.

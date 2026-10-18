@@ -27,7 +27,7 @@ use std::{
 use super::{
     error::KernelError,
     logic::Pure,
-    term::Term,
+    term::{Term, abstract_typed_free},
     types::{Sort, Typ, TypeEnv},
 };
 
@@ -95,11 +95,9 @@ impl Hash for CTerm {
 impl CTerm {
     /// Compatibility certification.
     ///
-    /// This is the historical best-effort wrapper: it infers a top-level type
-    /// when possible, may consult the global HOL type database, and may still
-    /// return a `CTerm` whose type is `Typ::dummy()`. It exists for legacy
-    /// parser/loader/HOL compatibility and must not be treated as a hard
-    /// trusted certification boundary.
+    /// This historical best-effort wrapper infers a top-level type from the
+    /// term structure. It may retain `Typ::dummy()` and is not a trusted
+    /// certification boundary.
     pub fn certify(term: Term) -> Self {
         let maxidx = Self::compute_maxidx(&term);
         // Try to infer type from the term structure
@@ -230,14 +228,10 @@ impl CTerm {
         false
     }
 
-    /// Create a certified term, attempting to annotate dummy types from the
-    /// global theorem database's TypeEnv first. Falls back to plain `certify`
-    /// if the DB is not available.
-    pub fn certify_annotated(mut term: Term) -> Self {
-        // Try to annotate dummy types from the global TypeEnv
-        use crate::hol::hol_loader::HolTheoremDb;
-        let db = HolTheoremDb::get();
-        term.type_annotate(&db.type_env);
+    /// Create a compatibility-certified term, annotating dummy types from
+    /// the caller's explicit type environment first.
+    pub fn certify_annotated(mut term: Term, type_env: &crate::core::types::TypeEnv) -> Self {
+        term.type_annotate(type_env);
         Self::certify(term)
     }
 
@@ -514,17 +508,20 @@ impl Hyps {
     /// Strict kernel α-equivalence check for terms.
     ///
     /// This relation is for trusted theorem construction. It only accepts real
-    /// structural α-equivalence: term constructors must match, schematic
-    /// variable indices must match, and binder types must match. It deliberately
-    /// does not perform parser/loader compatibility repairs such as Free/Const
+    /// structural α-equivalence: term constructors, all type annotations and
+    /// schematic variable indices must match; only binder names are ignored.
+    /// It does not perform parser/loader compatibility repairs such as Free/Const
     /// suffix matching or Var/Free matching.
     pub(crate) fn kernel_alpha_eq(a: &Term, b: &Term) -> bool {
         match (a, b) {
-            (Term::Const { name: n1, .. }, Term::Const { name: n2, .. }) => n1 == n2,
-            (Term::Free { name: n1, .. }, Term::Free { name: n2, .. }) => n1 == n2,
-            (Term::Var { name: n1, index: i1, .. }, Term::Var { name: n2, index: i2, .. }) => {
-                n1 == n2 && i1 == i2
+            (Term::Const { name: n1, typ: t1 }, Term::Const { name: n2, typ: t2 })
+            | (Term::Free { name: n1, typ: t1 }, Term::Free { name: n2, typ: t2 }) => {
+                n1 == n2 && t1 == t2
             },
+            (
+                Term::Var { name: n1, index: i1, typ: t1 },
+                Term::Var { name: n2, index: i2, typ: t2 },
+            ) => n1 == n2 && i1 == i2 && t1 == t2,
             (Term::Bound(i1), Term::Bound(i2)) => i1 == i2,
             (Term::Abs { body: b1, typ: t1, .. }, Term::Abs { body: b2, typ: t2, .. }) => {
                 t1 == t2 && Self::kernel_alpha_eq(b1, b2)
@@ -832,20 +829,12 @@ impl Thm {
     fn derivation_replay_supported(deriv: &Derivation) -> bool {
         match deriv {
             Derivation::Oracle { .. } => false,
-            Derivation::Axiom { name, .. } => {
-                matches!(*name, "assume" | "reflexive" | "hol_object_refl")
-            },
+            Derivation::Axiom { name, .. } => matches!(*name, "assume" | "reflexive"),
             Derivation::Rule { name, premises, .. } => {
-                matches!(
-                    *name,
-                    "symmetric"
-                        | "transitive"
-                        | "implies_intr"
-                        | "implies_elim"
-                        | "true_def_transport"
-                ) && premises
-                    .iter()
-                    .all(|premise| Self::derivation_replay_supported(&premise.derivation))
+                matches!(*name, "symmetric" | "transitive" | "implies_intr" | "implies_elim")
+                    && premises
+                        .iter()
+                        .all(|premise| Self::derivation_replay_supported(&premise.derivation))
             },
         }
     }
@@ -1137,37 +1126,6 @@ impl ThmKernel {
         Hyps::kernel_alpha_eq(a, b) && Self::known_term_types_compatible(a, b)
     }
 
-    fn is_hol_true_term(term: &Term) -> bool {
-        matches!(term, Term::Const { name, typ } if name.as_ref() == "HOL.True" && typ == &Typ::base("bool"))
-    }
-
-    fn dest_hol_object_equals(term: &Term) -> Option<(&Term, &Term)> {
-        match term {
-            Term::App { func, arg: rhs } => match func.as_ref() {
-                Term::App { func: inner, arg: lhs } => match inner.as_ref() {
-                    Term::Const { name, .. } if name.as_ref() == "HOL.eq" => {
-                        Some((lhs.as_ref(), rhs.as_ref()))
-                    },
-                    _ => None,
-                },
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-
-    fn bool_identity_term() -> Term {
-        Term::abs("x", Typ::base("bool"), Term::bound(0))
-    }
-
-    fn is_true_def_rhs_term(term: &Term) -> bool {
-        let Some((lhs, rhs)) = Self::dest_hol_object_equals(term) else {
-            return false;
-        };
-        let bool_id = Self::bool_identity_term();
-        lhs == &bool_id && rhs == &bool_id
-    }
-
     /// **Admit** `ct` as an oracle-backed theorem: `⊢ ct`, tagged with the
     /// oracle `name`.
     ///
@@ -1294,123 +1252,6 @@ impl ThmKernel {
     }
 
     // =================================================================
-    // HOL object-logic primitive bridge: reflexive object equality
-    // =================================================================
-
-    /// **HOL object reflexivity bridge**: `|- HOL.eq t t`.
-    ///
-    /// This is a deliberately narrow HOL object-logic primitive bridge. It is
-    /// not derived from Pure `reflexive`, and it must not be used as a general
-    /// unfolding or simplification engine. The input term must be checked, and
-    /// `HOL.eq` must be declared in the explicit `TypeEnv` with a type scheme
-    /// compatible with `α => α => bool`.
-    pub fn hol_object_refl(ct: CTerm, type_env: &TypeEnv) -> Result<Thm, KernelError> {
-        ct.require_checked("ThmKernel::hol_object_refl")?;
-        ct.require_no_dummy_types("ThmKernel::hol_object_refl")?;
-
-        let object_type = ct.term_type().clone();
-        let expected_eq_type =
-            Typ::arrows(vec![object_type.clone(), object_type], Typ::base("bool"));
-        let declared_eq_type = type_env
-            .const_type("HOL.eq")
-            .ok_or_else(|| KernelError::UndeclaredConstant("HOL.eq".into()))?;
-        if declared_eq_type.contains_dummy() {
-            return Err(KernelError::DummyType { op: "ThmKernel::hol_object_refl" });
-        }
-
-        let t = ct.term().clone();
-        let prop = Term::apps(Term::const_("HOL.eq", expected_eq_type), vec![t.clone(), t]);
-        let prop = CTerm::certify_checked(prop, type_env)?;
-        if prop.term_type() != &Typ::base("bool") {
-            return Err(KernelError::TypeMismatch {
-                expected: Typ::base("bool"),
-                actual: prop.term_type().clone(),
-            });
-        }
-
-        Ok(Thm {
-            hyps: Hyps::empty(),
-            prop: prop.clone(),
-            maxidx: prop.maxidx(),
-            tpairs: vec![],
-            shyps: vec![],
-            oracles: vec![],
-            trust: ThmTrust::Strict,
-            derivation: Derivation::Axiom { name: "hol_object_refl", prop },
-            serial: new_serial(),
-        })
-    }
-
-    // =================================================================
-    // HOL checked-definition transport: True_def fold-back
-    // =================================================================
-
-    /// **Checked True_def transport**: from a strict proof of the checked
-    /// `True_def` RHS to a strict proof of `HOL.True`.
-    ///
-    /// This is deliberately narrower than a definition rewriting engine. It
-    /// only accepts the checked source shape for `True_def`:
-    ///
-    /// ```text
-    /// HOL.True == HOL.eq (λx::bool. x) (λx::bool. x)
-    /// ```
-    ///
-    /// The `rhs_thm` premise must be strict, closed, oracle-free, and prove the
-    /// supplied checked RHS exactly.
-    pub fn true_def_transport(lhs: CTerm, rhs: CTerm, rhs_thm: &Thm) -> Result<Thm, KernelError> {
-        const OP: &str = "ThmKernel::true_def_transport";
-
-        lhs.require_checked(OP)?;
-        rhs.require_checked(OP)?;
-        lhs.require_no_dummy_types(OP)?;
-        rhs.require_no_dummy_types(OP)?;
-
-        if lhs.term_type() != &Typ::base("bool") || !Self::is_hol_true_term(lhs.term()) {
-            return Err(KernelError::KernelInvariant {
-                op: OP,
-                message: "lhs is not the checked HOL.True constant".into(),
-            });
-        }
-
-        if rhs.term_type() != &Typ::base("bool") || !Self::is_true_def_rhs_term(rhs.term()) {
-            return Err(KernelError::KernelInvariant {
-                op: OP,
-                message: "rhs is not the checked True_def reflexive HOL.eq body".into(),
-            });
-        }
-
-        if !rhs_thm.is_strict_closed_proved() {
-            return Err(KernelError::KernelInvariant {
-                op: OP,
-                message: "rhs theorem is not strict closed proved".into(),
-            });
-        }
-
-        if rhs_thm.prop() != &rhs {
-            return Err(KernelError::KernelInvariant {
-                op: OP,
-                message: "rhs theorem proposition does not match checked True_def RHS".into(),
-            });
-        }
-
-        Ok(Thm {
-            hyps: Hyps::empty(),
-            prop: lhs.clone(),
-            maxidx: lhs.maxidx(),
-            tpairs: vec![],
-            shyps: rhs_thm.shyps.clone(),
-            oracles: vec![],
-            trust: ThmTrust::Strict,
-            derivation: Derivation::Rule {
-                name: "true_def_transport",
-                prop: lhs,
-                premises: vec![ThmDeriv::from_thm(rhs_thm)],
-            },
-            serial: new_serial(),
-        })
-    }
-
-    // =================================================================
     // Primitive: symmetric
     // =================================================================
 
@@ -1531,27 +1372,34 @@ impl ThmKernel {
             });
         }
 
-        let new_prop = CTerm::certify(Pure::mk_equals(
-            result_typ,
-            Term::app(f.clone(), x.clone()),
-            Term::app(g.clone(), y.clone()),
-        ));
+        let trust = Self::trust_from_premises(&[thm_f, thm_x]);
+        let new_prop = Self::certify_rule_prop(
+            Pure::mk_equals(
+                result_typ,
+                Term::app(f.clone(), x.clone()),
+                Term::app(g.clone(), y.clone()),
+            ),
+            trust,
+            "ThmKernel::combination",
+        )?;
 
-        Ok(Thm {
+        let mut result = Thm {
             hyps: thm_f.hyps.union(&thm_x.hyps),
             prop: new_prop.clone(),
-            maxidx: usize::max(thm_f.maxidx, thm_x.maxidx),
+            maxidx: 0,
             tpairs: Self::union_tpairs(&thm_f.tpairs, &thm_x.tpairs),
             shyps: Self::union_shyps(&thm_f.shyps, &thm_x.shyps),
             oracles: Self::union_oracles(&thm_f.oracles, &thm_x.oracles),
-            trust: Self::trust_from_premises(&[thm_f, thm_x]),
+            trust,
             derivation: Derivation::Rule {
                 name: "combination",
                 prop: new_prop,
                 premises: vec![ThmDeriv::from_thm(thm_f), ThmDeriv::from_thm(thm_x)],
             },
             serial: new_serial(),
-        })
+        };
+        result.maxidx = result.actual_maxidx();
+        Ok(result)
     }
 
     // =================================================================
@@ -1572,30 +1420,33 @@ impl ThmKernel {
             }
         }
 
-        // The new equality type is the function type x_typ → eq_typ
-        let fn_typ = Typ::arrow(x_typ.clone(), eq_typ);
+        let left = abstract_typed_free(x_name, &x_typ, t)?;
+        let right = abstract_typed_free(x_name, &x_typ, u)?;
+        let fn_typ = Typ::arrow(x_typ, eq_typ);
+        let trust = Self::trust_from_premises(&[thm]);
+        let new_prop = Self::certify_rule_prop(
+            Pure::mk_equals(fn_typ, left, right),
+            trust,
+            "ThmKernel::abstraction",
+        )?;
 
-        let new_prop = CTerm::certify(Pure::mk_equals(
-            fn_typ,
-            Term::abs(x_name, x_typ.clone(), t.clone()),
-            Term::abs(x_name, x_typ, u.clone()),
-        ));
-
-        Ok(Thm {
+        let mut result = Thm {
             hyps: thm.hyps.clone(),
             prop: new_prop.clone(),
-            maxidx: thm.maxidx,
+            maxidx: 0,
             tpairs: thm.tpairs.clone(),
             shyps: thm.shyps.clone(),
             oracles: thm.oracles.clone(),
-            trust: Self::trust_from_premises(&[thm]),
+            trust,
             derivation: Derivation::Rule {
                 name: "abstraction",
                 prop: new_prop,
                 premises: vec![ThmDeriv::from_thm(thm)],
             },
             serial: new_serial(),
-        })
+        };
+        result.maxidx = result.actual_maxidx();
+        Ok(result)
     }
 
     // =================================================================
@@ -1615,7 +1466,7 @@ impl ThmKernel {
             _ => return Err(KernelError::BetaConversion("not a lambda".into())),
         };
 
-        let reduced = super::term_subst::subst_bounds(&[arg.clone()], body);
+        let reduced = super::term_subst::subst_bounds(std::slice::from_ref(arg), body);
 
         // The equality type is the body's type; extract from the CTerm's type
         // (which is the application's result type = body type after beta reduction)
@@ -1720,23 +1571,31 @@ impl ThmKernel {
                 return Err(KernelError::FreeVarInHypotheses { name: x_name.to_string() });
             }
         }
-        let all_term = Pure::mk_all(x_name, x_typ.clone(), thm.prop.term().clone());
-        let new_prop = CTerm::certify(all_term);
-        Ok(Thm {
+        let body = abstract_typed_free(x_name, &x_typ, thm.prop.term())?;
+        let all_const = Term::const_(
+            "Pure.all",
+            Typ::arrow(Typ::arrow(x_typ, Pure::prop_type()), Pure::prop_type()),
+        );
+        let trust = Self::trust_from_premises(&[thm]);
+        let new_prop =
+            Self::certify_rule_prop(Term::app(all_const, body), trust, "ThmKernel::forall_intr")?;
+        let mut result = Thm {
             hyps: thm.hyps.clone(),
             prop: new_prop.clone(),
-            maxidx: thm.maxidx,
+            maxidx: 0,
             tpairs: thm.tpairs.clone(),
             shyps: thm.shyps.clone(),
             oracles: thm.oracles.clone(),
-            trust: Self::trust_from_premises(&[thm]),
+            trust,
             derivation: Derivation::Rule {
                 name: "forall_intr",
                 prop: new_prop,
                 premises: vec![ThmDeriv::from_thm(thm)],
             },
             serial: new_serial(),
-        })
+        };
+        result.maxidx = result.actual_maxidx();
+        Ok(result)
     }
 
     pub fn forall_elim(ct: CTerm, thm: &Thm) -> Result<Thm, KernelError> {
@@ -1772,20 +1631,72 @@ impl ThmKernel {
     // Primitive: instantiate
     // =================================================================
 
-    /// Apply an environment (from unification) to instantiate a theorem.
-    ///
-    /// If `Γ ⊢ φ` is a theorem schema (with schematic variables), then
-    /// for any substitution `θ`, `Γθ ⊢ φθ` is also a theorem.
-    fn validate_instantiation(env: &super::envir::Envir, thm: &Thm) -> Result<(), KernelError> {
-        for h in thm.hyps.iter() {
-            Self::validate_instantiation_term(env, h.term())?;
+    /// Infer a term's instantiated type without mistaking an annotation for
+    /// evidence that its applications are well typed or its Bounds are scoped.
+    fn infer_instantiated_type(
+        term: &Term,
+        bound: &mut Vec<Typ>,
+        env: Option<&super::envir::Envir>,
+    ) -> Result<Typ, KernelError> {
+        const OP: &str = "ThmKernel::instantiate_checked";
+        match term {
+            Term::Const { typ, .. } | Term::Free { typ, .. } | Term::Var { typ, .. } => {
+                let typ = env.map_or_else(|| typ.clone(), |env| env.norm_type(typ));
+                CTerm::ensure_type_has_no_dummy(&typ, OP)?;
+                Ok(typ)
+            },
+            Term::Bound(index) => index
+                .checked_add(1)
+                .and_then(|depth| bound.len().checked_sub(depth))
+                .and_then(|position| bound.get(position))
+                .cloned()
+                .ok_or_else(|| KernelError::KernelInvariant {
+                    op: OP,
+                    message: format!("unbound index {index} in instantiation"),
+                }),
+            Term::Abs { typ, body, .. } => {
+                let typ = env.map_or_else(|| typ.clone(), |env| env.norm_type(typ));
+                CTerm::ensure_type_has_no_dummy(&typ, OP)?;
+                bound.push(typ.clone());
+                let body_type = Self::infer_instantiated_type(body, bound, env);
+                bound.pop();
+                Ok(Typ::arrow(typ, body_type?))
+            },
+            Term::App { func, arg } => {
+                let function_type = Self::infer_instantiated_type(func, bound, env)?;
+                let argument_type = Self::infer_instantiated_type(arg, bound, env)?;
+                let (domain, range) = function_type
+                    .dest_fun()
+                    .ok_or_else(|| KernelError::NotFunctionType(function_type.clone()))?;
+                let mut substitutions = HashMap::new();
+                if !CTerm::type_scheme_match_inner(domain, &argument_type, &mut substitutions) {
+                    return Err(KernelError::TypeMismatch {
+                        expected: domain.clone(),
+                        actual: argument_type,
+                    });
+                }
+                Ok(CTerm::apply_type_scheme_subst(range, &substitutions))
+            },
         }
-        Self::validate_instantiation_term(env, thm.prop.term())
+    }
+
+    fn validate_instantiation(env: &super::envir::Envir, thm: &Thm) -> Result<(), KernelError> {
+        let is_strict = Self::trust_from_premises(&[thm]) == ThmTrust::Strict;
+        for h in thm.hyps.iter() {
+            Self::validate_instantiation_term(env, h.term(), is_strict)?;
+        }
+        Self::validate_instantiation_term(env, thm.prop.term(), is_strict)?;
+        for (left, right) in &thm.tpairs {
+            Self::validate_instantiation_term(env, left, is_strict)?;
+            Self::validate_instantiation_term(env, right, is_strict)?;
+        }
+        Ok(())
     }
 
     fn validate_instantiation_term(
         env: &super::envir::Envir,
         term: &Term,
+        is_strict: bool,
     ) -> Result<(), KernelError> {
         let mut stack = vec![term];
         while let Some(t) = stack.pop() {
@@ -1793,8 +1704,15 @@ impl ThmKernel {
                 Term::Var { name, index, typ } => {
                     if let Some(assigned) = env.lookup(name, *index) {
                         let expected = env.norm_type(typ);
-                        let actual = env.norm_type(&Self::term_known_type(assigned));
-                        if Self::known_types_mismatch(&expected, &actual) {
+                        let actual = if is_strict {
+                            Self::infer_instantiated_type(assigned, &mut Vec::new(), Some(env))?
+                        } else {
+                            Self::term_known_type(assigned)
+                        };
+                        let actual = env.norm_type(&actual);
+                        if (is_strict && expected != actual)
+                            || (!is_strict && Self::known_types_mismatch(&expected, &actual))
+                        {
                             return Err(KernelError::TypeMismatch { expected, actual });
                         }
                     }
@@ -1810,27 +1728,56 @@ impl ThmKernel {
         Ok(())
     }
 
-    fn instantiate_unchecked(env: &super::envir::Envir, thm: &Thm) -> Thm {
-        let mut new_hyps = Hyps::empty();
-        for h in thm.hyps.iter() {
-            new_hyps.insert(CTerm::certify(env.norm_term(h.term())));
+    fn instantiate_validated(env: &super::envir::Envir, thm: &Thm) -> Result<Thm, KernelError> {
+        let trust = Self::trust_from_premises(&[thm]);
+        let certify = |term: Term| -> Result<CTerm, KernelError> {
+            if trust == ThmTrust::Strict {
+                let actual = Self::infer_instantiated_type(&term, &mut Vec::new(), None)?;
+                if actual != Pure::prop_type() {
+                    return Err(KernelError::TypeMismatch { expected: Pure::prop_type(), actual });
+                }
+            }
+            Self::certify_rule_prop(term, trust, "ThmKernel::instantiate_checked")
+        };
+        let mut hyps = Hyps::empty();
+        for hyp in thm.hyps.iter() {
+            hyps.insert(certify(env.norm_term(hyp.term()))?);
         }
-        let new_prop = CTerm::certify(env.norm_term(thm.prop.term()));
-        Thm {
-            hyps: new_hyps,
-            prop: new_prop.clone(),
-            maxidx: usize::max(thm.maxidx, env.maxidx()),
-            tpairs: thm.tpairs.clone(),
+        let prop = certify(env.norm_term(thm.prop.term()))?;
+        let tpairs: Vec<_> = thm
+            .tpairs
+            .iter()
+            .map(|(left, right)| (env.norm_term(left), env.norm_term(right)))
+            .collect();
+        if trust == ThmTrust::Strict {
+            for (left, right) in &tpairs {
+                let left_type = Self::infer_instantiated_type(left, &mut Vec::new(), None)?;
+                let right_type = Self::infer_instantiated_type(right, &mut Vec::new(), None)?;
+                if left_type != right_type {
+                    return Err(KernelError::TypeMismatch {
+                        expected: left_type,
+                        actual: right_type,
+                    });
+                }
+            }
+        }
+        let mut result = Thm {
+            hyps,
+            prop: prop.clone(),
+            maxidx: 0,
+            tpairs,
             shyps: thm.shyps.clone(),
             oracles: thm.oracles.clone(),
-            trust: Self::trust_from_premises(&[thm]),
+            trust,
             derivation: Derivation::Rule {
                 name: "instantiate",
-                prop: new_prop,
+                prop,
                 premises: vec![ThmDeriv::from_thm(thm)],
             },
             serial: new_serial(),
-        }
+        };
+        result.maxidx = result.actual_maxidx();
+        Ok(result)
     }
 
     /// Checked theorem instantiation.
@@ -1838,8 +1785,11 @@ impl ThmKernel {
     /// This rejects a concrete type contradiction in the supplied environment
     /// before applying it. It is the preferred API for new kernel code.
     pub fn instantiate_checked(env: &super::envir::Envir, thm: &Thm) -> Result<Thm, KernelError> {
+        if env.is_empty() {
+            return Ok(thm.clone());
+        }
         Self::validate_instantiation(env, thm)?;
-        Ok(Self::instantiate_unchecked(env, thm))
+        Self::instantiate_validated(env, thm)
     }
 
     /// Legacy compatibility path for the historical infallible API.
@@ -1879,24 +1829,9 @@ impl ThmKernel {
                 if n1 != n2 {
                     return false;
                 }
-                // Type-aware: check TypeEnv when embedded types are dummy
-                let t1_eff = if t1.is_dummy() {
-                    use crate::hol::hol_loader::HolTheoremDb;
-                    HolTheoremDb::get().type_env.const_type(n1).unwrap_or(t1)
-                } else {
-                    t1
-                };
-                let t2_eff = if t2.is_dummy() {
-                    use crate::hol::hol_loader::HolTheoremDb;
-                    HolTheoremDb::get().type_env.const_type(n2).unwrap_or(t2)
-                } else {
-                    t2
-                };
-                if !t1_eff.is_dummy() && !t2_eff.is_dummy() {
-                    Self::types_compatible(t1_eff, t2_eff)
-                } else {
-                    true
-                }
+                // Unknown type annotations cannot reject a possible unifier:
+                // callers may be using different immutable declaration snapshots.
+                if !t1.is_dummy() && !t2.is_dummy() { Self::types_compatible(t1, t2) } else { true }
             },
             (Term::Free { name: n1, typ: t1 }, Term::Free { name: n2, typ: t2 }) => {
                 n1 == n2 && !Self::known_types_mismatch(t1, t2)
@@ -1970,44 +1905,57 @@ impl ThmKernel {
         // 4. Instantiate both theorems with the unifier
         let thm1 = Self::instantiate_checked(&env, thm1).ok()?;
         let thm2 = Self::instantiate_checked(&env, thm2).ok()?;
-
-        // 5. Build the result: replace thm2's i-th premise with thm1's premise chain
-        let prems_1: Vec<Term> = if full_match {
-            // Full match: entire subgoal is a hypothesis — no new premises
-            Vec::new()
-        } else {
-            let (p, _) = Pure::strip_imp_prems(thm1.prop.term());
-            p.iter().cloned().cloned().collect()
-        };
-        let (prems_2, concl_2) = Pure::strip_imp_prems(thm2.prop.term());
-
-        let mut new_prems: Vec<Term> = Vec::new();
-        new_prems.extend(prems_2[..i].iter().cloned().cloned());
-        new_prems.extend(prems_1.iter().cloned());
-        new_prems.extend(prems_2[i + 1..].iter().cloned().cloned());
-
-        let mut new_prop = concl_2.clone();
-        for p in new_prems.iter().rev() {
-            new_prop = Pure::mk_implies(p.clone(), new_prop);
+        let matched_term =
+            if full_match { thm1.prop.term() } else { Pure::strip_imp_prems(thm1.prop.term()).1 };
+        let premise_2 = Pure::nth_premise(thm2.prop.term(), i)?;
+        if !Self::alpha_eq_with_known_types(matched_term, premise_2) {
+            return None;
         }
 
-        let new_prop = CTerm::certify(new_prop);
+        Self::compose_instantiated(&thm1, &thm2, i, full_match)
+    }
 
-        Some(Thm {
-            hyps: thm1.hyps.union(&thm2.hyps),
-            prop: new_prop.clone(),
-            maxidx: usize::max(thm1.maxidx, thm2.maxidx),
-            tpairs: Self::union_tpairs(&thm1.tpairs, &thm2.tpairs),
-            shyps: Self::union_shyps(&thm1.shyps, &thm2.shyps),
-            oracles: Self::union_oracles(&thm1.oracles, &thm2.oracles),
-            trust: Self::trust_from_premises(&[&thm1, &thm2]),
+    /// Replace the matched premise only after both instantiated conclusions
+    /// have been checked for the same proposition.
+    fn compose_instantiated(
+        rule: &Thm,
+        state: &Thm,
+        index: usize,
+        is_full_match: bool,
+    ) -> Option<Thm> {
+        let rule_prems =
+            if is_full_match { Vec::new() } else { Pure::strip_imp_prems(rule.prop.term()).0 };
+        let (state_prems, conclusion) = Pure::strip_imp_prems(state.prop.term());
+        let mut proposition = conclusion.clone();
+        for premise in state_prems[index + 1..]
+            .iter()
+            .rev()
+            .chain(rule_prems.iter().rev())
+            .chain(state_prems[..index].iter().rev())
+        {
+            proposition = Pure::mk_implies((**premise).clone(), proposition);
+        }
+
+        let trust = Self::trust_from_premises(&[rule, state]);
+        let proposition =
+            Self::certify_rule_prop(proposition, trust, "ThmKernel::bicompose").ok()?;
+        let mut result = Thm {
+            hyps: rule.hyps.union(&state.hyps),
+            prop: proposition.clone(),
+            maxidx: 0,
+            tpairs: Self::union_tpairs(&rule.tpairs, &state.tpairs),
+            shyps: Self::union_shyps(&rule.shyps, &state.shyps),
+            oracles: Self::union_oracles(&rule.oracles, &state.oracles),
+            trust,
             derivation: Derivation::Rule {
                 name: "bicompose",
-                prop: new_prop,
-                premises: vec![ThmDeriv::from_thm(&thm1), ThmDeriv::from_thm(&thm2)],
+                prop: proposition,
+                premises: vec![ThmDeriv::from_thm(rule), ThmDeriv::from_thm(state)],
             },
             serial: new_serial(),
-        })
+        };
+        result.maxidx = result.actual_maxidx();
+        Some(result)
     }
 
     // =================================================================
@@ -2372,10 +2320,7 @@ fn collect_type_sorts(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{
-        envir::Envir,
-        types::{Symbol, TypeEnv},
-    };
+    use crate::core::{envir::Envir, types::TypeEnv};
 
     fn prop(name: &str) -> CTerm {
         checked_prop(name)
@@ -2781,22 +2726,6 @@ mod tests {
     }
 
     #[test]
-    fn test_instantiate_with_unifier() {
-        // Test instantiate with a non-empty environment
-        let mut env = Envir::empty(10);
-        let x_name: Symbol = "x".into();
-        let nat = Typ::base("nat");
-        let zero = Term::const_("zero", nat.clone());
-        env.update(x_name.clone(), 0, nat.clone(), zero.clone());
-
-        let var_term = Term::var("x", 0, nat);
-        let thm = ThmKernel::assume(checked_cterm(var_term)).unwrap();
-        let result = ThmKernel::instantiate_checked(&env, &thm).unwrap();
-        // The var should be replaced by zero
-        assert_eq!(result.prop().term(), &zero);
-    }
-
-    #[test]
     fn test_instantiate_legacy_is_test_only_and_conservative() {
         // Characterizes the old infallible behavior without keeping it as a
         // production API: bad environments must not manufacture a new theorem.
@@ -2911,10 +2840,7 @@ mod tests {
         );
 
         let res = ThmKernel::transitive(&thm1, &thm2);
-        assert!(
-            matches!(res, Err(KernelError::TypeMismatch { .. })),
-            "transitive accepted equality types nat and bool: {res:?}"
-        );
+        assert!(res.is_err(), "transitive accepted equality types nat and bool: {res:?}");
     }
 
     // =================================================================

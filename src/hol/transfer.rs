@@ -35,10 +35,7 @@ use crate::core::thm::Thm;
 use crate::core::types::Typ;
 
 #[cfg(test)]
-use crate::{
-    core::thm::{CTerm, ThmKernel},
-    hol::hologic,
-};
+use crate::core::thm::{CTerm, ThmKernel};
 
 // =========================================================================
 // Transfer rule
@@ -144,7 +141,7 @@ impl QuotientType {
 /// Generate the relator for a type constructor based on its BNF structure.
 ///
 /// For example, for `'a list`:
-/// ```
+/// ```text
 /// rel_list R Nil Nil = True
 /// rel_list R (Cons x xs) (Cons y ys) = R x y ∧ rel_list R xs ys
 /// ```

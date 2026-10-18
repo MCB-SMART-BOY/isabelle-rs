@@ -1,11 +1,26 @@
 # Architecture
 
-This document describes the current Isabelle-rs architecture as a trusted-kernel
-research prototype. It intentionally does not claim feature parity with
-Isabelle/HOL, Isabelle/Isar, or Isabelle/PIDE.
-
-Read root [AGENTS.md](../AGENTS.md), then
-[PROJECT_STATUS.md](PROJECT_STATUS.md), before using this architecture.
+> Historical architecture snapshot (2026-10-03 sampled checkpoint), not the
+> current implementation inventory or verification result. The trust boundary
+> has since moved to `crates/kernel` (`src/kernel/mod.rs` re-exports it).
+> At the 2026-10-07 bundled sample, audited `HOL::TrueI` reaches
+> `KernelTrustedClosed: 1/125`, with `TransitionalStrictClosed: 0/125`;
+> independent Pure/HOL fixtures remain outside that batch. For current
+> behavior and metrics read [AGENTS.md](../../AGENTS.md),
+> [PROJECT_STATUS.md](../status/PROJECT_STATUS.md),
+> [TRUST.md](../status/TRUST.md), and
+> [MIGRATION_MATRIX.md](../kernel/MIGRATION_MATRIX.md). For the automation
+> cutover, see [dated xtask evidence](../status/PROJECT_STATUS.md#xtask-automation-cutover-2026-10-11)
+> and [current engineering workflow](../guides/DEVELOPMENT.md#engineering-workflow).
+> The following diagrams and priorities record the earlier design, not
+> work still outstanding today. The approved native compatibility program
+> now also targets official Isabelle/ML and PIDE; this archived prioritization
+> does not supersede it or make ISIP a replacement.
+> The `src/core`/T4 diagrams and six-rule replay list below are descriptions
+> of this earlier checkpoint, not the present kernel API: for current variable
+> transformations and finite checked composition see
+> [KERNEL_PRIMITIVES.md](../kernel/KERNEL_PRIMITIVES.md) and
+> [NATIVE_THM_INTERFACE_INVENTORY.md](../status/NATIVE_THM_INTERFACE_INVENTORY.md).
 
 ## Architectural Position
 
@@ -31,14 +46,15 @@ Legacy quarantine (src/core/):
     -> proof-search indexes or transitional legacy theory tables
 ```
 
-`TrustedTheory` is now immutable owner/fact ancestry.
-`accept_closed_theorem` recursively recertifies and replays one closed
-candidate, reconstructs ancestor-theorem dependencies, rejects duplicate names
-and owner/store inconsistencies, and atomically returns the accepted child and
-token. No sampled HOL theorem has the prerequisite source/basis/definition
-chain, so `KernelTrustedClosed` remains `0/125`.
+At this earlier checkpoint, `TrustedTheory` was immutable owner/fact ancestry.
+`accept_closed_theorem` recursively recertified and replayed one closed
+candidate, reconstructed ancestor-theorem dependencies, rejected duplicate
+names and owner/store inconsistencies, and atomically returned the accepted
+child and token. No sampled HOL theorem then had the prerequisite
+source/basis/definition chain; `KernelTrustedClosed` was `0/125` in this
+historical snapshot.
 
-The project currently prioritizes, in dependency order:
+At that checkpoint, the project prioritized, in dependency order:
 
 1. Keep completed immutable context identity and exact-owner acceptance stable.
 2. Keep the implemented data-only source proposition AST unresolved and outside
@@ -54,10 +70,10 @@ The project currently prioritizes, in dependency order:
 Design-only high-performance symbolic compute remains an untrusted parallel
 track and cannot reorder this chain.
 
-It does not currently prioritize broad HOL command coverage, PIDE parity, LSP
-features, Sledgehammer, SMT, or Code Generator work.
-It also does not currently add Burn/CubeCL or GPU dependencies; those remain
-future optional backends after a deterministic CPU symbolic-compute baseline.
+At this checkpoint, the project did not prioritize broad HOL command coverage,
+PIDE parity, LSP features, Sledgehammer, SMT, or Code Generator work. Burn/CubeCL
+and GPU dependencies were not included; they were optional backend ideas after
+a deterministic CPU symbolic-compute baseline, not the official-compatibility plan.
 
 ## Trusted Boundary
 
@@ -120,7 +136,7 @@ and goal initialization. It must not be used as a proof-failure fallback.
 | Isar layer | `src/isar/*` | Partial structured proof state machine and method dispatch. |
 | HOL layer | `src/hol/*`, `src/tools/*` | Partial HOL loading, theorem DB, simplifier/Metis/Meson/linarith stubs and tools. |
 | Theory/session | `src/theory/*` | Theory processing, closed theorem statistics, session summaries. |
-| Future symbolic compute | `docs/HPC_SYMBOLIC_COMPUTE_DESIGN.md` | Untrusted packed term/fact/rewrite prefilter design; no current source module and no theorem construction authority. |
+| Future symbolic compute | [`HPC_SYMBOLIC_COMPUTE_DESIGN.md`](../design/HPC_SYMBOLIC_COMPUTE_DESIGN.md) | Untrusted packed term/fact/rewrite prefilter design; no theorem construction authority. |
 | UI/runtime | `src/lsp/*`, `src/server/*`, `src/wasm/*` | Skeleton infrastructure; not part of the current trust-critical path. |
 
 ## Theory Processing Flow
@@ -163,8 +179,8 @@ src::kernel::TrustedTheory
 
 `SessionBuilder` reports legacy `TransitionalStrictClosed` counts. It must not
 present them, raw indexed entries, or compatibility closed-shapes as
-`KernelTrustedClosed`; the sampled metrics are `TransitionalStrictClosed: 1/125`
-and `KernelTrustedClosed: 0/125`.
+`KernelTrustedClosed`; the 2026-10-03 sampled metrics were
+`TransitionalStrictClosed: 1/125` and `KernelTrustedClosed: 0/125`.
 
 ## Proofterm Replay Flow
 
@@ -209,15 +225,15 @@ Current semantics:
 | Partial proofterm replay | Only validates a small primitive subset. | Extend replay rule-by-rule with attack tests. |
 | HOL tool stubs/fallbacks | Many generated facts are admitted or heuristic. | Keep fallback admitted; reduce by cause later. |
 
-## Verification Gates
+## Verification Gates (Historical Guidance)
 
-For trusted-boundary code changes:
-
-Run `scripts/dev-check.sh strict`.
-
-For broad theory runs:
-
-Run `scripts/dev-check.sh core`, `tier2`, or `tier3`.
-
-Full `cargo test --lib` has a known stack-sensitive loader test in this
-checkout. Report it separately unless it has been verified fixed.
+The historical project gate was `scripts/dev-check.sh strict`; `core`, `tier2`,
+and `tier3` were separate theory runs. Those are the invocation names associated
+with this older guidance, not xtask-produced results. A passing strict gate did
+not establish full library or global workstation validation. The then-recorded
+full tests were killed for memory use; a serial retry timed out. Consult
+[engineering workflow](../guides/DEVELOPMENT.md#engineering-workflow) for
+current commands and
+[xtask cutover](../status/PROJECT_STATUS.md#xtask-automation-cutover-2026-10-11)
+for the separately observed automation results; do not attribute these older
+test outcomes to xtask.

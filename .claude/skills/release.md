@@ -9,9 +9,15 @@ permissions: [Bash:cargo test, Bash:cargo check, Bash:cargo clippy, Read, Edit, 
 # Release
 
 Release work must be explicitly requested. Review `CHANGELOG.md`, current
-project positioning, dependency changes, and the dirty worktree. Run
-`scripts/dev-check.sh all` unless the release scope documents a narrower gate.
+[`PROJECT_STATUS.md`](../../docs/status/PROJECT_STATUS.md), dependency changes,
+and the dirty worktree. `cargo +stable xtask release-check --tag TAG` verifies
+the version, then runs `verify` on supported platforms; it does not create a
+tag or publish. Run independent `selftest`, security audits and the complete
+global validator; report actual failures, omissions and unavailable prerequisites.
+`core`, `all`, and Tier modes remain explicit diagnostics, not release gates.
 
-Update versions and status documents consistently, report skipped or failing
-tests, then create a normal non-amended commit and tag only after approval.
-Never market transitional `HOL::TrueI` as a new-kernel trusted theorem.
+Update versions and status documents consistently. Only create a normal
+non-amended commit or tag after explicit separate approval; never auto-commit.
+Use the dated evidence in [`PROJECT_STATUS.md`](../../docs/status/PROJECT_STATUS.md)
+for sampled outcomes and independent CLI fixtures; do not treat any historical
+sample as a fresh release check or as full Isabelle compatibility.

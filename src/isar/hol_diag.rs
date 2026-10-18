@@ -1,5 +1,5 @@
 #[cfg(test)]
-mod hol_diag {
+mod tests {
     use crate::{
         hol::hol_loader::{HolTheoremDb, parse_lemmas},
         isar::method::{classify_verify_result, verify_lemma},
@@ -8,7 +8,7 @@ mod hol_diag {
     #[test]
     #[ignore = "overflow on full DB with 15K theorems — known issue"]
     fn test_hol_failures() {
-        let _db = HolTheoremDb::get();
+        let db = HolTheoremDb::global();
         let source = include_str!("../../theories/HOL/HOL.thy");
         let lemmas = parse_lemmas(source);
         let with_proof: Vec<_> = lemmas.iter().filter(|l| l.proof_script.is_some()).collect();
@@ -16,7 +16,7 @@ mod hol_diag {
         let mut ok = 0;
         for (idx, lem) in with_proof.iter().enumerate() {
             eprintln!("  [{}/{}] verifying: {}...", idx + 1, with_proof.len(), lem.name);
-            let result = verify_lemma(lem);
+            let result = verify_lemma(lem, db);
             let outcome = classify_verify_result(&lem.name, &result);
             if outcome.is_transitional_strict_closed() {
                 ok += 1;

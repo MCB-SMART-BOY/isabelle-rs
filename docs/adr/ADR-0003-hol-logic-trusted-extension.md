@@ -3,32 +3,46 @@
 ## Status
 
 Proposed. This ADR defines a target boundary only. It does not authorize or
-implement a HOL substitution primitive, theorem adapter, module move, or
-workspace split.
+implement a HOL substitution primitive, theorem adapter, or runtime module/crate
+move. The A-package Cargo workspace/xtask is build automation, not this split.
+
+Implementation checkpoint (not a change in this ADR's proposed status): the
+strict TCB now resides in `crates/kernel/`, with `src/kernel/mod.rs` re-exporting
+it. Explicit signature type-constructor declarations and arities, checked
+axiom-schema installation, conservative monomorphic definitions, exact-owner
+replay, and the narrow source-backed `HOL::TrueI` acceptance path exist.
+`tests/fixtures/TrustedTrueI.thy` and the independent Pure identity fixture
+produce tokens outside the sampled HOL batch. The 2026-10-07 audited bundled
+source projection produced the single sampled `HOL::TrueI` accepted token
+(`KernelTrustedClosed: 1/125`). Subsequently resumed native P2/P3/P4
+implementation has not rerun that sample; the token does not establish
+unrelated HOL/ML command execution, whole-theory compilation, the general HOL
+calculus, or the planned module move. See
+[PROJECT_STATUS.md](../status/PROJECT_STATUS.md) for current delivery state.
 
 ## Context
 
-ADR-0001 made `src/kernel` the new strict Pure/LCF nucleus and quarantined the
+ADR-0001 established the strict Pure/LCF nucleus (now `crates/kernel/`,
+re-exported by `src/kernel`) and quarantined the
 legacy `src/core` theorem engine. ADR-0002 identified a separate object-logic
 layer above the kernel.
 
-The first migrated theorem, `HOL::TrueI`, currently crosses transitional
-legacy bridges for HOL object reflexivity and checked `True_def` transport. It
-demonstrates the strangler path, but it must not establish a precedent of
-adding each new HOL rule to `src/core::ThmKernel`.
+The first sampled theorem, `HOL::TrueI`, crossed transitional legacy bridges
+for HOL object reflexivity and checked `True_def` transport in the 2026-10-03
+checkpoint. That legacy `core::Thm` with `ThmTrust::Strict` was not a
+`src/kernel::TrustedTheorem`; the bridge is historical migration evidence, not
+a precedent for adding each HOL rule to `src/core::ThmKernel`.
 
-Its `TransitionalStrictClosed: 1/125` result is represented by legacy
-`core::Thm` with `ThmTrust::Strict`; it is not a
-`src/kernel::TrustedTheorem` accepted into a new-kernel `TrustedTheory`. The
-metric is useful migration evidence, not evidence that the target boundary is
-complete.
-
-The current sampled metrics are:
+The current sampled metrics (2026-10-07) are:
 
 ```text
-TransitionalStrictClosed: 1/125
-KernelTrustedClosed:      0/125
+TransitionalStrictClosed: 0/125
+KernelTrustedClosed:      1/125
 ```
+
+Only the exact source-backed `HOL::TrueI` candidate reaches the latter bucket,
+through audited source projection, checked Pure transport and exact-owner
+replay. This is not complete HOL theory verification.
 
 `KernelTrustedClosed` requires a new-kernel theorem whose conclusion is a
 checked `CProp : prop`, not a bool-valued HOL term stored directly as a theorem
@@ -85,6 +99,12 @@ kernel code TCB. The installed HOL manifest is the explicit logical basis for a
 HOL session, but it adds no executable code TCB. Audits and reports must
 distinguish kernel code trust from declared object-logic assumptions.
 
+`LogicAxiom` in this proposed design is not the implemented Rust enum variant:
+the strict kernel currently records checked schema instances as
+`Derivation::AxiomInstance` and replays them under an installed
+`LogicBasis`. The name above does not grant a new API or install the broader
+HOL `subst`/`ext` basis.
+
 The object-logic basis manifest must be immutable, data-oriented, and identified
 by a `LogicBasisId` derived from a stable manifest hash. It must not be a
 runtime callback or executable theorem factory. Generic kernel code may validate
@@ -124,8 +144,8 @@ Definitions, object-logic axioms, and derived theorems are distinct inputs:
 
 ## HOL Equality Calculus Gate
 
-Isabelle/HOL already fixes the logical status of equality rules. In
-`theories/HOL/HOL.thy:219-222`, `refl`, `subst`, and `ext` are declared by
+In the restored [Isabelle2025 HOL source](../../isabelle-source/src/HOL/HOL.thy)
+at lines 213–216, `refl`, `subst`, and `ext` are declared by
 `axiomatization`. This migration must preserve that logical semantics:
 
 ```text
@@ -158,8 +178,8 @@ Pure equality or mapped to a Pure equality term merely because the surface
 syntax uses the same `=` glyph.
 
 Checked definitions require a separate conservative-definition mechanism.
-`True_def` must not be hidden inside an arbitrary logic-axiom manifest, and the
-current theorem-specific transport bridge must not be generalized as a
+`True_def` must not be hidden inside an arbitrary logic-axiom manifest, and
+the historical theorem-specific transport bridge must not be generalized as a
 substitute for that mechanism.
 
 ## Conservative Definition Gate
@@ -185,17 +205,20 @@ Pure equality theorem, not a theorem-specific transport operation. Installing
 
 Using the definition theorem under `HOL.Trueprop` must proceed through ordinary
 checked Pure equality/congruence rules. It must not directly convert a theorem
-of `rhs` into a theorem of `c`. The existing `true_def_transport` bridge is
-therefore ineligible as the template for future definitions.
+of `rhs` into a theorem of `c`. The removed legacy `true_def_transport` bridge
+is therefore ineligible as the template for future definitions.
 
 ## Kernel-Neutral Implementation Gates
 
 The target boundary requires several logic-neutral capabilities. The strict
-nucleus already has a private `CProp` constructor,
-`ProofContext::certify_prop`, and `KernelThm { prop: CProp }`; the current
-HOL/Isar migration path does not use them. Some remaining gates are absent and
-others are not connected end to end. Before an extension root can produce a
-new-kernel trusted theorem, designs and attack tests are required for:
+nucleus now has explicit constructor arities in `Signature`, checked
+`ProofContext::certify_prop`, axiom-schema validation before basis installation,
+and replayable closed-theorem acceptance. Two supported standalone source-backed
+fixtures and one audited sampled `HOL::TrueI` projection exercise narrow
+Pure/HOL paths; other sampled HOL theorem migration and the general HOL/Isar
+extension remain incomplete. The following
+list records the *target gates* (some have narrow implementations), not a
+claim that each is still absent:
 
 - type variables, polymorphic schemes, sorts, and type-constructor arities;
 - routing HOL elaboration through the existing type-level `CProp` boundary,
@@ -217,7 +240,7 @@ new-kernel trusted theorem, designs and attack tests are required for:
 None of these gates may be bypassed with a fake concrete type named `'a`, a
 monomorphic equality special case, or a legacy fact promoted to strict input.
 
-The current legacy `hol_object_refl` and `true_def_transport` derivations are
+The removed legacy `hol_object_refl` and `true_def_transport` derivations were
 transitional experiments. A theorem whose stored proposition is
 `HOL.eq t t : bool` or `HOL.True : bool` is ineligible for
 `KernelTrustedClosed`, regardless of its legacy `ThmTrust` flag.
@@ -264,12 +287,12 @@ It may not:
 - fall back to legacy verification after a registered adapter rejects;
 - add a trusted method to `src/core`.
 
-For the current transitional `TrueI` entry, the only registered pair is
+For the registered sampled `TrueI` candidate, legacy parsing requires
 `SourcePropositionStatus::FullyConsumed` plus
 `SourcePropositionShape::StandaloneHolTrueAlias`. `Other`, `Contextual`, and
-`Unavailable` shapes fail closed with the same explicit source-unverified
-rejection. This shape enum is temporary parser/loader metadata, not source name
-resolution and not the checked proposition AST required by this ADR.
+`Unavailable` shapes fail closed with an explicit source-unverified rejection.
+This shape enum is temporary parser/loader metadata, not source name
+resolution or the source authority for the audited projection.
 
 ## Replay Boundary
 
@@ -295,11 +318,17 @@ and installed generic `LogicAxiom` schema instances. Legacy structural-only or
 unsupported derivations may remain diagnostic migration values, but cannot
 become `KernelTrustedClosed`.
 
-## Migration Sequence
+## Migration Sequence (original target ordering)
+
+The steps below retain the target ordering from this proposed decision.
+Subsequent implementation has delivered narrow checked elaboration, logic
+basis, conservative definition, and both standalone and audited sampled
+`TrueI` source acceptance. Other sampled HOL theorems remain unsupported;
+labels such as “[Next]” describe the original proposal, not today's work queue.
 
 Retain the hardened parser/dispatcher status-and-shape guard as transitional
 fail-closed infrastructure. It is not a name-resolved AST and is not a trusted
-acceptance input. Future implementation proceeds in this order:
+acceptance input. The original sequence was:
 
 1. [Implemented] Introduce immutable `SignatureId` / `TheoryId` values and
    propagate exact context stamps through strict certification, theorem
@@ -314,7 +343,7 @@ acceptance input. Future implementation proceeds in this order:
    not assign Pure/HOL meanings, carry trusted context, or construct a theorem.
 4. [Next] Integrate source parsing and implement theorem-independent checked
    declaration/proposition elaboration as specified in
-   [CHECKED_HOL_PROPOSITION_NORMALIZATION.md](CHECKED_HOL_PROPOSITION_NORMALIZATION.md),
+   [CHECKED_HOL_PROPOSITION_NORMALIZATION.md](../design/CHECKED_HOL_PROPOSITION_NORMALIZATION.md),
    including checked `judgment`/constant/type-scheme resolution and explicit
    `HOL.Trueprop` insertion into the existing `CProp` boundary.
 5. Encode and audit Isabelle/HOL's declared logical axiom schemas in the
@@ -355,19 +384,24 @@ logical roots.
 
 ### Split crates before the boundary is implemented
 
-Rejected for the current phase because it would freeze an untested dependency
-boundary. The module and rule contracts must stabilize first.
+This was rejected at the time because it would have frozen an untested
+dependency boundary. The strict TCB has since been extracted as
+`crates/kernel/`; the proposed HOL module move and wider platform split are
+still deferred.
 
 ## Consequences
 
 - The Pure kernel TCB stays logic-neutral.
 - A HOL session has an explicit additional trusted surface that can be audited
   separately.
-- The current `HOL::TrueI` bridges remain transitional debt; they are not a
-  template for expanding `src/core`.
-- `HOL::trans` remains blocked until checked proposition elaboration, an
-  authorized immutable HOL context, conservative definitions, the replayable
-  HOL basis, and a real new-kernel `HOL::TrueI` loop all exist.
-- Transitional coverage may remain `1/125` and kernel-trusted coverage `0/125`
-  while these boundaries are built. That is preferable to increasing either
-  count through unverifiable trusted shortcuts.
+- The removed sampled legacy `HOL::TrueI` bridge is historical transitional
+  debt, not a template for expanding `src/core`. Standalone source-backed
+  `TrueI` remains a separate fixture, outside the sampled migration.
+- `HOL::trans` remains blocked on the general checked HOL equality calculus,
+  including authorized `subst`/`ext` schemas and their Pure derivations;
+  installing the narrow `refl` basis and `True_def` for the standalone fixture
+  and audited sampled `TrueI` projection does not complete that calculus.
+- Current sampled coverage is `TransitionalStrictClosed: 0/125` and
+  `KernelTrustedClosed: 1/125`, limited to audited `HOL::TrueI` projection. See
+  the canonical [project status](../status/PROJECT_STATUS.md) for scope and
+  counts.

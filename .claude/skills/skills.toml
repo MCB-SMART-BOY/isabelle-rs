@@ -7,7 +7,7 @@
 [registry]
 version = "3.0.0"
 project = "isabelle-rs"
-updated = "2026-07-18"
+updated = "2026-10-11"
 
 # =============================================================================
 # Skill Categories
@@ -20,6 +20,7 @@ updated = "2026-07-18"
 # theory        — theory building, DB search, parse debugging
 # release       — version bumps, changelog, doc sync
 # meta          — benchmarks, test matrices
+# maintenance   — documentation and routing synchronization
 #
 # Every skill is subordinate to root AGENTS.md. Active registration means a
 # workflow is available when explicitly scoped; it does not override the
@@ -40,7 +41,7 @@ triggers = ["lemma verification", "proof failure", "test failure", "this lemma d
 permissions = ["Bash:cargo test", "Bash:cargo run", "Read", "Grep"]
 depends_on = ["AGENTS.md", "scripts/README.md", ".claude/rules/testing.md", ".claude/rules/proof-methods.md", ".claude/rules/kernel.md"]
 related_skills = ["debug-overflow", "audit-kernel"]
-lifecycle = { created = "2026-06-03", last_reviewed = "2026-07-18", review_interval_days = 30 }
+lifecycle = { created = "2026-06-03", last_reviewed = "2026-10-11", review_interval_days = 30 }
 
 [[skills]]
 id = "debug-overflow"
@@ -53,25 +54,25 @@ triggers = ["stack overflow", "overflowed its stack", "SIGABRT", "recursion too 
 permissions = ["Bash:cargo test", "Bash:RUST_MIN_STACK", "Read"]
 depends_on = ["AGENTS.md", ".claude/rules/iterative.md"]
 related_skills = ["verify", "bench"]
-lifecycle = { created = "2026-06-03", last_reviewed = "2026-06-03", review_interval_days = 60 }
+lifecycle = { created = "2026-06-03", last_reviewed = "2026-10-11", review_interval_days = 60 }
 
 [[skills]]
 id = "audit-kernel"
 name = "Audit Kernel"
-description = "Audit strict src/kernel and legacy src/core trust boundaries, context identity, replay, and theorem acceptance."
+description = "Audit isolated crates/kernel and legacy src/core trust boundaries, context identity, replay, and theorem acceptance; src/kernel is a re-export."
 category = "safety"
 status = "active"
 version = "3.0.0"
 triggers = ["kernel change", "theorem construction", "context identity", "proof statistics", "new inference rule", "kernel safety"]
 permissions = ["Bash:cargo test", "Read", "Grep"]
-depends_on = ["AGENTS.md", "docs/KERNEL_TRUSTED_ACCEPTANCE_GAPS.md", ".claude/rules/kernel.md"]
+depends_on = ["AGENTS.md", "docs/kernel/KERNEL_TRUSTED_ACCEPTANCE_GAPS.md", ".claude/rules/kernel.md"]
 related_skills = ["verify", "refactor"]
-lifecycle = { created = "2026-06-03", last_reviewed = "2026-07-18", review_interval_days = 60 }
+lifecycle = { created = "2026-06-03", last_reviewed = "2026-10-11", review_interval_days = 60 }
 
 [[skills]]
 id = "add-method"
 name = "Add Proof Method"
-description = "Add a proof method only when explicitly scoped; broad method coverage is deferred behind source-aware HOL elaboration and basis installation."
+description = "Add a proof method only when explicitly scoped; proof completion requires a real checked result, not a search hit."
 category = "development"
 status = "active"
 version = "3.0.0"
@@ -79,7 +80,7 @@ triggers = ["add proof method", "new search strategy", "port method from Isabell
 permissions = ["Bash:cargo test", "Bash:cargo check", "Read", "Edit"]
 depends_on = ["AGENTS.md", ".claude/rules/proof-methods.md"]
 related_skills = ["add-isar-command", "port-isabelle", "verify"]
-lifecycle = { created = "2026-06-03", last_reviewed = "2026-06-03", review_interval_days = 60 }
+lifecycle = { created = "2026-06-03", last_reviewed = "2026-10-11", review_interval_days = 60 }
 
 [[skills]]
 id = "add-isar-command"
@@ -92,7 +93,7 @@ triggers = ["add Isar command", "proof language", "state machine", "have/show", 
 permissions = ["Bash:cargo test", "Bash:cargo check", "Read", "Edit"]
 depends_on = ["AGENTS.md", ".claude/rules/isar.md"]
 related_skills = ["add-method", "verify"]
-lifecycle = { created = "2026-06-03", last_reviewed = "2026-06-03", review_interval_days = 60 }
+lifecycle = { created = "2026-06-03", last_reviewed = "2026-10-11", review_interval_days = 60 }
 
 [[skills]]
 id = "port-isabelle"
@@ -103,9 +104,9 @@ status = "active"
 version = "3.0.0"
 triggers = ["port from Isabelle", "Isabelle ML", "ML to Rust", "new module from Isabelle", "port ML"]
 permissions = ["Bash:cargo test", "Bash:cargo check", "Read", "Edit", "Grep"]
-depends_on = ["AGENTS.md", ".claude/rules/kernel.md", ".claude/rules/api-design.md", "docs/GAP_ANALYSIS.md"]
+depends_on = ["AGENTS.md", ".claude/rules/kernel.md", ".claude/rules/api-design.md", "docs/kernel/KERNEL_TRUSTED_ACCEPTANCE_GAPS.md"]
 related_skills = ["add-method", "refactor", "audit-kernel"]
-lifecycle = { created = "2026-06-03", last_reviewed = "2026-06-03", review_interval_days = 60 }
+lifecycle = { created = "2026-06-03", last_reviewed = "2026-10-11", review_interval_days = 60 }
 
 [[skills]]
 id = "refactor"
@@ -118,7 +119,7 @@ triggers = ["refactor", "extract module", "rename", "restructure", "code smell",
 permissions = ["Bash:cargo test", "Bash:cargo clippy", "Bash:cargo fmt", "Read", "Edit", "Grep"]
 depends_on = ["AGENTS.md", ".claude/rules/refactoring.md", ".claude/rules/api-design.md"]
 related_skills = ["audit-kernel", "add-method", "build-theory"]
-lifecycle = { created = "2026-06-03", last_reviewed = "2026-06-03", review_interval_days = 90 }
+lifecycle = { created = "2026-06-03", last_reviewed = "2026-10-11", review_interval_days = 90 }
 
 [[skills]]
 id = "build-theory"
@@ -131,12 +132,12 @@ triggers = ["theory loading", ".thy file", "parse failure", "batch compile", "se
 permissions = ["Bash:cargo test", "Bash:cargo run", "Read"]
 depends_on = ["AGENTS.md", "scripts/README.md", ".claude/rules/theory-loading.md", ".claude/rules/isar.md"]
 related_skills = ["verify", "search-db"]
-lifecycle = { created = "2026-06-03", last_reviewed = "2026-06-03", review_interval_days = 60 }
+lifecycle = { created = "2026-06-03", last_reviewed = "2026-10-11", review_interval_days = 60 }
 
 [[skills]]
 id = "search-db"
 name = "Search Theorem Database"
-description = "Navigate HolTheoremDb as a searchable migration index; never present indexed facts as final trusted theorems."
+description = "Navigate HolTheoremDb and its database-local search caches as migration indexes; never present indexed facts as accepted theorems."
 category = "theory"
 status = "active"
 version = "3.0.0"
@@ -144,7 +145,7 @@ triggers = ["find theorem", "lookup rule", "search database", "theorem by name",
 permissions = ["Read", "Grep"]
 depends_on = ["AGENTS.md"]
 related_skills = ["build-theory", "verify"]
-lifecycle = { created = "2026-06-03", last_reviewed = "2026-07-18", review_interval_days = 90 }
+lifecycle = { created = "2026-06-03", last_reviewed = "2026-10-11", review_interval_days = 90 }
 
 [[skills]]
 id = "bench"
@@ -157,7 +158,7 @@ triggers = ["benchmark", "performance", "test all", "regression test", "run all 
 permissions = ["Bash:cargo test", "Bash:RUST_MIN_STACK"]
 depends_on = ["AGENTS.md", "scripts/README.md", ".claude/rules/testing.md", ".claude/rules/performance.md"]
 related_skills = ["verify", "debug-overflow"]
-lifecycle = { created = "2026-06-03", last_reviewed = "2026-06-03", review_interval_days = 60 }
+lifecycle = { created = "2026-06-03", last_reviewed = "2026-10-11", review_interval_days = 60 }
 
 [[skills]]
 id = "release"
@@ -170,7 +171,7 @@ triggers = ["release", "version bump", "phase complete", "changelog", "cut relea
 permissions = ["Bash:cargo test", "Bash:cargo check", "Bash:cargo clippy", "Read", "Edit", "Bash:git"]
 depends_on = ["AGENTS.md", ".claude/hooks/post-session.md", ".claude/rules/release.md"]
 related_skills = ["verify", "bench"]
-lifecycle = { created = "2026-06-03", last_reviewed = "2026-06-03", review_interval_days = 90 }
+lifecycle = { created = "2026-06-03", last_reviewed = "2026-10-11", review_interval_days = 90 }
 
 [[skills]]
 id = "run-isabelle-rs"
@@ -183,7 +184,7 @@ triggers = ["run", "start", "build", "screenshot", "demo", "compile", "launch", 
 permissions = ["Bash:cargo build", "Bash:cargo run", "Bash:cargo test", "Bash:RUST_MIN_STACK"]
 depends_on = ["AGENTS.md", "scripts/README.md"]
 related_skills = ["verify", "bench", "build-theory"]
-lifecycle = { created = "2026-06-16", last_reviewed = "2026-07-18", review_interval_days = 60 }
+lifecycle = { created = "2026-06-16", last_reviewed = "2026-10-11", review_interval_days = 60 }
 
 [[skills]]
 id = "sync-docs"
@@ -194,9 +195,9 @@ status = "active"
 version = "3.0.0"
 triggers = ["sync docs", "update docs", "doc sync", "stale docs", "after code change", "update documentation"]
 permissions = ["Read", "Write", "Edit", "Bash:git", "Bash:cargo"]
-depends_on = ["AGENTS.md", "docs/PROJECT_STATUS.md", ".claude/skills/sync-docs.md"]
+depends_on = ["AGENTS.md", "docs/status/PROJECT_STATUS.md", "docs/status/TRUST.md", ".claude/skills/sync-docs.md"]
 related_skills = ["release", "refactor", "audit-kernel"]
-lifecycle = { created = "2026-06-16", last_reviewed = "2026-07-18", review_interval_days = 60 }
+lifecycle = { created = "2026-06-16", last_reviewed = "2026-10-11", review_interval_days = 60 }
 
 # =============================================================================
 # Skill Lifecycle States

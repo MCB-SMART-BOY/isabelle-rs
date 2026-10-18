@@ -46,27 +46,25 @@ pub struct Typedecl {
 impl Typedecl {
     /// Parse a typedecl command.
     pub fn parse(source: &str) -> Option<Self> {
-        let source = source.trim().strip_prefix("typedecl ")?.trim();
-        // Skip type parameters like 'a, 'b to get the actual type name
-        let words: Vec<&str> = source.split_whitespace().collect();
-        // The type name is the last word, type params are the ones starting with '
-        let name = words.iter().rfind(|w| !w.starts_with('\''))?.to_string();
-        let arity = words.iter().filter(|w| w.starts_with('\'')).count();
-        Some(Typedecl { name, arity })
-    }
-
-    /// Generate the type declaration theorem.
-    pub fn generate_theorem(&self) -> ParsedLemma {
-        let term =
-            Term::const_(format!("OFCLASS({}, type_class)", self.name).as_str(), Typ::base("prop"));
-        ParsedLemma {
-            name: format!("{}.type", self.name),
-            attributes: vec!["typedecl".to_string()],
-            theorem: Arc::new(ThmKernel::assume_compat(CTerm::certify_annotated(term))),
-            proof_script: None,
-            alias_for: None,
-            source_loc: None,
+        use crate::isar::token::{Lexer, TokenKind};
+        let tokens = Lexer::new(source).tokenize_checked().ok()?;
+        let meaningful: Vec<_> =
+            tokens.iter().filter(|token| token.kind != TokenKind::EOF).collect();
+        let (command, body) = meaningful.split_first()?;
+        if command.source != "typedecl" {
+            return None;
         }
+        let (name, parameters) = body.split_last()?;
+        if !matches!(name.kind, TokenKind::Ident | TokenKind::LongIdent) {
+            return None;
+        }
+        let mut seen = std::collections::HashSet::new();
+        for parameter in parameters {
+            if parameter.kind != TokenKind::TypeVar || !seen.insert(&parameter.source) {
+                return None;
+            }
+        }
+        Some(Typedecl { name: name.source.clone(), arity: parameters.len() })
     }
 }
 
@@ -134,14 +132,13 @@ impl Specification {
                 vec!["specification".to_string()]
             };
 
-            lemmas.push(ParsedLemma {
-                name: format!("spec_{}", name),
-                attributes: attrs,
-                theorem: Arc::new(ThmKernel::assume_compat(CTerm::certify_annotated(term))),
-                proof_script: None,
-                alias_for: None,
-                source_loc: None,
-            });
+            lemmas.push(ParsedLemma::new_synthetic(
+                format!("spec_{}", name),
+                attrs,
+                Arc::new(ThmKernel::assume_compat(CTerm::certify(term))),
+                None,
+                None,
+            ));
         }
 
         lemmas
@@ -172,8 +169,7 @@ impl LocalDef {
             return None;
         }
         let name = parts[0].trim().to_string();
-        let term = crate::isar::term_parser::parse_term(parts[1].trim())
-            .unwrap_or_else(|| Term::const_(parts[1].trim(), Typ::base("prop")));
+        let term = crate::isar::term_parser::parse_term(parts[1].trim())?;
 
         Some(LocalDef { name, term, typ: None })
     }
@@ -181,14 +177,13 @@ impl LocalDef {
     /// Generate the definition theorem.
     pub fn generate_theorem(&self) -> ParsedLemma {
         let def_term = Term::const_(format!("def_{}", self.name).as_str(), Typ::base("prop"));
-        ParsedLemma {
-            name: format!("def_{}", self.name),
-            attributes: vec!["def".to_string()],
-            theorem: Arc::new(ThmKernel::assume_compat(CTerm::certify_annotated(def_term))),
-            proof_script: None,
-            alias_for: None,
-            source_loc: None,
-        }
+        ParsedLemma::new_synthetic(
+            format!("def_{}", self.name),
+            vec!["def".to_string()],
+            Arc::new(ThmKernel::assume_compat(CTerm::certify(def_term))),
+            None,
+            None,
+        )
     }
 }
 
@@ -225,7 +220,7 @@ impl Definition {
             if let Some(start) = source[..pos].rfind('[') {
                 let attr_str = &source[start + 1..pos];
                 attrs = attr_str.split(',').map(|s| s.trim().to_string()).collect();
-                format!("{} {}", &source[..start].trim(), &source[pos + 1..].trim())
+                format!("{} {}", source[..start].trim(), source[pos + 1..].trim())
             } else {
                 source.to_string()
             }
@@ -235,9 +230,9 @@ impl Definition {
         let source = source.trim();
 
         // Case 1: `definition "x = t"` — no `where` clause
-        if source.starts_with('"') {
-            if let Some(end) = source[1..].find('"') {
-                let inner = &source[1..end + 1];
+        if let Some(stripped) = source.strip_prefix('"') {
+            if let Some(end) = stripped.find('"') {
+                let inner = &stripped[..end];
                 if let Some((name, term)) = Self::parse_equality(inner) {
                     return Some(Definition { name, term, typ: None, attributes: attrs });
                 }
@@ -247,27 +242,22 @@ impl Definition {
 
         // Case 2: `definition x where "x = t"`
         // or `definition x :: "'a => 'a" where "x a = a"`
-        let (name, typ, body) = if let Some(where_pos) = source.find("where") {
-            let prefix = source[..where_pos].trim();
-            let body = source[where_pos + 5..].trim();
-            // Extract name from prefix (may have type annotation)
-            let name = prefix.split_whitespace().next()?.trim_end_matches(',').to_string();
-            // Extract type annotation if present: `x :: "type"`
-            let typ = if let Some(colon) = prefix.find("::") {
-                let type_str = prefix[colon + 2..].trim();
-                Some(Typ::base(type_str))
-            } else {
-                None
-            };
-            (name, typ, body)
+        let where_pos = source.find("where")?;
+        let prefix = source[..where_pos].trim();
+        let body = source[where_pos + 5..].trim();
+        // Extract name from prefix (may have type annotation)
+        let name = prefix.split_whitespace().next()?.trim_end_matches(',').to_string();
+        // Extract type annotation if present: `x :: "type"`
+        let typ = if let Some(colon) = prefix.find("::") {
+            let type_str = prefix[colon + 2..].trim();
+            Some(Typ::base(type_str))
         } else {
-            return None;
+            None
         };
 
         // Parse the body term from the where clause
         let body_str = body.trim().trim_matches('"');
-        let term = crate::isar::term_parser::parse_term(body_str)
-            .unwrap_or_else(|| Term::const_(body_str, Typ::base("bool")));
+        let term = crate::isar::term_parser::parse_term(body_str)?;
 
         Some(Definition { name, term, typ, attributes: attrs })
     }
@@ -276,27 +266,24 @@ impl Definition {
     fn parse_equality(s: &str) -> Option<(String, Term)> {
         let parts: Vec<&str> = s.splitn(2, '=').collect();
         if parts.len() < 2 {
-            // No equality — the whole thing is the name
-            return Some((s.to_string(), Term::const_("True", Typ::base("bool"))));
+            return None;
         }
         let name = parts[0].trim().to_string();
         let rhs = parts[1].trim();
-        let term = crate::isar::term_parser::parse_term(rhs)
-            .unwrap_or_else(|| Term::const_(rhs, Typ::base("bool")));
+        let term = crate::isar::term_parser::parse_term(rhs)?;
         Some((name, term))
     }
 
     /// Generate a lemma for this definition.
     pub fn generate_theorem(&self) -> ParsedLemma {
         let prop = Term::const_(self.name.as_str(), Typ::base("prop"));
-        ParsedLemma {
-            name: format!("def_{}", self.name),
-            attributes: self.attributes.clone(),
-            theorem: Arc::new(ThmKernel::assume_compat(CTerm::certify_annotated(prop))),
-            proof_script: None,
-            alias_for: Some(vec![self.name.clone()]),
-            source_loc: None,
-        }
+        ParsedLemma::new_synthetic(
+            format!("def_{}", self.name),
+            self.attributes.clone(),
+            Arc::new(ThmKernel::assume_compat(CTerm::certify(prop))),
+            None,
+            Some(vec![self.name.clone()]),
+        )
     }
 }
 
@@ -350,8 +337,7 @@ impl Axiomatization {
                 if ax.is_empty() {
                     continue;
                 }
-                let term = crate::isar::term_parser::parse_term(ax)
-                    .unwrap_or_else(|| Term::const_(ax, Typ::base("prop")));
+                let term = crate::isar::term_parser::parse_term(ax)?;
                 axioms.push(term);
             }
         }
@@ -365,28 +351,27 @@ impl Axiomatization {
 
         // Generate constant declaration lemmas
         for (name, _typ) in &self.constants {
-            lemmas.push(ParsedLemma {
-                name: format!("ax_{}", name),
-                attributes: vec!["axiom".to_string()],
-                theorem: Arc::new(ThmKernel::assume_compat(CTerm::certify_annotated(
-                    Term::const_(name.as_str(), Typ::base("prop")),
-                ))),
-                proof_script: None,
-                alias_for: Some(vec![name.clone()]),
-                source_loc: None,
-            });
+            lemmas.push(ParsedLemma::new_synthetic(
+                format!("ax_{}", name),
+                vec!["axiom".to_string()],
+                Arc::new(ThmKernel::assume_compat(CTerm::certify(Term::const_(
+                    name.as_str(),
+                    Typ::base("prop"),
+                )))),
+                None,
+                Some(vec![name.clone()]),
+            ));
         }
 
         // Generate axiom lemmas
         for (i, ax) in self.axioms.iter().enumerate() {
-            lemmas.push(ParsedLemma {
-                name: format!("axiom_{}", i),
-                attributes: vec!["axiom".to_string()],
-                theorem: Arc::new(ThmKernel::assume_compat(CTerm::certify_annotated(ax.clone()))),
-                proof_script: None,
-                alias_for: None,
-                source_loc: None,
-            });
+            lemmas.push(ParsedLemma::new_synthetic(
+                format!("axiom_{}", i),
+                vec!["axiom".to_string()],
+                Arc::new(ThmKernel::assume_compat(CTerm::certify(ax.clone()))),
+                None,
+                None,
+            ));
         }
 
         lemmas
@@ -407,29 +392,25 @@ pub struct Abbreviation {
 impl Abbreviation {
     pub fn parse(source: &str) -> Option<Self> {
         let source = source.trim().strip_prefix("abbreviation ")?.trim();
-        let (name, body) = if let Some(where_pos) = source.find("where") {
-            (source[..where_pos].trim().to_string(), source[where_pos + 5..].trim())
-        } else {
-            return None;
-        };
+        let where_pos = source.find("where")?;
+        let name = source[..where_pos].trim().to_string();
+        let body = source[where_pos + 5..].trim();
         let body_str = body.trim().trim_matches('"');
-        let term = crate::isar::term_parser::parse_term(body_str)
-            .unwrap_or_else(|| Term::const_(body_str, Typ::base("bool")));
+        let term = crate::isar::term_parser::parse_term(body_str)?;
         Some(Abbreviation { name, term })
     }
 
     pub fn generate_theorem(&self) -> ParsedLemma {
-        ParsedLemma {
-            name: format!("abbrev_{}", self.name),
-            attributes: vec!["abbreviation".to_string()],
-            theorem: Arc::new(ThmKernel::assume_compat(CTerm::certify_annotated(Term::const_(
+        ParsedLemma::new_synthetic(
+            format!("abbrev_{}", self.name),
+            vec!["abbreviation".to_string()],
+            Arc::new(ThmKernel::assume_compat(CTerm::certify(Term::const_(
                 self.name.as_str(),
                 Typ::base("prop"),
             )))),
-            proof_script: None,
-            alias_for: Some(vec![self.name.clone()]),
-            source_loc: None,
-        }
+            None,
+            Some(vec![self.name.clone()]),
+        )
     }
 }
 
@@ -470,17 +451,16 @@ impl TypeAbbrev {
     }
 
     pub fn generate_theorem(&self) -> ParsedLemma {
-        ParsedLemma {
-            name: format!("type_{}", self.name),
-            attributes: vec!["type_abbrev".to_string()],
-            theorem: Arc::new(ThmKernel::assume_compat(CTerm::certify_annotated(Term::const_(
+        ParsedLemma::new_synthetic(
+            format!("type_{}", self.name),
+            vec!["type_abbrev".to_string()],
+            Arc::new(ThmKernel::assume_compat(CTerm::certify(Term::const_(
                 self.name.as_str(),
                 Typ::base("type"),
             )))),
-            proof_script: None,
-            alias_for: None,
-            source_loc: None,
-        }
+            None,
+            None,
+        )
     }
 }
 
@@ -501,11 +481,7 @@ pub fn parse_spec_commands(source: &str) -> Vec<ParsedLemma> {
             continue;
         }
 
-        if t.starts_with("typedecl ") {
-            if let Some(td) = Typedecl::parse(t) {
-                lemmas.push(td.generate_theorem());
-            }
-        } else if t.starts_with("definition ") {
+        if t.starts_with("definition ") {
             if let Some(def) = Definition::parse(t) {
                 lemmas.push(def.generate_theorem());
             }
@@ -682,5 +658,30 @@ def my_def ≡ True
         assert!(is_new_command("datatype 'a list = Nil | Cons 'a"));
         assert!(!is_new_command("  shows \"P x\""));
         assert!(!is_new_command("x = y"));
+    }
+
+    #[test]
+    fn parse_local_definition_invalid_term_is_rejected() {
+        assert!(LocalDef::parse("def x ≡ True ==>").is_none());
+    }
+
+    #[test]
+    fn parse_definition_missing_equation_is_rejected() {
+        assert!(Definition::parse("definition \"foo\"").is_none());
+    }
+
+    #[test]
+    fn parse_definition_invalid_term_is_rejected() {
+        assert!(Definition::parse("definition foo where \"foo = (True\"").is_none());
+    }
+
+    #[test]
+    fn parse_axiomatization_invalid_proposition_is_rejected() {
+        assert!(Axiomatization::parse("axiomatization f where \"True ==>\"").is_none());
+    }
+
+    #[test]
+    fn parse_abbreviation_invalid_term_is_rejected() {
+        assert!(Abbreviation::parse("abbreviation foo where \"foo = (True\"").is_none());
     }
 }

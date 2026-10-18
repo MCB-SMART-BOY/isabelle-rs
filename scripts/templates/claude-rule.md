@@ -17,4 +17,6 @@ updated: <YYYY-MM-DD>
 
 - `<authoritative source path>`
 - `<design or trust document>`
-- `scripts/<maintained command>`
+- [Engineering workflow](../../docs/guides/DEVELOPMENT.md#engineering-workflow)
+- [Command catalog](../README.md#verification); link maintained `xtask`
+  commands rather than duplicating their implementation.

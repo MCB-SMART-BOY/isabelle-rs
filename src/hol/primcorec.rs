@@ -68,11 +68,9 @@ pub fn parse_primcorecs(source: &str) -> Vec<PrimcorecDef> {
     results
 }
 
-fn parse_primcorec_header(
-    header: &str,
-    lines: &[&str],
-    i: &mut usize,
-) -> Option<(String, String, Vec<(Option<String>, String, String)>)> {
+type PrimcorecHeader = (String, String, Vec<(Option<String>, String, String)>);
+
+fn parse_primcorec_header(header: &str, lines: &[&str], i: &mut usize) -> Option<PrimcorecHeader> {
     let header = header.trim();
     *i += 1;
 
@@ -202,14 +200,14 @@ impl PrimcorecDef {
         // For each equation, if the RHS is a constructor application,
         // generate: `sel_i (f args) = arg_i`
         // One equation is enough for sel rules — use first
-        if let Some((_label, lhs, rhs)) = self.equations.first() {
-            if let Some((_ctor_name, args)) = parse_constructor_app(rhs) {
-                for (idx, arg) in args.iter().enumerate() {
-                    let sel_name = format!("{}.sel_{}", self.name, idx);
-                    let lhs_term = format!("sel_{} ({})", idx, lhs);
-                    let eq_term = self.build_equation_term(&lhs_term, arg);
-                    results.push((sel_name, eq_term, vec!["primcorec".to_string()]));
-                }
+        if let Some((_label, lhs, rhs)) = self.equations.first()
+            && let Some((_ctor_name, args)) = parse_constructor_app(rhs)
+        {
+            for (idx, arg) in args.iter().enumerate() {
+                let sel_name = format!("{}.sel_{}", self.name, idx);
+                let lhs_term = format!("sel_{} ({})", idx, lhs);
+                let eq_term = self.build_equation_term(&lhs_term, arg);
+                results.push((sel_name, eq_term, vec!["primcorec".to_string()]));
             }
         }
 
@@ -380,14 +378,13 @@ pub fn primcorec_to_lemmas(def: &PrimcorecDef) -> Vec<crate::hol::hol_loader::Pa
 
     for (name, term, attrs) in theorems {
         let thm = ThmKernel::assume_compat(CTerm::certify(term));
-        lemmas.push(crate::hol::hol_loader::ParsedLemma {
+        lemmas.push(crate::hol::hol_loader::ParsedLemma::new_synthetic(
             name,
-            attributes: attrs,
-            theorem: Arc::new(thm),
-            proof_script: None,
-            alias_for: None,
-            source_loc: None,
-        });
+            attrs,
+            Arc::new(thm),
+            None,
+            None,
+        ));
     }
 
     lemmas

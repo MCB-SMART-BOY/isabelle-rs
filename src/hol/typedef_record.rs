@@ -290,14 +290,13 @@ fn make_lemma(
     thm: crate::core::thm::Thm,
     attrs: Vec<String>,
 ) -> crate::hol::hol_loader::ParsedLemma {
-    crate::hol::hol_loader::ParsedLemma {
-        name: name.to_string(),
-        attributes: attrs,
-        theorem: Arc::new(thm),
-        proof_script: None,
-        alias_for: None,
-        source_loc: None,
-    }
+    crate::hol::hol_loader::ParsedLemma::new_synthetic(
+        name.to_string(),
+        attrs,
+        Arc::new(thm),
+        None,
+        None,
+    )
 }
 
 // =========================================================================

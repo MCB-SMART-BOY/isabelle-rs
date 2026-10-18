@@ -3,6 +3,17 @@
 This directory contains reusable examples and design aids. It contains no
 production theorem constructor, trusted API, or project-integrated module.
 
+For actual gates and CLI contracts, use
+[scripts/README.md](../README.md) and the
+[development guide](../../docs/guides/DEVELOPMENT.md). The agent adapter is
+[`.claude/`](../../.claude/), not a `docs/agent/` mirror.
+
+The rule, skill and phase-plan forms follow the shared
+[engineering workflow](../../docs/guides/DEVELOPMENT.md#engineering-workflow).
+They are examples, not executable permission grants. Keep skill frontmatter
+and the adapter registry consistent; instantiating a template does not
+authorize new proof rules, product packages, commits or releases.
+
 Classifications:
 
 - **design-only**: a proposed interface or architecture shape. It may contain
@@ -29,12 +40,15 @@ Classifications:
 | `claude-rule.md` | example | Documentation review only. |
 | `claude-skill.md` | example | Documentation review only. |
 
-`scripts/check-rust-templates.sh` verifies that the Rust design files are
-standalone and internally compilable. It does **not** prove that their names,
-types, semantics, dependencies, or trust boundaries match the current
-`isabelle-rs` production API. Source code, tests, and accepted ADRs remain
-authoritative.
+`cargo +stable xtask templates` checks classification and standalone compilation
+of the Rust design files. It does **not** prove that names, types, semantics,
+dependencies or trust boundaries match the production `isabelle-rs` API.
+Source code, tests and accepted ADRs remain authoritative. The deterministic
+repository gate is `cargo +stable xtask verify`; its included docs checks still
+do not establish production template compatibility. Independent `selftest`,
+security audits and the global workstation validator remain separate.
 
-Short explanatory Bash, Rust, PowerShell, TOML, and JSON blocks may remain in
-Markdown. Large runnable or duplicated snippets belong in `scripts/` or this
-directory, with a link from the document and an explicit classification here.
+Keep only short explanatory Rust/TOML/JSON/command examples in Markdown.
+Reusable automation lives in [xtask](../../xtask/); this directory holds
+classified examples, while `scripts/reference/` holds official reference
+probe inputs. Neither directory is a second runnable project-script entry.

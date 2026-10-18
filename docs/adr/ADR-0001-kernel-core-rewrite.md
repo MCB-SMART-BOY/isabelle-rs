@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted.
+Accepted. The kernel-nucleus decision is implemented in `crates/kernel/`;
+`src/kernel/mod.rs` is the root crate's re-export, not a second TCB.
 
 ## Context
 
@@ -18,8 +19,9 @@ define the next TCB.
 
 ## Decision
 
-Create a new `src/kernel/` strict kernel nucleus and treat the existing system
-as legacy/quarantine until it is migrated through explicit adapters.
+Create a strict kernel nucleus (originally planned at `src/kernel/`, now
+implemented in `crates/kernel/`) and treat the existing system as
+legacy/quarantine until it is migrated through explicit adapters.
 
 This is not a full-project rewrite. It is a strangler-style kernel reset:
 
@@ -32,7 +34,7 @@ compat never enters the new TCB
 
 ## TCB Boundary
 
-`src/kernel/` is the new TCB experiment. It must not contain:
+`crates/kernel/` is the strict TCB experiment; `src/kernel/mod.rs` re-exports it. It must not contain:
 
 - compatibility alpha-equivalence;
 - `Typ::dummy` or equivalent unknown type values;
@@ -41,8 +43,13 @@ compat never enters the new TCB
 - raw-term auto-declare of constants or frees;
 - goal-as-theorem proof obligations;
 - public theorem constructors;
-- crate-wide unchecked certification or theorem constructors (`pub(crate)`);
+- unchecked certification or theorem constructors exposed to the root product,
+  legacy/frontends or external callers;
 - implicit conversion from search facts to trusted theorems.
+
+Unchecked construction may use `pub(crate)` or narrower visibility only inside
+the isolated `isabelle-kernel` crate. Its public frontend API must not expose
+those constructors; sharing a workspace does not share crate-private access.
 
 The legacy `src/core` remains available for existing code while migration is
 planned. It is not the target shape for new trusted work.
@@ -58,8 +65,8 @@ RawTerm
   -> primitive KernelRules
   -> KernelThm
   -> ClosedThm
-  -> TrustedTheorem
-  -> TrustedTheory
+  -> accept_closed_theorem(exact immutable owner, fact name)
+  -> (child TrustedTheory, sealed TrustedTheorem)
 ```
 
 The non-TCB flow is:
@@ -87,16 +94,16 @@ Every primitive rule must have:
 
 - `CTerm` in the new kernel means certified term only. Compatibility terms must
   use separate legacy/search types.
-- Internal escape hatches such as certified-subterm wrappers and theorem
-  constructors are visible only inside `crate::kernel` (`pub(in crate::kernel)`)
-  or narrower. Legacy `src/core`, Isar, HOL, tools, and session modules must
-  enter through strict certification or explicit adapters.
+- Direct theorem constructors and unchecked certification are confined to the
+  strict kernel crate. Public helper operations such as `theorem_builder` can
+  return candidate `KernelThm` values, but cannot mint accepted tokens;
+  `accept_closed_theorem` still verifies exact-owner replay. Legacy `src/core`,
+  Isar, HOL, tools, and session code cannot promote compatibility results.
 - `ProofObligation` is separate from theorem values.
-- The current `TrustedTheory` accepts only the nominal `TrustedTheorem` type,
-  but its context-free `add` operation is not final acceptance. The target
-  additionally requires immutable theory/logic provenance and context replay as
-  specified by ADR-0003 and
-  [KERNEL_TRUSTED_ACCEPTANCE_GAPS.md](KERNEL_TRUSTED_ACCEPTANCE_GAPS.md).
+- `TrustedTheory` acceptance now uses `accept_closed_theorem` with the exact
+  immutable owner and replay; the older context-free `add` limitation recorded
+  when this decision was written has been superseded by that implementation.
+  See [KERNEL_TRUSTED_ACCEPTANCE_GAPS.md](../kernel/KERNEL_TRUSTED_ACCEPTANCE_GAPS.md).
 - `SearchFactDb` may hold untrusted facts but cannot promote them to
   trusted theorems.
 - Old Isar/HOL/tactic migration should happen through adapters after the

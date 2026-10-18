@@ -3,7 +3,7 @@
 //! Provides:
 //! - `hol_basic_simp_rules()` — standard HOL simplification rules (built with hologic)
 //! - `mksimps_pairs()` — atomization rule mapping (HOL constants → intro/elim theorems)
-//! - `init_hol_simpset()` — complete HolSimplifier with rules + solvers
+//! - `init_hol_simpset(db)` — complete DB-scoped HolSimplifier with rules + solvers
 
 #![allow(non_snake_case)]
 
@@ -273,8 +273,7 @@ fn add_rule(rules: &mut Vec<RewriteRule>, name: &str, prop: Term) {
 }
 
 /// Load named theorems from the theorem database and convert to rewrite rules.
-fn load_named_rules(names: &[&str]) -> Vec<RewriteRule> {
-    let db = crate::hol::hol_loader::HolTheoremDb::get();
+fn load_named_rules(db: &crate::hol::hol_loader::HolTheoremDb, names: &[&str]) -> Vec<RewriteRule> {
     let mut rules = Vec::new();
     for name in names {
         if let Some(thm) = db.by_name.get(*name)
@@ -319,8 +318,7 @@ pub fn mksimps_pairs() -> Vec<(&'static str, Vec<&'static str>)> {
 /// 3. Arithmetic and assumption solver plugins
 ///
 /// This is the equivalent of Isabelle's `HOL_basic_ss`.
-pub fn init_hol_simpset() -> HolSimplifier {
-    let db = crate::hol::hol_loader::HolTheoremDb::get();
+pub fn init_hol_simpset(db: &crate::hol::hol_loader::HolTheoremDb) -> HolSimplifier {
     let mut rules: Vec<RewriteRule> = Vec::new();
 
     // Load DB simps
@@ -355,10 +353,10 @@ pub fn init_hol_simpset() -> HolSimplifier {
         "HOL.Eq_FalseI",
         "HOL.case_split",
     ];
-    rules.extend(load_named_rules(builtin_names));
+    rules.extend(load_named_rules(db, builtin_names));
 
     // Add HolSimplifier's own builtin rules (connective reduction fallbacks)
-    rules.extend(HolSimplifier::builtin_rules());
+    rules.extend(HolSimplifier::builtin_rules(db));
 
     let mut hs = HolSimplifier::with_rules(rules);
     hs.register_solver(Arc::new(crate::tools::simp::ArithSolver));

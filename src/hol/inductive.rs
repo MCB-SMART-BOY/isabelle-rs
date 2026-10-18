@@ -98,7 +98,7 @@ impl InductiveDef {
     /// we generate an induction hypothesis for each recursive occurrence of P.
     ///
     /// The induction rule has the form:
-    /// ```
+    /// ```text
     /// [| !!args1. IH1 ==> P t1; ...; !!argsN. IHN ==> P tN |] ==> P x
     /// ```
     fn gen_induct_rule(&self) -> Option<Term> {
@@ -243,7 +243,7 @@ impl InductiveDef {
     /// Generate the elimination rule from introduction rules.
     ///
     /// For each intro rule, we create a case. The elimination rule has the form:
-    /// ```
+    /// ```text
     /// [| P x; !!args1. [| prem1; ... |] ==> Q; ... |] ==> Q
     /// ```
     fn gen_elim_rule(&self) -> Option<Term> {
@@ -292,14 +292,13 @@ pub fn inductive_to_lemmas(def: &InductiveDef) -> Vec<crate::hol::hol_loader::Pa
 
     for (name, term, attrs) in &theorems {
         let thm = ThmKernel::assume_compat(CTerm::certify(term.clone()));
-        lemmas.push(crate::hol::hol_loader::ParsedLemma {
-            name: name.clone(),
-            attributes: attrs.clone(),
-            theorem: Arc::new(thm),
-            proof_script: None,
-            alias_for: None,
-            source_loc: None,
-        });
+        lemmas.push(crate::hol::hol_loader::ParsedLemma::new_synthetic(
+            name.clone(),
+            attrs.clone(),
+            Arc::new(thm),
+            None,
+            None,
+        ));
     }
 
     lemmas

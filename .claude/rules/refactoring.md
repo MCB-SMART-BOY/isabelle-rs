@@ -13,5 +13,6 @@ error variants, theorem burdens, derivations, compatibility taint, and source
 provenance.
 
 Do not use a refactor to move legacy code into the candidate TCB or freeze an
-unstable boundary into a workspace split. Run `scripts/fix.sh check`, the strict
-gate, and affected theory modes.
+unstable boundary into a workspace split. Run `cargo +stable xtask fix check`
+when applicable, then `verify` and `selftest`; use `strict` for a trust-boundary
+change and explicit `core`/Tier modes only when the affected claim needs them.

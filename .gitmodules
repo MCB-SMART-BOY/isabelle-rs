@@ -1,0 +1,3 @@
+[submodule "isabelle-source"]
+	path = isabelle-source
+	url = https://github.com/isabelle-prover/mirror-isabelle.git

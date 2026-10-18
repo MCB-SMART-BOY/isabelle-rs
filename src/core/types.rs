@@ -2,27 +2,47 @@
 //! Corresponds to src/Pure/type.ML, src/Pure/sorts.ML.
 use std::{
     cell::RefCell,
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeSet, HashMap, HashSet},
     fmt,
     sync::Arc,
 };
 
-thread_local! { static IT: RefCell<HashMap<String, Arc<str>>> = RefCell::new(HashMap::new()); }
+// Per-thread cache only: never retain unbounded client-supplied symbol escapes.
+const MAX_INTERNED_NAMES: usize = 4096;
+const MAX_INTERNED_BYTES: usize = 64 * 1024;
+const MAX_INTERNED_NAME_BYTES: usize = 1024;
+
+#[derive(Default)]
+struct InternCache {
+    names: HashSet<Arc<str>>,
+    retained_bytes: usize,
+}
+
+thread_local! { static IT: RefCell<InternCache> = RefCell::new(InternCache::default()); }
 
 pub fn intern(s: &str) -> Arc<str> {
-    IT.with(|t| {
-        let mut t = t.borrow_mut();
-        if let Some(e) = t.get(s) {
-            Arc::clone(e)
-        } else {
-            let a: Arc<str> = Arc::from(s);
-            t.insert(s.to_string(), Arc::clone(&a));
-            a
+    IT.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some(name) = cache.names.get(s) {
+            return Arc::clone(name);
         }
+
+        // Bypassed names remain owned by their callers, not by the worker's TLS.
+        if s.len() > MAX_INTERNED_NAME_BYTES
+            || cache.names.len() >= MAX_INTERNED_NAMES
+            || s.len() > MAX_INTERNED_BYTES - cache.retained_bytes
+        {
+            return Arc::from(s);
+        }
+
+        let name: Arc<str> = Arc::from(s);
+        cache.retained_bytes += s.len();
+        cache.names.insert(Arc::clone(&name));
+        name
     })
 }
 
-/// Symbol — interned name. Currently an alias for Arc<str>.
+/// Symbol — owned name; common names share a bounded per-thread cache.
 pub type Symbol = Arc<str>;
 pub type Class = Symbol; // Symbol alias
 
@@ -175,22 +195,10 @@ impl Typ {
         }
     }
 
-    /// Annotate dummy types with known types from the environment.
-    /// Returns true if any types were replaced.
-    pub fn annotate_from_env(&mut self, env: &TypeEnv) -> bool {
-        match self {
-            Typ::Type { name, args } if name.as_ref() == "dummy" && args.is_empty() => {
-                false // Can't annotate a pure dummy without context
-            },
-            Typ::Type { name: _, args } => {
-                let mut changed = false;
-                for arg in args.iter_mut() {
-                    changed |= arg.annotate_from_env(env);
-                }
-                changed
-            },
-            Typ::TFree { .. } | Typ::TVar { .. } => false,
-        }
+    /// A bare type cannot match a dummy against a named environment entry.
+    /// Without term-level context, this leaves the type unchanged and returns false.
+    pub fn annotate_from_env(&mut self, _env: &TypeEnv) -> bool {
+        false
     }
 
     /// Replace this type if it's dummy with a known type.
@@ -332,6 +340,69 @@ mod tests {
     use super::*;
 
     #[test]
+    fn intern_existing_name_reuses_arc() {
+        std::thread::spawn(|| {
+            let first = intern("common_symbol_name");
+            let second = intern("common_symbol_name");
+            assert!(Arc::ptr_eq(&first, &second));
+            let retained = Arc::downgrade(&first);
+            drop(first);
+            drop(second);
+            assert!(retained.upgrade().is_some());
+        })
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    fn intern_oversized_name_releases_without_cache() {
+        std::thread::spawn(|| {
+            let long_name = "x".repeat(MAX_INTERNED_NAME_BYTES + 1);
+            let symbol = intern(&long_name);
+            let released = Arc::downgrade(&symbol);
+            assert_eq!(&*symbol, long_name);
+            drop(symbol);
+            assert!(released.upgrade().is_none());
+        })
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    fn intern_full_entry_budget_releases_new_name() {
+        std::thread::spawn(|| {
+            for index in 0..MAX_INTERNED_NAMES {
+                let symbol = intern(&format!("{index:04x}"));
+                drop(symbol);
+            }
+            let symbol = intern("beyond_entry_budget");
+            let released = Arc::downgrade(&symbol);
+            drop(symbol);
+            assert!(released.upgrade().is_none());
+            assert!(Arc::ptr_eq(&intern("0000"), &intern("0000")));
+        })
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    fn intern_full_byte_budget_releases_new_name() {
+        std::thread::spawn(|| {
+            let suffix = "x".repeat(MAX_INTERNED_NAME_BYTES - 4);
+            for index in 0..(MAX_INTERNED_BYTES / MAX_INTERNED_NAME_BYTES) {
+                let symbol = intern(&format!("{index:04x}{suffix}"));
+                drop(symbol);
+            }
+            let symbol = intern("beyond_byte_budget");
+            let released = Arc::downgrade(&symbol);
+            drop(symbol);
+            assert!(released.upgrade().is_none());
+        })
+        .join()
+        .unwrap();
+    }
+
+    #[test]
     fn test_type_env_builtins() {
         let env = TypeEnv::new();
         assert_eq!(env.type_arity("fun"), Some(2));
@@ -380,7 +451,7 @@ mod tests {
         let ord = Symbol::from("ord");
         env.declare_class("ord", &[Symbol::from("type")]);
         // Declare order subclass of ord
-        env.declare_class("order", &[ord.clone()]);
+        env.declare_class("order", std::slice::from_ref(&ord));
 
         // A type variable with sort {order} should satisfy {ord}
         let tv = Typ::free("'a", Sort::singleton("order"));
@@ -395,7 +466,6 @@ mod tests {
     #[test]
     fn test_sort_algebra_arity() {
         let mut env = TypeEnv::new();
-        let ord = Symbol::from("ord");
         // list :: (type)type — no sort constraint
         env.declare_arity("list", "type", vec![]);
         // list :: (ord)ord — 'a list is ord if 'a is ord

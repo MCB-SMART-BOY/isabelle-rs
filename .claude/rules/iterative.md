@@ -13,5 +13,5 @@ short-circuit behavior, error paths, and theorem burdens.
 
 Add shallow equivalence plus deep non-overflow tests. A stable reusable Rust
 skeleton must be classified as design-only, compile under
-`scripts/check-rust-templates.sh`, and live in `scripts/templates/`. Short local
+`cargo +stable xtask templates`, and live in `scripts/templates/`. Short local
 contract snippets may remain in Markdown.

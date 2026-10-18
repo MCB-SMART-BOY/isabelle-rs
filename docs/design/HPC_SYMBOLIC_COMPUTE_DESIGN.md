@@ -1,8 +1,14 @@
 # HPC Symbolic Compute Design
 
-Status: deferred design-only track. No dependency, production module, or trusted
-boundary is introduced here, and this work must not reorder the immutable
-context/acceptance/`TrueI` chain in [ROADMAP.md](ROADMAP.md).
+Status: deferred, untrusted-only proposal. No packed compute module,
+Burn/CubeCL dependency or accelerator-to-theorem API is implemented.
+The two standalone source-backed fixture tokens are outside the historical
+bundled HOL sample. Its audited `HOL::TrueI` projection yielded
+`KernelTrustedClosed: 1/125` (`TransitionalStrictClosed: 0/125`); the
+subsequently resumed P2/P3/P4 native closure implementation has not rerun
+this sampler. Neither that result nor historical official reference observations
+authorize this optional performance track. See
+[ROADMAP.md](../status/ROADMAP.md).
 
 ## Goal
 
@@ -35,9 +41,10 @@ GPU complete simplifier
 GPU proofterm replay as a trusted gate
 ```
 
-The strict CPU kernel remains the theorem authority. GPU or multi-backend
-compute may produce candidates, scores, fingerprints, or certificate drafts;
-it must not produce `TrustedTheorem`.
+The separate CPU `isabelle-kernel` crate is the only authority for checked
+theorem acceptance. Compute backends may generate candidates, scores,
+fingerprints or certificate drafts; they may never create a
+`TrustedTheorem`, accepted token, or legacy proof result on their own.
 
 ## Backend Positioning
 
@@ -66,40 +73,35 @@ after a deterministic CPU baseline and packed symbolic IR exist.
 The mandatory data flow is:
 
 ```text
-Kernel Term / Fact / Rewrite Rule
-  -> untrusted PackedTermArena / PackedFact / PackedRewriteRule
-  -> CPU/GPU symbolic compute
+Existing term/fact/rule indexes
+  -> untrusted packed candidate representation
+  -> optional CPU/GPU compute
   -> candidate ids / scores / fingerprints / certificate drafts
-  -> exact CPU proof-search step
-  -> strict kernel replay/check
-  -> KernelThm / TrustedTheorem only if the kernel accepts it
+  -> lookup exact source objects and perform CPU proof/search step
+  -> strict kernel certification and owner-bound replay/acceptance
+  -> TrustedTheorem only on success
 ```
 
 ## Hard Invariants
 
 These are trust-boundary requirements, not implementation suggestions:
 
-1. `src/kernel` must not depend on `compute`, Burn, CubeCL, WGPU, CUDA, ROCm,
-   Metal, Vulkan, WebGPU, or any backend-specific crate.
-2. `compute` must not construct `KernelThm`, `ClosedThm`, `OpenThm`,
-   `TrustedTheorem`, or legacy `Thm`.
-3. `compute` must not construct strict `CTerm` or `CProp`.
-4. `compute` must not call `CTerm::from_certified_subterm` or any other
-   certified-by-origin wrapper.
-5. `compute` output must be candidate IDs, scores, fingerprints, diagnostics,
-   or certificate drafts only.
-6. If a backend produces a substitution candidate, rewrite candidate, or proof
-   step candidate, CPU code must re-run exact matching/certification/replay
-   before theorem state changes.
-7. Fingerprint/hash equality is never theorem equality and never term
-   alpha-equivalence.
-8. Packed IR is a cache/index representation, not a trusted AST. Unpacking it
-   into theorem-facing terms requires normal certification again.
-9. Candidate IDs must refer back to original facts, rules, or subterms from
-   existing indexes; generated terms from compute backends are not accepted as
-   theorem inputs.
-10. Backend nondeterminism must not affect theorem acceptance. It may affect
-    search ordering only after deterministic tie-breaking.
+1. `crates/kernel` must not depend on compute, Burn, CubeCL or backend crates.
+2. Compute must not construct `KernelThm`, `ClosedThm`, `OpenThm`,
+   `TrustedTheorem`, or legacy `Thm` as proof evidence.
+3. Compute must not construct certified `CTerm` or `CProp`.
+4. Compute must not call `CTerm::from_certified_subterm` or another
+   kernel-crate-private certified-by-origin helper.
+5. Its outputs are candidate IDs, scores, fingerprints, diagnostics or drafts.
+6. CPU proof/search code must re-check any suggested substitution, rewrite or
+   proof step before theorem state changes.
+7. Hash/fingerprint equality is never term equality or a proof.
+8. Packed IR is an index/cache, not a certified AST; unpacked theorem-facing
+   terms require ordinary declaration-aware certification and derivation.
+9. Candidate IDs must resolve to existing, authorized source facts, rules or
+   subterms. They confer no owner/theorem-reference authority.
+10. Backend nondeterminism may affect only search order after deterministic
+    tie-breaking, never theorem acceptance.
 
 ## Candidate-Only Output Model
 
@@ -108,7 +110,7 @@ outputs must point back to existing source objects:
 
 The shared candidate and backend design types are maintained in the
 design-only standalone
-[symbolic_compute_backend.rs](../scripts/templates/symbolic_compute_backend.rs)
+[symbolic_compute_backend.rs](../../scripts/templates/symbolic_compute_backend.rs)
 template. Its compilation does not validate a production compute API.
 
 The follow-up CPU path must:
@@ -136,11 +138,11 @@ trusted boundary and then proved by existing kernel rules.
 Future target modules or crates may look like:
 
 ```text
-isabelle-kernel
-  trusted CPU LCF kernel
+isabelle-kernel (existing crates/kernel)
+  trusted CPU LCF kernel; no compute dependency
 
-isabelle-index
-  term/fact/rewrite indexes and packed symbolic views
+isabelle-index (proposed)
+  packed views and search indexes, no theorem authority
 
 isabelle-compute
   backend-agnostic symbolic compute traits and CPU baseline
@@ -297,12 +299,12 @@ GPU and SIMD backends need packed, array-oriented data.
 Initial design:
 
 The packed structs and `PackedTrustClass` are centralized in
-[symbolic_compute_backend.rs](../scripts/templates/symbolic_compute_backend.rs).
+[symbolic_compute_backend.rs](../../scripts/templates/symbolic_compute_backend.rs).
 
 `PackedTrustClass` is advisory. It helps ranking and filtering, but cannot be
 used for theorem acceptance. In particular, it has no `KernelTrustedClosed`
-variant: final trust requires the original context-bound
-`src/kernel::TrustedTheorem`, not packed metadata.
+variant: final trust requires an owner-bound
+`isabelle-kernel::TrustedTheorem`, not packed metadata.
 
 `PackedTermArena` must not become a second source of theorem terms. It is
 derived from existing terms for indexing and batching. Any conversion from
@@ -336,10 +338,9 @@ target. It provides deterministic behavior, test oracles, and portability.
 
 Gate:
 
-- no `src/` changes;
-- no `Cargo.toml` or `Cargo.lock` changes;
-- no Burn/CubeCL dependency;
-- `bash scripts/check-strict-kernel.sh` passes.
+- no production compute or dependency changes in this design phase;
+- no trusted constructor exposed to packed IR;
+- existing strict-kernel checks stay independent of this proposal.
 
 ### Phase 1: Packed IR CPU Baseline
 

@@ -123,9 +123,9 @@ pub fn parse_subclasses(source: &str) -> Vec<SubclassDecl> {
         // Form: subclass super_class [by method]
         let (super_class, proof) = if let Some(by_pos) = rest.find(" by ") {
             (rest[..by_pos].trim().to_string(), Some(rest[by_pos + 4..].trim().to_string()))
-        } else if rest.ends_with("..") {
+        } else if let Some(stripped) = rest.strip_suffix("..") {
             // `subclass foo ..` — omit proof
-            (rest[..rest.len() - 2].trim().to_string(), None)
+            (stripped.trim().to_string(), None)
         } else {
             (rest.to_string(), None)
         };
@@ -152,14 +152,13 @@ pub fn instance_to_lemmas(decl: &InstanceDecl) -> Vec<crate::hol::hol_loader::Pa
     let instance_term = Term::const_(instance_name.as_str(), Typ::base("prop"));
     let thm = ThmKernel::assume_compat(CTerm::certify(instance_term));
 
-    lemmas.push(crate::hol::hol_loader::ParsedLemma {
-        name: format!("{}.{}.instance", decl.type_name, decl.class_name),
-        attributes: vec!["instance".to_string()],
-        theorem: Arc::new(thm),
-        proof_script: decl.proof.clone(),
-        alias_for: None,
-        source_loc: None,
-    });
+    lemmas.push(crate::hol::hol_loader::ParsedLemma::new_synthetic(
+        format!("{}.{}.instance", decl.type_name, decl.class_name),
+        vec!["instance".to_string()],
+        Arc::new(thm),
+        decl.proof.clone(),
+        None,
+    ));
 
     lemmas
 }
@@ -172,14 +171,13 @@ pub fn subclass_to_lemmas(decl: &SubclassDecl) -> Vec<crate::hol::hol_loader::Pa
     let subclass_term = Term::const_(subclass_name.as_str(), Typ::base("prop"));
     let thm = ThmKernel::assume_compat(CTerm::certify(subclass_term));
 
-    lemmas.push(crate::hol::hol_loader::ParsedLemma {
-        name: format!("{}.subclass_{}", decl.sub_class, decl.super_class),
-        attributes: vec!["subclass".to_string(), "classrel".to_string()],
-        theorem: Arc::new(thm),
-        proof_script: decl.proof.clone(),
-        alias_for: None,
-        source_loc: None,
-    });
+    lemmas.push(crate::hol::hol_loader::ParsedLemma::new_synthetic(
+        format!("{}.subclass_{}", decl.sub_class, decl.super_class),
+        vec!["subclass".to_string(), "classrel".to_string()],
+        Arc::new(thm),
+        decl.proof.clone(),
+        None,
+    ));
 
     lemmas
 }

@@ -17,7 +17,66 @@ use crate::core::{
     thm::{CTerm, KernelCheckMode, Thm, ThmKernel},
     types::Typ,
 };
-use crate::isar::proof_context::ProofCertContext;
+use crate::hol::hol_loader::HolTheoremDb;
+use crate::isar::{
+    outer_syntax::{CommandSpan, OuterSyntax},
+    proof_context::ProofCertContext,
+    proof_result::{GoalExportError, apply_goal_method, export_scoped_result},
+    token::{Token, TokenKind},
+};
+
+/// Reuse declarations from checked propositions, never raw candidate annotations.
+fn collect_checked_names(term: &Term, ctx: &mut ProofCertContext) {
+    match term {
+        Term::Const { name, typ } => ctx.declare_const(name, typ.clone()),
+        Term::Free { name, typ } => ctx.declare_free(name, typ.clone()),
+        Term::Abs { body, .. } => collect_checked_names(body, ctx),
+        Term::App { func, arg } => {
+            collect_checked_names(func, ctx);
+            collect_checked_names(arg, ctx);
+        },
+        Term::Bound(_) | Term::Var { .. } => {},
+    }
+}
+
+fn resolve_declared_names(term: Term, ctx: &ProofCertContext) -> Term {
+    match term {
+        Term::Free { name, typ } if typ.is_dummy() => {
+            if let Some(typ) = ctx.type_env().frees.get(name.as_ref()) {
+                Term::free(name, typ.clone())
+            } else if let Some(typ) = ctx.type_env().const_type(name.as_ref()) {
+                Term::const_(name, typ.clone())
+            } else {
+                Term::free(name, typ)
+            }
+        },
+        Term::Abs { name, typ, body } => Term::abs(name, typ, resolve_declared_names(*body, ctx)),
+        Term::App { func, arg } => {
+            Term::app(resolve_declared_names(*func, ctx), resolve_declared_names(*arg, ctx))
+        },
+        other => other,
+    }
+}
+
+fn certify_statement(
+    stmt: Term,
+    goal: &Thm,
+    fixes: &[(String, Typ)],
+    facts: &[Arc<Thm>],
+    premises: &[Arc<Thm>],
+) -> Result<CTerm, KernelError> {
+    let mut ctx = ProofCertContext::new();
+    collect_checked_names(goal.prop().term(), &mut ctx);
+    for (name, typ) in fixes {
+        ctx.declare_free(name, typ.clone());
+    }
+    for fact in facts.iter().chain(premises) {
+        if fact.check_kernel_invariants(KernelCheckMode::Strict).is_ok() {
+            collect_checked_names(fact.prop().term(), &mut ctx);
+        }
+    }
+    ctx.certify_prop(resolve_declared_names(stmt, &ctx))
+}
 
 /// The proof state during a structured Isar proof.
 #[derive(Debug, Clone)]
@@ -34,6 +93,8 @@ pub enum ProofState {
         chained_fact: Option<Arc<Thm>>,
         /// Fixed variables
         fixes: Vec<(String, Typ)>,
+        /// Only explicit local assumptions grant authority to discharge hypotheses.
+        local_assumptions: Vec<CTerm>,
         /// Pending subgoals (from induction/cases)
         subgoals: Vec<Thm>,
         /// Index of current subgoal being proved
@@ -41,7 +102,7 @@ pub enum ProofState {
         /// Nested block depth (for { ... } blocks)
         block_depth: usize,
         /// The result of the final `show` statement (for qed composition)
-        show_result: Option<Thm>,
+        show_result: Option<Box<Thm>>,
         /// Abbreviations from `let` commands (name -> term binding)
         let_bindings: Vec<(String, Term)>,
     },
@@ -91,6 +152,7 @@ impl ProofState {
                 facts: Vec::new(),
                 chained_fact: None,
                 fixes: Vec::new(),
+                local_assumptions: Vec::new(),
                 subgoals: Vec::new(),
                 current_subgoal: 0,
                 block_depth: 0,
@@ -160,11 +222,16 @@ impl ProofState {
         }
     }
 
-    /// Fix a variable (Isar `fix x y`).
-    pub fn fix(&mut self, var: &str, typ: Typ) {
-        if let ProofState::Proving { fixes, .. } = self {
-            fixes.push((var.to_string(), typ));
+    /// Fix a new variable. Shadowing an existing fix is ambiguous at export.
+    pub fn fix(&mut self, var: &str, typ: Typ) -> Result<(), GoalExportError> {
+        let ProofState::Proving { fixes, .. } = self else {
+            return Err(GoalExportError::MissingProofResult);
+        };
+        if fixes.iter().any(|(name, _)| name == var) || typ.contains_dummy() {
+            return Err(GoalExportError::InvalidScript { line: 0 });
         }
+        fixes.push((var.to_string(), typ));
+        Ok(())
     }
 
     /// Define a local abbreviation (Isar `let x = t` or `let x be "prop"`).
@@ -225,19 +292,20 @@ impl ProofState {
 
     /// Add a checked local assumption (`A |- A`) to the active proof state.
     pub fn assume_checked(&mut self, ct: CTerm) -> Result<Arc<Thm>, KernelError> {
-        let thm = ThmKernel::assume(ct)?;
-        thm.check_kernel_invariants(KernelCheckMode::Strict)?;
-        let thm = Arc::new(thm);
-
-        if let ProofState::Proving { facts, .. } = self {
-            facts.push(Arc::clone(&thm));
-            Ok(thm)
-        } else {
-            Err(KernelError::KernelInvariant {
+        if !matches!(self, ProofState::Proving { .. }) {
+            return Err(KernelError::KernelInvariant {
                 op: "ProofState::assume_checked",
                 message: "local assumptions require an active Proving state".to_string(),
-            })
+            });
         }
+        let thm = ThmKernel::assume(ct.clone())?;
+        thm.check_kernel_invariants(KernelCheckMode::Strict)?;
+        let thm = Arc::new(thm);
+        if let ProofState::Proving { facts, local_assumptions, .. } = self {
+            local_assumptions.push(ct);
+            facts.push(Arc::clone(&thm));
+        }
+        Ok(thm)
     }
 
     /// Assume a proposition (Isar `assume "A"`).
@@ -267,45 +335,56 @@ impl ProofState {
         }
     }
 
-    /// Prove an intermediate lemma (`have "B" by method`).
+    /// Prove an intermediate statement without granting its hypotheses new authority.
     pub fn have(
         &mut self,
         stmt: &Term,
         method: &str,
         all_premises: &[Arc<Thm>],
-    ) -> Option<Arc<Thm>> {
-        let goal = ThmKernel::assume_compat(CTerm::certify(stmt.clone()));
-        let mut combined_prems: Vec<Arc<Thm>> =
-            all_premises.iter().chain(self.get_premises().iter()).cloned().collect();
-        // Include chained fact if present
-        if let Some(chained) = self.take_chained() {
-            combined_prems.push(chained);
-        }
-        let result = crate::isar::method::exec_proof(&goal, method, &combined_prems)?;
-        let result_arc = Arc::new(result);
-        // Chain this result for the next step
-        self.chain_fact(Arc::clone(&result_arc));
-        self.add_fact(Arc::clone(&result_arc));
-        Some(result_arc)
+        db: &HolTheoremDb,
+    ) -> Result<Arc<Thm>, GoalExportError> {
+        let result = self.prove_statement(stmt, method, all_premises, db)?;
+        let result = Arc::new(result);
+        self.chain_fact(Arc::clone(&result));
+        self.add_fact(Arc::clone(&result));
+        Ok(result)
     }
 
-    /// Prove the current goal (`show "C" by method`).
-    /// Stores the result for final composition in `qed`.
-    pub fn show(&mut self, stmt: &Term, method: &str, all_premises: &[Arc<Thm>]) -> Option<Thm> {
-        let actual_stmt = self.resolve_case_stmt(stmt);
-        let goal = ThmKernel::assume_compat(CTerm::certify(actual_stmt));
-        let mut combined_prems: Vec<Arc<Thm>> =
-            all_premises.iter().chain(self.get_premises().iter()).cloned().collect();
-        // Include chained fact if present
-        if let Some(chained) = self.take_chained() {
-            combined_prems.push(chained);
-        }
-        let result = crate::isar::method::exec_proof(&goal, method, &combined_prems)?;
-        // Store the show result for qed to use in final theorem composition
+    /// Prove the declared statement and retain its actual derivation for qed.
+    pub fn show(
+        &mut self,
+        stmt: &Term,
+        method: &str,
+        all_premises: &[Arc<Thm>],
+        db: &HolTheoremDb,
+    ) -> Result<Thm, GoalExportError> {
+        let result =
+            self.prove_statement(&self.resolve_case_stmt(stmt), method, all_premises, db)?;
         if let ProofState::Proving { show_result, .. } = self {
-            *show_result = Some(result.clone());
+            *show_result = Some(Box::new(result.clone()));
         }
-        Some(result)
+        Ok(result)
+    }
+
+    fn prove_statement(
+        &self,
+        stmt: &Term,
+        method: &str,
+        all_premises: &[Arc<Thm>],
+        db: &HolTheoremDb,
+    ) -> Result<Thm, GoalExportError> {
+        let ProofState::Proving { goal, facts, chained_fact, fixes, local_assumptions, .. } = self
+        else {
+            return Err(GoalExportError::MissingProofResult);
+        };
+        let expected = certify_statement(stmt.clone(), goal, fixes, facts, all_premises)
+            .map_err(GoalExportError::from)?;
+        let mut available: Vec<Arc<Thm>> = all_premises.iter().chain(facts).cloned().collect();
+        if let Some(chained) = chained_fact {
+            available.push(Arc::clone(chained));
+        }
+        apply_goal_method(&expected, method, &available, local_assumptions, db)?
+            .ok_or(GoalExportError::MissingProofResult)
     }
 
     /// Resolve ?case/?thesis to the current subgoal's conclusion.
@@ -324,11 +403,6 @@ impl ProofState {
         if let ProofState::Proving { chained_fact, .. } = self {
             *chained_fact = Some(thm);
         }
-    }
-
-    /// Get and clear the chained fact.
-    fn take_chained(&mut self) -> Option<Arc<Thm>> {
-        if let ProofState::Proving { chained_fact, .. } = self { chained_fact.take() } else { None }
     }
 
     /// Set up a case context (`case Nil` or `case (Cons x xs)`).
@@ -379,62 +453,35 @@ impl ProofState {
         }
     }
 
-    /// Attempt to finalize the proof (`qed`).
-    /// Returns the final theorem if all subgoals are solved.
-    pub fn qed(&mut self) -> Option<Thm> {
+    /// Finalize only with a real, connected derivation of the original goal.
+    pub fn qed(&mut self) -> Result<Thm, GoalExportError> {
         match self {
-            ProofState::Proving { subgoals, goal, fixes, facts, show_result, .. } => {
-                // Priority 1: use the show_result if available
-                let base_result = if let Some(result) = show_result {
-                    result.clone()
+            ProofState::Proving {
+                goal, subgoals, fixes, local_assumptions, show_result, ..
+            } => {
+                if !subgoals.is_empty() {
+                    return Err(GoalExportError::UnsupportedComposition);
                 }
-                // Priority 2: check if all subgoals are solved
-                else if !subgoals.is_empty() && subgoals.iter().all(|sg| sg.nprems() == 0) {
-                    subgoals[0].clone()
-                }
-                // Priority 3: use original goal if closed
-                else if subgoals.is_empty() && goal.nprems() == 0 {
-                    goal.clone()
-                } else {
-                    return None;
-                };
-
-                // Discharge local hypotheses via implies_intr
-                let mut current = base_result;
-                let local_assumptions: Vec<CTerm> = facts
-                    .iter()
-                    .filter_map(|f| {
-                        let cterm = CTerm::certify(f.prop().term().clone());
-                        if current.hyps().contains(&cterm) { Some(cterm) } else { None }
-                    })
-                    .collect();
-                for assum in local_assumptions.iter().rev() {
-                    if let Ok(new_thm) = ThmKernel::implies_intr(assum, &current) {
-                        current = new_thm;
-                    }
-                }
-
-                // Discharge fixed variables via forall_intr
-                for (var_name, var_typ) in fixes.iter().rev() {
-                    if let Ok(new_thm) = ThmKernel::forall_intr(var_name, var_typ.clone(), &current)
-                    {
-                        current = new_thm;
-                    }
-                }
-
-                *self = ProofState::Done(current.clone());
-                Some(current)
+                let result = show_result.as_ref().ok_or(GoalExportError::MissingProofResult)?;
+                let exported = export_scoped_result(
+                    goal.prop(),
+                    result.as_ref(),
+                    local_assumptions,
+                    fixes,
+                    &[],
+                )?;
+                *self = ProofState::Done(exported.clone());
+                Ok(exported)
             },
-            ProofState::Ready { goal } => {
-                if goal.nprems() == 0 {
-                    let result = goal.clone();
-                    *self = ProofState::Done(result.clone());
-                    Some(result)
-                } else {
-                    None
-                }
+            ProofState::Ready { .. } => Err(GoalExportError::MissingProofResult),
+            ProofState::Done(result) => {
+                crate::isar::proof_result::validate_proof_result(
+                    result.prop().term(),
+                    result,
+                    &[],
+                )?;
+                Ok(result.clone())
             },
-            ProofState::Done(thm) => Some(thm.clone()),
         }
     }
 }
@@ -472,7 +519,7 @@ mod tests {
     fn test_proof_state_lifecycle() {
         let ctx = cert_ctx(&["Px"]);
         let mut state = proving_state();
-        state.fix("x", Typ::base("nat"));
+        state.fix("x", Typ::base("nat")).unwrap();
         let assumed = state.assume_in_context(&ctx, Term::const_("Px", Typ::base("prop"))).unwrap();
         let prems = state.get_premises();
         assert_eq!(prems.len(), 1);
@@ -648,543 +695,136 @@ mod tests {
     }
 }
 
-/// Interpret a structured Isar proof script, driving the ProofState.
-/// Handles: `fix`, `assume`, `have`, `show`, `case`, `next`, `qed`, `by`, `proof`.
+/// Interpret only proof commands whose entire checked token spans are understood.
+/// A standalone `by` finishes the proof; structured scripts require `qed`/`done`.
 pub fn interpret_proof_script(
     state: &mut ProofState,
     script: &str,
     premises: &[Arc<Thm>],
-) -> Option<Thm> {
-    let script = script.trim();
-
-    // Handle simple `by method` proofs (no structured commands)
-    if script.starts_with("by ") || script.starts_with("by(") {
-        return exec_simple_proof(state, script, premises);
+    db: &HolTheoremDb,
+) -> Result<Thm, GoalExportError> {
+    let spans = OuterSyntax::standard().parse_spans_checked(script).map_err(|error| {
+        GoalExportError::InvalidScript {
+            line: script[..error.offset.min(script.len())].lines().count().max(1),
+        }
+    })?;
+    let mut pending: Option<(Term, bool)> = None;
+    let mut completed = None;
+    for span in spans {
+        let line = span.line_number(script).max(1);
+        if completed.is_some() {
+            return Err(GoalExportError::InvalidScript { line });
+        }
+        if pending.is_some() && span.name != "by" {
+            return Err(GoalExportError::InvalidScript { line });
+        }
+        if let Some(result) = execute_script_span(state, &span, premises, line, &mut pending, db)? {
+            completed = Some(result);
+        }
     }
+    completed.ok_or(GoalExportError::MissingProofResult)
+}
 
-    // Parse commands line by line
-    let lines: Vec<&str> = script.lines().collect();
-    let mut i = 0;
-    while i < lines.len() {
-        let t = lines[i].trim();
-        if t.is_empty() {
-            i += 1;
-            continue;
-        }
-
-        // `let` — define a local abbreviation
-        if t.starts_with("let ") {
-            let rest = t.strip_prefix("let ").unwrap_or("");
-            if let Some((name, expr)) = parse_let_binding(rest) {
-                state.let_def(&name, expr);
-            }
-            i += 1;
-            continue;
-        }
-
-        // `proof` — begin proof block
-        if t.starts_with("proof ") || t == "proof" {
+fn execute_script_span(
+    state: &mut ProofState,
+    span: &CommandSpan,
+    premises: &[Arc<Thm>],
+    line: usize,
+    pending: &mut Option<(Term, bool)>,
+    db: &HolTheoremDb,
+) -> Result<Option<Thm>, GoalExportError> {
+    match span.name.as_str() {
+        "proof" if span.tokens.len() == 1 && matches!(state, ProofState::Ready { .. }) => {
             state.begin_proof();
-            // Handle `proof (induct ...)` or `proof (cases ...)`
-            if let Some(inner) = t.strip_prefix("proof ") {
-                let inner = inner.trim();
-                if inner.starts_with("(induct") || inner.starts_with("(induction") {
-                    // Extract induction variable and optional rule, strip arbitrary:
-                    let induct_body = if inner.starts_with("(induct ") {
-                        inner[8..].trim_end_matches(')')
-                    } else if inner.starts_with("(induction ") {
-                        inner[12..].trim_end_matches(')')
-                    } else {
-                        inner.trim_matches(|c| c == '(' || c == ')')
-                    };
-                    // Strip 'arbitrary:' option
-                    let induct_body = if let Some(pos) = induct_body.find(" arbitrary:") {
-                        induct_body[..pos].trim()
-                    } else if let Some(pos) = induct_body.find(" arbitrary ") {
-                        induct_body[..pos].trim()
-                    } else {
-                        induct_body
-                    };
-                    // Apply induction and store subgoals for case/next navigation
-                    let induct_method = format!("induct {}", induct_body);
-                    if let Some(goal) = state.get_current_goal() {
-                        let results = crate::isar::method::exec_single_method(
-                            &goal,
-                            &induct_method,
-                            premises,
-                        );
-                        if !results.is_empty() {
-                            state.set_subgoals(results);
-                        }
-                    }
-                }
-            }
-            i += 1;
-            continue;
-        }
-
-        // `qed` — finalize proof
-        if t == "qed" || t.starts_with("qed ") {
-            return state.qed();
-        }
-
-        // `done` — also finalize proof
-        if t == "done" {
-            return state.qed();
-        }
-
-        // `fix x y` — fix variables
-        if t.starts_with("fix ") {
-            let vars = t.strip_prefix("fix ").unwrap_or("").trim();
-            for var in vars.split_whitespace() {
-                let var = var.trim();
-                if !var.is_empty() {
-                    state.fix(var, Typ::dummy());
-                }
-            }
-            i += 1;
-            continue;
-        }
-
-        // `assume "A"` — assume a proposition
-        if t.starts_with("assume ") {
-            let rest = t.strip_prefix("assume ").unwrap_or("").trim();
-            // Strip quotes if present (Isar syntax uses "..." to delimit propositions)
-            let term_str = rest.trim_matches('"');
-            if let Some(prop) = parse_term_from_script(term_str) {
-                if state.assume(prop).is_err() {
-                    return None;
-                }
-            }
-            i += 1;
-            continue;
-        }
-
-        // `have "B" by method` or `have name: "B" by method`
-        if t.starts_with("have ") {
-            let result = parse_and_exec_have_show(state, t, premises, false);
-            if result.is_some() {
-                i += 1;
-                continue;
-            }
-        }
-
-        // `show "C" by method` or `show name: "C" by method`
-        if t.starts_with("show ") {
-            let result = parse_and_exec_have_show(state, t, premises, true);
-            if result.is_some() {
-                i += 1;
-                continue;
-            }
-        }
-
-        // `hence` = `then have`
-        if t.starts_with("hence ") {
-            let rest = t.strip_prefix("hence ").unwrap_or("");
-            let have_cmd = format!("have {}", rest);
-            let result = parse_and_exec_have_show(state, &have_cmd, premises, false);
-            if result.is_some() {
-                i += 1;
-                continue;
-            }
-        }
-
-        // `thus` = `then show`
-        if t.starts_with("thus ") {
-            let rest = t.strip_prefix("thus ").unwrap_or("");
-            let show_cmd = format!("show {}", rest);
-            let result = parse_and_exec_have_show(state, &show_cmd, premises, true);
-            if result.is_some() {
-                i += 1;
-                continue;
-            }
-        }
-
-        // `case name` — induction case
-        if t.starts_with("case ") {
-            let case_name = t.strip_prefix("case ").unwrap_or("").trim();
-            state.case_(case_name);
-            i += 1;
-            continue;
-        }
-
-        // `next` — next subgoal
-        if t == "next" {
-            state.next();
-            i += 1;
-            continue;
-        }
-
-        // `then` — chain previous fact for next have/show
-        if t == "then" {
-            // The fact from the previous have/show is already chained.
-            // This is a no-op — the chaining happens automatically.
-            i += 1;
-            continue;
-        }
-
-        // `{` — begin nested block: save state for restoration
-        if t == "{" {
-            if let ProofState::Proving { block_depth, .. } = state {
-                *block_depth += 1;
-            }
-            i += 1;
-            continue;
-        }
-        // `}` — end nested block: restore outer context
-        if t == "}" {
-            if let ProofState::Proving { block_depth, .. } = state
-                && *block_depth > 0
-            {
-                *block_depth -= 1;
-            }
-            i += 1;
-            continue;
-        }
-
-        // `obtain vars where "prop" by method` — existential elimination
-        if t.starts_with("obtain ") {
-            let rest = t.strip_prefix("obtain ").unwrap_or("").trim();
-            let result = parse_and_exec_obtain(state, rest, &lines, &mut i, premises);
-            if result {
-                continue;
-            }
-            i += 1;
-            continue;
-        }
-
-        // `from name1 name2` — select facts from DB and chain them
-        if t.starts_with("from ") {
-            let names = t.strip_prefix("from ").unwrap_or("").trim();
-            let db = crate::hol::hol_loader::HolTheoremDb::get();
-            for name in names.split_whitespace() {
-                let name = name.trim();
-                if !name.is_empty()
-                    && let Some(thm) = db.by_name.get(name)
-                {
-                    state.chain_fact(Arc::clone(thm));
-                }
-            }
-            i += 1;
-            continue;
-        }
-
-        // `with name1 name2` — same as from but also includes current facts
-        if t.starts_with("with ") {
-            let names = t.strip_prefix("with ").unwrap_or("").trim();
-            let db = crate::hol::hol_loader::HolTheoremDb::get();
-            for name in names.split_whitespace() {
-                let name = name.trim();
-                if !name.is_empty()
-                    && let Some(thm) = db.by_name.get(name)
-                {
-                    state.add_fact(Arc::clone(thm));
-                }
-            }
-            i += 1;
-            continue;
-        }
-
-        // `note name = thm1 thm2 ...` — bind theorems to a name
-        if t.starts_with("note ") {
-            let rest = t.strip_prefix("note ").unwrap_or("").trim();
-            if let Some(eq_pos) = rest.find('=') {
-                let _name = rest[..eq_pos].trim();
-                let thm_names: Vec<&str> = rest[eq_pos + 1..].split_whitespace().collect();
-                let db = crate::hol::hol_loader::HolTheoremDb::get();
-                for thm_name in &thm_names {
-                    if let Some(thm) = db.by_name.get(*thm_name) {
-                        state.add_fact(Arc::clone(thm));
-                    }
-                }
-            }
-            i += 1;
-            continue;
-        }
-
-        // `let` — local abbreviation (term-level, skip for now)
-        if t.starts_with("let ") {
-            i += 1;
-            continue;
-        }
-
-        // `using thm1 thm2` — add facts to context for next method
-        if t.starts_with("using ") {
-            let names = t.strip_prefix("using ").unwrap_or("").trim();
-            let db = crate::hol::hol_loader::HolTheoremDb::get();
-            for name in names.split_whitespace() {
-                let name = name.trim().trim_matches(',');
-                if !name.is_empty()
-                    && let Some(thm) = db.by_name.get(name)
-                {
-                    state.add_fact(Arc::clone(thm));
-                }
-            }
-            i += 1;
-            continue;
-        }
-
-        // `unfolding thm1 thm2` — expand definitions (treat as using for now)
-        if t.starts_with("unfolding ") {
-            let names = t.strip_prefix("unfolding ").unwrap_or("").trim();
-            let db = crate::hol::hol_loader::HolTheoremDb::get();
-            for name in names.split_whitespace() {
-                let name = name.trim();
-                if !name.is_empty()
-                    && let Some(thm) = db.by_name.get(name)
-                {
-                    state.chain_fact(Arc::clone(thm));
-                }
-            }
-            i += 1;
-            continue;
-        }
-
-        // `also` — calculational reasoning: chain fact (like then)
-        if t.starts_with("also ") {
-            // `also "thm"` — look up and chain
-            let rest = t.strip_prefix("also ").unwrap_or("").trim().trim_matches('"');
-            if !rest.is_empty() {
-                let db = crate::hol::hol_loader::HolTheoremDb::get();
-                if let Some(thm) = db.by_name.get(rest) {
-                    state.chain_fact(Arc::clone(thm));
-                }
-            }
-            i += 1;
-            continue;
-        }
-        if t == "also" {
-            // `also` without argument — chain from previous (no-op, chaining is automatic)
-            i += 1;
-            continue;
-        }
-
-        // `finally` — conclude calculational chain
-        if t.starts_with("finally ") {
-            let rest = t.strip_prefix("finally ").unwrap_or("").trim().trim_matches('"');
-            if !rest.is_empty() {
-                let db = crate::hol::hol_loader::HolTheoremDb::get();
-                if let Some(thm) = db.by_name.get(rest) {
-                    state.chain_fact(Arc::clone(thm));
-                }
-            }
-            // Try to close the calculation with transitivity
-            if let Some(goal) = state.get_current_goal() {
-                let results = crate::isar::method::exec_single_method(&goal, "auto", &[]);
-                if let Some(solved) = results.into_iter().find(|r| r.nprems() == 0) {
-                    state.set_current_goal(solved);
-                }
-            }
-            i += 1;
-            continue;
-        }
-        if t == "finally" {
-            if let Some(goal) = state.get_current_goal() {
-                let results = crate::isar::method::exec_single_method(&goal, "auto", &[]);
-                if let Some(solved) = results.into_iter().find(|r| r.nprems() == 0) {
-                    state.set_current_goal(solved);
-                }
-            }
-            i += 1;
-            continue;
-        }
-
-        // `moreover` — collect current facts for later use
-        if t == "moreover" {
-            // Facts are already accumulated; this is a no-op marker
-            i += 1;
-            continue;
-        }
-
-        // `ultimately` — use collected facts to close
-        if t == "ultimately" {
-            // Try to close with all accumulated facts
-            if let Some(goal) = state.get_current_goal() {
-                let premises: Vec<Arc<Thm>> = state.get_premises().to_vec();
-                let results = crate::isar::method::exec_proof(&goal, "by auto", &premises);
-                if let Some(solved) = results {
-                    state.set_current_goal(solved);
-                }
-            }
-            i += 1;
-            continue;
-        }
-
-        // Unknown command — skip
-        i += 1;
+        },
+        "fix" => {
+            let (name, typ) =
+                parse_fix_tokens(&span.tokens).ok_or(GoalExportError::InvalidScript { line })?;
+            state.fix(&name, typ).map_err(|error| script_error_at(error, line))?;
+        },
+        "assume" => assume_script_proposition(state, &span.tokens, premises, line)?,
+        "have" | "show" if matches!(state, ProofState::Proving { .. }) => {
+            let prop = parse_quoted_proposition(&span.tokens, 1)
+                .ok_or(GoalExportError::InvalidScript { line })?;
+            *pending = Some((prop, span.name == "show"));
+        },
+        "by" if !span.body.trim().is_empty() => {
+            return execute_script_by(state, span.body.trim(), premises, line, pending, db);
+        },
+        "qed" | "done" if span.tokens.len() == 1 => return state.qed().map(Some),
+        _ => return Err(GoalExportError::InvalidScript { line }),
     }
-
-    // If we reach here without qed, try to finalize
-    state.qed()
+    Ok(None)
 }
 
-/// Parse and execute a `have` or `show` command.
-fn parse_and_exec_have_show(
+fn assume_script_proposition(
     state: &mut ProofState,
-    cmd: &str,
+    tokens: &[Token],
     premises: &[Arc<Thm>],
-    is_show: bool,
-) -> Option<()> {
-    // Parse: `have name: "statement" by method` or `have "statement" by method`
-    let rest = if cmd.starts_with("have ") {
-        cmd.strip_prefix("have ")?.trim()
-    } else if cmd.starts_with("show ") {
-        cmd.strip_prefix("show ")?.trim()
-    } else {
-        return None;
+    line: usize,
+) -> Result<(), GoalExportError> {
+    let prop =
+        parse_quoted_proposition(tokens, 1).ok_or(GoalExportError::InvalidScript { line })?;
+    let ProofState::Proving { goal, fixes, facts, .. } = state else {
+        return Err(GoalExportError::InvalidScript { line });
     };
-
-    // Extract method (everything after " by ")
-    let (stmt_part, method) = if let Some(by_pos) = rest.find(" by ") {
-        (rest[..by_pos].trim(), rest[by_pos + 4..].trim())
-    } else if let Some(by_pos) = rest.find(" by(") {
-        (rest[..by_pos].trim(), rest[by_pos + 1..].trim())
-    } else {
-        return None;
-    };
-
-    // Extract statement (skip optional name label)
-    let stmt_str = if let Some(colon_pos) = stmt_part.find(": \"") {
-        stmt_part[colon_pos + 2..].trim_end_matches('"')
-    } else if stmt_part.starts_with('"') {
-        stmt_part.trim_matches('"')
-    } else {
-        stmt_part
-    };
-
-    let stmt_term = parse_term_from_script(stmt_str)?;
-
-    if is_show {
-        state.show(&stmt_term, method, premises)?;
-    } else {
-        state.have(&stmt_term, method, premises)?;
-    }
-    Some(())
+    let ct = certify_statement(prop, goal, fixes, facts, premises)?;
+    state.assume_checked(ct)?;
+    Ok(())
 }
 
-/// Execute a simple `by method` or `by(method)` proof.
-fn exec_simple_proof(state: &mut ProofState, script: &str, premises: &[Arc<Thm>]) -> Option<Thm> {
-    let goal = state.get_current_goal()?;
-    let result = crate::isar::method::exec_proof(&goal, script, premises)?;
-    state.set_current_goal(result);
-    state.qed()
-}
-
-/// Parse and execute an `obtain vars where "prop" by method` command.
-/// This is existential elimination: from EX x. P(x), obtain a witness x and assume P(x).
-fn parse_and_exec_obtain(
+fn execute_script_by(
     state: &mut ProofState,
-    rest: &str,
-    lines: &[&str],
-    i: &mut usize,
+    method: &str,
     premises: &[Arc<Thm>],
-) -> bool {
-    // Parse: `vars where "prop" by method`
-    // or: `vars where "prop"` with by method on next line
-    let (vars, prop_and_method) = if let Some(where_pos) = rest.find(" where ") {
-        (rest[..where_pos].trim().to_string(), rest[where_pos + 7..].trim().to_string())
-    } else {
-        return false;
-    };
-
-    // Extract the quoted proposition and the method
-    let (prop_str, method) = if let Some(by_pos) = prop_and_method.find(" by ") {
-        let prop_part = &prop_and_method[..by_pos].trim();
-        let method_part = &prop_and_method[by_pos + 4..].trim();
-        (prop_part.trim_matches('"').to_string(), method_part.to_string())
-    } else if let Some(by_pos) = prop_and_method.find(" by(") {
-        let prop_part = &prop_and_method[..by_pos].trim();
-        let method_part = &prop_and_method[by_pos + 1..].trim();
-        (prop_part.trim_matches('"').to_string(), method_part.to_string())
-    } else {
-        // Check next line for "by method"
-        let prop_part = prop_and_method.trim_matches('"').to_string();
-        if *i + 1 < lines.len() {
-            let next_line = lines[*i + 1].trim();
-            if let Some(by_rest) = next_line.strip_prefix("by ") {
-                *i += 1;
-                (prop_part, by_rest.trim().to_string())
-            } else if let Some(by_rest) = next_line.strip_prefix("by(") {
-                *i += 1;
-                (prop_part, by_rest.trim().to_string())
-            } else {
-                return false;
-            }
+    line: usize,
+    pending: &mut Option<(Term, bool)>,
+    db: &HolTheoremDb,
+) -> Result<Option<Thm>, GoalExportError> {
+    if let Some((prop, is_show)) = pending.take() {
+        let result = if is_show {
+            state.show(&prop, method, premises, db).map(|_| ())
         } else {
-            return false;
-        }
-    };
-
-    // Parse the proposition term
-    let prop_term = match crate::isar::term_parser::parse_term(&prop_str) {
-        Some(t) => t,
-        None => return false,
-    };
-
-    // Fix the variables and add the obtained proposition as a fact
-    // We need to do this carefully to avoid double-borrow of state
-    {
-        // Fix the variables first
-        for var in vars.split_whitespace() {
-            let var = var.trim();
-            if !var.is_empty() {
-                state.fix(var, Typ::dummy());
-            }
-        }
+            state.have(&prop, method, premises, db).map(|_| ())
+        };
+        result.map_err(|error| script_error_at(error, line))?;
+        return Ok(None);
     }
-
-    // Add the obtained proposition as an assumption
-    let assume_thm = ThmKernel::assume_compat(CTerm::certify(prop_term.clone()));
-    state.add_fact(Arc::new(assume_thm));
-
-    // Try to verify the existential using the method (if not empty)
-    if !method.is_empty()
-        && let Some(goal) = state.get_current_goal()
-    {
-        let results = crate::isar::method::exec_single_method(&goal, &method, premises);
-        if results.iter().any(|r| r.nprems() == 0) {
-            // Method proved it, update the goal
-            if let Some(closed) = results.into_iter().find(|r| r.nprems() == 0) {
-                state.set_current_goal(closed);
-            }
-        }
+    if matches!(state, ProofState::Ready { .. }) {
+        state.begin_proof();
     }
-    // Even if method fails, we keep the obtained fact (it's an assumption)
-    true
+    let goal = state.get_current_goal().ok_or(GoalExportError::MissingProofResult)?;
+    state
+        .show(goal.prop().term(), method, premises, db)
+        .map_err(|error| script_error_at(error, line))?;
+    state.qed().map(Some)
 }
 
-/// Parse a term from a proof script string (thin wrapper).
-fn parse_term_from_script(s: &str) -> Option<Term> {
-    crate::isar::term_parser::parse_term(s)
+fn script_error_at(error: GoalExportError, line: usize) -> GoalExportError {
+    match error {
+        GoalExportError::InvalidScript { .. } => GoalExportError::InvalidScript { line },
+        other => other,
+    }
 }
 
-/// Parse a `let` binding: `x = expr` or `x be "prop"`.
-/// Returns `Some((name, term))` or `None` if parsing fails.
-fn parse_let_binding(rest: &str) -> Option<(String, Term)> {
-    let rest = rest.trim();
-    // Try `let x = t` form
-    if let Some(eq_pos) = rest.find('=') {
-        let name = rest[..eq_pos].trim().to_string();
-        let rhs = rest[eq_pos + 1..].trim();
-        if !name.is_empty() && !rhs.is_empty() {
-            // Try parsing the RHS as a term
-            if let Some(term) = crate::isar::term_parser::parse_term(rhs) {
-                return Some((name, term));
-            }
-        }
+fn parse_quoted_proposition(tokens: &[Token], offset: usize) -> Option<Term> {
+    if tokens.len() != offset + 1 || tokens[offset].kind != TokenKind::String {
+        return None;
     }
-    // Try `let x be "prop"` form
-    if let Some(be_pos) = rest.find(" be ") {
-        let name = rest[..be_pos].trim().to_string();
-        let rhs = rest[be_pos + 4..].trim().trim_matches('"');
-        if !name.is_empty()
-            && !rhs.is_empty()
-            && let Some(term) = crate::isar::term_parser::parse_term(rhs)
-        {
-            return Some((name, term));
-        }
+    let quoted = &tokens[offset].source;
+    let content = quoted.strip_prefix('"')?.strip_suffix('"')?;
+    crate::isar::term_parser::parse_term(content)
+}
+
+fn parse_fix_tokens(tokens: &[Token]) -> Option<(String, Typ)> {
+    if tokens.len() != 4 || tokens[1].kind != TokenKind::Ident || tokens[2].source != "::" {
+        return None;
     }
-    None
+    let typ = crate::isar::term_parser::parse_type(&tokens[3].source)?;
+    if typ.contains_dummy() {
+        return None;
+    }
+    Some((tokens[1].source.clone(), typ))
 }
 
 impl ProofState {
@@ -1211,15 +851,8 @@ impl ProofState {
 
 #[cfg(test)]
 mod isar_tests {
-    use std::sync::Arc;
-
     use super::*;
-    use crate::core::{
-        logic::Pure,
-        term::Term,
-        thm::{CTerm, ThmKernel},
-        types::Typ,
-    };
+    use crate::core::{term::Term, types::Typ};
 
     fn cert_ctx(names: &[&str]) -> ProofCertContext {
         let mut ctx = ProofCertContext::new();
@@ -1230,34 +863,16 @@ mod isar_tests {
     }
 
     #[test]
-    fn test_structured_have_show() {
-        // Test that the ProofState can execute have/show logic
+    fn proof_state_structured_show_requires_original_goal() {
         let a = Term::const_("A", Typ::base("prop"));
-        let ctx = cert_ctx(&["A"]);
-        let mut state = ProofState::new_checked_goal_from_term_in_context(&ctx, a.clone()).unwrap();
+        let b = Term::const_("B", Typ::base("prop"));
+        let ctx = cert_ctx(&["A", "B"]);
+        let mut state = ProofState::new_checked_goal_from_term_in_context(&ctx, a).unwrap();
         state.begin_proof();
-        state.assume_in_context(&ctx, a.clone()).unwrap();
-        let prems = state.get_premises();
-        assert_eq!(prems.len(), 1, "Should have one assumed fact");
-        // show "A" by assumption: A is in premises, so assumption tactic works
-        let result = state.show(&a, "assumption", &[]);
-        eprintln!("show result: {:?}", result);
-        // The show may or may not succeed depending on theorem database state
-        // In a full DB with proper setup, this should work
-    }
-
-    #[test]
-    fn test_simple_by_proof() {
-        // Simulate: lemma "A = A" by (rule refl)
-        let a = Term::free("A", Typ::dummy());
-        let eq = Pure::mk_equals(Typ::dummy(), a.clone(), a.clone());
-        let goal = ThmKernel::assume_compat(CTerm::certify(eq));
-        let mut state = ProofState::new(goal);
-
-        let script = "by (rule refl)";
-        let premises: Vec<Arc<Thm>> = vec![];
-        let result = interpret_proof_script(&mut state, script, &premises);
-        eprintln!("Result: {:?}", result);
+        state.assume_in_context(&ctx, b.clone()).unwrap();
+        state.show(&b, "assumption", &[], &HolTheoremDb::new()).unwrap();
+        assert!(matches!(state.qed(), Err(GoalExportError::PropositionMismatch)));
+        assert!(matches!(state, ProofState::Proving { .. }));
     }
 
     #[test]
@@ -1282,45 +897,26 @@ mod isar_tests {
     }
 
     #[test]
-    fn test_parse_let_binding() {
-        // Test parsing of different let forms
-        let (name, _) = parse_let_binding("x = a").expect("should parse let x = a");
-        assert_eq!(name, "x");
-
-        let (name2, _) =
-            parse_let_binding("prop be \"A ==> B\"").expect("should parse let prop be ...");
-        assert_eq!(name2, "prop");
-    }
-
-    #[test]
-    fn test_proof_state_lifecycle_extended() {
-        // Test the full lifecycle with have/show
+    fn proof_state_incomplete_script_rejects_eof() {
         let a = Term::const_("A", Typ::base("prop"));
-        let b = Term::const_("B", Typ::base("prop"));
-        let stmt = Pure::mk_implies(a.clone(), Pure::mk_implies(b.clone(), a.clone()));
-        let ctx = cert_ctx(&["A", "B"]);
-        let mut state = ProofState::new_checked_goal_from_term_in_context(&ctx, stmt).unwrap();
-        state.begin_proof();
-        // assume A
-        state.assume_in_context(&ctx, a.clone()).unwrap();
-        // have "B" by ... would use actual proof
-        // show "A" by assumption
-        let prems = state.get_premises();
-        assert!(!prems.is_empty());
+        let ctx = cert_ctx(&["A"]);
+        let mut state = ProofState::new_checked_goal_from_term_in_context(&ctx, a).unwrap();
+        assert!(matches!(
+            interpret_proof_script(
+                &mut state,
+                "proof\nassume \"A\"\nshow \"A\" by assumption",
+                &[],
+                &HolTheoremDb::new()
+            ),
+            Err(GoalExportError::MissingProofResult)
+        ));
     }
 }
 
 #[cfg(test)]
 mod induction_tests {
-    use std::sync::Arc;
-
     use super::*;
-    use crate::core::{
-        logic::Pure,
-        term::Term,
-        thm::{CTerm, ThmKernel},
-        types::Typ,
-    };
+    use crate::core::{term::Term, types::Typ};
 
     fn cert_ctx(names: &[&str]) -> ProofCertContext {
         let mut ctx = ProofCertContext::new();
@@ -1351,17 +947,17 @@ mod induction_tests {
 
         // case Nil — should select first subgoal
         state.case_("Nil");
-        let current = state.get_current_goal();
-        assert!(current.is_some());
+        assert_eq!(
+            state.get_current_goal().unwrap().prop().term(),
+            &Term::const_("NilCase", Typ::base("prop"))
+        );
 
         // next — should select second subgoal
         state.next();
-        let current2 = state.get_current_goal();
-        assert!(current2.is_some());
-
-        // Verify we moved to the second subgoal
-        let current2 = current2.unwrap();
-        eprintln!("Second subgoal: {:?}", current2.prop().term());
+        assert_eq!(
+            state.get_current_goal().unwrap().prop().term(),
+            &Term::const_("ConsCase", Typ::base("prop"))
+        );
     }
 
     #[test]
@@ -1378,7 +974,6 @@ mod induction_tests {
         state.set_subgoals_checked_from_terms_in_context(&ctx, vec![subgoal_term.clone()]).unwrap();
 
         let resolved = state.resolve_case_stmt(&Term::const_("?case", Typ::base("prop")));
-        eprintln!("Resolved ?case to: {:?}", resolved);
-        // Should resolve to P(Nil), the current subgoal's conclusion
+        assert_eq!(resolved, subgoal_term);
     }
 }

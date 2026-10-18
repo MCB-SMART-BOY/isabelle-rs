@@ -13,6 +13,7 @@
 //! - `syntax` — Rowan CST-based incremental parser + Pretty Printer
 //! - `wasm` — WASM plugin system
 
+pub mod compute_worker;
 pub mod core;
 pub mod document;
 pub mod fleche;
@@ -20,6 +21,8 @@ pub mod hol;
 pub mod isar;
 pub mod kernel;
 pub mod lsp;
+pub mod ml;
+pub mod native_plugins;
 pub mod server;
 pub mod session;
 pub mod syntax;

@@ -16,7 +16,9 @@
 //! | `FullSuccess` | 100% of sampled lemmas verify |
 //! | `PartialSuccess` | Some lemmas verify, some fail |
 //! | `SyntaxError` | A parse error prevented complete file processing |
-//! | `TypeError` | Type checking failure in lemmas |
+//! | `DependencyError` | A missing, failed or incompatible import blocked the theory |
+//! | `UnsupportedError` | Unsupported header declarations blocked the theory |
+//! | `ConflictError` | Duplicate theory identity blocked the theory |
 //! | `ProofFailure` | All lemmas fail proof search |
 //! | `Timeout` | File processing exceeds time budget |
 //! | `NoLemmas` | File has no verifiable lemmas |
@@ -38,6 +40,12 @@ pub enum VerifyStatus {
     PartialSuccess { verified: usize, attempted: usize, failed_names: Vec<String> },
     /// One or more parse errors prevented complete file processing.
     SyntaxError { message: String, attempted: usize },
+    /// Missing, failed, cyclic, or incompatible imports prevented loading.
+    DependencyError { message: String, attempted: usize },
+    /// Header declarations are not supported by this loader.
+    UnsupportedError { message: String, attempted: usize },
+    /// Multiple sources claimed the same theory identity.
+    ConflictError { message: String, attempted: usize },
     /// Type checking or proof-context certification failed on one or more lemmas.
     TypeError { message: String, attempted: usize },
     /// All attempted lemmas failed proof search.
@@ -85,6 +93,9 @@ impl VerifyStatus {
             VerifyStatus::FullSuccess { .. } => "OK",
             VerifyStatus::PartialSuccess { .. } => "PARTIAL",
             VerifyStatus::SyntaxError { .. } => "SYNTAX",
+            VerifyStatus::DependencyError { .. } => "DEPEND",
+            VerifyStatus::UnsupportedError { .. } => "UNSUP",
+            VerifyStatus::ConflictError { .. } => "CONFLICT",
             VerifyStatus::TypeError { .. } => "TYPE",
             VerifyStatus::ProofFailure { .. } => "PROOF",
             VerifyStatus::Timeout { .. } => "TIMEOUT",
@@ -125,6 +136,8 @@ pub struct VerifyReport {
     pub total_theorems: usize,
     /// Total time
     pub total_time: Duration,
+    /// A directory enumeration failure means this is not a complete batch.
+    pub scan_error: Option<String>,
 }
 
 impl VerifyReport {
@@ -154,10 +167,11 @@ impl VerifyReport {
                 VerifyStatus::ProofFailure { attempted } => {
                     total_attempted += attempted;
                 },
-                VerifyStatus::SyntaxError { attempted, .. } => {
-                    total_attempted += attempted;
-                },
-                VerifyStatus::TypeError { attempted, .. } => {
+                VerifyStatus::SyntaxError { attempted, .. }
+                | VerifyStatus::DependencyError { attempted, .. }
+                | VerifyStatus::UnsupportedError { attempted, .. }
+                | VerifyStatus::ConflictError { attempted, .. }
+                | VerifyStatus::TypeError { attempted, .. } => {
                     total_attempted += attempted;
                 },
                 _ => {},
@@ -167,11 +181,30 @@ impl VerifyReport {
         let overall_rate =
             if total_attempted == 0 { 0.0 } else { total_verified as f64 / total_attempted as f64 };
 
-        VerifyReport { total, results, counts, overall_rate, total_theorems, total_time }
+        VerifyReport {
+            total,
+            results,
+            counts,
+            overall_rate,
+            total_theorems,
+            total_time,
+            scan_error: None,
+        }
+    }
+
+    /// Success requires a complete scan and successful loading of every discovered file.
+    pub fn is_success(&self) -> bool {
+        self.scan_error.is_none()
+            && self.results.iter().all(|result| {
+                matches!(result.status, VerifyStatus::FullSuccess { .. } | VerifyStatus::NoLemmas)
+            })
     }
 
     /// Print a human-readable report.
     pub fn print(&self) {
+        if let Some(error) = &self.scan_error {
+            eprintln!("Incomplete theory scan: {error}");
+        }
         println!("\n╔══════════════════════════════════════════════════════╗");
         println!("║   Isabelle-rs Transitional Verification Report       ║");
         println!("╠══════════════════════════════════════════════════════╣");
@@ -187,8 +220,10 @@ impl VerifyReport {
         );
         println!("╠══════════════════════════════════════════════════════╣");
 
-        let order =
-            ["OK", "PARTIAL", "TIMEOUT", "INTERNAL", "PROOF", "TYPE", "SYNTAX", "NO-LEMMA", "IO"];
+        let order = [
+            "OK", "PARTIAL", "TIMEOUT", "INTERNAL", "PROOF", "TYPE", "SYNTAX", "DEPEND", "UNSUP",
+            "CONFLICT", "NO-LEMMA", "IO",
+        ];
         for label in &order {
             if let Some(count) = self.counts.get(label) {
                 let bar = "█".repeat((*count as f64 / self.total as f64 * 20.0) as usize);
@@ -200,6 +235,9 @@ impl VerifyReport {
 
     /// Print a summary of the top failing files.
     pub fn print_failures(&self, top_n: usize) {
+        if let Some(error) = &self.scan_error {
+            eprintln!("Incomplete theory scan: {error}");
+        }
         println!("\n--- Top {} Failing Files ---", top_n);
         let mut failures: Vec<&VerifyResult> = self
             .results
@@ -308,5 +346,41 @@ mod tests {
         ]);
 
         assert!((report.overall_rate - 4.0 / 20.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn report_non_syntax_load_failures_remain_counted_failures() {
+        let report = VerifyReport::new(vec![
+            result("proved", VerifyStatus::FullSuccess { attempted: 1 }),
+            result(
+                "missing",
+                VerifyStatus::DependencyError {
+                    message: "unavailable import".into(),
+                    attempted: 2,
+                },
+            ),
+            result(
+                "unsupported",
+                VerifyStatus::UnsupportedError { message: "keywords".into(), attempted: 1 },
+            ),
+            result(
+                "duplicate",
+                VerifyStatus::ConflictError { message: "duplicate name".into(), attempted: 1 },
+            ),
+        ]);
+
+        assert_eq!(report.overall_rate, 1.0 / 5.0);
+        assert!(!report.is_success());
+        let csv = report.to_csv();
+        for (name, label) in
+            [("missing", "DEPEND"), ("unsupported", "UNSUP"), ("duplicate", "CONFLICT")]
+        {
+            let row = report.results.iter().find(|row| row.name == name).unwrap();
+            assert_eq!(row.status.label(), label);
+            assert_eq!(row.status.rate(), 0.0);
+            assert!(!row.status.has_verified());
+            assert_eq!(report.counts.get(label), Some(&1));
+            assert!(csv.contains(&format!("{name},{label},0.0000,0,")));
+        }
     }
 }

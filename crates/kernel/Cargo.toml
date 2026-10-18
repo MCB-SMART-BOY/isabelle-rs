@@ -3,7 +3,7 @@ name = "isabelle-kernel"
 version = "0.1.0"
 edition = "2024"
 description = "Isabelle/Pure-inspired LCF proof kernel"
-license = "Apache-2.0"
+license.workspace = true
 repository = "https://github.com/MCB-SMART-BOY/isabelle-rs"
 
 [dependencies]

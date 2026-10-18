@@ -1,6 +1,6 @@
 ---
 name: Add Proof Method
-description: Add a proof method only when explicitly scoped; broad method coverage is deferred behind source-aware HOL elaboration and basis installation.
+description: Add a proof method only when explicitly scoped; proof completion requires a real checked result, not a search hit.
 category: development
 version: 3.0.0
 triggers: [add proof method, new search strategy, port method from Isabelle, add tactic]
@@ -8,11 +8,15 @@ permissions: [Bash:cargo test, Bash:cargo check, Read, Edit]
 ---
 # Add Proof Method
 
-General proof-method expansion is not the current main line. First prove that
-the method reduces a classified admitted cause without adding trusted proof
-power to `src/core` or bypassing `src/kernel` acceptance.
+Broad proof-method compatibility belongs to later stages of the approved A–H
+program, not the current implementation. For an explicitly scoped method
+change, show that it addresses an observed failure without adding trusted proof
+power to `src/core` or bypassing `crates/kernel` acceptance.
 
-Follow the existing method enum, parser, execution dispatch, and theorem lookup
-paths in `src/isar/method.rs`. Preserve `NotApplicable` versus explicit
-rejection semantics, keep failed proof search admitted, add focused tests, and
-run `scripts/dev-check.sh strict` plus the affected theory mode.
+Follow method parsing, `src/isar/proof_result.rs`, execution dispatch, and
+theorem lookup. The checked complete-source path must reject unknown methods,
+arguments, and facts rather than falling back to Auto/Blast. Match the entire
+goal with a Strict/checked theorem and permitted hypotheses before completion;
+preserve separate explicit admit statistics only in sampled/search paths. Add
+focused proof/failure tests, then run `cargo +stable xtask strict` and the
+affected theory mode.

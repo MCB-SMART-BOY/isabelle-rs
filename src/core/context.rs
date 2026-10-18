@@ -193,6 +193,9 @@ impl Context {
     /// # Examples
     ///
     /// ```rust
+    /// use std::sync::Arc;
+    /// use isabelle_rs::core::{context::Context, theory::Theory};
+    ///
     /// let thy = Arc::new(Theory::pure());
     /// let ctx = Context::theory(Arc::clone(&thy));
     /// let proof_ctx = ctx.enter_proof();
@@ -228,6 +231,9 @@ impl Context {
     /// # Examples
     ///
     /// ```rust
+    /// use std::sync::Arc;
+    /// use isabelle_rs::core::{context::Context, theory::Theory};
+    ///
     /// let thy = Arc::new(Theory::pure());
     /// let ctx = Context::proof(Arc::clone(&thy)).exit_proof();
     /// assert!(ctx.is_theory());
@@ -370,7 +376,7 @@ mod tests {
         let thy1 = Theory::pure();
         let ctx = Context::proof(Arc::clone(&thy1));
 
-        let mut thy2 = Theory::begin("Test", vec![Arc::clone(&thy1)]);
+        let mut thy2 = Theory::begin("Test", vec![Arc::clone(&thy1)]).unwrap();
         thy2.declare_const("c", Typ::base("bool"));
         let thy2 = Arc::new(thy2);
 

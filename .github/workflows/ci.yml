@@ -1,9 +1,5 @@
-# Isabelle-rs CI Pipeline
-#
-# Verification is split by responsibility. Repository-owned scripts define the
-# strict-kernel, sampled-core, and documentation gates; every Cargo resolution
-# uses the committed lockfile and the stable toolchain.
-
+# Full repository verification is Rust xtask; independent security scans are
+# mandatory jobs. Historical ignored diagnostics remain manual-only.
 name: CI
 
 on:
@@ -11,195 +7,123 @@ on:
     branches: [main, dev]
   pull_request:
     branches: [main, dev]
-  workflow_dispatch:  # manual trigger
+  workflow_dispatch:
+    inputs:
+      run_ignored_diagnostics:
+        description: 'Run historically ignored Rust diagnostics separately'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_MIN_STACK: 268435456  # 256MB for BNF/Ctr_Sugar/Lfp
+  RUST_MIN_STACK: 268435456
 
 jobs:
-  # ==========================================================================
-  # Stage 1: Quick Checks (parallel, < 2 min)
-  # ==========================================================================
-
-  fmt:
-    name: "fmt"
+  verify:
+    name: "complete repository verify"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt
-      - run: cargo fmt --all -- --check
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Require fixed official Isabelle checkout
+        run: cargo +stable xtask pinned-source
+      - run: cargo +stable xtask verify
 
-  clippy:
-    name: "clippy"
+  xtask-selftest:
+    name: "xtask / independent selftest"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - run: cargo +stable xtask selftest
+
+  gitleaks:
+    name: "security / gitleaks"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
         with:
-          cache-on-failure: true
-      - run: cargo clippy --locked --lib -- -W clippy::all -D clippy::correctness
+          submodules: true
+      - name: Scan working tree (official pinned image)
+        run: docker run --rm -v "$PWD:/repo:ro" ghcr.io/gitleaks/gitleaks:v8.28.0 detect --no-git --source /repo --redact
 
-  # ==========================================================================
-  # Stage 2: Unit Tests (parallel, < 5 min)
-  # ==========================================================================
-
-  test-unit-core:
-    name: "unit / core"
-    needs: [fmt, clippy]
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        module:
-          - core::thm
-          - core::unify
-          - core::simplifier
-          - core::logic
-          - core::tactic
-          - core::net
-          - core::types
-          - core::sorts
-          - core::sign
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo test --locked --lib ${{ matrix.module }}
-
-  test-unit-isar:
-    name: "unit / isar"
-    needs: [fmt, clippy]
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        module:
-          - isar::method
-          - isar::proof
-          - isar::proof_state
-          - isar::term_parser
-          - isar::outer_syntax
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo test --locked --lib ${{ matrix.module }}
-
-  test-unit-hol:
-    name: "unit / hol"
-    needs: [fmt, clippy]
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        module:
-          - hol
-          - theory::loader
-          - theory::session_builder
-          - syntax::printer
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo test --locked --lib ${{ matrix.module }}
-
-  # ==========================================================================
-  # Stage 3: Integration Tests (< 10 min)
-  # ==========================================================================
-
-  test-integration:
-    name: "integration"
-    needs: [test-unit-core, test-unit-isar, test-unit-hol]
+  trivy:
+    name: "security / trivy"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt
-      - uses: Swatinem/rust-cache@v2
-      - name: Strict kernel gate
-        run: bash scripts/dev-check.sh strict
-      - name: Sampled core trust snapshot
-        run: bash scripts/dev-check.sh core
-      - name: BNF/datatype tests
-        run: cargo test --locked --test bnf_tests
-      - name: Integration tests
-        run: cargo test --locked --test integration_tests
-      - name: Property-based tests (advisory)
-        continue-on-error: true
-        run: cargo test --locked --test proptest
-      - name: Known-failure baseline (advisory)
-        continue-on-error: true
-        run: cargo test --locked --lib -- --ignored
-      - name: All targets compile
-        run: cargo check --locked --all-targets
-
-  # ==========================================================================
-  # Stage 4: Extended Checks
-  # ==========================================================================
-
-  audit:
-    name: "security audit (advisory)"
-    needs: [test-integration]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@cargo-audit
-      - name: Report RustSec advisories
-        continue-on-error: true
-        run: cargo audit
-
-  docs:
-    name: "docs"
-    needs: [test-integration]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+          submodules: true
+      - uses: taiki-e/install-action@v2
         with:
-          components: rustfmt
-      - uses: Swatinem/rust-cache@v2
-      - run: bash scripts/dev-check.sh docs
-      - run: cargo doc --locked --no-deps --document-private-items
+          tool: trivy@0.67.2
+      - run: trivy fs --exit-code 1 --include-dev-deps .
 
-  release-build:
-    name: "release build"
-    needs: [test-integration]
+  cargo-audit:
+    name: "security / cargo audit"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo build --locked --release
+        with:
+          submodules: true
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit@0.22.2
+      - run: cargo audit
 
-  # ==========================================================================
-  # Platform verification (no tests, just compiles)
-  # ==========================================================================
+  cargo-deny:
+    name: "security / cargo deny"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.18.8
+      - run: cargo deny check
 
   build-macos:
-    name: "build / macos"
-    needs: [fmt, clippy]
-    runs-on: macos-latest
+    name: "compile / macos"
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check --locked
+      - run: cargo +stable xtask check
 
   build-windows:
-    name: "build / windows"
-    needs: [fmt, clippy]
+    name: "compile / windows"
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check --locked
+      - run: cargo +stable xtask check
+
+  ignored-diagnostics:
+    name: "historically ignored Rust diagnostics (explicit opt-in)"
+    if: github.event_name == 'workflow_dispatch' && inputs.run_ignored_diagnostics
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo +stable xtask test --lib -- --ignored

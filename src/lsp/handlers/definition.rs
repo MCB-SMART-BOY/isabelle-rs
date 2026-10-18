@@ -90,7 +90,7 @@ pub fn handle_definition(ctx: &HandlerContext, req: JsonRpcRequest) {
         };
 
     // Look up in the definition index
-    match crate::hol::hol_loader::HolTheoremDb::get_definition_location(&word) {
+    match crate::hol::hol_loader::HolTheoremDb::global().get_definition_location(&word) {
         Some(loc) => {
             let def_uri = if loc.file == "<unknown>" {
                 // For unknown files, try to resolve from the current URI's directory

@@ -137,39 +137,4 @@ mod batch_verify {
             eprintln!("  {:>8}: {:>5}  {}", label, count, bar);
         }
     }
-
-    #[test]
-    fn test_failure_analysis() {
-        let hol_dir = Path::new("isabelle-source/src/HOL");
-        if !hol_dir.exists() {
-            return;
-        }
-
-        let mut builder = SessionBuilder::new();
-        builder.set_accept_all(true);
-        builder.scan(hol_dir).unwrap();
-        builder.resolve_dependencies();
-        let report = builder.build_with_classifier();
-
-        // Analyze failure patterns
-        let syntax_count = report.counts.get("SYNTAX").copied().unwrap_or(0);
-        let proof_count = report.counts.get("PROOF").copied().unwrap_or(0);
-        let partial_count = report.counts.get("PARTIAL").copied().unwrap_or(0);
-
-        eprintln!("\nFailure Analysis:");
-        eprintln!("  SYNTAX errors:  {} files", syntax_count);
-        eprintln!("  PROOF failures: {} files", proof_count);
-        eprintln!("  PARTIAL passes: {} files", partial_count);
-
-        // Print top 10 failures
-        report.print_failures(10);
-
-        // Highlight actionable fixes
-        if syntax_count > 0 {
-            eprintln!("\n  🔧 ACTION: Fix syntax errors first — these block all lemmas");
-        }
-        if proof_count > 0 {
-            eprintln!("  🔧 ACTION: Add proof method support for the failing patterns");
-        }
-    }
 }

@@ -8,11 +8,11 @@ permissions: [Bash:cargo test, Bash:cargo clippy, Bash:cargo fmt, Read, Edit, Gr
 ---
 # Refactor
 
-Capture a relevant baseline with `scripts/dev-check.sh`; inspect the dirty
+Capture a relevant baseline with `cargo +stable xtask`; inspect the dirty
 worktree and preserve unrelated changes. Refactor in behavior-preserving steps,
 keeping theorem construction authority, burden propagation, compatibility
 taint, and `TransitionalStrictClosed`/`KernelTrustedClosed` semantics unchanged.
 
-Run `scripts/fix.sh check`, the strict gate for trust-boundary code, and the
-appropriate theory mode. Do not combine a structural refactor with new proof
-power or workspace splitting.
+Run `cargo +stable xtask fix check`, the strict gate for trust-boundary code,
+and the appropriate theory mode. Do not combine a structural refactor with
+new proof power or workspace splitting.

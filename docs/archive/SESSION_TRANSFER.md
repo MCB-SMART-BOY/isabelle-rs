@@ -1,20 +1,27 @@
 # Session Transfer
 
-This file is intentionally short. Older session-transfer documents in this
-repository are historical snapshots and must not be treated as current project
-status.
+> Historical session-transfer snapshot (2026-10-03 sampled checkpoint), not
+> current implementation or verification guidance. Its dependency-order
+> proposal below predates sampled `HOL::TrueI` acceptance and the checked
+> declaration, basis, and definition paths. The 2026-10-07 bundled sample
+> instead records `TransitionalStrictClosed: 0/125` and
+> `KernelTrustedClosed: 1/125` for audited `HOL::TrueI` alone; independent
+> Pure/HOL fixtures remain outside the sample. The approved native
+> compatibility program separately targets official Isabelle/ML and PIDE,
+> neither delivered by these historical trust results nor by ISIP design.
+> For current context read:
+>
+> 1. Root [AGENTS.md](../../AGENTS.md)
+> 2. [PROJECT_STATUS.md](../status/PROJECT_STATUS.md)
+> 3. [TRUST.md](../status/TRUST.md)
+> 4. [KERNEL_TRUSTED_ACCEPTANCE_GAPS.md](../kernel/KERNEL_TRUSTED_ACCEPTANCE_GAPS.md)
+> 5. [ROADMAP.md](../status/ROADMAP.md)
+> 6. [KERNEL_RULES.md](../kernel/KERNEL_RULES.md)
+> 7. [KERNEL_ATTACK_TESTS.md](../kernel/KERNEL_ATTACK_TESTS.md)
+> 8. [xtask cutover evidence](../status/PROJECT_STATUS.md#xtask-automation-cutover-2026-10-11)
+> 9. [engineering workflow](../guides/DEVELOPMENT.md#engineering-workflow)
 
-For current context, read these in order:
-
-1. Root [AGENTS.md](../AGENTS.md)
-2. [PROJECT_STATUS.md](PROJECT_STATUS.md)
-3. [TRUST.md](TRUST.md)
-4. [KERNEL_TRUSTED_ACCEPTANCE_GAPS.md](KERNEL_TRUSTED_ACCEPTANCE_GAPS.md)
-5. [ROADMAP.md](ROADMAP.md)
-6. [KERNEL_RULES.md](KERNEL_RULES.md)
-7. [KERNEL_ATTACK_TESTS.md](KERNEL_ATTACK_TESTS.md)
-
-## Current Project Position
+## Project Position at This Historical Checkpoint
 
 ```text
 Isabelle-rs is a Rust research prototype of an Isabelle/Pure-inspired
@@ -25,16 +32,16 @@ Isabelle/HOL feature parity.
 
 Do not describe the current project as a full Rust rewrite of Isabelle.
 
-## Current Priority
+## Historical Priority
 
-The sampled baseline remains:
+The 2026-10-03 sampled baseline was:
 
 ```text
 TransitionalStrictClosed: 1/125
 KernelTrustedClosed:      0/125
 ```
 
-Implementation must proceed in exactly this order:
+The following was the historical proposal, not today's mandatory sequence:
 
 ```text
 immutable SignatureId / TheoryId [implemented]
@@ -51,7 +58,7 @@ immutable SignatureId / TheoryId [implemented]
 executable HOL validator or theorem factory. No `hol_subst`, additional theorem
 adapter, or HOL-specific kernel primitive may bypass this order.
 
-## Known Persistent Debts
+## Known Debts at This Historical Checkpoint
 
 - `compat_alpha_eq` Free/Const compatibility outside the strict kernel.
 - `compat_alpha_eq` Var/Free compatibility outside the strict kernel.
@@ -65,9 +72,8 @@ adapter, or HOL-specific kernel primitive may bypass this order.
 
 ## Verification Reminder
 
-For trusted-boundary changes:
-
-Run `scripts/dev-check.sh strict` from the repository root.
-
-Do not claim broad `cargo test --lib` success unless the theory-loader
-stack-sensitive test has been verified fixed.
+For the separate dated xtask results and current project commands, see
+[xtask cutover](../status/PROJECT_STATUS.md#xtask-automation-cutover-2026-10-11)
+and [engineering workflow](../guides/DEVELOPMENT.md#engineering-workflow).
+No result in this transfer note establishes a passing complete library suite,
+full native compatibility, or a passing global validation gate.

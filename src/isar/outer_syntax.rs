@@ -24,7 +24,7 @@
 
 use crate::isar::{
     keyword::Keywords,
-    token::{Lexer, Token, TokenKind},
+    token::{LexError, Lexer, Token, TokenKind},
 };
 
 // =========================================================================
@@ -89,6 +89,63 @@ impl OuterSyntax {
     pub fn parse_spans(&self, source: &str) -> Vec<CommandSpan> {
         let tokens = Lexer::new(source).tokenize();
         self.tokenize_to_spans(&tokens)
+    }
+    /// Parse every lexical unit into a command, rejecting orphan tokens and separators.
+    /// Body text retains the original spacing and interior comments.
+    pub fn parse_spans_checked(&self, source: &str) -> Result<Vec<CommandSpan>, LexError> {
+        self.parse_spans_checked_from(source, 0)
+    }
+
+    /// Lex the complete file, then parse only the body after a validated header.
+    /// Token positions and reported errors remain absolute UTF-8 byte offsets.
+    pub(crate) fn parse_spans_checked_from(
+        &self,
+        source: &str,
+        body_offset: usize,
+    ) -> Result<Vec<CommandSpan>, LexError> {
+        if !source.is_char_boundary(body_offset) {
+            return Err(LexError { offset: body_offset, detail: "invalid body boundary".into() });
+        }
+        let tokens = Lexer::new(source).tokenize_checked()?;
+        let mut spans = Vec::new();
+        let mut current = Vec::new();
+        for token in tokens.into_iter().filter(|token| token.offset >= body_offset) {
+            if token.kind == TokenKind::EOF {
+                break;
+            }
+            if token.kind == TokenKind::Semicolon {
+                return Err(LexError {
+                    offset: token.offset,
+                    detail: "unexpected command separator `;`".into(),
+                });
+            }
+            let is_command = matches!(
+                token.kind,
+                TokenKind::Keyword(_) | TokenKind::Ident | TokenKind::LongIdent
+            ) && self.keywords.is_command(&token.source);
+            if is_command && !current.is_empty() {
+                spans.push(self.checked_span(source, std::mem::take(&mut current), token.offset));
+            }
+            if current.is_empty() && !is_command {
+                return Err(LexError {
+                    offset: token.offset,
+                    detail: format!("token `{}` outside a command", token.source),
+                });
+            }
+            current.push(token);
+        }
+        if !current.is_empty() {
+            spans.push(self.checked_span(source, current, source.len()));
+        }
+        Ok(spans)
+    }
+
+    fn checked_span(&self, source: &str, tokens: Vec<Token>, end: usize) -> CommandSpan {
+        let first = &tokens[0];
+        let body_start = first.offset + first.source.len();
+        let body = source[body_start..end].to_string();
+        let kind = self.keywords.command_kind(&first.source).unwrap_or("").to_string();
+        CommandSpan::new(first.source.clone(), kind, tokens, body)
     }
 
     /// Convert a flat list of tokens into command spans.
@@ -191,9 +248,9 @@ impl OuterSyntax {
             CommandCategory::ProofAsm
         } else if self.keywords.is_proof_script(name) {
             CommandCategory::ProofScript
-        } else if self.keywords.is_kind(name, crate::isar::keyword::PRF_CHAIN) {
-            CommandCategory::ProofChain
-        } else if self.keywords.is_kind(name, crate::isar::keyword::NEXT_BLOCK) {
+        } else if self.keywords.is_kind(name, crate::isar::keyword::PRF_CHAIN)
+            || self.keywords.is_kind(name, crate::isar::keyword::NEXT_BLOCK)
+        {
             CommandCategory::ProofChain
         } else if self.keywords.is_kind(name, crate::isar::keyword::PRF_DECL) {
             CommandCategory::ProofDecl
@@ -395,5 +452,55 @@ mod tests {
         let names: Vec<&str> = spans.iter().map(|s| s.name.as_str()).collect();
         // "auto" is a method argument to "proof", not a separate command
         assert_eq!(names, vec!["lemma", "proof", "qed", "lemma", "by"]);
+    }
+
+    #[test]
+    fn parse_spans_checked_preserves_raw_body_and_quoted_keywords() {
+        let source = "(* before *) lemma  ident:  \"by end\"  (* inner (* end *) *)  by  assumption (* trailing *) end (* after *)";
+        let spans = OuterSyntax::standard().parse_spans_checked(source).unwrap();
+        assert_eq!(
+            spans.iter().map(|span| span.name.as_str()).collect::<Vec<_>>(),
+            ["lemma", "by", "end"]
+        );
+        assert_eq!(spans[0].body, "  ident:  \"by end\"  (* inner (* end *) *)  ");
+        assert_eq!(spans[1].body, "  assumption (* trailing *) ");
+        assert_eq!(spans[2].body, " (* after *)");
+        assert_eq!(&source[spans[1].tokens[0].offset..spans[1].tokens[0].offset + 2], "by");
+    }
+
+    #[test]
+    fn parse_spans_checked_orphan_and_separator_report_original_byte_offset() {
+        let syntax = OuterSyntax::standard();
+        for source in [" stray lemma x", " ; lemma x", "lemma x; end", "lemma x end;"] {
+            let error = syntax.parse_spans_checked(source).unwrap_err();
+            let expected = source.find(if source.contains(';') { ';' } else { 's' }).unwrap();
+            assert_eq!(error.offset, expected, "{source}");
+        }
+    }
+
+    #[test]
+    fn parse_spans_checked_bad_suffix_never_succeeds() {
+        let syntax = OuterSyntax::standard();
+        for suffix in ["(* unterminated", "\"unterminated", "‹unfinished", r"\<unfinished"] {
+            let source = format!("lemma x end {suffix}");
+            let error = syntax.parse_spans_checked(&source).unwrap_err();
+            assert_eq!(error.offset, "lemma x end ".len(), "{suffix}");
+        }
+    }
+
+    #[test]
+    fn parse_spans_checked_from_validated_header_uses_absolute_offsets() {
+        let source = "theory T imports HOL begin lemma x: \"by end\" end";
+        let boundary = source.find(' ').unwrap();
+        let spans = OuterSyntax::standard().parse_spans_checked_from(source, boundary).unwrap();
+        assert_eq!(
+            spans.iter().map(|span| span.name.as_str()).collect::<Vec<_>>(),
+            ["lemma", "end"]
+        );
+        assert_eq!(spans[0].tokens[0].offset, source.find("lemma").unwrap());
+        let malformed = format!("{source} (* unclosed");
+        let error =
+            OuterSyntax::standard().parse_spans_checked_from(&malformed, boundary).unwrap_err();
+        assert_eq!(error.offset, malformed.find("(* unclosed").unwrap());
     }
 }

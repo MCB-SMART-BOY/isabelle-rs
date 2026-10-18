@@ -8,13 +8,18 @@ permissions: [Bash:cargo test, Bash:RUST_MIN_STACK]
 ---
 # Bench
 
-Use `scripts/dev-check.sh` as the only command source:
+Use [the command catalog](../../scripts/README.md#verification) for exact
+`cargo +stable xtask` entry points:
 
-- `strict` for the firewall, attack, boundary, inline, and legacy-core suites.
-- `core` for the exact sampled 125-theorem run.
-- `tier2`, `tier3`, or `broad` for theory-wide claims.
-- `lib` only when explicitly testing the stack-sensitive full library.
-- `all` for docs, strict, and all theory tiers.
+- `verify` for deterministic repository checks, including full workspace tests;
+  `selftest` separately for product-independent automation.
+- `strict` for the scoped trusted-kernel gate; `core` for sampled 125-theorem
+  outcomes. Historical `KernelTrustedClosed: 1/125` and
+  `TransitionalStrictClosed: 0/125` are not fresh results; CLI fixtures are separate.
+- `tier2`, `tier3`, `broad` or `all` only as explicit report-only diagnostics.
+- `lib` for root-library tests; `test` for full workspace tests. Bare `cargo test`
+  covers only the root default member.
 
-Report actual output, elapsed time, failures, and skipped modes. Do not reuse
-historical `125/125`, proof-rate, or test-count claims.
+`all`/`broad` do not replace `verify`, `selftest`, independent security audits
+or the global validator. Benchmark performance only with actual separately
+measured runs; report observed output, duration, failures, and unrun modes.

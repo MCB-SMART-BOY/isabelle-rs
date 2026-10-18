@@ -112,8 +112,9 @@ impl InductiveSetDef {
 
         // 1. Introduction rules
         for (rule_name, rule_stmt) in &self.intros {
-            let term = crate::isar::term_parser::parse_term(rule_stmt)
-                .unwrap_or_else(|| Term::const_(rule_name.as_str(), Typ::base("prop")));
+            let Some(term) = crate::isar::term_parser::parse_term(rule_stmt) else {
+                continue;
+            };
             results.push((
                 rule_name.clone(),
                 term,
@@ -161,15 +162,14 @@ pub fn inductive_set_to_lemmas(def: &InductiveSetDef) -> Vec<crate::hol::hol_loa
     let theorems = def.generate_theorems();
 
     for (name, term, attrs) in theorems {
-        let thm = ThmKernel::assume_compat(CTerm::certify_annotated(term));
-        lemmas.push(crate::hol::hol_loader::ParsedLemma {
+        let thm = ThmKernel::assume_compat(CTerm::certify(term));
+        lemmas.push(crate::hol::hol_loader::ParsedLemma::new_synthetic(
             name,
-            attributes: attrs,
-            theorem: Arc::new(thm),
-            proof_script: None,
-            alias_for: None,
-            source_loc: None,
-        });
+            attrs,
+            Arc::new(thm),
+            None,
+            None,
+        ));
     }
 
     lemmas
@@ -195,21 +195,28 @@ mod tests {
     }
 
     #[test]
-    fn test_inductive_set_theorems() {
+    fn inductive_set_to_lemmas_complete_intro_preserves_proposition() {
         let def = InductiveSetDef {
             name: "Ev".to_string(),
             element_type: "nat set".to_string(),
-            intros: vec![
-                ("Ev0".to_string(), "0 ∈ Ev".to_string()),
-                ("EvS".to_string(), "n ∈ Ev ⟹ Suc (Suc n) ∈ Ev".to_string()),
-            ],
+            intros: vec![("Ev_intro".to_string(), "A ==> A".to_string())],
         };
-        let theorems = def.generate_theorems();
-        eprintln!("Generated {} theorems:", theorems.len());
-        for (name, _, attrs) in &theorems {
-            eprintln!("  [{}] {}", attrs.join(","), name);
-        }
-        // intros (2) + induct + cases + mem = 5
-        assert!(theorems.len() >= 5, "Expected >=5, got {}", theorems.len());
+        let lemmas = inductive_set_to_lemmas(&def);
+        let intro = lemmas.iter().find(|lemma| lemma.name == "Ev_intro").unwrap();
+        let proposition = Term::free("A", Typ::dummy());
+        let expected = crate::core::logic::Pure::mk_implies(proposition.clone(), proposition);
+        assert_eq!(intro.theorem.prop().term(), &expected);
+        assert!(!intro.theorem.is_strict_closed_proved());
+    }
+
+    #[test]
+    fn inductive_set_to_lemmas_incomplete_intro_does_not_create_fact() {
+        let def = InductiveSetDef {
+            name: "Ev".to_string(),
+            element_type: "nat set".to_string(),
+            intros: vec![("Ev_invalid".to_string(), "A ==>".to_string())],
+        };
+        let lemmas = inductive_set_to_lemmas(&def);
+        assert!(lemmas.iter().all(|lemma| lemma.name != "Ev_invalid"));
     }
 }

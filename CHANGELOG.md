@@ -1,8 +1,213 @@
 # Changelog
 
-All notable changes to isabelle-rs.
+Notable changes to isabelle-rs. Entries below tagged releases are historical
+claims made at that time, not current proof metrics or compatibility promises.
+Current outcomes and verification limits are maintained in
+[Project Status](docs/status/PROJECT_STATUS.md).
 
-### Engineering
+## [Unreleased]
+
+### Engineering quality repair (2026-10-19)
+- Upgrade the xtask ZIP dependency to locked `9.0.5` for
+  RUSTSEC-2026-0367, RUSTSEC-2026-0368 and RUSTSEC-2026-0369; retain
+  existing archive contents, permissions, features and no-overwrite behavior.
+- Group composition and observer inputs without changing proof replay or
+  evidence authority; migrate every caller to the new public input types.
+- Reduce ML and nested host-error payload sizes while retaining exception,
+  source, cancellation and failure information.
+- Classify blocked theory imports as dependency failures instead of syntax
+  errors, retaining fail-closed loading and the official-source parser checks.
+- Use PATH-resolved tools in supervision fixtures; repair workspace formatting,
+  strict lints and unused code without adding suppression or ignoring tests.
+  Actual delivery results remain in Project Status; native compatibility and
+  the real solver cleanup prerequisite are separate gates.
+
+### Legal wording clarification (2026-10-19)
+- Separate project maintenance and license declarations from legal conclusions
+  about originality, ownership, derivative-work status or non-infringement.
+- Align English/Chinese reader guidance and all three project NOTICE copies;
+  retain license texts, copyright notices and third-party terms unchanged.
+- Clarify that ISIP is a project proposal, without claiming external standards
+  adoption or official Isabelle endorsement; retain its name and design goals.
+- Distinguish source and binary redistribution checks; packaging and quality
+  gates are not legal-compliance certification. No dependency, product behavior,
+  release permission or license selection changes.
+
+### Documentation and workflow refresh (2026-10-19)
+- Align English/Chinese entrypoints, current status, roadmap and agent routing
+  with resumed-but-unaccepted native Pure/ML work, scoped Rust THM consumers
+  and the four-package workspace.
+- Mark local official reference preparation/build/inventory as disabled by the
+  JVM-free policy; preserve offline comparison and the solver cleanup blocker.
+- Keep the existing native Rust xtask workflow, distinguish executable
+  orchestration from short examples, design templates and upstream ML probes,
+  and document the actual limits of snippet/link/template checks.
+- Record the actual native ROOT stop at `PolyML.objSize` in `ml_heap.ML`,
+  separate Rust THM mappings from ML acceptance, and delimit the old resolution
+  wrapper and WASM resource/proposal claims.
+- Add dependency-ordered delivery stages with explicit quality, source execution,
+  replay, offline compatibility, solver and redistribution exit conditions.
+- Correct the demo's stale TCB description without changing proof or execution
+  semantics. Keep historical results separate from current verification;
+  dependencies and CI release gates are unchanged.
+
+The earlier unreleased entries below retain their original checkpoint scope.
+They may describe subsequently disabled commands or then-paused work; current
+execution policy and gate results are owned by Project Status, not those entries.
+
+### Project licensing and distribution notices
+- Apply shared Apache-2.0 Cargo metadata to all four workspace packages,
+  including xtask, and ship portable LICENSE/NOTICE files with both libraries.
+- Record the project's Apache declaration separately from bundled Isabelle
+  sources and copied upstream excerpts, whose applicable terms are retained.
+  This is not a project-wide originality or ownership determination.
+- Include project and identified Isabelle legal texts in release archives,
+  preserving their exact bytes and non-executable permissions. This is not
+  a complete dependency notice inventory or redistribution compliance claim.
+- Align the two zstd dependency license exceptions with the existing lockfile;
+  dependency versions and the global license/advisory policy remain unchanged.
+
+### Native ML semantic and offline evidence repairs
+- Bind internal callback type evidence to its certified argument position,
+  including distinct polymorphic uses of the same closure; preserve the public
+  untyped-call rejection boundary.
+- Revoke foreign callable invocations before type lookup and both FileHostBridge
+  runtime domains on a binding mismatch. Preserve ordinary exception packets,
+  reporter results and ref effects without making fatal/permission stops catchable.
+- Align bootstrap frame/load decoding and registration verification with the
+  producer, accept hash-checked empty source reads, and retain incomplete results
+  for unsealed loads or missing named members. These are native/offline repairs,
+  not new official reference or theorem acceptance evidence.
+
+### Integrated verification and source-quality repairs
+- Added `cargo +stable xtask verify` as the complete repository matrix, including
+  strict workspace/all-targets lint, locked compilation, TCB checks, documentation
+  gates and the full workspace regression suite with failure aggregation.
+  CI uses this matrix and independent required security scans; `release-check`
+  now checks the version then runs `verify`, not Tier diagnostics.
+- Repaired missing `Sort` imports and kernel Clippy issues without adding proof
+  rules. `KernelError::MixedContext` retains complete expected/actual context
+  stamps in boxed error-only payloads.
+- Fixed theory-header handling of leading document headings and nested
+  cartouches; executable preambles remain rejected. Unsupported theory
+  declarations/imports/proofs still fail closed.
+- Refreshed the documentation and harness routes around one workflow and test
+  ownership model. Quality verification does not accept paused P2/P3 native
+  compatibility; actual outcomes remain in Project Status.
+
+### Native Rust maintenance automation
+- Replaced maintained Shell/PowerShell/Python automation and script tests with
+  Rust `cargo +stable xtask` commands: documentation checks, firewall and compat
+  audits, `fix`, local `install`, supervised diagnostics, reference preparation/
+  observation, editor reminder hooks, and release `package`. The existing
+  checkout and Rust/Cargo are prerequisites; installation does not
+  download/upgrade Rust, pull sources or copy binaries onto PATH.
+- Official reference Isabelle/ML observer input is still executed only by the
+  official runtime. Design templates and reference inputs remain in `scripts/`,
+  not as alternative runnable project scripts.
+- Re-executed the pinned official Pure/HOL build and nine-root inventory through
+  the migrated Rust commands. Both exited successfully with zero trace-decoder
+  errors; unresolved observations remain explicit and the original frozen
+  reference snapshot is unchanged. This is not native Rust HOL acceptance.
+- The initial automation-only verification passed independent selftests and
+  strict xtask Clippy, frozen reference decoding/comparison and real trace/hook
+  smokes. Full-project compilation, formatting, strict Clippy and regression
+  were blocked at that stage; see the dated
+  [migration record](docs/status/PROJECT_STATUS.md#native-rust-automation-verification-2026-10-14).
+  Earlier sampled and official reference results remain separate evidence.
+
+### Isolated Isabelle2025 Reference Baseline
+- Added `xtask reference prepare|build|inventory` with a pinned distribution,
+  fixed-source copy, private environment, no-network namespace, explicit build
+  artifact selection and bounded subprocess lifecycle.
+- Actually rebuilt Pure/HOL and executed the nine-root observer session.
+  Exported structured declarations/facts, source-bound command and ML inputs,
+  axiom provenance, public interface declarations and bootstrap requirements.
+  The frozen reference snapshot preserves gaps and grants no Rust authority.
+- Recorded real `veriT` use as a production permission/design gate. Official
+  success does not fix the existing compatibility/Clippy failures, complete
+  native closure execution or change the sampled `KernelTrustedClosed: 1/125`.
+
+### Documentation and Workflow Synchronization
+- Unified first-party documentation and `.claude/` routing around the
+  SCOPE → DESIGN → IMPLEMENT → REVIEW → VERIFY → DELIVER lifecycle.
+  A–H delivery packages and historical trust phases remain separate.
+- Corrected stale sampled counts, legacy-versus-strict admission language,
+  already-implemented search/process repairs and the post-xtask status.
+  A is implemented; B's capability/reference baseline is next, not delivered.
+- Distinguished scoped `strict`/`all`/CI lint, workspace regression and the
+  complete global validator. Known compatibility and strict-Clippy failures
+  remain blockers; historical evidence is preserved with its original scope.
+- Updated skill/configuration descriptions and reader routes without changing
+  product proof behavior, dependency versions, CI execution policy or hook
+  implementation. Parsing harness metadata does not prove runtime enforcement.
+
+### Typed Build Automation
+- Added an independent `xtask` workspace member with locked build/check/test,
+  strict/core/docs gates, explicit selftests, audits, and version/release checks.
+  The workspace still defaults to the root product; kernel dependencies are
+  unchanged. This does not add proof rules or official Isabelle compatibility.
+- Migrated CI, installers and active command guidance; removed the two replaced
+  Shell orchestration scripts. Historical verification records retain the
+  commands used at the time.
+- Independent steps now aggregate failures; successful Cargo artifact records,
+  not guessed target paths, bind supervised workers. The single-lemma `profile`
+  entry supports the existing manifest workflow and paths containing spaces.
+  Existing supervisor cancellation boundaries remain unchanged; killing the
+  Cargo/xtask parent alone does not guarantee descendant cancellation.
+- Fixed the kernel firewall's false-clean result on `rg` execution errors.
+  Missing tools, scan errors, failed builds and blocked dependents fail visibly.
+
+### Diagnostic and Regression Boundaries
+- Moved eight report-only HOL workloads from default tests to explicit
+  `isabelle-scale-hol` modes (six earlier migrations plus Tier 2/3, not all
+  available scale modes). Tier 2 retains its active file sequence, per-file
+  deadlines, adaptive `AUTO_LIMIT`, trust classifications and statistics;
+  Tier 3 retains its 30 paths and aggregate statistics without a new per-file
+  budget. Kept the 125-theorem core, global HOL database, functional/trust
+  assertions and nine official HOL files' no-`SyntaxError` compatibility
+  checks in the regression suite. No new ignores were added.
+- `cargo +stable xtask tier2`/`tier3` builds the locked worker, then supervises
+  each diagnostic with a default 600-second wall deadline and 4096 MiB
+  per-process address-space limit, overridable with
+  `HOL_DIAGNOSTIC_TIMEOUT_SECS` / `HOL_DIAGNOSTIC_MEMORY_MIB`. Each run prints
+  its fresh output directory for `stderr.log` and `supervisor.json`; `broad`
+  runs `core`, `tier2`, `tier3` in order and aggregates independent failures.
+  At the time, direct `scripts/profile-hol.sh --scale-mode` required explicit
+  budgets and provided namespace cleanup; this historical script was replaced
+  by native Rust `cargo +stable xtask supervise --worker PATH ...`. Completion
+  is not a theory build or proof; timeout is incomplete.
+- Avoided redundant formal-comment prefix scans on ordinary source
+  characters, preserving all existing ASCII/Unicode masking behavior.
+- Replaced six nonempty-result arithmetic tests with checked, isolated
+  proof-contract regressions while retaining default global HOL DB coverage.
+  `ArithSolver` now starts from a checked obligation and validates the complete
+  result and authorized hypotheses, rather than returning a self-assumption as
+  a proof. No arithmetic basis, search-budget cut, or accepted token was added.
+- Kept malformed lexical suffix checks at the span layer and moved `end ?`
+  rejection coverage to strict whole-file acceptance and legacy transaction
+  rollback. Method punctuation remains lexically valid; production parsing
+  and theorem authority are unchanged.
+- Fixed public Rust doctest imports and marked six Isabelle formula examples as
+  `text`, preserving their documentation without compiling them as Rust. Added
+  no `ignore` or `no_run` workaround.
+
+### Experimental Process Isolation
+- Moved built-in LSP and Session document checks and LSP definition lookups
+  into one supervised, reusable compute child; bounded and versioned IPC
+  carries diagnostics and proof-state display data only.
+- Required an explicit trusted worker executable from embedded LSP/Session
+  callers. Cancellation and shutdown reap the direct child and report cleanup
+  failures; fatal worker failure ends pending definition requests with errors.
+  Timed-out Session checks do not expose stale proof state. Serialize shared
+  snapshot goals without pre-frame duplication, returning an unavailable
+  diagnostic when the bounded response is too large.
+- Preserved Session cleanup failures across cancelled replies and shutdown
+  join timeouts. Record worker-side failures even if the owning pool detached.
+- Custom executors remain cooperative; the child is not an OS memory or
+  privilege sandbox.
+
+### Earlier Engineering Changes
 - Removed global `#![allow(dead_code, unused_variables, unused_imports,
   unreachable_patterns, unused_comparisons)]` from `src/lib.rs`. Dead code in
   intentionally stubbed modules (HOL inference rules, BNF infrastructure,
@@ -14,12 +219,38 @@ All notable changes to isabelle-rs.
   `--all-targets` compilation gate added to CI.
 - Moved `proptest` from `[dependencies]` to `[dev-dependencies]`.
 
-## [Unreleased]
+### Quality Gate Remediation
+- Removed unused first-party paths and corrected linted ownership, parsing,
+  error-size, and public module-export shapes without promoting legacy proofs
+  to trusted tokens; `SessionError` remains publicly matchable.
+- Added a repository-local single-thread/stack default for Cargo tests, keeping
+  all library and integration tests in the quality gate.
+- Scoped a gitleaks function-text false positive and accepted 13 vulnerable
+  upstream editor-lockfile entries for Rust verification only. The latter are
+  still vulnerabilities; both exceptions require review by 2026-11-03 or on
+  upstream Gitlink change and are invalid for editor/VSIX delivery.
 
 ### Trust Boundary
+- Added explicit strict type-constructor declarations and arity validation to
+  certification and `SignatureId` v2 snapshots; old digests do not authorize
+  reconstructed signatures.
+- Validate all basis axiom schemas before installation and share conservative
+  definition checks between construction and exact-owner replay. Binder replay
+  scopes Free variables in premises only; ancestor token payloads are checked.
+- Support the standalone Pure source `!!P::prop. PROP P ==> PROP P` with
+  `by assumption`; reject the old `impI` spelling. Both this fixture and HOL
+  `TrueI` return accepted tokens, outside the sampled 125-theorem batch.
+- Make complete legacy theory loading a fail-closed file transaction. Real type
+  declarations persist; unsupported commands, missing/failed imports, unfinished
+  proofs, and trailing input cannot publish partial theories.
+- Require full term consumption and correct binder indices; proof completion
+  validates actual Strict/checked results, complete goals and scoped assumptions.
+- Require full rewrite certificates and validated automation/ATP steps; malformed
+  replay cannot fall back to local search and claim successful reconstruction.
 - Renamed the sampled legacy strict metric to `TransitionalStrictClosed` and
-  introduced the separate `KernelTrustedClosed` metric. The current honest
-  result is `1/125` transitional and `0/125` new-kernel trusted.
+  introduced the separate `KernelTrustedClosed` metric. The bundled five-file
+  sampler currently reports `0/125` transitional and `1/125` kernel-trusted:
+  the audited real-source `HOL::TrueI` projection, not a general HOL compiler.
 - Hardened the registered `HOL::TrueI` path so explicit strict adapters run
   before compatibility parser-gap fallbacks and reject free, dummy-typed,
   malformed, contextual, or unverifiable source propositions without legacy
@@ -54,9 +285,26 @@ All notable changes to isabelle-rs.
   declarations pending; the document layer does not classify a declaration as
   verified before it can retain and check the complete proof block.
 
-### Scripts
-- Added `scripts/dev-check.sh` as the common formatting, compilation, strict,
-  sampled-core, theory-tier, library, and documentation verification entrypoint.
+### Experimental LSP
+- Bounded open-document, command, diagnostic, snapshot and response admission;
+  one shared CPU worker handles document checks and HOL definition lookups
+  without blocking protocol dispatch. Revision replacement, invalidation,
+  close and shutdown cancel queued queries; an outstanding duplicate request
+  ID ends the original query with one error.
+- Bounded the per-thread symbol cache and moved production HOL loading progress
+  to best-effort nonblocking logging. At this pre-process-cutover checkpoint,
+  running legacy commands and global HOL DB initialization could not be
+  preempted; quotas did not provide a hard CPU/RSS budget or a trusted runtime.
+
+### Scripts (Earlier Unreleased Steps)
+- Added a separate manifest-replay HOL diagnostic worker and Linux/GNU
+  supervisor with explicit wall/CPU/address-space/file-size limits, flushed
+  stage events, private output directories, and namespace descendant reaping.
+  Replay captures the full bootstrap context and legacy first-200 source
+  selection; it adds neither proof authority nor a full-suite success claim.
+- Previously added `scripts/dev-check.sh` as the shared verification entry.
+  It was subsequently removed by the xtask cutover above; this is historical,
+  not the current command.
 - Added Markdown size/duplication auditing, standalone compilation checks for
   explicitly design-only Rust templates, and a compatibility-callsite audit.
   Short explanatory blocks remain allowed; template compilation does not prove
@@ -73,25 +321,38 @@ All notable changes to isabelle-rs.
   benchmark compile errors at every revision. Those are now fixed
   (`ThmKernel::assume` unwrap, `pub(crate)` `check_proof` → public
   `replay_proof`); the gate is green.
-- GitHub releases now require a tag matching `Cargo.toml` and the full
-  repository-owned release gate before platform artifacts are built.
+- GitHub releases require a tag matching `Cargo.toml` and the scoped
+  repository-owned release matrix before platform artifacts are built.
+  That workflow is not the complete local quality gate.
+
+### Verification Limits (Historical 2026-10-07 Checkpoint)
+- The 2026-10-07 strict gate passed 615 tests and 11 effective doctests, with
+  one existing ignored example. The five-theory sampler reported `0/125`
+  transitional and `1/125` kernel-trusted; no broader HOL acceptance follows.
+- Scoped secrets and dependency audits passed in a bounded shared-validator
+  attempt. A separate locked root Clippy run passed after six lint fixes; the
+  shared validator at that checkpoint still lacked a full test result. Prior
+  full tests were OOM-killed, a single-thread run timed out after 3600 seconds,
+  and the 2026-10-07 attempt exceeded a 900-second wall limit. The later
+  [A-package run](docs/status/PROJECT_STATUS.md#xtask-automation-cutover-2026-10-11)
+  completed workspace testing with the official-source regression failure.
+  Neither record establishes full-suite success or an official runtime differential.
 
 ### Docs
 - Repositioned the project as a Rust research prototype of an
   Isabelle/Pure-inspired LCF kernel with explicit oracle footprints,
   closed-theorem acceptance, and minimal proofterm replay.
-- Added `docs/PROJECT_STATUS.md` as the canonical high-level status document.
+- Established `docs/status/PROJECT_STATUS.md` as the canonical high-level status.
 - Rewrote README, architecture, trust, gap-analysis, development, roadmap, and
   session-transfer docs to distinguish full Isabelle parity from the narrower
   trusted-kernel research slice.
-- Corrected the completion assessment: the Pure kernel research nucleus and its
-  immutable signature/theory identity boundary are meaningful, but the minimal
-  Isabelle/Pure trusted loop, source-aware `Trueprop` elaboration, conservative
-  definitions, authorized logic basis, dependency provenance, and unique
-  acceptance remain incomplete.
+- Separated measured trust outcomes from subjective historical completion
+  estimates. Later narrow source elaboration, logic-basis, conservative-definition
+  and acceptance paths are implemented; sampled integration and broad coverage
+  remain incomplete.
 - Added root `AGENTS.md` as the harness-neutral authority and
-  `docs/KERNEL_TRUSTED_ACCEPTANCE_GAPS.md` as the source-audited context identity
-  and minimal acceptance plan.
+  `docs/kernel/KERNEL_TRUSTED_ACCEPTANCE_GAPS.md` as the source-audited acceptance
+  inventory and remaining sampled-integration plan.
 - Added the repository-root Apache-2.0 license declared by `Cargo.toml`; bundled
   Isabelle theory sources retain their separate upstream license.
 - Added the checked HOL proposition normalization contract and proposed HOL
@@ -99,6 +360,9 @@ All notable changes to isabelle-rs.
   primitive was added.
 - Updated Isabelle-rs-specific `~/.codex` references, rules, and skills to use
   the corrected metrics, priorities, and centralized scripts.
+- Synchronized first-party English/Chinese summaries, kernel/design/ADR/ISIP
+  status, contributor workflows, and relocated links. Historical releases and
+  archived assessments are retained as history, not rewritten as current results.
 
 ## [2.2.1] — 2026-06-21
 

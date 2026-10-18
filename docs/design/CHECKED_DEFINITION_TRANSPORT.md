@@ -2,45 +2,41 @@
 
 ## Status
 
-Narrow legacy `True_def` transport is implemented for the first existing
-core-file `TransitionalStrictClosed` experiment.
-
-Current chain:
+Historical design/implementation record for the legacy `True_def` transport
+used in the 2026-10-03 sampled transitional `HOL::TrueI` experiment. The
+theorem-specific bridge is no longer present in the current verification path.
+The strict kernel separately implements `TrustedTheory::define_const`: a
+parent-context checked, fresh, closed, monomorphic definition certificate
+whose entry and replay share semantic validation (including every RHS type
+annotation), followed by an accepted definition theorem.
 
 ```text
-True_def checked definition source: done, non-theorem input only
-HOL object-equality/reflexivity bridge: done
-checked-definition transport/fold-back for True_def: done in this phase
-try_strict_hol_true_i: implemented as a narrow TrueI-only adapter
-core batch TransitionalStrictClosed: 1/125
-KernelTrustedClosed: 0/125
+2026-10-03: legacy True_def + HOL object refl + shape-specific fold-back
+  -> sampled TransitionalStrictClosed: 1/125; KernelTrustedClosed: 0/125
+2026-10-07: audited bundled HOL::TrueI source projection + strict definition
+  -> sampled TransitionalStrictClosed: 0/125; KernelTrustedClosed: 1/125
 ```
 
-This theorem-specific transport produces a bool-valued legacy theorem without
-a conservative definition certificate or immutable theory identity. It is
-ineligible for `KernelTrustedClosed` and must not be expanded into general
-definition rewriting in legacy core; a future
-conservative-definition mechanism belongs with the object-logic boundary
-proposed in
-[ADR-0003-hol-logic-trusted-extension.md](ADR-0003-hol-logic-trusted-extension.md).
+The current projection checks only the declarations and proof needed for
+`HOL::TrueI`, not arbitrary sampled HOL definitions or the complete theory.
+Do not revive theorem-specific legacy transport as general definition
+rewriting. The deferred general boundary is discussed in
+[ADR-0003-hol-logic-trusted-extension.md](../adr/ADR-0003-hol-logic-trusted-extension.md).
 
 ## Purpose
 
-`True_def` is stored in `HolTheoremDb::checked_definitions` as checked
-definition input:
+`True_def` was stored in `HolTheoremDb::checked_definitions` as checked
+legacy definition input:
 
 ```text
 lhs: HOL.True
 rhs: HOL.eq (λx::bool. x) (λx::bool. x)
 ```
 
-This source is not a theorem, not a searchable fact, and not proof progress by
-itself. It is a checked legacy payload, not a certified conservative
-definition: it establishes neither constant freshness nor closure,
-non-recursion, type/sort discipline, theory ancestry, or a Pure equality
-theorem.
-
-The narrow transport step is:
+This source was not itself a theorem, searchable fact, or proof progress.
+The legacy payload was not a strict-kernel conservative definition certificate:
+it established neither a fresh constant, exact parent identity, complete RHS
+monomorphism, nor replayable definition dependency. The former transport was:
 
 ```text
 rhs_thm:
@@ -55,8 +51,8 @@ result:
 
 ## Trust Boundary
 
-This transport expands the transitional legacy trusted surface. It is not part
-of the target TCB and is not:
+This transport expanded the transitional legacy trusted surface. It was not
+part of the target TCB and was not:
 
 - general unfolding;
 - general definition rewriting;
@@ -65,14 +61,14 @@ of the target TCB and is not:
 - a way to turn checked definitions into theorem facts;
 - a shortcut for `HOL::TrueI`.
 
-The first version is deliberately restricted to `True_def`. Arbitrary checked
-definitions must remain unsupported until the project has a general,
-documented definitional equality story.
+The historical version was restricted to `True_def`; its conditions below
+are not a live API. Current source-backed acceptance uses generic strict
+definition replay, not the theorem-specific fold-back.
 
 ## Acceptance Conditions
 
-`try_strict_true_def_transport(true_def, rhs_thm)` succeeds only if all
-conditions hold:
+The removed `try_strict_true_def_transport(true_def, rhs_thm)` required all
+of the following:
 
 - `true_def.name == "True_def"`;
 - `true_def.const_name == "HOL.True"`;
@@ -89,7 +85,7 @@ conditions hold:
 
 ## Rejection Conditions
 
-The transport must reject:
+The removed transport had to reject:
 
 - missing `True_def`;
 - any checked definition source whose name is not `True_def`;
@@ -102,28 +98,26 @@ The transport must reject:
 
 ## Replay Contract
 
-The theorem records a named derivation rule:
+The legacy theorem recorded a named derivation rule:
 
 ```text
 true_def_transport(rhs_thm)
 ```
 
-Proof replay checks:
+Historical proof replay checked:
 
 - exactly one premise exists;
 - the premise replays to the checked `True_def` RHS shape;
 - the result proposition is `HOL.True`;
 - premise burdens are preserved.
 
-The replay rule is intentionally shape-specific. It does not inspect or accept
-arbitrary definition names.
+That replay rule was shape-specific and did not inspect or accept arbitrary
+definition names.
 
 ## Relationship To HOL::TrueI
 
-This transport is now consumed by the narrow `HOL::TrueI` adapter.
-
-`HOL::TrueI` may be routed to strict acceptance only after the verifier checks
-all of the following:
+Historically the legacy `HOL::TrueI` adapter consumed this transport with the
+following checked shape; it is not the current acceptance route:
 
 ```text
 theorem name: HOL::TrueI / TrueI
@@ -135,12 +129,15 @@ true_def_transport folds RHS back to HOL.True
 final legacy theorem is TransitionalStrictClosed
 ```
 
-The core batch reports `TransitionalStrictClosed: 1/125`.
-`KernelTrustedClosed` remains `0/125`.
+The 2026-10-07 sampled core batch instead reports
+`TransitionalStrictClosed: 0/125` and `KernelTrustedClosed: 1/125`: only its
+source-backed `HOL::TrueI` projection obtains a replayed exact-owner token.
+The independent source-backed HOL/Pure fixtures remain outside this batch.
 
 ## Attack Tests
 
-Required tests:
+The `true_def_transport_*` names below refer to historical bridge coverage,
+not tests or an API in the current checkout:
 
 ```text
 true_def_transport_accepts_checked_true_def_rhs
@@ -155,3 +152,6 @@ true_def_transport_produces_strict_closed_true
 true_def_transport_replay_succeeds
 true_def_transport_replay_rejects_wrong_rhs
 ```
+
+Current sampled projection attack coverage is in
+[`tests/sampled_true_i.rs`](../../tests/sampled_true_i.rs).

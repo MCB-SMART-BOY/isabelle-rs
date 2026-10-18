@@ -873,14 +873,7 @@ impl CtrSugar {
 
     /// Create a ParsedLemma from a theorem.
     fn make_lemma(&self, name: String, attrs: Vec<String>, thm: Arc<Thm>) -> ParsedLemma {
-        ParsedLemma {
-            name,
-            attributes: attrs,
-            theorem: thm,
-            proof_script: None,
-            alias_for: None,
-            source_loc: None,
-        }
+        ParsedLemma::new_synthetic(name, attrs, thm, None, None)
     }
 
     // =================================================================
@@ -892,7 +885,7 @@ impl CtrSugar {
         let mut axioms = Vec::new();
         let dt_typ = Typ::base(def.name.as_str());
 
-        for (_ctor_idx, (ctor_name, args)) in def.constructors.iter().enumerate() {
+        for (ctor_name, args) in &def.constructors {
             if args.is_empty() {
                 let lhs = Term::const_(ctor_name.as_str(), dt_typ.clone());
                 let eq = Pure::mk_equals(dt_typ.clone(), lhs.clone(), lhs);
@@ -1461,70 +1454,64 @@ pub fn generate_ctr_sugar_lemmas(source: &str) -> Vec<ParsedLemma> {
         let dt_name = &sugar.datatype.name;
 
         // Exhaustion
-        lemmas.push(ParsedLemma {
-            name: format!("{dt_name}.exhaust"),
-            attributes: vec!["elim".into(), "ctr_sugar".into()],
-            theorem: Arc::new(theorems.exhaust.clone()),
-            proof_script: None,
-            alias_for: None,
-            source_loc: None,
-        });
+        lemmas.push(ParsedLemma::new_synthetic(
+            format!("{dt_name}.exhaust"),
+            vec!["elim".into(), "ctr_sugar".into()],
+            Arc::new(theorems.exhaust.clone()),
+            None,
+            None,
+        ));
 
         // Injectivity
         for (i, thm) in theorems.injects.iter().enumerate() {
-            lemmas.push(ParsedLemma {
-                name: format!("{dt_name}.inject_{}", i + 1),
-                attributes: vec!["simp".into(), "ctr_sugar".into()],
-                theorem: Arc::new(thm.clone()),
-                proof_script: None,
-                alias_for: None,
-                source_loc: None,
-            });
+            lemmas.push(ParsedLemma::new_synthetic(
+                format!("{dt_name}.inject_{}", i + 1),
+                vec!["simp".into(), "ctr_sugar".into()],
+                Arc::new(thm.clone()),
+                None,
+                None,
+            ));
         }
 
         // Distinctness
         for (i, thm) in theorems.distincts.iter().enumerate() {
-            lemmas.push(ParsedLemma {
-                name: format!("{dt_name}.distinct_{}", i + 1),
-                attributes: vec!["simp".into(), "ctr_sugar".into()],
-                theorem: Arc::new(thm.clone()),
-                proof_script: None,
-                alias_for: None,
-                source_loc: None,
-            });
+            lemmas.push(ParsedLemma::new_synthetic(
+                format!("{dt_name}.distinct_{}", i + 1),
+                vec!["simp".into(), "ctr_sugar".into()],
+                Arc::new(thm.clone()),
+                None,
+                None,
+            ));
         }
 
         // Case equations
         for (i, thm) in theorems.case_thms.iter().enumerate() {
-            lemmas.push(ParsedLemma {
-                name: format!("{dt_name}.case_{}", i + 1),
-                attributes: vec!["simp".into(), "ctr_sugar".into()],
-                theorem: Arc::new(thm.clone()),
-                proof_script: None,
-                alias_for: None,
-                source_loc: None,
-            });
+            lemmas.push(ParsedLemma::new_synthetic(
+                format!("{dt_name}.case_{}", i + 1),
+                vec!["simp".into(), "ctr_sugar".into()],
+                Arc::new(thm.clone()),
+                None,
+                None,
+            ));
         }
 
         // Case congruence
-        lemmas.push(ParsedLemma {
-            name: format!("{dt_name}.case_cong"),
-            attributes: vec!["cong".into(), "ctr_sugar".into()],
-            theorem: Arc::new(theorems.case_cong),
-            proof_script: None,
-            alias_for: None,
-            source_loc: None,
-        });
+        lemmas.push(ParsedLemma::new_synthetic(
+            format!("{dt_name}.case_cong"),
+            vec!["cong".into(), "ctr_sugar".into()],
+            Arc::new(theorems.case_cong),
+            None,
+            None,
+        ));
 
         // Split
-        lemmas.push(ParsedLemma {
-            name: format!("{dt_name}.split"),
-            attributes: vec!["split".into(), "ctr_sugar".into()],
-            theorem: Arc::new(theorems.split),
-            proof_script: None,
-            alias_for: None,
-            source_loc: None,
-        });
+        lemmas.push(ParsedLemma::new_synthetic(
+            format!("{dt_name}.split"),
+            vec!["split".into(), "ctr_sugar".into()],
+            Arc::new(theorems.split),
+            None,
+            None,
+        ));
 
         // Discriminator theorems
         let disc_thm_idx: usize = 0;
@@ -1538,14 +1525,13 @@ pub fn generate_ctr_sugar_lemmas(source: &str) -> Vec<ParsedLemma> {
                     } else {
                         format!("disc_{}_false_{}", _i + 1, j + 1)
                     };
-                    lemmas.push(ParsedLemma {
-                        name: format!("{dt_name}.{suffix}"),
-                        attributes: vec!["simp".into(), "ctr_sugar".into()],
-                        theorem: Arc::new(thm.clone()),
-                        proof_script: None,
-                        alias_for: None,
-                        source_loc: None,
-                    });
+                    lemmas.push(ParsedLemma::new_synthetic(
+                        format!("{dt_name}.{suffix}"),
+                        vec!["simp".into(), "ctr_sugar".into()],
+                        Arc::new(thm.clone()),
+                        None,
+                        None,
+                    ));
                 }
             }
         }
@@ -1556,28 +1542,26 @@ pub fn generate_ctr_sugar_lemmas(source: &str) -> Vec<ParsedLemma> {
             for (j, _) in args.iter().enumerate() {
                 if sel_idx < theorems.sel_thms.len() {
                     let thm = &theorems.sel_thms[sel_idx];
-                    lemmas.push(ParsedLemma {
-                        name: format!("{dt_name}.sel_{}_{}", _i + 1, j + 1),
-                        attributes: vec!["simp".into(), "ctr_sugar".into()],
-                        theorem: Arc::new(thm.clone()),
-                        proof_script: None,
-                        alias_for: None,
-                        source_loc: None,
-                    });
+                    lemmas.push(ParsedLemma::new_synthetic(
+                        format!("{dt_name}.sel_{}_{}", _i + 1, j + 1),
+                        vec!["simp".into(), "ctr_sugar".into()],
+                        Arc::new(thm.clone()),
+                        None,
+                        None,
+                    ));
                     sel_idx += 1;
                 }
             }
         }
 
         // Nchotomy
-        lemmas.push(ParsedLemma {
-            name: format!("{dt_name}.nchotomy"),
-            attributes: vec!["elim".into(), "ctr_sugar".into()],
-            theorem: Arc::new(theorems.exhaust),
-            proof_script: None,
-            alias_for: None,
-            source_loc: None,
-        });
+        lemmas.push(ParsedLemma::new_synthetic(
+            format!("{dt_name}.nchotomy"),
+            vec!["elim".into(), "ctr_sugar".into()],
+            Arc::new(theorems.exhaust),
+            None,
+            None,
+        ));
     }
     lemmas
 }
@@ -1773,7 +1757,7 @@ mod tests {
         // First case theorem: case_option f1 f2 None = f1
         let case0 = &thms.case_thms[0];
         let prop0 = case0.prop().term();
-        let (lhs0, rhs0) = Pure::dest_equals(prop0).expect("case0 is equality");
+        let (_, rhs0) = Pure::dest_equals(prop0).expect("case0 is equality");
         // rhs should be f1
         assert!(format!("{rhs0:?}").contains("f1"), "case0 rhs should contain f1, got {rhs0:?}");
 
@@ -1797,7 +1781,8 @@ mod tests {
         // 3: is_Some (Some x1) = True
         for (i, dt_thm) in thms.disc_thms.iter().enumerate() {
             let prop = dt_thm.prop().term();
-            let (lhs, rhs) = Pure::dest_equals(prop).expect(&format!("disc_thm {i} is equality"));
+            let (lhs, rhs) =
+                Pure::dest_equals(prop).unwrap_or_else(|| panic!("disc_thm {i} is equality"));
 
             let lhs_str = format!("{lhs:?}");
             let rhs_str = format!("{rhs:?}");
@@ -1833,7 +1818,7 @@ mod tests {
         // Selector theorem: the (Some x1) = x1
         let sel = &thms.sel_thms[0];
         let prop = sel.prop().term();
-        let (lhs, rhs) = Pure::dest_equals(prop).expect("sel_thm is equality");
+        let (lhs, _) = Pure::dest_equals(prop).expect("sel_thm is equality");
 
         let lhs_str = format!("{lhs:?}");
         assert!(lhs_str.contains("sel_"), "sel_thm lhs should contain selector");

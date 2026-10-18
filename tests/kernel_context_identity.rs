@@ -21,11 +21,15 @@ fn certified_a(ctx: &ProofContext) -> isabelle_rs::kernel::CProp {
 #[test]
 fn signature_id_is_deterministic_and_order_independent() {
     let first = Signature::new()
+        .extend_type_constructor("nat", 0)
+        .unwrap()
         .extend_const("A", Ty::prop())
         .unwrap()
         .extend_const("n", ty("nat"))
         .unwrap();
     let second = Signature::new()
+        .extend_type_constructor("nat", 0)
+        .unwrap()
         .extend_const("n", ty("nat"))
         .unwrap()
         .extend_const("A", Ty::prop())
@@ -35,6 +39,8 @@ fn signature_id_is_deterministic_and_order_independent() {
     assert_eq!(first, second);
 
     let changed = Signature::new()
+        .extend_type_constructor("bool", 0)
+        .unwrap()
         .extend_const("A", Ty::prop())
         .unwrap()
         .extend_const("n", ty("bool"))
@@ -65,26 +71,43 @@ fn signature_extension_is_immutable_and_duplicates_fail_closed() {
 #[test]
 fn untrusted_signature_snapshot_recomputes_and_checks_digest() {
     let expected = Signature::new()
+        .extend_type_constructor("nat", 0)
+        .unwrap()
         .extend_const("n", ty("nat"))
         .unwrap()
         .extend_const("A", Ty::prop())
         .unwrap();
+    let type_constructors = vec![("nat".into(), 0)];
     let declarations = vec![("A".into(), Ty::prop()), ("n".into(), ty("nat"))];
 
-    let rebuilt =
-        Signature::from_untrusted_snapshot(expected.id().to_bytes(), declarations.clone()).unwrap();
+    let rebuilt = Signature::from_untrusted_snapshot(
+        expected.id().to_bytes(),
+        type_constructors.clone(),
+        declarations.clone(),
+    )
+    .unwrap();
     assert_eq!(rebuilt.id(), expected.id());
 
     let mut forged_digest = expected.id().to_bytes();
     forged_digest[0] ^= 0xff;
     assert!(matches!(
-        Signature::from_untrusted_snapshot(forged_digest, declarations),
+        Signature::from_untrusted_snapshot(forged_digest, type_constructors.clone(), declarations),
         Err(KernelError::SignatureDigestMismatch)
     ));
 
     assert!(matches!(
         Signature::from_untrusted_snapshot(
             expected.id().to_bytes(),
+            Vec::new(),
+            vec![("A".into(), Ty::prop()), ("n".into(), ty("nat"))],
+        ),
+        Err(KernelError::UndeclaredTypeConstructor(name)) if name.as_str() == "nat"
+    ));
+
+    assert!(matches!(
+        Signature::from_untrusted_snapshot(
+            expected.id().to_bytes(),
+            type_constructors,
             vec![("A".into(), Ty::prop()), ("A".into(), Ty::prop())],
         ),
         Err(KernelError::DuplicateDeclaration { .. })
@@ -169,7 +192,7 @@ fn independently_rebuilt_identical_contexts_interoperate() {
     let left_ctx = context(TheorySnapshot::root("Root", signature_with_a()));
     let right_ctx = context(TheorySnapshot::root("Root", signature_with_a()));
     let left_a = certified_a(&left_ctx);
-    let right_assumption = KernelRules::assume(certified_a(&right_ctx)).into_kernel();
+    let right_assumption = KernelRules::assume(certified_a(&right_ctx)).unwrap().into_kernel();
 
     let identity = KernelRules::implies_intr(&left_a, &right_assumption).unwrap();
     assert!(identity.hyps().is_empty());
@@ -182,11 +205,17 @@ fn same_text_under_wrong_signature_is_rejected_before_logical_matching() {
     let wide = narrow.extend_const("B", Ty::prop()).unwrap();
     let narrow_ctx = context(TheorySnapshot::root("Root", narrow));
     let wide_ctx = context(TheorySnapshot::root("Root", wide));
-    let narrow_a = KernelRules::assume(certified_a(&narrow_ctx)).into_kernel();
-    let wide_a = KernelRules::assume(certified_a(&wide_ctx)).into_kernel();
+    let narrow_a = KernelRules::assume(certified_a(&narrow_ctx)).unwrap().into_kernel();
+    let wide_a = KernelRules::assume(certified_a(&wide_ctx)).unwrap().into_kernel();
 
     let error = KernelRules::transitive(&narrow_a, &wide_a).unwrap_err();
-    assert!(matches!(error, KernelError::MixedContext { .. }));
+    match &error {
+        KernelError::MixedContext { expected, actual } => {
+            assert_eq!(expected.as_ref(), &narrow_ctx.stamp());
+            assert_eq!(actual.as_ref(), &wide_ctx.stamp());
+        },
+        other => panic!("expected mixed-context rejection, got {other:?}"),
+    }
 }
 
 #[test]
@@ -194,8 +223,8 @@ fn same_text_under_different_theory_ancestry_is_rejected() {
     let root = TheorySnapshot::root("Root", signature_with_a());
     let left_ctx = context(root.begin_child("Left"));
     let right_ctx = context(root.begin_child("Right"));
-    let left_a = KernelRules::assume(certified_a(&left_ctx)).into_kernel();
-    let right_a = KernelRules::assume(certified_a(&right_ctx)).into_kernel();
+    let left_a = KernelRules::assume(certified_a(&left_ctx)).unwrap().into_kernel();
+    let right_a = KernelRules::assume(certified_a(&right_ctx)).unwrap().into_kernel();
 
     let error = KernelRules::implies_elim(&left_a, &right_a).unwrap_err();
     assert!(matches!(error, KernelError::MixedContext { .. }));
@@ -206,8 +235,8 @@ fn mixed_context_substitution_is_rejected_before_rule_shape_checks() {
     let root = TheorySnapshot::root("Root", signature_with_a());
     let left_ctx = context(root.begin_child("Left"));
     let right_ctx = context(root.begin_child("Right"));
-    let alleged_equality = KernelRules::assume(certified_a(&left_ctx)).into_kernel();
-    let goal = KernelRules::assume(certified_a(&right_ctx)).into_kernel();
+    let alleged_equality = KernelRules::assume(certified_a(&left_ctx)).unwrap().into_kernel();
+    let goal = KernelRules::assume(certified_a(&right_ctx)).unwrap().into_kernel();
 
     let error = KernelRules::subst_premise(&alleged_equality, &goal, 0).unwrap_err();
     assert!(matches!(error, KernelError::MixedContext { .. }));
@@ -220,7 +249,7 @@ fn stale_parent_certified_object_is_rejected_in_child_context() {
     let stale_parent_a = certified_a(&parent_ctx);
 
     let child_ctx = context(parent_theory.begin_child("Child"));
-    let child_assumption = KernelRules::assume(certified_a(&child_ctx)).into_kernel();
+    let child_assumption = KernelRules::assume(certified_a(&child_ctx)).unwrap().into_kernel();
     let error = KernelRules::implies_intr(&stale_parent_a, &child_assumption).unwrap_err();
 
     assert!(matches!(error, KernelError::MixedContext { .. }));
@@ -231,7 +260,7 @@ fn closed_theorem_records_exact_proved_in_theory() {
     let parent = TheorySnapshot::root("Root", signature_with_a());
     let ctx = context(parent.clone());
     let a = certified_a(&ctx);
-    let assumed = KernelRules::assume(a.clone()).into_kernel();
+    let assumed = KernelRules::assume(a.clone()).unwrap().into_kernel();
     let identity = KernelRules::implies_intr(&a, &assumed).unwrap();
     let closed = identity.try_close().unwrap();
 

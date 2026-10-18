@@ -395,11 +395,6 @@ mod tests {
         ThmKernel::assume_compat(ct)
     }
 
-    fn goal_with_hyp() -> Thm {
-        let a = CTerm::certify(prop("A"));
-        ThmKernel::implies_intr(&a, &ThmKernel::assume_compat(a.clone())).unwrap()
-    }
-
     #[test]
     fn test_all_tac() {
         let st = trivial_goal();

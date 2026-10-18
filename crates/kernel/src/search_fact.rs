@@ -7,7 +7,7 @@ use super::{CProp, KernelThm};
 /// for trusted acceptance.
 ///
 /// ```compile_fail
-/// use isabelle_rs::kernel::{SearchFact, TrustedTheorem};
+/// use isabelle_kernel::{SearchFact, TrustedTheorem};
 /// fn cannot_promote(fact: SearchFact) {
 ///     let _: TrustedTheorem = fact.try_into().unwrap();
 /// }

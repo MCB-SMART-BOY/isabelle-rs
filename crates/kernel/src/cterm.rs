@@ -1,10 +1,45 @@
 use super::{ContextStamp, KernelError, Name, Term, Ty};
+/// A type checked in an exact theory and local fixed-type scope.
+/// No public constructor or deserialization grants certification.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct CType {
+    ty: Ty,
+    context: ContextStamp,
+    max_index: Option<usize>,
+}
+
+impl CType {
+    pub(crate) fn new(ty: Ty, context: ContextStamp) -> Self {
+        Self::with_max_index(ty, context, None)
+    }
+
+    pub(crate) fn with_max_index(ty: Ty, context: ContextStamp, previous: Option<usize>) -> Self {
+        let mut max_index = previous;
+        ty.for_each_type_var(&mut |_, index, _| {
+            max_index = Some(max_index.map_or(index, |max: usize| max.max(index)));
+        });
+        Self { ty, context, max_index }
+    }
+
+    pub fn ty(&self) -> &Ty {
+        &self.ty
+    }
+
+    pub fn context(&self) -> ContextStamp {
+        self.context
+    }
+    /// A lower bound for all schematic indices seen in this certified type.
+    pub fn max_var_index(&self) -> Option<usize> {
+        self.max_index
+    }
+}
 
 /// Strict certified term.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CTerm {
     term: Term,
     context: ContextStamp,
+    max_index: Option<usize>,
 }
 
 /// An entry in a schematic instantiation substitution.
@@ -71,7 +106,9 @@ impl CTerm {
     /// legacy `core`/Isar/HOL/tooling code must enter through strict
     /// certification instead of wrapping typed terms directly.
     pub(crate) fn new(term: Term, context: ContextStamp) -> Self {
-        CTerm { term, context }
+        let mut max_index = None;
+        crate::obligations::ProofPayload::include_term_index(&term, &mut max_index);
+        Self { term, context, max_index }
     }
 
     /// Wrap a term that originates from an already-certified `CProp` or
@@ -90,7 +127,21 @@ impl CTerm {
     /// can call it. External code and upper-layer modules MUST use
     /// `ProofContext::certify_term` instead.
     pub(crate) fn from_certified_subterm(term: Term, context: ContextStamp) -> Self {
-        CTerm { term, context }
+        Self::new(term, context)
+    }
+
+    pub fn max_var_index(&self) -> Option<usize> {
+        self.max_index
+    }
+
+    pub(crate) fn with_max_index(
+        term: Term,
+        context: ContextStamp,
+        previous: Option<usize>,
+    ) -> Self {
+        let mut certified = Self::new(term, context);
+        certified.max_index = certified.max_index.max(previous);
+        certified
     }
 
     pub fn term(&self) -> &Term {

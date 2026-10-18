@@ -11,7 +11,10 @@ Use clear typed Rust, small auditable functions, specific errors, and minimal
 comments explaining non-obvious invariants. Preserve unrelated dirty work and
 avoid unsafe/destructive operations unless explicitly justified.
 
-Run `scripts/fix.sh check` for normal changes and the relevant
-`scripts/dev-check.sh` modes before reporting. Reusable commands live in Bash
-under `scripts/`; large reusable Rust/configuration skeletons live under
-`scripts/templates/`. Short explanatory Markdown snippets are allowed.
+Use `cargo +stable xtask fix check` for non-mutating fix inspection when
+applicable, then `cargo +stable xtask verify` for deterministic repository
+verification. `selftest` and external security/global gates remain separate;
+see [the command catalog](../../scripts/README.md#verification). All maintained
+automation lives in `xtask/`; `scripts/` retains official reference probe
+inputs and classified Rust/configuration design templates, not runnable
+project scripts. Short explanatory Markdown snippets are allowed.

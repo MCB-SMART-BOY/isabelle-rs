@@ -1,21 +1,16 @@
-//! WASM runtime — loads and executes .wasm plugins via wasmtime.
+//! WASM runtime for search-only plugin metadata.
 //!
-//! ## Fuel metering
-//!
-//! Each WASM instruction consumes 1 fuel unit. The default limit is
-//! 10_000_000 instructions (~10ms on modern hardware). When fuel
-//! runs out, the plugin is terminated with an error.
-//!
-//! ## Memory model
-//!
-//! Plugins get a 64KB linear memory. They communicate with the host
-//! by writing/reading to/from this memory via host function calls.
+//! Tactic execution and proof reconstruction are not implemented. Lookup
+//! returns legacy metadata handles, never a kernel theorem or proof acceptance.
 
 use std::sync::Arc;
 
 use wasmtime::{Caller, Engine, FuncType, Linker, Memory, Module, Store, TypedFunc, Val, ValType};
 
-use super::{Plugin, PluginContext};
+use super::{
+    Plugin, PluginContext,
+    host::{HOST_FACT_KIND, HOST_LOOKUP, ThmTable},
+};
 use crate::core::thm::Thm;
 
 // =========================================================================
@@ -24,11 +19,9 @@ use crate::core::thm::Thm;
 
 /// State held inside the wasmtime Store.
 struct RuntimeState {
-    /// Memory shared with the WASM module.
     memory: Option<Memory>,
-    /// Plugin context (named theorems etc).
-    #[allow(dead_code)]
     ctx: PluginContext,
+    search_facts: ThmTable,
 }
 
 // =========================================================================
@@ -38,7 +31,6 @@ struct RuntimeState {
 /// Manages a loaded WASM plugin instance.
 pub struct WasmRuntime {
     _engine: Engine,
-    #[allow(dead_code)]
     store: Store<RuntimeState>,
     /// The `apply_tactic` function exported by the plugin.
     _apply_func: TypedFunc<(i32, i32), i32>,
@@ -48,7 +40,7 @@ pub struct WasmRuntime {
 }
 
 impl WasmRuntime {
-    /// Maximum fuel (instructions) before timeout.
+    /// Execution fuel budget, not a wall-clock deadline or memory limit.
     pub const DEFAULT_FUEL: u64 = 10_000_000;
 
     /// Load a WASM plugin from raw bytes.
@@ -65,8 +57,10 @@ impl WasmRuntime {
         let module = Module::from_binary(&engine, wasm_bytes)
             .map_err(|e| format!("failed to compile WASM module: {e}"))?;
 
-        let mut store =
-            Store::new(&engine, RuntimeState { memory: None, ctx: PluginContext::new() });
+        let mut store = Store::new(
+            &engine,
+            RuntimeState { memory: None, ctx: PluginContext::new(), search_facts: ThmTable::new() },
+        );
 
         // Set fuel limit
         store.set_fuel(Self::DEFAULT_FUEL).map_err(|e| format!("failed to set fuel: {e}"))?;
@@ -97,21 +91,39 @@ impl WasmRuntime {
         engine: &Engine,
         linker: &mut Linker<RuntimeState>,
     ) -> Result<(), String> {
-        // host_lookup: look up a theorem by name
-        // Signature: fn(name_ptr: i32, name_len: i32) -> i32
+        // Search-only lookup: a positive handle indexes legacy metadata;
+        // -1 denotes unknown names, invalid memory/UTF-8 or exhausted handles.
         let lookup_type = FuncType::new(engine, [ValType::I32, ValType::I32], [ValType::I32]);
         linker
             .func_new(
                 "env",
-                "host_lookup",
+                HOST_LOOKUP,
                 lookup_type,
-                |_caller: Caller<'_, RuntimeState>, _params: &[Val], _results: &mut [Val]| {
-                    // TODO: read name from memory, look up in ctx, return thm_id
-                    _results[0] = Val::I32(0);
+                |mut caller: Caller<'_, RuntimeState>, params: &[Val], results: &mut [Val]| {
+                    let ptr = params[0].unwrap_i32();
+                    let len = params[1].unwrap_i32();
+                    results[0] = Val::I32(Self::lookup_search_fact(&mut caller, ptr, len));
                     Ok(())
                 },
             )
             .map_err(|e| format!("failed to define host_lookup: {e}"))?;
+
+        // Classification of a search handle, never a proof acceptance code.
+        let kind_type = FuncType::new(engine, [ValType::I32], [ValType::I32]);
+        linker
+            .func_new(
+                "env",
+                HOST_FACT_KIND,
+                kind_type,
+                |caller: Caller<'_, RuntimeState>, params: &[Val], results: &mut [Val]| {
+                    let handle = params[0].unwrap_i32();
+                    let kind =
+                        caller.data().search_facts.get(handle).map(|fact| fact.kind().abi_code());
+                    results[0] = Val::I32(kind.unwrap_or(-1));
+                    Ok(())
+                },
+            )
+            .map_err(|e| format!("failed to define host_fact_kind: {e}"))?;
 
         // host_debug: print a debug message
         let debug_type = FuncType::new(engine, [ValType::I32, ValType::I32], []);
@@ -137,18 +149,35 @@ impl WasmRuntime {
         Ok(())
     }
 
-    /// Call the plugin's apply_tactic function.
-    ///
-    /// Currently returns an empty result — full implementation requires
-    /// proper memory management between host and WASM.
-    pub fn call_tactic(&mut self, _state: &Thm, _ctx: PluginContext) -> Result<Vec<Thm>, String> {
-        // Full implementation would:
-        // 1. Convert Goal → PluginGoal, serialize to JSON
-        // 2. Write JSON bytes to WASM memory
-        // 3. Call apply_tactic(ptr, len)
-        // 4. Read result from WASM memory
-        // 5. Deserialize PluginResult → Vec<Vec<Goal>>
-        Ok(Vec::new())
+    /// Read a plugin-supplied name and return a legacy search handle.
+    fn lookup_search_fact(caller: &mut Caller<'_, RuntimeState>, ptr: i32, len: i32) -> i32 {
+        let (Ok(ptr), Ok(len)) = (usize::try_from(ptr), usize::try_from(len)) else {
+            return -1;
+        };
+        if len > super::sdk::MAX_DATA_SIZE {
+            return -1;
+        }
+        let Some(memory) = &caller.data().memory else {
+            return -1;
+        };
+        let mut bytes = vec![0; len];
+        if memory.read(&*caller, ptr, &mut bytes).is_err() {
+            return -1;
+        }
+        let Ok(name) = std::str::from_utf8(&bytes) else {
+            return -1;
+        };
+        let Some(fact) = caller.data().ctx.lookup(name).cloned() else {
+            return -1;
+        };
+        caller.data_mut().search_facts.register(fact).unwrap_or(-1)
+    }
+
+    /// Tactic execution is unsupported; search metadata never counts as proof.
+    pub fn call_tactic(&mut self, _state: &Thm, ctx: PluginContext) -> Result<Vec<Thm>, String> {
+        self.store.data_mut().search_facts.clear();
+        self.store.data_mut().ctx = ctx;
+        Err("WASM tactic execution and proof reconstruction are not implemented".into())
     }
 }
 
@@ -182,5 +211,59 @@ mod tests {
         let result = WasmRuntime::load("test".into(), "0.1".into(), wasm_bytes);
         // Should fail (incomplete module) but not panic
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn host_lookup_known_legacy_fact_returns_metadata_only() {
+        use wasmtime::MemoryType;
+
+        let engine = Engine::default();
+        let mut linker = Linker::new(&engine);
+        WasmRuntime::define_host_functions(&engine, &mut linker).unwrap();
+
+        let proposition = crate::core::thm::CTerm::certify(crate::core::term::Term::const_(
+            "A",
+            crate::core::types::Typ::base("prop"),
+        ));
+        let admitted = crate::core::thm::ThmKernel::admit(proposition, "test");
+        let mut ctx = PluginContext::new();
+        ctx.index_legacy("A".into(), &admitted);
+        let mut store =
+            Store::new(&engine, RuntimeState { memory: None, ctx, search_facts: ThmTable::new() });
+        let memory = Memory::new(&mut store, MemoryType::new(1, None)).unwrap();
+        memory.write(&mut store, 0, b"A").unwrap();
+        store.data_mut().memory = Some(memory);
+
+        let lookup = linker
+            .get(&mut store, "env", HOST_LOOKUP)
+            .unwrap()
+            .into_func()
+            .unwrap()
+            .typed::<(i32, i32), i32>(&store)
+            .unwrap();
+        let handle = lookup.call(&mut store, (0, 1)).unwrap();
+        assert!(handle > 0);
+        assert_eq!(
+            store.data().search_facts.get(handle).unwrap().kind(),
+            super::super::host::LegacyFactKind::Admitted
+        );
+        let kind = linker
+            .get(&mut store, "env", HOST_FACT_KIND)
+            .unwrap()
+            .into_func()
+            .unwrap()
+            .typed::<i32, i32>(&store)
+            .unwrap();
+        assert_eq!(
+            kind.call(&mut store, handle).unwrap(),
+            super::super::host::LegacyFactKind::Admitted.abi_code()
+        );
+        assert_eq!(kind.call(&mut store, -1).unwrap(), -1);
+        assert_eq!(lookup.call(&mut store, (1, 1)).unwrap(), -1);
+        assert_eq!(lookup.call(&mut store, (-1, 1)).unwrap(), -1);
+        assert_eq!(lookup.call(&mut store, (i32::MAX, 1)).unwrap(), -1);
+        store.data_mut().search_facts.clear();
+        assert!(store.data().search_facts.get(handle).is_none());
+        assert_eq!(kind.call(&mut store, handle).unwrap(), -1);
     }
 }

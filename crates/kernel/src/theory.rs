@@ -1,15 +1,21 @@
-use std::{collections::BTreeSet, fmt, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+    sync::Arc,
+};
 
 use super::{
-    CProp, ClosedThm, ContextStamp, DefinitionCertificateError, KernelError, KernelThm, Name,
-    ProofContext, RawTerm, Signature, Ty,
+    ArityCert, CProp, ClassRelCert, ClosedThm, ConstScheme, ContextStamp,
+    DefinitionCertificateError, KernelError, KernelThm, Name, OfClassCandidate, ProofContext,
+    RawTerm, SemanticArityCert, Signature, Sort, Ty,
     identity::{CanonicalEncoder, THEORY_DOMAIN, TheoryId},
     invariant::replay_closed_theorem_in,
-    logic::LogicBasisId,
+    logic::{LogicBasisId, PolyType, PolyTypeParam, TypeVarId},
+    obligations::ProofPayload,
     theorem_builder,
 };
 
-const THEOREM_DOMAIN: &[u8] = b"isabelle-rs/theorem/v2";
+const THEOREM_DOMAIN: &[u8] = b"isabelle-rs/theorem/v8";
 
 /// Content identity of a replay-accepted theorem.
 ///
@@ -17,13 +23,8 @@ const THEOREM_DOMAIN: &[u8] = b"isabelle-rs/theorem/v2";
 /// deserializable as trusted values.
 ///
 /// ```compile_fail
-/// use isabelle_rs::kernel::TheoremId;
+/// use isabelle_kernel::TheoremId;
 /// let _forged = TheoremId([0; 32]);
-/// ```
-///
-/// ```compile_fail
-/// use isabelle_rs::kernel::TheoremId;
-/// let _: TheoremId = serde_json::from_str("[0, 1]").unwrap();
 /// ```
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TheoremId([u8; 32]);
@@ -54,7 +55,7 @@ impl fmt::Debug for TheoremId {
 /// declared type, and canonical RHS. The constructor is private to this module.
 ///
 /// ```compile_fail
-/// use isabelle_rs::kernel::DefinitionId;
+/// use isabelle_kernel::DefinitionId;
 /// let _forged = DefinitionId([0; 32]);
 /// ```
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -85,6 +86,7 @@ pub(crate) struct DefinitionCertificate {
     pub(crate) parent: TheoryId,
     pub(crate) name: Name,
     pub(crate) declared_ty: Ty,
+    pub(crate) scheme: ConstScheme,
     /// The RHS as a raw term (certified on replay in owner context).
     pub(crate) rhs_raw: RawTerm,
 }
@@ -101,20 +103,36 @@ impl DefinitionCertificate {
         parent: &TheoryId,
         name: &Name,
         declared_ty: &Ty,
+        scheme: &ConstScheme,
         rhs_raw: &RawTerm,
     ) -> DefinitionId {
-        let mut encoder = CanonicalEncoder::new(b"isabelle-rs/define-const/v1");
+        let mut encoder = CanonicalEncoder::new(b"isabelle-rs/define-const/v3");
         parent.write_canonical(&mut encoder);
         encoder.write_name(name);
         declared_ty.write_canonical(&mut encoder);
+        match scheme {
+            ConstScheme::Monomorphic(ty) => {
+                encoder.write_u8(0);
+                ty.write_canonical(&mut encoder);
+            },
+            ConstScheme::Polymorphic(ty) => {
+                encoder.write_u8(1);
+                ty.write_canonical(&mut encoder);
+            },
+        }
         rhs_raw.write_canonical(&mut encoder);
         DefinitionId(encoder.finish())
     }
 
     /// Recompute and verify the certificate's identity from its payload.
     pub(crate) fn validate(&self, expected_parent: &TheoryId) -> Result<(), KernelError> {
-        let recomputed =
-            Self::compute_id(expected_parent, &self.name, &self.declared_ty, &self.rhs_raw);
+        let recomputed = Self::compute_id(
+            expected_parent,
+            &self.name,
+            &self.declared_ty,
+            &self.scheme,
+            &self.rhs_raw,
+        );
         if recomputed != self.id {
             return Err(KernelError::DefinitionCertificate(
                 DefinitionCertificateError::IdMismatch { stored: self.id, recomputed },
@@ -147,6 +165,41 @@ impl DefinitionCertificate {
         }
         Ok(())
     }
+    fn declared_ty_has_atom(
+        &self,
+        target: &Name,
+        target_index: Option<usize>,
+        target_sort: &super::Sort,
+    ) -> bool {
+        let mut found = false;
+        self.declared_ty.for_each_type_atom(&mut |name, index, sort| {
+            found |= name == target && index == target_index && sort == target_sort;
+        });
+        found
+    }
+}
+
+fn definition_scheme(ty: &Ty) -> Result<ConstScheme, KernelError> {
+    let mut params = Vec::new();
+    let mut failure = None;
+    ty.for_each_type_var(&mut |name, index, sort| match u32::try_from(index) {
+        Ok(index) => {
+            let id = TypeVarId::new(name.clone(), index, sort.clone());
+            if !params.iter().any(|param: &PolyTypeParam| param.id == id) {
+                params.push(PolyTypeParam { id });
+            }
+        },
+        Err(_) => {
+            failure = Some(KernelError::TypeVariableIndexOutOfRange { name: name.clone(), index })
+        },
+    });
+    if let Some(error) = failure {
+        return Err(error);
+    }
+    if params.is_empty() {
+        return Ok(ConstScheme::Monomorphic(ty.clone()));
+    }
+    Ok(ConstScheme::Polymorphic(PolyType::new(params, ty.clone())?))
 }
 
 /// Validate a definition certificate against a parent theory snapshot.
@@ -160,17 +213,48 @@ pub(crate) fn validate_definition_certificate_in_parent(
     // 1. ID integrity + parent ownership + self-ref + closedness
     certificate.validate_semantics(&parent_snapshot.id())?;
 
-    // 2. Constant must not already exist in parent
-    if parent_snapshot.signature().get_const(&certificate.name).is_some() {
+    if parent_snapshot.signature().is_protected_class_predicate(&certificate.name) {
         return Err(KernelError::DuplicateDeclaration { name: certificate.name.clone() });
     }
+    if let Some(existing) = parent_snapshot.signature().get_const(&certificate.name) {
+        // Exact predeclaration is allowed; independent checked axiom and
+        // definition constraints are checked with the committed parent owner.
+        if existing != &certificate.scheme
+            || parent_snapshot.ancestors().any(|node| {
+                matches!(
+                    node.extension(),
+                    TheoryExtension::DefineConst { certificate: prior }
+                        if prior.name == certificate.name
+                )
+            })
+        {
+            return Err(KernelError::DuplicateDeclaration { name: certificate.name.clone() });
+        }
+    }
 
-    // 3. Reject non-concrete declared types — definitions must be monomorphic.
-    if !certificate.declared_ty.is_concrete_type() {
+    let expected_scheme = definition_scheme(&certificate.declared_ty)?;
+    if certificate.scheme != expected_scheme {
         return Err(KernelError::DefinitionCertificate(
-            DefinitionCertificateError::NonConcreteDeclaredType {
+            DefinitionCertificateError::InvalidScheme { name: certificate.name.clone() },
+        ));
+    }
+    parent_snapshot.signature().validate_type(&certificate.declared_ty)?;
+    let mut hidden = None;
+    certificate.rhs_raw.for_each_annotation(&mut |ty| {
+        if hidden.is_some() {
+            return;
+        }
+        ty.for_each_type_atom(&mut |name, index, sort| {
+            if index.is_none() || !certificate.declared_ty_has_atom(name, index, sort) {
+                hidden = Some(ty.clone());
+            }
+        });
+    });
+    if let Some(ty) = hidden {
+        return Err(KernelError::DefinitionCertificate(
+            DefinitionCertificateError::RhsContainsTypeVariables {
                 name: certificate.name.clone(),
-                ty: certificate.declared_ty.clone(),
+                ty,
             },
         ));
     }
@@ -180,7 +264,7 @@ pub(crate) fn validate_definition_certificate_in_parent(
     let rhs = ctx.certify_term(certificate.rhs_raw.clone())?;
 
     // 4. RHS type must match declared type
-    if &rhs.ty() != &certificate.declared_ty {
+    if rhs.ty() != certificate.declared_ty {
         return Err(KernelError::DefinitionCertificate(
             DefinitionCertificateError::RhsTypeMismatch {
                 name: certificate.name.clone(),
@@ -193,12 +277,55 @@ pub(crate) fn validate_definition_certificate_in_parent(
     Ok(())
 }
 
+fn validate_definition_owner_in_parent(
+    parent: &TrustedTheory,
+    certificate: &DefinitionCertificate,
+) -> Result<(), KernelError> {
+    validate_definition_certificate_in_parent(parent.snapshot(), certificate)?;
+    if parent.signature().get_const(&certificate.name).is_none() {
+        return Ok(());
+    }
+    let Some(basis) = parent.logic_basis() else {
+        if parent.snapshot().find_logic_basis_id().is_some() {
+            return Err(KernelError::Invariant("definition parent lost its axiom basis".into()));
+        }
+        return Ok(());
+    };
+    let definitions: BTreeMap<_, _> = parent
+        .ancestors()
+        .filter_map(|node| {
+            if let TheoryExtension::DefineConst { certificate } = node.snapshot().extension() {
+                Some((&certificate.name, &certificate.rhs_raw))
+            } else {
+                None
+            }
+        })
+        .collect();
+    let mut pending = BTreeSet::new();
+    for axiom in basis.axioms() {
+        axiom.prop.referenced_consts(&mut pending);
+    }
+    let mut visited = BTreeSet::new();
+    while let Some(name) = pending.pop_first() {
+        if name == certificate.name {
+            return Err(KernelError::DuplicateDeclaration { name: certificate.name.clone() });
+        }
+        if visited.insert(name.clone())
+            && let Some(rhs) = definitions.get(&name)
+        {
+            rhs.referenced_consts(&mut pending);
+        }
+    }
+    Ok(())
+}
+
 /// Dependency categories reserved by the accepted-theorem identity schema.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DependencyKind {
     Axiom,
     Definition,
     Theorem,
+    Class,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -253,6 +380,14 @@ impl DependencySet {
             .insert(DependencyId { kind: DependencyKind::Definition, digest: id.to_bytes() });
     }
 
+    pub(crate) fn insert_class(&mut self, owner: TheoryId) {
+        self.entries.insert(DependencyId { kind: DependencyKind::Class, digest: owner.to_bytes() });
+    }
+
+    pub(crate) fn extend(&mut self, other: &Self) {
+        self.entries.extend(other.entries.iter().copied());
+    }
+
     fn write_canonical(&self, encoder: &mut CanonicalEncoder) {
         encoder.write_u64(self.entries.len() as u64);
         for dependency in &self.entries {
@@ -260,6 +395,7 @@ impl DependencySet {
                 DependencyKind::Axiom => 0,
                 DependencyKind::Definition => 1,
                 DependencyKind::Theorem => 2,
+                DependencyKind::Class => 3,
             };
             encoder.write_u8(tag);
             encoder.write_fixed_bytes(&dependency.digest);
@@ -289,16 +425,21 @@ pub struct TheorySnapshot {
 
 struct TheoryNode {
     id: TheoryId,
-    parent: Option<TheorySnapshot>,
+    parents: Vec<TheorySnapshot>,
     signature: Signature,
     extension: TheoryExtension,
 }
 
 #[derive(Clone)]
-enum TheoryExtension {
+pub(crate) enum TheoryExtension {
     Root { name: Name },
     BeginChild { name: Name },
+    MergeParents { name: Name, logic_basis_id: Option<LogicBasisId> },
     DeclareConst { name: Name, ty: Ty },
+    DeclareConstScheme { name: Name, scheme: super::PolyType },
+    DeclareFreshNonemptyTycon { name: Name, arity: usize },
+    InstallClassRelation { certificate: ClassRelCert },
+    InstallClassArity { certificate: ArityCert },
     DefineConst { certificate: DefinitionCertificate },
     StoreTheorem { name: Name, theorem: TheoremId },
     InstallLogicBasis { logic_basis_id: LogicBasisId },
@@ -306,12 +447,12 @@ enum TheoryExtension {
 
 impl TheorySnapshot {
     pub fn root(name: impl Into<Name>, signature: Signature) -> Self {
-        Self::build(None, signature, TheoryExtension::Root { name: name.into() })
+        Self::build(Vec::new(), signature, TheoryExtension::Root { name: name.into() })
     }
 
     pub fn begin_child(&self, name: impl Into<Name>) -> Self {
         Self::build(
-            Some(self.clone()),
+            vec![self.clone()],
             self.signature().clone(),
             TheoryExtension::BeginChild { name: name.into() },
         )
@@ -320,23 +461,77 @@ impl TheorySnapshot {
     pub fn extend_const(&self, name: impl Into<Name>, ty: Ty) -> Result<Self, KernelError> {
         let name = name.into();
         let signature = self.signature().extend_const(name.clone(), ty.clone())?;
-        Ok(Self::build(Some(self.clone()), signature, TheoryExtension::DeclareConst { name, ty }))
+        Ok(Self::build(vec![self.clone()], signature, TheoryExtension::DeclareConst { name, ty }))
+    }
+    fn extend_const_scheme(
+        &self,
+        name: Name,
+        scheme: super::PolyType,
+    ) -> Result<Self, KernelError> {
+        let signature = self.signature().extend_const_scheme(name.clone(), scheme.clone())?;
+        Ok(Self::build(
+            vec![self.clone()],
+            signature,
+            TheoryExtension::DeclareConstScheme { name, scheme },
+        ))
+    }
+
+    fn extend_fresh_nonempty_tycon(&self, name: Name, arity: usize) -> Result<Self, KernelError> {
+        let signature = self.signature().extend_type_constructor(name.clone(), arity)?;
+        Ok(Self::build(
+            vec![self.clone()],
+            signature,
+            TheoryExtension::DeclareFreshNonemptyTycon { name, arity },
+        ))
+    }
+
+    fn extend_class_relation(&self, certificate: &ClassRelCert) -> Result<Self, KernelError> {
+        let signature =
+            self.signature().install_class_relation(&certificate.lower, &certificate.upper)?;
+        Ok(Self::build(
+            vec![self.clone()],
+            signature,
+            TheoryExtension::InstallClassRelation { certificate: certificate.clone() },
+        ))
+    }
+
+    fn extend_class_arity(&self, certificate: &ArityCert) -> Result<Self, KernelError> {
+        let signature = self.signature().install_class_arity(
+            &certificate.tycon,
+            &certificate.arg_sorts,
+            &certificate.result,
+        )?;
+        Ok(Self::build(
+            vec![self.clone()],
+            signature,
+            TheoryExtension::InstallClassArity { certificate: certificate.clone() },
+        ))
     }
 
     pub(crate) fn extend_definition(
         &self,
         certificate: &DefinitionCertificate,
     ) -> Result<Self, KernelError> {
-        let signature = self
-            .signature()
-            .extend_const(certificate.name.clone(), certificate.declared_ty.clone())?;
+        let signature = match self.signature().get_const(&certificate.name) {
+            Some(existing) if existing == &certificate.scheme => self.signature().clone(),
+            Some(_) => {
+                return Err(KernelError::DuplicateDeclaration { name: certificate.name.clone() });
+            },
+            None => match &certificate.scheme {
+                ConstScheme::Monomorphic(ty) => {
+                    self.signature().extend_const(certificate.name.clone(), ty.clone())?
+                },
+                ConstScheme::Polymorphic(scheme) => self
+                    .signature()
+                    .extend_const_scheme(certificate.name.clone(), scheme.clone())?,
+            },
+        };
         Ok(Self::build(
-            Some(self.clone()),
+            vec![self.clone()],
             signature,
             TheoryExtension::DefineConst { certificate: certificate.clone() },
         ))
     }
-
     pub fn id(&self) -> TheoryId {
         self.inner.id
     }
@@ -345,81 +540,64 @@ impl TheorySnapshot {
         &self.inner.signature
     }
     pub fn stamp(&self) -> ContextStamp {
-        // Walk the extension chain to find an InstallLogicBasis node
-        let logic_basis = self.find_logic_basis_id();
-        ContextStamp::new(self.id(), self.signature().id(), logic_basis)
+        ContextStamp::new(self.id(), self.signature().id(), self.find_logic_basis_id())
     }
 
-    /// Walk the extension chain to locate the nearest InstallLogicBasis.
-    fn find_logic_basis_id(&self) -> Option<super::LogicBasisId> {
-        let mut node = Some(self);
-        while let Some(n) = node {
-            if let TheoryExtension::InstallLogicBasis { logic_basis_id } = n.extension() {
-                return Some(*logic_basis_id);
-            }
-            node = n.parent();
-        }
-        None
+    fn find_logic_basis_id(&self) -> Option<LogicBasisId> {
+        self.ancestors().find_map(|node| match node.extension() {
+            TheoryExtension::InstallLogicBasis { logic_basis_id }
+            | TheoryExtension::MergeParents { logic_basis_id: Some(logic_basis_id), .. } => {
+                Some(*logic_basis_id)
+            },
+            _ => None,
+        })
     }
 
-    pub fn parent(&self) -> Option<&TheorySnapshot> {
-        self.inner.parent.as_ref()
+    pub fn parents(&self) -> &[TheorySnapshot] {
+        &self.inner.parents
     }
 
-    fn extension(&self) -> &TheoryExtension {
+    pub(crate) fn extension(&self) -> &TheoryExtension {
         &self.inner.extension
     }
 
     pub fn is_ancestor_of(&self, descendant: &TheorySnapshot) -> bool {
-        let mut current = Some(descendant);
-        while let Some(theory) = current {
-            if theory.id() == self.id() {
-                return true;
-            }
-            current = theory.parent();
-        }
-        false
+        descendant.find_snapshot_by_id(self.id()).is_some()
     }
 
-    pub(crate) fn has_ancestor(&self, ancestor: TheoryId) -> bool {
-        let mut current = Some(self);
-        while let Some(theory) = current {
-            if theory.id() == ancestor {
-                return true;
+    pub(crate) fn ancestors(&self) -> impl Iterator<Item = &TheorySnapshot> {
+        let mut pending = vec![self];
+        let mut visited = BTreeSet::new();
+        std::iter::from_fn(move || {
+            loop {
+                let next = pending.pop()?;
+                if visited.insert(next.id()) {
+                    pending.extend(next.parents().iter().rev());
+                    return Some(next);
+                }
             }
-            current = theory.parent();
-        }
-        false
+        })
     }
 
-    /// Find a snapshot by TheoryId in the ancestry chain.
-    /// Returns None if the id is not in the chain (including self).
     pub(crate) fn find_snapshot_by_id(&self, target: TheoryId) -> Option<&TheorySnapshot> {
-        let mut current = Some(self);
-        while let Some(snap) = current {
-            if snap.id() == target {
-                return Some(snap);
-            }
-            current = snap.parent();
-        }
-        None
+        self.ancestors().find(|snapshot| snapshot.id() == target)
     }
 
     fn store_theorem(&self, name: Name, theorem: TheoremId) -> Self {
         Self::build(
-            Some(self.clone()),
+            vec![self.clone()],
             self.signature().clone(),
             TheoryExtension::StoreTheorem { name, theorem },
         )
     }
 
     fn build(
-        parent: Option<TheorySnapshot>,
+        parents: Vec<TheorySnapshot>,
         signature: Signature,
         extension: TheoryExtension,
     ) -> Self {
-        let id = compute_theory_id(parent.as_ref().map(TheorySnapshot::id), &extension, &signature);
-        Self { inner: Arc::new(TheoryNode { id, parent, signature, extension }) }
+        let id = compute_theory_id(&parents, &extension, &signature);
+        Self { inner: Arc::new(TheoryNode { id, parents, signature, extension }) }
     }
 }
 
@@ -427,7 +605,7 @@ impl fmt::Debug for TheorySnapshot {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TheorySnapshot")
             .field("id", &self.id())
-            .field("parent", &self.parent().map(TheorySnapshot::id))
+            .field("parents", &self.parents().iter().map(TheorySnapshot::id).collect::<Vec<_>>())
             .field("signature", &self.signature().id())
             .field("logic_basis", &self.find_logic_basis_id())
             .finish()
@@ -435,17 +613,14 @@ impl fmt::Debug for TheorySnapshot {
 }
 
 fn compute_theory_id(
-    parent: Option<TheoryId>,
+    parents: &[TheorySnapshot],
     extension: &TheoryExtension,
     signature: &Signature,
 ) -> TheoryId {
     let mut encoder = CanonicalEncoder::new(THEORY_DOMAIN);
-    match parent {
-        Some(parent) => {
-            encoder.write_u8(1);
-            parent.write_canonical(&mut encoder);
-        },
-        None => encoder.write_u8(0),
+    encoder.write_u64(parents.len() as u64);
+    for parent in parents {
+        parent.id().write_canonical(&mut encoder);
     }
     extension.write_canonical(&mut encoder);
     signature.id().write_canonical(&mut encoder);
@@ -463,10 +638,36 @@ impl TheoryExtension {
                 encoder.write_u8(1);
                 encoder.write_name(name);
             },
+            TheoryExtension::MergeParents { name, logic_basis_id } => {
+                encoder.write_u8(6);
+                encoder.write_name(name);
+                encoder.write_u8(u8::from(logic_basis_id.is_some()));
+                if let Some(logic_basis_id) = logic_basis_id {
+                    logic_basis_id.write_canonical(encoder);
+                }
+            },
             TheoryExtension::DeclareConst { name, ty } => {
                 encoder.write_u8(2);
                 encoder.write_name(name);
                 ty.write_canonical(encoder);
+            },
+            TheoryExtension::DeclareConstScheme { name, scheme } => {
+                encoder.write_u8(10);
+                encoder.write_name(name);
+                scheme.write_canonical(encoder);
+            },
+            TheoryExtension::DeclareFreshNonemptyTycon { name, arity } => {
+                encoder.write_u8(7);
+                encoder.write_name(name);
+                encoder.write_u64(*arity as u64);
+            },
+            TheoryExtension::InstallClassRelation { certificate } => {
+                encoder.write_u8(8);
+                certificate.write_canonical(encoder);
+            },
+            TheoryExtension::InstallClassArity { certificate } => {
+                encoder.write_u8(9);
+                certificate.write_canonical(encoder);
             },
             TheoryExtension::DefineConst { certificate } => {
                 encoder.write_u8(4);
@@ -492,7 +693,7 @@ impl TheoryExtension {
 /// Construction and proof extraction are intentionally unavailable.
 ///
 /// ```compile_fail
-/// use isabelle_rs::kernel::TrustedTheorem;
+/// use isabelle_kernel::TrustedTheorem;
 /// fn forge(inner: std::sync::Arc<()>) {
 ///     let _ = TrustedTheorem(inner);
 /// }
@@ -580,7 +781,7 @@ impl fmt::Debug for TrustedTheorem {
 /// There is deliberately no `Default`, context-free `new`, or `from_snapshot`.
 ///
 /// ```compile_fail
-/// use isabelle_rs::kernel::TrustedTheory;
+/// use isabelle_kernel::TrustedTheory;
 /// let _ = TrustedTheory::new();
 /// ```
 #[derive(Clone)]
@@ -591,7 +792,7 @@ pub struct TrustedTheory {
 #[derive(Clone)]
 struct TrustedTheoryNode {
     snapshot: TheorySnapshot,
-    parent: Option<TrustedTheory>,
+    parents: Vec<TrustedTheory>,
     local_fact: Option<TrustedTheorem>,
     fact_count: usize,
     logic_basis: Option<Arc<super::LogicBasis>>,
@@ -602,7 +803,7 @@ impl TrustedTheory {
         Self {
             inner: Arc::new(TrustedTheoryNode {
                 snapshot: TheorySnapshot::root(name, signature),
-                parent: None,
+                parents: Vec::new(),
                 local_fact: None,
                 fact_count: 0,
                 logic_basis: None,
@@ -617,24 +818,140 @@ impl TrustedTheory {
         signature: Signature,
         basis: &super::LogicBasis,
     ) -> Result<Self, KernelError> {
-        basis.validate_against(&signature)?;
-        let root = TrustedTheory::root(name, signature.clone());
+        TrustedTheory::root(name, signature).install_basis(basis)
+    }
+
+    /// Install the checked basis on this committed owner, retaining its
+    /// declaration and class-arity ancestry for theorem replay.
+    pub fn install_basis(&self, basis: &super::LogicBasis) -> Result<Self, KernelError> {
+        basis.validate_against(self.signature())?;
+        super::hol_basis_origin::check_hol_basis_origin(self, basis)?;
+        let accumulated = match self.logic_basis() {
+            Some(previous)
+                if previous.policy() == super::logic::LogicPolicyId::HOLBasisV1
+                    && basis.policy() == previous.policy() =>
+            {
+                if (basis.axioms().is_empty() && basis.declarations().is_empty())
+                    || basis.axioms().iter().any(|axiom| previous.get_axiom(&axiom.name).is_some())
+                    || basis
+                        .declarations()
+                        .iter()
+                        .any(|declaration| previous.declarations().contains(declaration))
+                {
+                    return Err(KernelError::DuplicateDeclaration {
+                        name: "logic basis slot".into(),
+                    });
+                }
+                previous.union(basis)?
+            },
+            Some(_) => {
+                return Err(KernelError::DuplicateDeclaration { name: "logic basis".into() });
+            },
+            None => basis.clone(),
+        };
         let child_snapshot = TheorySnapshot::build(
-            Some(root.snapshot().clone()),
-            signature,
-            TheoryExtension::InstallLogicBasis { logic_basis_id: basis.id() },
+            vec![self.snapshot().clone()],
+            self.signature().clone(),
+            TheoryExtension::InstallLogicBasis { logic_basis_id: accumulated.id() },
         );
-        let basis_arc = Arc::new(basis.clone());
-        let child = Self::child(&root, child_snapshot, None);
-        // Override the logic_basis on the child (child inherits parent's None)
+        let child = Self::child(self, child_snapshot, None);
         let mut inner = (*child.inner).clone();
-        inner.logic_basis = Some(basis_arc);
+        inner.logic_basis = Some(Arc::new(accumulated));
         Ok(Self { inner: Arc::new(inner) })
     }
 
     /// The installed logic basis, if any.
     pub fn logic_basis(&self) -> Option<&super::LogicBasis> {
         self.inner.logic_basis.as_deref()
+    }
+
+    /// Join committed owner identities in first-input order, dropping duplicates
+    /// and inputs covered by another parent. No candidate child escapes on error.
+    pub fn merge_parents(
+        name: impl Into<Name>,
+        parents: &[TrustedTheory],
+    ) -> Result<Self, KernelError> {
+        if parents.is_empty() {
+            return Err(KernelError::Invariant("cannot merge an empty parent set".into()));
+        }
+        let canonical = Self::canonical_parents(parents);
+        Self::check_consistency_roots(&canonical)?;
+        Self::merge_checked(name.into(), &canonical)
+    }
+
+    fn canonical_parents(parents: &[Self]) -> Vec<Self> {
+        let mut seen = BTreeSet::new();
+        parents
+            .iter()
+            .filter(|parent| {
+                seen.insert(parent.id())
+                    && !parents.iter().any(|other| {
+                        other.id() != parent.id()
+                            && parent.snapshot().is_ancestor_of(other.snapshot())
+                    })
+            })
+            .cloned()
+            .collect()
+    }
+
+    // Parents have been validated by the caller (or will be checked by the
+    // shared DAG traversal). Never recursively call the public constructor here.
+    fn merge_checked(name: Name, canonical: &[Self]) -> Result<Self, KernelError> {
+        let first = canonical
+            .first()
+            .ok_or_else(|| KernelError::Invariant("cannot merge an empty parent set".into()))?;
+        let mut signature = first.signature().clone();
+        for parent in &canonical[1..] {
+            signature = signature.merge(parent.signature())?;
+        }
+        check_joint_declarations(canonical)?;
+        check_joint_definitions(canonical)?;
+        check_joint_facts(canonical)?;
+        let mut basis = first.inner.logic_basis.clone();
+        for parent in &canonical[1..] {
+            basis = match (basis.as_ref(), parent.logic_basis()) {
+                (None, None) => None,
+                (Some(left), Some(right)) => Some(Arc::new(left.union(right)?)),
+                _ => {
+                    return Err(KernelError::Invariant(
+                        "incompatible logic policies in parent merge".into(),
+                    ));
+                },
+            };
+        }
+        if let Some(basis) = &basis {
+            basis.validate_against(&signature)?;
+        }
+        check_joint_axiom_origins(canonical)?;
+        let mut unique_facts = BTreeSet::new();
+        for parent in canonical {
+            for node in parent.ancestors() {
+                if let Some(theorem) = &node.inner.local_fact {
+                    unique_facts.insert(theorem.accepted_in());
+                }
+            }
+        }
+        let snapshot = TheorySnapshot::build(
+            canonical.iter().map(|parent| parent.snapshot().clone()).collect(),
+            signature,
+            TheoryExtension::MergeParents {
+                name,
+                logic_basis_id: basis.as_ref().map(|basis| basis.id()),
+            },
+        );
+        let merged = Self {
+            inner: Arc::new(TrustedTheoryNode {
+                snapshot,
+                parents: canonical.to_vec(),
+                local_fact: None,
+                fact_count: unique_facts.len(),
+                logic_basis: basis,
+            }),
+        };
+        if let Some(basis) = merged.logic_basis() {
+            super::hol_basis_origin::check_hol_basis_origin(&merged, basis)?;
+        }
+        Ok(merged)
     }
 
     pub fn begin_child(&self, name: impl Into<Name>) -> Self {
@@ -646,19 +963,116 @@ impl TrustedTheory {
         let snapshot = self.snapshot().extend_const(name, ty)?;
         Ok(Self::child(self, snapshot, None))
     }
+    /// Declare a polymorphic constant on an immutable owner, recording its
+    /// exact scheme and parent in the theory identity.
+    pub fn extend_const_scheme(
+        &self,
+        name: impl Into<Name>,
+        scheme: super::PolyType,
+    ) -> Result<Self, KernelError> {
+        let snapshot = self.snapshot().extend_const_scheme(name.into(), scheme)?;
+        Ok(Self::child(self, snapshot, None))
+    }
 
-    /// Atomically define a constant and accept its definition theorem.
-    ///
-    /// Certifies RHS in the parent context (guaranteeing freshness — the
-    /// constant does not yet exist), checks closedness, produces a
-    /// [`DefinitionCertificate`], extends the signature with a
-    /// `DefineConst` extension, constructs the definition theorem, and
-    /// accepts it.  Returns the child theory and the accepted
-    /// [`TrustedTheorem`].
-    ///
-    /// This is the sole production entry point for conservative
-    /// definitions. Every invariant is checked before any theory
-    /// mutation occurs.
+    /// Introduce a genuinely fresh nonempty type constructor. Its model is a
+    /// product of its inhabited parameters (unit when there are no parameters);
+    /// this declaration does not itself install any class arity.
+    pub fn declare_fresh_nonempty_tycon(
+        &self,
+        name: impl Into<Name>,
+        arity: usize,
+    ) -> Result<Self, KernelError> {
+        let name = name.into();
+        if matches!(name.as_str(), "fun" | "prop") {
+            return Err(KernelError::UnknownClassEvidence);
+        }
+        let snapshot = self.snapshot().extend_fresh_nonempty_tycon(name, arity)?;
+        Ok(Self::child(self, snapshot, None))
+    }
+
+    /// Check a classrel proof in the committed parent before installing its edge.
+    pub fn install_class_relation(
+        &self,
+        lower: Name,
+        upper: Name,
+        proof: OfClassCandidate,
+    ) -> Result<Self, KernelError> {
+        let certificate = ClassRelCert { parent: self.id(), lower, upper, proof };
+        certificate.check_in_parent(self)?;
+        let snapshot = self.snapshot().extend_class_relation(&certificate)?;
+        Ok(Self::child(self, snapshot, None))
+    }
+
+    /// Check the exact argument slots and result class in the pre-installation
+    /// parent; a boolean `of_sort` precheck is never sufficient.
+    pub fn install_class_arity(
+        &self,
+        tycon: Name,
+        arg_sorts: Vec<Sort>,
+        result: Name,
+        proof: OfClassCandidate,
+    ) -> Result<Self, KernelError> {
+        let certificate =
+            ArityCert { parent: self.id(), tycon, arg_sorts, result, proof, semantic: None };
+        certificate.check_in_parent(self)?;
+        let snapshot = self.snapshot().extend_class_arity(&certificate)?;
+        Ok(Self::child(self, snapshot, None))
+    }
+
+    /// Install one of the three audited nonempty model arities. Projection of a
+    /// typedef requires K3's final committed certificate and is not an input here.
+    pub fn install_semantic_arity(&self, model: SemanticArityCert) -> Result<Self, KernelError> {
+        model.check_in_parent(self)?;
+        let tycon = model.tycon();
+        let arity = model.arity();
+        let certificate = ArityCert {
+            parent: self.id(),
+            tycon,
+            arg_sorts: vec![Sort::hol_type(); arity],
+            result: Name::from("HOL.type"),
+            proof: OfClassCandidate::SemanticArity {
+                arguments: vec![vec![OfClassCandidate::AnnotatedAtomLeaf]; arity],
+            },
+            semantic: Some(model),
+        };
+        certificate.check_in_parent(self)?;
+        let snapshot = self.snapshot().extend_class_arity(&certificate)?;
+        Ok(Self::child(self, snapshot, None))
+    }
+
+    /// Define a constant with explicit lhs parameters. The RHS is abstracted
+    /// in parameter order, then certified in the committed parent before its
+    /// immutable definition certificate and theorem are installed.
+    pub fn define_const_with_args(
+        &self,
+        name: impl Into<Name>,
+        parameters: Vec<(Name, Ty)>,
+        rhs_raw: RawTerm,
+    ) -> Result<(TrustedTheory, TrustedTheorem), KernelError> {
+        let mut seen = BTreeSet::new();
+        for (parameter, ty) in &parameters {
+            if !seen.insert(parameter) {
+                return Err(KernelError::DuplicateDeclaration { name: parameter.clone() });
+            }
+            self.signature().validate_type(ty)?;
+            if let Some((fixed, sort)) = ty.first_type_free() {
+                return Err(KernelError::LocalTypeInSignature {
+                    name: parameter.clone(),
+                    fixed: fixed.clone(),
+                    sort: sort.clone(),
+                });
+            }
+        }
+        let body = crate::term::abstract_definition_frees(rhs_raw, &parameters, 0)?;
+        let bound = parameters
+            .into_iter()
+            .rev()
+            .fold(body, |body, (parameter, ty)| RawTerm::abs(parameter, ty, body));
+        self.define_const(name, bound)
+    }
+
+    /// Atomically define a closed constant and accept its definition theorem.
+    /// The declared scheme binds exactly the RHS's schematic type variables.
     pub fn define_const(
         &self,
         name: impl Into<Name>,
@@ -666,48 +1080,24 @@ impl TrustedTheory {
     ) -> Result<(TrustedTheory, TrustedTheorem), KernelError> {
         let name = name.into();
         let parent_ctx = ProofContext::new(self.snapshot().clone());
-
-        // 1. Certify RHS in parent context — ensures freshness and closedness
-        let rhs = parent_ctx.certify_term(rhs_raw.clone())?;
-        let rhs_ty = rhs.ty().clone();
-
-        // 2. RHS must be closed
-        if rhs_raw.has_free_vars() {
-            return Err(KernelError::Invariant("definition RHS is not closed".into()));
-        }
-
-        // 3. RHS must not reference the constant being defined
-        if rhs_raw.mentions_const(&name) {
-            return Err(KernelError::Invariant(
-                format!("definition RHS references the constant being defined: {name}").into(),
-            ));
-        }
-
-        // 3b. Declared type must be concrete — definitions must be monomorphic.
-        if !rhs_ty.is_concrete_type() {
-            return Err(KernelError::DefinitionCertificate(
-                DefinitionCertificateError::NonConcreteDeclaredType {
-                    name: name.clone(),
-                    ty: rhs_ty,
-                },
-            ));
-        }
-
-        // 4. Compute canonical DefinitionId
-        let definition_id = DefinitionCertificate::compute_id(&self.id(), &name, &rhs_ty, &rhs_raw);
-
-        // 5. Create certificate
+        let rhs_ty = parent_ctx.certify_term(rhs_raw.clone())?.ty();
+        let scheme = definition_scheme(&rhs_ty)?;
+        let definition_id =
+            DefinitionCertificate::compute_id(&self.id(), &name, &rhs_ty, &scheme, &rhs_raw);
         let certificate = DefinitionCertificate {
             id: definition_id,
             parent: self.id(),
             name: name.clone(),
             declared_ty: rhs_ty,
-            rhs_raw: rhs_raw.clone(),
+            scheme,
+            rhs_raw,
         };
+        validate_definition_owner_in_parent(self, &certificate)?;
 
         // 6. Extend the theory
         let snapshot = self.snapshot().extend_definition(&certificate)?;
         let child = Self::child(self, snapshot, None);
+        check_joint_definitions(std::slice::from_ref(&child))?;
 
         // 7. Build definition theorem: |- const == rhs
         let ctx = ProofContext::new(child.snapshot().clone());
@@ -735,21 +1125,92 @@ impl TrustedTheory {
         self.snapshot().stamp()
     }
 
-    pub fn parent(&self) -> Option<&TrustedTheory> {
-        self.inner.parent.as_ref()
+    pub fn parents(&self) -> &[TrustedTheory] {
+        &self.inner.parents
+    }
+
+    pub(crate) fn ancestors(&self) -> impl Iterator<Item = &TrustedTheory> {
+        let mut pending = vec![self];
+        let mut visited = BTreeSet::new();
+        std::iter::from_fn(move || {
+            loop {
+                let next = pending.pop()?;
+                if visited.insert(next.id()) {
+                    pending.extend(next.parents().iter().rev());
+                    return Some(next);
+                }
+            }
+        })
+    }
+
+    pub(crate) fn find_owner(&self, id: TheoryId) -> Option<&Self> {
+        self.ancestors().find(|node| node.id() == id)
+    }
+
+    /// Retrieve an actual committed owner in this immutable DAG, including self.
+    pub(crate) fn find_ancestor_by_id(&self, id: TheoryId) -> Option<TrustedTheory> {
+        self.find_owner(id).cloned()
+    }
+
+    pub(crate) fn has_fresh_nonempty_declaration(&self, name: &Name, arity: usize) -> bool {
+        matches!(
+            self.snapshot().extension(),
+            TheoryExtension::DeclareFreshNonemptyTycon { name: declared, arity: count }
+                if declared == name && *count == arity
+        )
+    }
+
+    pub(crate) fn find_class_relation(&self, lower: &Name, upper: &Name) -> Option<&ClassRelCert> {
+        self.ancestors().find_map(|node| match node.snapshot().extension() {
+            TheoryExtension::InstallClassRelation { certificate }
+                if &certificate.lower == lower && &certificate.upper == upper =>
+            {
+                Some(certificate)
+            },
+            _ => None,
+        })
+    }
+
+    pub(crate) fn find_arity_certificate(&self, tycon: &Name, result: &Name) -> Option<&ArityCert> {
+        self.ancestors().find_map(|node| match node.snapshot().extension() {
+            TheoryExtension::InstallClassArity { certificate }
+                if &certificate.tycon == tycon && &certificate.result == result =>
+            {
+                Some(certificate)
+            },
+            _ => None,
+        })
+    }
+    pub(crate) fn find_class_relation_installation(
+        &self,
+        lower: &Name,
+        upper: &Name,
+    ) -> Option<TheoryId> {
+        self.ancestors().find_map(|node| match node.snapshot().extension() {
+            TheoryExtension::InstallClassRelation { certificate }
+                if &certificate.lower == lower && &certificate.upper == upper =>
+            {
+                Some(node.id())
+            },
+            _ => None,
+        })
+    }
+
+    pub(crate) fn find_arity_installation(&self, tycon: &Name, result: &Name) -> Option<TheoryId> {
+        self.ancestors().find_map(|node| match node.snapshot().extension() {
+            TheoryExtension::InstallClassArity { certificate }
+                if &certificate.tycon == tycon && &certificate.result == result =>
+            {
+                Some(node.id())
+            },
+            _ => None,
+        })
     }
 
     pub fn get(&self, name: &Name) -> Option<&TrustedTheorem> {
-        let mut current = Some(self);
-        while let Some(theory) = current {
-            if let Some(theorem) = theory.inner.local_fact.as_ref()
-                && theorem.name() == name
-            {
-                return Some(theorem);
-            }
-            current = theory.parent();
-        }
-        None
+        self.ancestors()
+            .filter_map(|theory| theory.inner.local_fact.as_ref())
+            .find(|theorem| theorem.name() == name)
     }
 
     pub fn len(&self) -> usize {
@@ -765,13 +1226,16 @@ impl TrustedTheory {
         snapshot: TheorySnapshot,
         local_fact: Option<TrustedTheorem>,
     ) -> Self {
-        debug_assert_eq!(snapshot.parent().map(TheorySnapshot::id), Some(parent.id()));
+        debug_assert_eq!(
+            snapshot.parents().iter().map(TheorySnapshot::id).collect::<Vec<_>>(),
+            vec![parent.id()]
+        );
         let fact_count = parent.len() + usize::from(local_fact.is_some());
         let logic_basis = parent.inner.logic_basis.clone();
         Self {
             inner: Arc::new(TrustedTheoryNode {
                 snapshot,
-                parent: Some(parent.clone()),
+                parents: vec![parent.clone()],
                 local_fact,
                 fact_count,
                 logic_basis,
@@ -779,14 +1243,31 @@ impl TrustedTheory {
         }
     }
 
+    // The exhaustive owner-extension table is kept together for trust-boundary review.
     fn check_consistency(&self) -> Result<(), KernelError> {
-        let mut current = Some(self);
-        while let Some(theory) = current {
+        Self::check_consistency_roots(std::slice::from_ref(self))
+    }
+
+    fn check_consistency_roots(roots: &[Self]) -> Result<(), KernelError> {
+        for theory in joint_ancestors(roots) {
             let snapshot = theory.snapshot();
-            match (theory.parent(), snapshot.extension(), theory.inner.local_fact.as_ref()) {
-                (None, TheoryExtension::Root { name }, None) => {
-                    if snapshot.parent().is_some()
-                        || theory.len() != 0
+            if !theory
+                .parents()
+                .iter()
+                .map(Self::id)
+                .eq(snapshot.parents().iter().map(TheorySnapshot::id))
+            {
+                return Err(KernelError::Invariant(
+                    "trusted owner parents differ from its encoded snapshot parents".into(),
+                ));
+            }
+            theory.check_basis_inheritance()?;
+            match (theory.parents(), snapshot.extension(), theory.inner.local_fact.as_ref()) {
+                ([], TheoryExtension::Root { name }, None) => {
+                    if !snapshot.parents().is_empty()
+                        || !theory.parents().is_empty()
+                        || !theory.is_empty()
+                        || snapshot.signature().has_certificate_edges()
                         || TheorySnapshot::root(name.clone(), snapshot.signature().clone()).id()
                             != theory.id()
                     {
@@ -795,8 +1276,24 @@ impl TrustedTheory {
                         ));
                     }
                 },
-                (Some(parent), TheoryExtension::BeginChild { name }, None) => {
-                    if snapshot.parent().map(TheorySnapshot::id) != Some(parent.id())
+                (parents, TheoryExtension::MergeParents { name, logic_basis_id }, None)
+                    if !parents.is_empty() =>
+                {
+                    let canonical = Self::canonical_parents(theory.parents());
+                    let expected = Self::merge_checked(name.clone(), &canonical)?;
+                    if !canonical.iter().map(Self::id).eq(theory.parents().iter().map(Self::id))
+                        || theory.id() != expected.id()
+                        || theory.signature() != expected.signature()
+                        || theory.len() != expected.len()
+                        || theory.logic_basis().map(super::LogicBasis::id) != *logic_basis_id
+                    {
+                        return Err(KernelError::Invariant(
+                            "merged owner does not match its checked parents".into(),
+                        ));
+                    }
+                },
+                ([parent], TheoryExtension::BeginChild { name }, None) => {
+                    if snapshot.parents().first().map(TheorySnapshot::id) != Some(parent.id())
                         || theory.len() != parent.len()
                         || parent.snapshot().begin_child(name.clone()).id() != theory.id()
                     {
@@ -805,9 +1302,9 @@ impl TrustedTheory {
                         ));
                     }
                 },
-                (Some(parent), TheoryExtension::DeclareConst { name, ty }, None) => {
+                ([parent], TheoryExtension::DeclareConst { name, ty }, None) => {
                     let expected = parent.snapshot().extend_const(name.clone(), ty.clone())?;
-                    if snapshot.parent().map(TheorySnapshot::id) != Some(parent.id())
+                    if snapshot.parents().first().map(TheorySnapshot::id) != Some(parent.id())
                         || theory.len() != parent.len()
                         || expected.id() != theory.id()
                     {
@@ -816,12 +1313,48 @@ impl TrustedTheory {
                         ));
                     }
                 },
-                (Some(parent), TheoryExtension::DefineConst { certificate }, None) => {
+                ([parent], TheoryExtension::DeclareConstScheme { name, scheme }, None) => {
+                    let expected =
+                        parent.snapshot().extend_const_scheme(name.clone(), scheme.clone())?;
+                    if theory.len() != parent.len()
+                        || theory.id() != expected.id()
+                        || theory.signature() != expected.signature()
+                    {
+                        return Err(KernelError::Invariant(
+                            "polymorphic declaration does not replay in its exact parent".into(),
+                        ));
+                    }
+                },
+                ([parent], TheoryExtension::DeclareFreshNonemptyTycon { name, arity }, None) => {
+                    let expected =
+                        parent.snapshot().extend_fresh_nonempty_tycon(name.clone(), *arity)?;
+                    if matches!(name.as_str(), "fun" | "prop")
+                        || theory.len() != parent.len()
+                        || expected.id() != theory.id()
+                    {
+                        return Err(KernelError::UnknownClassEvidence);
+                    }
+                },
+                ([parent], TheoryExtension::InstallClassRelation { certificate }, None) => {
+                    certificate.check_in_parent(parent)?;
+                    let expected = parent.snapshot().extend_class_relation(certificate)?;
+                    if theory.len() != parent.len() || expected.id() != theory.id() {
+                        return Err(KernelError::UnknownClassEvidence);
+                    }
+                },
+                ([parent], TheoryExtension::InstallClassArity { certificate }, None) => {
+                    certificate.check_in_parent(parent)?;
+                    let expected = parent.snapshot().extend_class_arity(certificate)?;
+                    if theory.len() != parent.len() || expected.id() != theory.id() {
+                        return Err(KernelError::UnknownClassEvidence);
+                    }
+                },
+                ([parent], TheoryExtension::DefineConst { certificate }, None) => {
                     // Validate certificate against parent BEFORE extending signature
-                    validate_definition_certificate_in_parent(parent.snapshot(), certificate)?;
+                    validate_definition_owner_in_parent(parent, certificate)?;
 
                     let expected = parent.snapshot().extend_definition(certificate)?;
-                    if snapshot.parent().map(TheorySnapshot::id) != Some(parent.id())
+                    if snapshot.parents().first().map(TheorySnapshot::id) != Some(parent.id())
                         || theory.len() != parent.len()
                         || expected.id() != theory.id()
                     {
@@ -830,39 +1363,17 @@ impl TrustedTheory {
                         ));
                     }
                 },
-                (Some(parent), TheoryExtension::InstallLogicBasis { logic_basis_id }, None) => {
-                    if snapshot.parent().map(TheorySnapshot::id) != Some(parent.id())
-                        || theory.len() != parent.len()
-                    {
-                        return Err(KernelError::Invariant(
-                            "trusted logic-basis owner does not match its snapshot parent".into(),
-                        ));
-                    }
-                    // Cross-validate: the extension's logic_basis_id must match
-                    // the stored LogicBasis payload's identity.
-                    match theory.logic_basis() {
-                        Some(basis) if basis.id() != *logic_basis_id => {
-                            return Err(KernelError::Invariant(
-                                "stored logic basis ID does not match extension's logic_basis_id"
-                                    .into(),
-                            ));
-                        },
-                        None => {
-                            return Err(KernelError::Invariant(
-                                "theory has no logic basis but extension claims one".into(),
-                            ));
-                        },
-                        _ => {},
-                    }
+                ([parent], TheoryExtension::InstallLogicBasis { logic_basis_id }, None) => {
+                    theory.check_basis_installation(parent, *logic_basis_id)?;
                 },
 
                 (
-                    Some(parent),
+                    [parent],
                     TheoryExtension::StoreTheorem { name, theorem: theorem_id },
                     Some(theorem),
                 ) => {
                     let expected = parent.snapshot().store_theorem(name.clone(), *theorem_id);
-                    if snapshot.parent().map(TheorySnapshot::id) != Some(parent.id())
+                    if snapshot.parents().first().map(TheorySnapshot::id) != Some(parent.id())
                         || theory.len() != parent.len() + 1
                         || expected.id() != theory.id()
                         || theorem.name() != name
@@ -883,7 +1394,107 @@ impl TrustedTheory {
                     ));
                 },
             }
-            current = theory.parent();
+        }
+        check_joint_definitions(roots)?;
+        Ok(())
+    }
+
+    fn check_basis_inheritance(&self) -> Result<(), KernelError> {
+        if matches!(self.snapshot().extension(), TheoryExtension::InstallLogicBasis { .. }) {
+            return Ok(());
+        }
+        let inherited =
+            if matches!(self.snapshot().extension(), TheoryExtension::MergeParents { .. }) {
+                Self::joined_basis(self.parents())?
+            } else {
+                self.parents().first().and_then(Self::logic_basis).cloned()
+            };
+        if !same_basis(self.logic_basis(), inherited.as_ref()) {
+            return Err(KernelError::Invariant("owner changed its inherited logic basis".into()));
+        }
+        Ok(())
+    }
+
+    fn joined_basis(parents: &[Self]) -> Result<Option<super::LogicBasis>, KernelError> {
+        let mut bases = parents.iter().map(Self::logic_basis);
+        let mut joined = bases.next().flatten().cloned();
+        for next in bases {
+            joined = match (joined.as_ref(), next) {
+                (None, None) => None,
+                (Some(left), Some(right)) => Some(left.union(right)?),
+                _ => {
+                    return Err(KernelError::Invariant(
+                        "incompatible logic policies in parent merge".into(),
+                    ));
+                },
+            };
+        }
+        Ok(joined)
+    }
+
+    fn check_basis_installation(
+        &self,
+        parent: &Self,
+        basis_id: LogicBasisId,
+    ) -> Result<(), KernelError> {
+        let previous = parent.logic_basis();
+        let basis = self
+            .logic_basis()
+            .ok_or_else(|| KernelError::Invariant("theory has no installed logic basis".into()))?;
+        let expected = TheorySnapshot::build(
+            vec![parent.snapshot().clone()],
+            parent.signature().clone(),
+            TheoryExtension::InstallLogicBasis { logic_basis_id: basis.id() },
+        );
+        if basis.id() != basis_id
+            || self.snapshot().parents().first().map(TheorySnapshot::id) != Some(parent.id())
+            || self.signature() != parent.signature()
+            || self.len() != parent.len()
+            || self.id() != expected.id()
+        {
+            return Err(KernelError::Invariant(
+                "trusted logic-basis owner does not match its validated parent".into(),
+            ));
+        }
+        basis.validate_against(parent.signature())?;
+        super::hol_basis_origin::check_hol_basis_origin(parent, basis)?;
+        if let Some(previous) = previous {
+            Self::check_hol_basis_extension(previous, basis)?;
+        }
+        Ok(())
+    }
+
+    fn check_hol_basis_extension(
+        previous: &super::LogicBasis,
+        basis: &super::LogicBasis,
+    ) -> Result<(), KernelError> {
+        if previous.policy() != super::logic::LogicPolicyId::HOLBasisV1
+            || previous.policy() != basis.policy()
+        {
+            return Err(KernelError::Invariant(
+                "incompatible logic policies in basis installation".into(),
+            ));
+        }
+        let declarations: Vec<_> = basis
+            .declarations()
+            .iter()
+            .filter(|declaration| !previous.declarations().contains(declaration))
+            .cloned()
+            .collect();
+        let axioms: Vec<_> = basis
+            .axioms()
+            .iter()
+            .filter(|axiom| previous.get_axiom(&axiom.name).is_none())
+            .cloned()
+            .collect();
+        if declarations.is_empty() && axioms.is_empty() {
+            return Err(KernelError::Invariant("empty HOL basis extension".into()));
+        }
+        let delta = super::LogicBasis::try_hol_basis(declarations, axioms)?;
+        if !same_basis(Some(basis), Some(&previous.union(&delta)?)) {
+            return Err(KernelError::Invariant(
+                "installed HOL basis does not replay from parent".into(),
+            ));
         }
         Ok(())
     }
@@ -898,48 +1509,73 @@ impl TrustedTheory {
             DependencyKind::Axiom => self.contains_axiom_dependency(dependency.digest),
             DependencyKind::Definition => self.contains_definition(dependency.definition_id()),
             DependencyKind::Theorem => self.contains_theorem_digest(dependency.digest),
+            DependencyKind::Class => self.ancestors().any(|node| {
+                node.id().to_bytes() == dependency.digest
+                    && matches!(
+                        node.snapshot().extension(),
+                        TheoryExtension::InstallClassRelation { .. }
+                            | TheoryExtension::InstallClassArity { .. },
+                    )
+            }),
+        })
+    }
+
+    /// Return the introduction manifest, never the current union view.
+    pub(crate) fn find_axiom_origin(
+        &self,
+        name: &Name,
+    ) -> Option<(&super::LogicBasis, &super::AxiomSchema)> {
+        self.ancestors().find_map(|node| {
+            if !matches!(node.snapshot().extension(), TheoryExtension::InstallLogicBasis { .. }) {
+                return None;
+            }
+            let basis = node.logic_basis()?;
+            if node
+                .parents()
+                .first()
+                .and_then(Self::logic_basis)
+                .is_some_and(|parent| parent.get_axiom(name).is_some())
+            {
+                return None;
+            }
+            basis.get_axiom(name).map(|schema| (basis, schema))
         })
     }
 
     fn contains_axiom_dependency(&self, digest: [u8; 32]) -> bool {
-        if let Some(basis) = self.logic_basis() {
-            for schema in basis.axioms() {
-                let dep_id = super::AxiomDependencyId::compute(basis.id(), schema.id());
-                if dep_id.to_bytes() == digest {
-                    return true;
-                }
+        self.ancestors().any(|node| {
+            if !matches!(node.snapshot().extension(), TheoryExtension::InstallLogicBasis { .. }) {
+                return false;
             }
-        }
-        false
+            node.logic_basis().is_some_and(|basis| {
+                basis.axioms().iter().any(|schema| {
+                    let is_new = node
+                        .parents()
+                        .first()
+                        .and_then(Self::logic_basis)
+                        .and_then(|previous| previous.get_axiom(&schema.name))
+                        .is_none();
+                    is_new
+                        && super::AxiomDependencyId::compute(basis.id(), schema.id()).to_bytes()
+                            == digest
+                })
+            })
+        })
     }
 
     fn contains_theorem_digest(&self, digest: [u8; 32]) -> bool {
-        let mut current = Some(self);
-        while let Some(theory) = current {
-            if theory
-                .inner
-                .local_fact
-                .as_ref()
-                .is_some_and(|theorem| theorem.id().to_bytes() == digest)
-            {
-                return true;
-            }
-            current = theory.parent();
-        }
-        false
+        self.ancestors()
+            .filter_map(|node| node.inner.local_fact.as_ref())
+            .any(|theorem| theorem.id().to_bytes() == digest)
     }
 
     fn contains_definition(&self, id: DefinitionId) -> bool {
-        let mut current = Some(self);
-        while let Some(theory) = current {
-            if let TheoryExtension::DefineConst { certificate } = theory.snapshot().extension() {
-                if certificate.id == id {
-                    return true;
-                }
-            }
-            current = theory.parent();
-        }
-        false
+        self.ancestors().any(|node| {
+            matches!(
+                node.snapshot().extension(),
+                TheoryExtension::DefineConst { certificate } if certificate.id == id
+            )
+        })
     }
 
     /// Walk ancestor chain to find the [`DefinitionCertificate`] for a given id,
@@ -948,39 +1584,212 @@ impl TrustedTheory {
         &self,
         id: &DefinitionId,
     ) -> Option<(DefinitionCertificate, TheoryId)> {
-        let mut current = Some(self);
-        while let Some(theory) = current {
-            if let TheoryExtension::DefineConst { certificate } = theory.snapshot().extension() {
-                if &certificate.id == id {
-                    let parent_id = theory.parent().map(|p| p.id()).unwrap_or_else(|| theory.id());
-                    return Some((certificate.clone(), parent_id));
+        self.ancestors().find_map(|node| match node.snapshot().extension() {
+            TheoryExtension::DefineConst { certificate } if &certificate.id == id => {
+                Some((certificate.clone(), node.parents()[0].id()))
+            },
+            _ => None,
+        })
+    }
+    pub(crate) fn find_accepted_theorem(
+        &self,
+        expected: &TrustedTheorem,
+    ) -> Option<&TrustedTheorem> {
+        self.ancestors().filter_map(|node| node.inner.local_fact.as_ref()).find(|theorem| {
+            theorem.id() == expected.id()
+                && theorem.name() == expected.name()
+                && theorem.accepted_in() == expected.accepted_in()
+                && theorem.0.closed == expected.0.closed
+                && theorem.dependencies() == expected.dependencies()
+        })
+    }
+}
+
+fn same_basis(left: Option<&super::LogicBasis>, right: Option<&super::LogicBasis>) -> bool {
+    match (left, right) {
+        (None, None) => true,
+        (Some(left), Some(right)) => {
+            left.id() == right.id()
+                && left.policy() == right.policy()
+                && left.declarations() == right.declarations()
+                && left.axioms() == right.axioms()
+        },
+        _ => false,
+    }
+}
+
+fn check_joint_axiom_origins(parents: &[TrustedTheory]) -> Result<(), KernelError> {
+    let mut origins = BTreeMap::new();
+    for node in joint_ancestors(parents) {
+        if !matches!(node.snapshot().extension(), TheoryExtension::InstallLogicBasis { .. }) {
+            continue;
+        }
+        if let Some(basis) = node.logic_basis() {
+            for axiom in basis.axioms() {
+                let is_new = node
+                    .parents()
+                    .first()
+                    .and_then(TrustedTheory::logic_basis)
+                    .and_then(|previous| previous.get_axiom(&axiom.name))
+                    .is_none();
+                if is_new && origins.insert(axiom.name.clone(), node.id()).is_some() {
+                    return Err(KernelError::DuplicateDeclaration { name: axiom.name.clone() });
                 }
             }
-            current = theory.parent();
         }
-        None
     }
-    pub(crate) fn contains_theorem(&self, expected: &TrustedTheorem) -> bool {
-        let mut current = Some(self);
-        while let Some(theory) = current {
-            if theory.inner.local_fact.as_ref().is_some_and(|theorem| {
-                theorem.id() == expected.id()
-                    && theorem.name() == expected.name()
-                    && theorem.accepted_in() == expected.accepted_in()
-            }) {
-                return true;
-            }
-            current = theory.parent();
+    Ok(())
+}
+
+fn joint_ancestors(parents: &[TrustedTheory]) -> Vec<&TrustedTheory> {
+    let mut visited = BTreeSet::new();
+    parents
+        .iter()
+        .flat_map(TrustedTheory::ancestors)
+        .filter(|node| visited.insert(node.id()))
+        .collect()
+}
+
+fn record_const_origin(
+    origins: &mut BTreeMap<Name, TheoryId>,
+    name: &Name,
+    origin: TheoryId,
+) -> Result<(), KernelError> {
+    if origins.insert(name.clone(), origin).is_some_and(|previous| previous != origin) {
+        return Err(KernelError::DuplicateDeclaration { name: name.clone() });
+    }
+    Ok(())
+}
+
+fn definition_declaration_origin(
+    node: &TrustedTheory,
+    certificate: &DefinitionCertificate,
+) -> Result<TheoryId, KernelError> {
+    let parent = node
+        .parents()
+        .first()
+        .ok_or_else(|| KernelError::Invariant("definition owner has no parent".into()))?;
+    if parent.signature().get_const(&certificate.name).is_none() {
+        return Ok(node.id());
+    }
+    parent
+        .ancestors()
+        .find_map(|ancestor| match ancestor.snapshot().extension() {
+            TheoryExtension::DeclareConst { name, .. } if name == &certificate.name => {
+                Some(ancestor.id())
+            },
+            TheoryExtension::DeclareConstScheme { name, .. } if name == &certificate.name => {
+                Some(ancestor.id())
+            },
+            TheoryExtension::Root { .. }
+                if ancestor.signature().get_const(&certificate.name).is_some() =>
+            {
+                Some(ancestor.id())
+            },
+            _ => None,
+        })
+        .ok_or_else(|| KernelError::Invariant("definition has no declaration origin".into()))
+}
+
+fn check_joint_declarations(parents: &[TrustedTheory]) -> Result<(), KernelError> {
+    let mut roots = BTreeSet::new();
+    let mut origins = BTreeMap::new();
+    let mut type_origins = BTreeMap::new();
+    let mut definitions = BTreeMap::new();
+    for node in joint_ancestors(parents) {
+        match node.snapshot().extension() {
+            TheoryExtension::Root { .. } => {
+                roots.insert(node.id());
+            },
+            TheoryExtension::DeclareConst { name, .. } => {
+                record_const_origin(&mut origins, name, node.id())?
+            },
+            TheoryExtension::DeclareConstScheme { name, .. } => {
+                record_const_origin(&mut origins, name, node.id())?
+            },
+            TheoryExtension::DeclareFreshNonemptyTycon { name, .. } => {
+                record_const_origin(&mut type_origins, name, node.id())?
+            },
+            TheoryExtension::DefineConst { certificate } => {
+                let name = &certificate.name;
+                record_const_origin(
+                    &mut origins,
+                    name,
+                    definition_declaration_origin(node, certificate)?,
+                )?;
+                record_const_origin(&mut definitions, name, node.id())?;
+            },
+            _ => {},
         }
-        false
     }
+    if roots.len() != 1 {
+        return Err(KernelError::Invariant("parent merge has distinct signature roots".into()));
+    }
+    Ok(())
+}
+
+fn check_joint_facts(parents: &[TrustedTheory]) -> Result<(), KernelError> {
+    let mut facts = BTreeMap::new();
+    for node in joint_ancestors(parents) {
+        if let Some(theorem) = node.inner.local_fact.as_ref()
+            && let Some(previous) = facts.insert(theorem.name(), theorem.accepted_in())
+            && previous != theorem.accepted_in()
+        {
+            return Err(KernelError::DuplicateTheorem { name: theorem.name().clone() });
+        }
+    }
+    Ok(())
+}
+
+fn check_joint_definitions(parents: &[TrustedTheory]) -> Result<(), KernelError> {
+    let definitions: BTreeMap<_, _> = joint_ancestors(parents)
+        .into_iter()
+        .filter_map(|node| match node.snapshot().extension() {
+            TheoryExtension::DefineConst { certificate } => {
+                Some((&certificate.name, &certificate.rhs_raw))
+            },
+            _ => None,
+        })
+        .collect();
+    let mut done = BTreeSet::new();
+    let mut active = BTreeSet::new();
+    for name in definitions.keys() {
+        check_definition_path(name, &definitions, &mut active, &mut done)?;
+    }
+    Ok(())
+}
+
+fn check_definition_path<'a>(
+    name: &'a Name,
+    definitions: &BTreeMap<&'a Name, &'a RawTerm>,
+    active: &mut BTreeSet<&'a Name>,
+    done: &mut BTreeSet<&'a Name>,
+) -> Result<(), KernelError> {
+    if done.contains(name) {
+        return Ok(());
+    }
+    if !active.insert(name) {
+        return Err(KernelError::DefinitionCertificate(
+            DefinitionCertificateError::SelfReference { name: name.clone() },
+        ));
+    }
+    let mut referenced = BTreeSet::new();
+    definitions[name].referenced_consts(&mut referenced);
+    for dependency in &referenced {
+        if let Some((key, _)) = definitions.get_key_value(dependency) {
+            check_definition_path(key, definitions, active, done)?;
+        }
+    }
+    active.remove(name);
+    done.insert(name);
+    Ok(())
 }
 
 impl fmt::Debug for TrustedTheory {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TrustedTheory")
             .field("id", &self.id())
-            .field("parent", &self.parent().map(TrustedTheory::id))
+            .field("parents", &self.parents().iter().map(TrustedTheory::id).collect::<Vec<_>>())
             .field("signature", &self.signature().id())
             .field("logic_basis", &self.logic_basis().map(|b| b.id()))
             .field("facts", &self.len())
@@ -997,7 +1806,10 @@ pub fn accept_closed_theorem(
     let name = name.into();
     let expected = theory.stamp();
     if theorem.context() != expected {
-        return Err(KernelError::MixedContext { expected, actual: theorem.context() });
+        return Err(KernelError::MixedContext {
+            expected: Box::new(expected),
+            actual: Box::new(theorem.context()),
+        });
     }
     theory.check_consistency()?;
     if theory.get(&name).is_some() {
@@ -1009,18 +1821,27 @@ pub fn accept_closed_theorem(
     if replayed.context() != candidate.context()
         || replayed.hyps() != candidate.hyps()
         || replayed.prop() != candidate.prop()
+        || replayed.payload() != candidate.payload()
+        || replayed.max_var_index() != candidate.max_var_index()
     {
         return Err(KernelError::AcceptanceReplayMismatch);
     }
     if !replayed.hyps().is_empty() {
         return Err(KernelError::TheoremNotClosed { hypotheses: replayed.hyps().len() });
     }
+    replayed.payload().validate_closed(replayed.prop(), replayed.hyps())?;
     if !theory.resolves(replayed.dependencies()) {
         return Err(KernelError::UnknownTheoremDependency);
     }
 
     let dependencies = replayed.dependencies().clone();
-    let theorem_id = compute_theorem_id(expected, replayed.prop(), &dependencies);
+    let theorem_id = compute_theorem_id(
+        expected,
+        replayed.prop(),
+        replayed.payload(),
+        replayed.max_var_index(),
+        &dependencies,
+    );
     let child_snapshot = theory.snapshot().store_theorem(name.clone(), theorem_id);
     let trusted =
         TrustedTheorem::seal(theorem_id, name, theorem, dependencies, child_snapshot.id());
@@ -1032,12 +1853,21 @@ pub fn accept_closed_theorem(
 fn compute_theorem_id(
     context: ContextStamp,
     prop: &CProp,
+    payload: &ProofPayload,
+    max_index: Option<usize>,
     dependencies: &DependencySet,
 ) -> TheoremId {
     let mut encoder = CanonicalEncoder::new(THEOREM_DOMAIN);
     context.write_canonical(&mut encoder);
     encoder.write_u8(0); // PureReplayV1
-    encoder.write_u8(0); // no unresolved proof burdens
+    payload.write_canonical(&mut encoder);
+    match max_index {
+        Some(index) => {
+            encoder.write_u8(1);
+            encoder.write_u64(index as u64);
+        },
+        None => encoder.write_u8(0),
+    }
     prop.term().write_theorem_canonical(&mut encoder);
     dependencies.write_canonical(&mut encoder);
     TheoremId::from_digest(encoder.finish())
@@ -1074,7 +1904,7 @@ mod tests {
     fn implication_identity(theory: &TrustedTheory, name: &str) -> ClosedThm {
         let context = ProofContext::new(theory.snapshot().clone());
         let proposition = context.certify_prop(prop(name)).unwrap();
-        let assumed = KernelRules::assume(proposition.clone()).into_kernel();
+        let assumed = KernelRules::assume(proposition.clone()).unwrap().into_kernel();
         KernelRules::implies_intr(&proposition, &assumed).unwrap().try_close().unwrap()
     }
 
@@ -1083,17 +1913,76 @@ mod tests {
         let signature = Signature::new();
         let name = Name::from("SamePayload");
         let root =
-            compute_theory_id(None, &TheoryExtension::Root { name: name.clone() }, &signature);
-        let child = compute_theory_id(None, &TheoryExtension::BeginChild { name }, &signature);
+            compute_theory_id(&[], &TheoryExtension::Root { name: name.clone() }, &signature);
+        let child = compute_theory_id(&[], &TheoryExtension::BeginChild { name }, &signature);
 
         assert_ne!(root, child);
+    }
+
+    #[test]
+    fn polymorphic_declaration_replays_parent_and_distinguishes_schemes() {
+        let root = TrustedTheory::root("Schemes", Signature::new());
+        let alpha = Ty::tvar("a", 0, Sort::empty());
+        let scheme = PolyType::new(
+            vec![PolyTypeParam { id: TypeVarId::new("a", 0, Sort::empty()) }],
+            Ty::arrow(alpha.clone(), alpha),
+        )
+        .unwrap();
+        let declared = root.extend_const_scheme("identity", scheme.clone()).unwrap();
+        let repeated = root.extend_const_scheme("identity", scheme.clone()).unwrap();
+        assert_eq!(declared.id(), repeated.id());
+        assert!(declared.check_consistency().is_ok());
+        let left = declared.begin_child("Left");
+        let right = declared.begin_child("Right");
+        let merged = TrustedTheory::merge_parents("Shared", &[left, right]).unwrap();
+        assert!(merged.check_consistency().is_ok());
+        let foreign = root.begin_child("Foreign").extend_const_scheme("identity", scheme).unwrap();
+        assert_ne!(foreign.id(), declared.id());
+        let forged = TrustedTheory {
+            inner: Arc::new(TrustedTheoryNode {
+                snapshot: declared.snapshot().clone(),
+                parents: vec![root.begin_child("WrongParent")],
+                local_fact: None,
+                fact_count: 0,
+                logic_basis: None,
+            }),
+        };
+        assert!(matches!(forged.check_consistency(), Err(KernelError::Invariant(_))));
+        assert!(matches!(
+            TrustedTheory::merge_parents("Collision", &[declared, foreign]),
+            Err(KernelError::DuplicateDeclaration { .. }),
+        ));
+    }
+
+    #[test]
+    fn installed_basis_must_replay_its_immediate_parent_and_cannot_repeat() {
+        let basis = LogicBasis::try_new(vec![], vec![]).unwrap();
+        let root = trusted_theory("Pure", &[]);
+        let installed = root.install_basis(&basis).unwrap();
+        assert!(installed.check_consistency().is_ok());
+        assert!(matches!(
+            installed.install_basis(&basis),
+            Err(KernelError::DuplicateDeclaration { .. }),
+        ));
+        let different_parent = root.begin_child("Other");
+        let forged = TrustedTheory {
+            inner: Arc::new(TrustedTheoryNode {
+                snapshot: installed.snapshot().clone(),
+                parents: vec![different_parent],
+                local_fact: None,
+                fact_count: 0,
+                logic_basis: Some(Arc::new(basis)),
+            }),
+        };
+        assert!(matches!(forged.check_consistency(), Err(KernelError::Invariant(_))));
     }
 
     #[test]
     fn forged_closed_candidate_with_hypotheses_is_rejected() {
         let theory = trusted_theory("Pure", &["A"]);
         let context = ProofContext::new(theory.snapshot().clone());
-        let open = KernelRules::assume(context.certify_prop(prop("A")).unwrap()).into_kernel();
+        let open =
+            KernelRules::assume(context.certify_prop(prop("A")).unwrap()).unwrap().into_kernel();
         let forged = ClosedThm::from_kernel_unchecked_for_test(open);
 
         assert!(matches!(
@@ -1132,9 +2021,70 @@ mod tests {
     }
 
     #[test]
+    fn owner_acceptance_replays_nested_universal_introduction() {
+        let theory = trusted_theory("Pure", &[]);
+        let mut context = ProofContext::new(theory.snapshot().clone());
+        context.declare_free("P", Ty::prop());
+        context.declare_free("Q", Ty::prop());
+        let p = context.certify_prop(RawTerm::free("P", Ty::prop())).unwrap();
+        let p_term = context.certify_term(RawTerm::free("P", Ty::prop())).unwrap();
+        let q_term = context.certify_term(RawTerm::free("Q", Ty::prop())).unwrap();
+        let assumed = KernelRules::assume(p.clone()).unwrap();
+        let implication = KernelRules::implies_intr(&p, assumed.as_kernel()).unwrap();
+        let inner = KernelRules::forall_intr(&q_term, &implication).unwrap();
+        let outer = KernelRules::forall_intr(&p_term, &inner).unwrap();
+        let expected = context
+            .certify_prop(RawTerm::forall(
+                "P",
+                Ty::prop(),
+                RawTerm::forall(
+                    "Q",
+                    Ty::prop(),
+                    RawTerm::imp(RawTerm::bound(1), RawTerm::bound(1)),
+                ),
+            ))
+            .unwrap();
+        assert_eq!(outer.prop(), &expected);
+        let (_, accepted) =
+            accept_closed_theorem(&theory, "nested_identity", outer.try_close().unwrap()).unwrap();
+        assert_eq!(accepted.prop(), &expected);
+    }
+
+    #[test]
+    fn owner_acceptance_rejects_unscoped_and_forged_free_premises() {
+        let theory = trusted_theory("Pure", &[]);
+        let mut context = ProofContext::new(theory.snapshot().clone());
+        context.declare_free("P", Ty::prop());
+        let p = context.certify_prop(RawTerm::free("P", Ty::prop())).unwrap();
+        let p_term = context.certify_term(RawTerm::free("P", Ty::prop())).unwrap();
+        let assumed = KernelRules::assume(p.clone()).unwrap();
+        let valid = KernelRules::implies_intr(&p, assumed.as_kernel()).unwrap();
+        let valid_prop = valid.prop().clone();
+        assert!(matches!(
+            accept_closed_theorem(&theory, "unscoped", valid.try_close().unwrap()),
+            Err(KernelError::UndeclaredFree(_))
+        ));
+
+        let forged =
+            KernelThm::new(Vec::new(), p.clone(), assumed.as_kernel().derivation().clone());
+        let implication = KernelThm::new(
+            Vec::new(),
+            valid_prop,
+            Derivation::ImpliesIntr { assumption: p.clone(), premise: Box::new(forged) },
+        );
+        let quantified = KernelRules::forall_intr(&p_term, &implication).unwrap();
+        assert!(matches!(
+            accept_closed_theorem(&theory, "forged", quantified.try_close().unwrap()),
+            Err(KernelError::AcceptanceReplayMismatch)
+        ));
+    }
+
+    #[test]
     fn malformed_cached_application_type_is_rejected() {
         let nat = Ty::base("nat").unwrap();
         let signature = Signature::new()
+            .extend_type_constructor("nat", 0)
+            .unwrap()
             .extend_const("f", Ty::arrow(nat.clone(), nat.clone()))
             .unwrap()
             .extend_const("a", nat.clone())
@@ -1160,7 +2110,11 @@ mod tests {
     #[test]
     fn malformed_bound_and_equality_caches_are_rejected() {
         let nat = Ty::base("nat").unwrap();
-        let signature = Signature::new().extend_const("a", nat.clone()).unwrap();
+        let signature = Signature::new()
+            .extend_type_constructor("nat", 0)
+            .unwrap()
+            .extend_const("a", nat.clone())
+            .unwrap();
         let theory = TrustedTheory::root("Pure", signature);
 
         let malformed_abs = Term::Abs {
@@ -1180,7 +2134,7 @@ mod tests {
             Term::Eq { object_ty: Ty::prop(), lhs: Box::new(a.clone()), rhs: Box::new(a) },
             theory.stamp(),
         );
-        let assumed = KernelRules::assume(malformed_eq.clone()).into_kernel();
+        let assumed = KernelRules::assume(malformed_eq.clone()).unwrap().into_kernel();
         let candidate =
             KernelRules::implies_intr(&malformed_eq, &assumed).unwrap().try_close().unwrap();
         assert!(matches!(
@@ -1199,7 +2153,7 @@ mod tests {
         let missing_fact = TrustedTheory {
             inner: Arc::new(TrustedTheoryNode {
                 snapshot: child.snapshot().clone(),
-                parent: Some(parent.clone()),
+                parents: vec![parent.clone()],
                 local_fact: None,
                 fact_count: 0,
                 logic_basis: None,
@@ -1220,7 +2174,7 @@ mod tests {
         let wrong_accepted_in = TrustedTheory {
             inner: Arc::new(TrustedTheoryNode {
                 snapshot: child.snapshot().clone(),
-                parent: Some(parent.clone()),
+                parents: vec![parent.clone()],
                 local_fact: Some(wrong_token),
                 fact_count: 1,
                 logic_basis: None,
@@ -1258,6 +2212,26 @@ mod tests {
         };
         assert!(child.resolves(&known));
         assert!(!parent.resolves(&known));
+    }
+
+    #[test]
+    fn theorem_ref_reaccepted_records_exact_source_dependency() {
+        let root = trusted_theory("ReferenceDependency", &["A"]);
+        let (owner, source) =
+            accept_closed_theorem(&root, "identity", implication_identity(&root, "A")).unwrap();
+        assert!(source.dependencies().is_empty());
+        let reference = KernelRules::theorem_ref(&owner, &source).unwrap();
+        let (reused_owner, reused) = accept_closed_theorem(&owner, "reused", reference).unwrap();
+        assert_eq!(reused.prop().term(), source.prop().term());
+        assert_eq!(reused.proved_context(), owner.stamp());
+        assert_eq!(reused.accepted_in(), reused_owner.id());
+        assert_eq!(
+            reused.dependencies().entries,
+            BTreeSet::from([DependencyId {
+                kind: DependencyKind::Theorem,
+                digest: source.id().to_bytes(),
+            }])
+        );
     }
 
     #[test]
@@ -1327,17 +2301,21 @@ mod tests {
             CProp::from_checked_term(Term::mk_eq(variable.clone(), variable).unwrap(), stamp)
         };
 
-        let free_a = compute_theorem_id(stamp, &free("a"), &dependencies);
-        let free_b = compute_theorem_id(stamp, &free("b"), &dependencies);
-        let var_zero = compute_theorem_id(stamp, &var_eq(0, nat.clone()), &dependencies);
-        let var_one = compute_theorem_id(stamp, &var_eq(1, nat), &dependencies);
-        let var_bool = compute_theorem_id(stamp, &var_eq(0, boolean), &dependencies);
-        let const_imp = compute_theorem_id(
-            stamp,
+        let identify = |proposition: &CProp| {
+            let payload = ProofPayload::from_statement(proposition, &[]);
+            let mut max_index = None;
+            ProofPayload::include_term_index(proposition.term(), &mut max_index);
+            compute_theorem_id(stamp, proposition, &payload, max_index, &dependencies)
+        };
+        let free_a = identify(&free("a"));
+        let free_b = identify(&free("b"));
+        let var_zero = identify(&var_eq(0, nat.clone()));
+        let var_one = identify(&var_eq(1, nat));
+        let var_bool = identify(&var_eq(0, boolean));
+        let const_imp = identify(
             &ProofContext::new(theory.snapshot().clone())
                 .certify_prop(RawTerm::imp(prop("A"), prop("A")))
                 .unwrap(),
-            &dependencies,
         );
 
         assert_ne!(free_a, free_b);
@@ -1368,11 +2346,13 @@ mod tests {
             ]),
         };
 
-        let forward_id =
-            compute_theorem_id(theory.stamp(), &proposition, &DependencySet { entries: forward });
-        let reverse_id =
-            compute_theorem_id(theory.stamp(), &proposition, &DependencySet { entries: reverse });
-        let changed_id = compute_theorem_id(theory.stamp(), &proposition, &changed_kind);
+        let payload = ProofPayload::from_statement(&proposition, &[]);
+        let identify = |dependencies: &DependencySet| {
+            compute_theorem_id(theory.stamp(), &proposition, &payload, None, dependencies)
+        };
+        let forward_id = identify(&DependencySet { entries: forward });
+        let reverse_id = identify(&DependencySet { entries: reverse });
+        let changed_id = identify(&changed_kind);
 
         assert_eq!(forward_id, reverse_id);
         assert_ne!(forward_id, changed_id);
@@ -1380,25 +2360,25 @@ mod tests {
 
     fn type_inst_single(name: impl Into<Name>, ty: Ty) -> TypeInstantiation {
         let mut bindings = std::collections::BTreeMap::new();
-        bindings.insert(TypeVarId::new(name, 0), ty);
+        bindings.insert(TypeVarId::new(name, 0, crate::Sort::empty()), ty);
         TypeInstantiation::try_new(bindings).unwrap()
     }
 
     #[test]
     fn axiom_rejects_unknown_type_variable() {
-        let sig = Signature::new();
+        let sig = Signature::new()
+            .install_empty_class(crate::EmptyClassDeclCert::hol_type())
+            .unwrap()
+            .extend_const("P", Ty::prop())
+            .unwrap();
         let basis = LogicBasis::try_new(
             vec![],
             vec![AxiomSchema {
                 name: Name::from("test_ax"),
                 prop: RawTerm::Forall {
                     name: Name::from("x"),
-                    param_ty: Ty::tvar("'a", 0, crate::Sort::typ()),
-                    body: Box::new(RawTerm::Var {
-                        name: Name::from("x"),
-                        index: 0,
-                        ty: Ty::tvar("'a", 0, crate::Sort::typ()),
-                    }),
+                    param_ty: Ty::tvar("'a", 0, crate::Sort::hol_type()),
+                    body: Box::new(RawTerm::eq(RawTerm::bound(0), RawTerm::bound(0))),
                 },
             }],
         )
@@ -1419,7 +2399,7 @@ mod tests {
 
     #[test]
     fn axiom_rejects_extra_type_instantiation() {
-        let sig = Signature::new();
+        let sig = Signature::new().extend_const("P", Ty::prop()).unwrap();
         let basis = LogicBasis::try_new(
             vec![],
             vec![AxiomSchema {
@@ -1443,20 +2423,18 @@ mod tests {
 
     #[test]
     fn axiom_nested_binders_preserve_variable_identity() {
-        // Schema: ∀x:'a. ∀y:'a. x ==> y
-        // After 'a := prop, x := c1, y := c2, result must be c1 ==> c2.
-        // The old de Bruijn bug (i > 0 instead of i > depth)
-        // would produce c2 ==> c2 (variable capture).
+        // Schema: ∀x:'a. ∀y:'a. x == y is well-typed at every 'a.
+        // After 'a := prop, x := c1, y := c2, keep distinct binder identities.
 
         let schema = RawTerm::Forall {
             name: Name::from("x"),
-            param_ty: Ty::tvar("'a", 0, crate::Sort::typ()),
+            param_ty: Ty::tvar("'a", 0, crate::Sort::empty()),
             body: Box::new(RawTerm::Forall {
                 name: Name::from("y"),
-                param_ty: Ty::tvar("'a", 0, crate::Sort::typ()),
-                body: Box::new(RawTerm::Imp {
-                    premise: Box::new(RawTerm::Bound(1)),    // x
-                    conclusion: Box::new(RawTerm::Bound(0)), // y
+                param_ty: Ty::tvar("'a", 0, crate::Sort::empty()),
+                body: Box::new(RawTerm::Eq {
+                    lhs: Box::new(RawTerm::Bound(1)),
+                    rhs: Box::new(RawTerm::Bound(0)),
                 }),
             }),
         };
@@ -1477,11 +2455,8 @@ mod tests {
         let c1 = ctx.certify_term(RawTerm::const_("c1", Ty::prop())).unwrap();
         let c2 = ctx.certify_term(RawTerm::const_("c2", Ty::prop())).unwrap();
 
-        // Expected: c1 ==> c2
-        let expected = RawTerm::Imp {
-            premise: Box::new(RawTerm::Const { name: Name::from("c1"), ty: Ty::prop() }),
-            conclusion: Box::new(RawTerm::Const { name: Name::from("c2"), ty: Ty::prop() }),
-        };
+        let expected =
+            RawTerm::eq(RawTerm::const_("c1", Ty::prop()), RawTerm::const_("c2", Ty::prop()));
 
         let result = crate::theorem_builder::axiom_theorem(
             &ctx,
@@ -1502,7 +2477,7 @@ mod tests {
     fn axiom_rejects_substituting_concrete_type() {
         // Concrete types (prop, bool, fun) must NOT be substitution targets.
         // Only Ty::tvar type variables can be substituted.
-        let sig = Signature::new();
+        let sig = Signature::new().extend_const("P", Ty::prop()).unwrap();
         let basis = LogicBasis::try_new(
             vec![],
             vec![AxiomSchema {
@@ -1537,14 +2512,18 @@ mod tests {
         use crate::logic::PolyTypeParam;
         // Declare id : 'a -> 'a -> prop (a polymorphic binary predicate)
         let scheme = PolyType::new(
-            vec![PolyTypeParam { id: TypeVarId::new("'a", 0), sort: crate::Sort::typ() }],
+            vec![PolyTypeParam { id: TypeVarId::new("'a", 0, crate::Sort::empty()) }],
             Ty::arrow(
-                Ty::tvar("'a", 0, crate::Sort::typ()),
-                Ty::arrow(Ty::tvar("'a", 0, crate::Sort::typ()), Ty::prop()),
+                Ty::tvar("'a", 0, crate::Sort::empty()),
+                Ty::arrow(Ty::tvar("'a", 0, crate::Sort::empty()), Ty::prop()),
             ),
         )
         .unwrap();
-        let sig = Signature::new().extend_const_scheme("eq", scheme).unwrap();
+        let sig = Signature::new()
+            .extend_type_constructor("bool", 0)
+            .unwrap()
+            .extend_const_scheme("eq", scheme)
+            .unwrap();
         let theory = TrustedTheory::root("T", sig);
         let ctx = ProofContext::new(theory.snapshot().clone());
 
@@ -1563,7 +2542,11 @@ mod tests {
 
     #[test]
     fn certify_const_instance_rejects_wrong_monomorphic_type() {
-        let sig = Signature::new().extend_const("P", Ty::prop()).unwrap();
+        let sig = Signature::new()
+            .extend_type_constructor("bool", 0)
+            .unwrap()
+            .extend_const("P", Ty::prop())
+            .unwrap();
         let result = sig.certify_const_instance(&Name::from("P"), &Ty::base("bool").unwrap());
         assert!(matches!(result, Err(KernelError::TypeMismatch { .. })));
     }
@@ -1572,14 +2555,20 @@ mod tests {
     fn certify_const_instance_rejects_non_instance_of_polymorphic() {
         use crate::logic::{PolyType, PolyTypeParam};
         let scheme = PolyType::new(
-            vec![PolyTypeParam { id: TypeVarId::new("'a", 0), sort: crate::Sort::typ() }],
+            vec![PolyTypeParam { id: TypeVarId::new("'a", 0, crate::Sort::empty()) }],
             Ty::arrow(
-                Ty::tvar("'a", 0, crate::Sort::typ()),
-                Ty::arrow(Ty::tvar("'a", 0, crate::Sort::typ()), Ty::prop()),
+                Ty::tvar("'a", 0, crate::Sort::empty()),
+                Ty::arrow(Ty::tvar("'a", 0, crate::Sort::empty()), Ty::prop()),
             ),
         )
         .unwrap();
-        let sig = Signature::new().extend_const_scheme("eq", scheme).unwrap();
+        let sig = Signature::new()
+            .extend_type_constructor("bool", 0)
+            .unwrap()
+            .extend_type_constructor("nat", 0)
+            .unwrap()
+            .extend_const_scheme("eq", scheme)
+            .unwrap();
 
         // bool -> nat -> prop fails because bool != nat (different 'a positions)
         let result = sig.certify_const_instance(
@@ -1602,16 +2591,22 @@ mod tests {
         // f : 'a -> 'b -> prop (two distinct params)
         let scheme = PolyType::new(
             vec![
-                PolyTypeParam { id: TypeVarId::new("'a", 0), sort: crate::Sort::typ() },
-                PolyTypeParam { id: TypeVarId::new("'b", 0), sort: crate::Sort::typ() },
+                PolyTypeParam { id: TypeVarId::new("'a", 0, crate::Sort::empty()) },
+                PolyTypeParam { id: TypeVarId::new("'b", 0, crate::Sort::empty()) },
             ],
             Ty::arrow(
-                Ty::tvar("'a", 0, crate::Sort::typ()),
-                Ty::arrow(Ty::tvar("'b", 0, crate::Sort::typ()), Ty::prop()),
+                Ty::tvar("'a", 0, crate::Sort::empty()),
+                Ty::arrow(Ty::tvar("'b", 0, crate::Sort::empty()), Ty::prop()),
             ),
         )
         .unwrap();
-        let sig = Signature::new().extend_const_scheme("f", scheme).unwrap();
+        let sig = Signature::new()
+            .extend_type_constructor("bool", 0)
+            .unwrap()
+            .extend_type_constructor("nat", 0)
+            .unwrap()
+            .extend_const_scheme("f", scheme)
+            .unwrap();
 
         let result = sig.certify_const_instance(
             &Name::from("f"),
@@ -1627,14 +2622,18 @@ mod tests {
     fn certify_raw_accepts_polymorphic_instance() {
         use crate::logic::{PolyType, PolyTypeParam};
         let scheme = PolyType::new(
-            vec![PolyTypeParam { id: TypeVarId::new("'a", 0), sort: crate::Sort::typ() }],
+            vec![PolyTypeParam { id: TypeVarId::new("'a", 0, crate::Sort::empty()) }],
             Ty::arrow(
-                Ty::tvar("'a", 0, crate::Sort::typ()),
-                Ty::arrow(Ty::tvar("'a", 0, crate::Sort::typ()), Ty::prop()),
+                Ty::tvar("'a", 0, crate::Sort::empty()),
+                Ty::arrow(Ty::tvar("'a", 0, crate::Sort::empty()), Ty::prop()),
             ),
         )
         .unwrap();
-        let sig = Signature::new().extend_const_scheme("eq", scheme).unwrap();
+        let sig = Signature::new()
+            .extend_type_constructor("bool", 0)
+            .unwrap()
+            .extend_const_scheme("eq", scheme)
+            .unwrap();
         let theory = TrustedTheory::root("T", sig);
         let ctx = ProofContext::new(theory.snapshot().clone());
 
@@ -1660,6 +2659,10 @@ mod definition_tests {
 
     fn hol_sig() -> Signature {
         Signature::new()
+            .install_empty_class(crate::EmptyClassDeclCert::hol_type())
+            .unwrap()
+            .extend_type_constructor("bool", 0)
+            .unwrap()
             .extend_const("HOL.Trueprop", Ty::arrow(Ty::base("bool").unwrap(), Ty::prop()))
             .unwrap()
     }
@@ -1688,8 +2691,11 @@ mod definition_tests {
             .extend_const(
                 "HOL.eq",
                 Ty::arrow(
-                    Ty::tvar("'a", 0, crate::Sort::typ()),
-                    Ty::arrow(Ty::tvar("'a", 0, crate::Sort::typ()), Ty::base("bool").unwrap()),
+                    Ty::tvar("'a", 0, crate::Sort::hol_type()),
+                    Ty::arrow(
+                        Ty::tvar("'a", 0, crate::Sort::hol_type()),
+                        Ty::base("bool").unwrap(),
+                    ),
                 ),
             )
             .unwrap();
@@ -1707,8 +2713,11 @@ mod definition_tests {
             .extend_const(
                 "HOL.eq",
                 Ty::arrow(
-                    Ty::tvar("'a", 0, crate::Sort::typ()),
-                    Ty::arrow(Ty::tvar("'a", 0, crate::Sort::typ()), Ty::base("bool").unwrap()),
+                    Ty::tvar("'a", 0, crate::Sort::hol_type()),
+                    Ty::arrow(
+                        Ty::tvar("'a", 0, crate::Sort::hol_type()),
+                        Ty::base("bool").unwrap(),
+                    ),
                 ),
             )
             .unwrap();
@@ -1747,8 +2756,11 @@ mod definition_tests {
             .extend_const(
                 "HOL.eq",
                 Ty::arrow(
-                    Ty::tvar("'a", 0, crate::Sort::typ()),
-                    Ty::arrow(Ty::tvar("'a", 0, crate::Sort::typ()), Ty::base("bool").unwrap()),
+                    Ty::tvar("'a", 0, crate::Sort::hol_type()),
+                    Ty::arrow(
+                        Ty::tvar("'a", 0, crate::Sort::hol_type()),
+                        Ty::base("bool").unwrap(),
+                    ),
                 ),
             )
             .unwrap();
@@ -1760,8 +2772,11 @@ mod definition_tests {
             .extend_const(
                 "HOL.eq",
                 Ty::arrow(
-                    Ty::tvar("'a", 0, crate::Sort::typ()),
-                    Ty::arrow(Ty::tvar("'a", 0, crate::Sort::typ()), Ty::base("bool").unwrap()),
+                    Ty::tvar("'a", 0, crate::Sort::hol_type()),
+                    Ty::arrow(
+                        Ty::tvar("'a", 0, crate::Sort::hol_type()),
+                        Ty::base("bool").unwrap(),
+                    ),
                 ),
             )
             .unwrap();
@@ -1786,8 +2801,11 @@ mod definition_tests {
             .extend_const(
                 "HOL.eq",
                 Ty::arrow(
-                    Ty::tvar("'a", 0, crate::Sort::typ()),
-                    Ty::arrow(Ty::tvar("'a", 0, crate::Sort::typ()), Ty::base("bool").unwrap()),
+                    Ty::tvar("'a", 0, crate::Sort::hol_type()),
+                    Ty::arrow(
+                        Ty::tvar("'a", 0, crate::Sort::hol_type()),
+                        Ty::base("bool").unwrap(),
+                    ),
                 ),
             )
             .unwrap();
@@ -1808,8 +2826,11 @@ mod definition_tests {
             .extend_const(
                 "HOL.eq",
                 Ty::arrow(
-                    Ty::tvar("'a", 0, crate::Sort::typ()),
-                    Ty::arrow(Ty::tvar("'a", 0, crate::Sort::typ()), Ty::base("bool").unwrap()),
+                    Ty::tvar("'a", 0, crate::Sort::hol_type()),
+                    Ty::arrow(
+                        Ty::tvar("'a", 0, crate::Sort::hol_type()),
+                        Ty::base("bool").unwrap(),
+                    ),
                 ),
             )
             .unwrap();
@@ -1833,8 +2854,11 @@ mod definition_tests {
             .extend_const(
                 "HOL.eq",
                 Ty::arrow(
-                    Ty::tvar("'a", 0, crate::Sort::typ()),
-                    Ty::arrow(Ty::tvar("'a", 0, crate::Sort::typ()), Ty::base("bool").unwrap()),
+                    Ty::tvar("'a", 0, crate::Sort::hol_type()),
+                    Ty::arrow(
+                        Ty::tvar("'a", 0, crate::Sort::hol_type()),
+                        Ty::base("bool").unwrap(),
+                    ),
                 ),
             )
             .unwrap();
@@ -1850,8 +2874,11 @@ mod definition_tests {
                 .extend_const(
                     "HOL.eq",
                     Ty::arrow(
-                        Ty::tvar("'a", 0, crate::Sort::typ()),
-                        Ty::arrow(Ty::tvar("'a", 0, crate::Sort::typ()), Ty::base("bool").unwrap()),
+                        Ty::tvar("'a", 0, crate::Sort::hol_type()),
+                        Ty::arrow(
+                            Ty::tvar("'a", 0, crate::Sort::hol_type()),
+                            Ty::base("bool").unwrap(),
+                        ),
                     ),
                 )
                 .unwrap(),
@@ -1870,8 +2897,11 @@ mod definition_tests {
             .extend_const(
                 "HOL.eq",
                 Ty::arrow(
-                    Ty::tvar("'a", 0, crate::Sort::typ()),
-                    Ty::arrow(Ty::tvar("'a", 0, crate::Sort::typ()), Ty::base("bool").unwrap()),
+                    Ty::tvar("'a", 0, crate::Sort::hol_type()),
+                    Ty::arrow(
+                        Ty::tvar("'a", 0, crate::Sort::hol_type()),
+                        Ty::base("bool").unwrap(),
+                    ),
                 ),
             )
             .unwrap();
@@ -1900,8 +2930,11 @@ mod definition_tests {
             .extend_const(
                 "HOL.eq",
                 Ty::arrow(
-                    Ty::tvar("'a", 0, crate::Sort::typ()),
-                    Ty::arrow(Ty::tvar("'a", 0, crate::Sort::typ()), Ty::base("bool").unwrap()),
+                    Ty::tvar("'a", 0, crate::Sort::hol_type()),
+                    Ty::arrow(
+                        Ty::tvar("'a", 0, crate::Sort::hol_type()),
+                        Ty::base("bool").unwrap(),
+                    ),
                 ),
             )
             .unwrap();
@@ -1941,11 +2974,13 @@ mod definition_tests {
                 &theory.id(),
                 &Name::from("Q"),
                 &Ty::prop(),
+                &ConstScheme::Monomorphic(Ty::prop()),
                 &RawTerm::const_("Q", Ty::prop()),
             ),
             parent: theory.id(),
             name: Name::from("Q"),
             declared_ty: Ty::prop(),
+            scheme: ConstScheme::Monomorphic(Ty::prop()),
             rhs_raw: RawTerm::const_("Q", Ty::prop()), // self-reference
         };
 
@@ -1985,11 +3020,13 @@ mod definition_tests {
                 &theory.id(),
                 &Name::from("Q"),
                 &Ty::prop(),
+                &ConstScheme::Monomorphic(Ty::prop()),
                 &rhs,
             ),
             parent: wrong_parent,
             name: Name::from("Q"),
             declared_ty: Ty::prop(),
+            scheme: ConstScheme::Monomorphic(Ty::prop()),
             rhs_raw: rhs,
         };
 
@@ -2030,16 +3067,18 @@ mod definition_tests {
                 &theory.id(),
                 &Name::from("Q"),
                 &Ty::prop(),
+                &ConstScheme::Monomorphic(Ty::prop()),
                 &rhs,
             ),
             parent: theory.id(),
             name: Name::from("Q"),
             declared_ty: Ty::prop(),
+            scheme: ConstScheme::Monomorphic(Ty::prop()),
             rhs_raw: rhs,
         };
 
         let snapshot = TheorySnapshot::build(
-            Some(theory.snapshot().clone()),
+            vec![theory.snapshot().clone()],
             sig.clone(),
             TheoryExtension::DefineConst { certificate: tampered_cert },
         );
@@ -2053,7 +3092,7 @@ mod definition_tests {
                 conclusion: Box::new(RawTerm::const_("P", Ty::prop())),
             })
             .unwrap();
-        let assumed = KernelRules::assume(prop.clone()).into_kernel();
+        let assumed = KernelRules::assume(prop.clone()).unwrap().into_kernel();
         let thm = KernelRules::implies_intr(&prop, &assumed).unwrap();
         let closed = theorem_builder::close_thm(thm).unwrap();
 
@@ -2075,7 +3114,11 @@ mod definition_tests {
     /// type mismatch (prop != bool).
     #[test]
     fn stored_certificate_rejects_declared_type_mismatch() {
-        let sig = Signature::new().extend_const("P", Ty::prop()).unwrap();
+        let sig = Signature::new()
+            .extend_type_constructor("bool", 0)
+            .unwrap()
+            .extend_const("P", Ty::prop())
+            .unwrap();
         let theory = TrustedTheory::root("T", sig.clone());
         let rhs = RawTerm::const_("P", Ty::prop());
 
@@ -2085,18 +3128,20 @@ mod definition_tests {
                 &theory.id(),
                 &Name::from("Q"),
                 &Ty::base("bool").unwrap(),
+                &ConstScheme::Monomorphic(Ty::base("bool").unwrap()),
                 &rhs,
             ),
             parent: theory.id(),
             name: Name::from("Q"),
             declared_ty: Ty::base("bool").unwrap(),
+            scheme: ConstScheme::Monomorphic(Ty::base("bool").unwrap()),
             rhs_raw: rhs,
         };
 
         // Build signature with Q: bool (matches declared_ty)
         let extended_sig = sig.extend_const("Q", Ty::base("bool").unwrap()).unwrap();
         let snapshot = TheorySnapshot::build(
-            Some(theory.snapshot().clone()),
+            vec![theory.snapshot().clone()],
             extended_sig,
             TheoryExtension::DefineConst { certificate: tampered_cert },
         );
@@ -2110,7 +3155,7 @@ mod definition_tests {
                 conclusion: Box::new(RawTerm::const_("P", Ty::prop())),
             })
             .unwrap();
-        let assumed = KernelRules::assume(prop.clone()).into_kernel();
+        let assumed = KernelRules::assume(prop.clone()).unwrap().into_kernel();
         let thm = KernelRules::implies_intr(&prop, &assumed).unwrap();
         let closed = theorem_builder::close_thm(thm).unwrap();
 
@@ -2206,9 +3251,8 @@ mod definition_tests {
         let grandchild = TrustedTheory::child(&child, grandchild_snap, None);
 
         // Replay the definition theorem at the grandchild level.
-        // The grandchild's direct parent is `child` (which already has Q
-        // in its signature), so using owner.parent() would fail the
-        // freshness check. find_snapshot_by_id walks to the root.
+        // The direct parent already declares Q; replay must locate the
+        // certificate's original parent through the entire ancestry.
         let ctx = ProofContext::new(grandchild.snapshot().clone());
         let thm = theorem_builder::definition_theorem(&ctx, &real_cert).unwrap();
         let closed = theorem_builder::close_thm(thm).unwrap();
@@ -2216,28 +3260,19 @@ mod definition_tests {
         assert!(result.is_ok(), "replay from descendant must succeed, got: {result:?}");
     }
 
-    /// Definitions must have fully concrete declared types.
-    /// A constant with a type containing type variables must be rejected.
     #[test]
-    fn definition_rejects_non_concrete_declared_type() {
-        // Declare f: 'a -> prop — a polymorphic function
-        let sig = hol_sig()
-            .extend_const("f", Ty::arrow(Ty::tvar("'a", 0, crate::Sort::typ()), Ty::prop()))
-            .unwrap();
+    fn definition_polymorphic_rhs_binds_declared_type_scheme() {
+        let alpha = Ty::tvar("'a", 0, crate::Sort::hol_type());
+        let body = Ty::arrow(alpha, Ty::prop());
+        let sig = hol_sig().extend_const("f", body.clone()).unwrap();
         let root = TrustedTheory::root("Root", sig);
-        // Try to define Q with RHS f (which has type 'a -> prop, containing 'a)
-        let rhs =
-            RawTerm::const_("f", Ty::arrow(Ty::tvar("'a", 0, crate::Sort::typ()), Ty::prop()));
-        let result = root.define_const("Q", rhs);
-        assert!(
-            matches!(
-                result,
-                Err(KernelError::DefinitionCertificate(
-                    DefinitionCertificateError::NonConcreteDeclaredType { .. }
-                ))
-            ),
-            "must reject non-concrete declared type, got: {result:?}"
-        );
+        let (child, token) = root.define_const("Q", RawTerm::const_("f", body.clone())).unwrap();
+        assert!(matches!(
+            child.signature().get_const(&Name::from("Q")),
+            Some(ConstScheme::Polymorphic(_))
+        ));
+        assert!(child.signature().certify_const_instance(&Name::from("Q"), &body).is_ok());
+        assert!(KernelRules::theorem_ref(&child, &token).is_ok());
     }
 
     /// check_consistency cross-validates that the stored logic basis ID
@@ -2306,8 +3341,11 @@ mod definition_tests {
             vec![BasisDeclaration::Constant {
                 name: Name::from("HOL.All"),
                 scheme: PolyType::new(
-                    vec![PolyTypeParam::typ(TypeVarId::new("'a", 0))],
-                    Ty::arrow(Ty::arrow(Ty::tvar("'a", 0, Sort::typ()), Ty::prop()), Ty::prop()),
+                    vec![PolyTypeParam { id: TypeVarId::new("'a", 0, Sort::hol_type()) }],
+                    Ty::arrow(
+                        Ty::arrow(Ty::tvar("'a", 0, Sort::hol_type()), Ty::prop()),
+                        Ty::prop(),
+                    ),
                 )
                 .unwrap(),
             }],
@@ -2339,18 +3377,25 @@ mod definition_tests {
 mod axiom_dep_tests {
     use super::*;
     use crate::logic::{TypeInstantiation, TypeVarId};
-    use crate::{AxiomSchema, LogicBasis};
+    use crate::{AxiomSchema, LogicBasis, Sort};
 
     #[test]
     fn cross_basis_schemas_produce_different_dep_ids() {
         let _sig = Signature::new()
+            .install_empty_class(crate::EmptyClassDeclCert::hol_type())
+            .unwrap()
+            .extend_type_constructor("bool", 0)
+            .unwrap()
             .extend_const("HOL.Trueprop", Ty::arrow(Ty::base("bool").unwrap(), Ty::prop()))
             .unwrap()
             .extend_const(
                 "HOL.eq",
                 Ty::arrow(
-                    Ty::tvar("'a", 0, crate::Sort::typ()),
-                    Ty::arrow(Ty::tvar("'a", 0, crate::Sort::typ()), Ty::base("bool").unwrap()),
+                    Ty::tvar("'a", 0, crate::Sort::hol_type()),
+                    Ty::arrow(
+                        Ty::tvar("'a", 0, crate::Sort::hol_type()),
+                        Ty::base("bool").unwrap(),
+                    ),
                 ),
             )
             .unwrap();
@@ -2360,11 +3405,11 @@ mod axiom_dep_tests {
                 name: Name::from("test_ax"),
                 prop: RawTerm::Forall {
                     name: Name::from("x"),
-                    param_ty: Ty::tvar("'a", 0, crate::Sort::typ()),
+                    param_ty: Ty::tvar("'a", 0, crate::Sort::hol_type()),
                     body: Box::new(RawTerm::Var {
                         name: Name::from("x"),
                         index: 0,
-                        ty: Ty::tvar("'a", 0, crate::Sort::typ()),
+                        ty: Ty::tvar("'a", 0, crate::Sort::hol_type()),
                     }),
                 },
             }],
@@ -2376,7 +3421,7 @@ mod axiom_dep_tests {
                 name: Name::from("test_ax"),
                 prop: RawTerm::Forall {
                     name: Name::from("x"),
-                    param_ty: Ty::tvar("'a", 0, crate::Sort::typ()),
+                    param_ty: Ty::tvar("'a", 0, crate::Sort::hol_type()),
                     body: Box::new(RawTerm::Bound(0)),
                 },
             }],
@@ -2676,16 +3721,20 @@ mod axiom_dep_tests {
     /// by subst_types completeness check.
     #[test]
     fn axiom_rejects_type_inst_index_mismatch() {
-        let sig = Signature::new().extend_const("P", Ty::prop()).unwrap();
+        let sig = Signature::new()
+            .install_empty_class(crate::EmptyClassDeclCert::hol_type())
+            .unwrap()
+            .extend_const("P", Ty::prop())
+            .unwrap();
         // Schema with two distinct type variables: 'a and 'b
         let schema = AxiomSchema {
             name: Name::from("ax"),
             prop: RawTerm::Forall {
                 name: Name::from("x"),
-                param_ty: Ty::tvar("'a", 0, crate::Sort::typ()),
+                param_ty: Ty::tvar("'a", 0, crate::Sort::hol_type()),
                 body: Box::new(RawTerm::Forall {
                     name: Name::from("y"),
-                    param_ty: Ty::tvar("'b", 0, crate::Sort::typ()),
+                    param_ty: Ty::tvar("'b", 0, crate::Sort::hol_type()),
                     body: Box::new(RawTerm::Const { name: Name::from("P"), ty: Ty::prop() }),
                 }),
             },
@@ -2701,7 +3750,7 @@ mod axiom_dep_tests {
             Name::from("ax"),
             {
                 let mut bindings = std::collections::BTreeMap::new();
-                bindings.insert(TypeVarId::new("'a", 0), Ty::prop());
+                bindings.insert(TypeVarId::new("'a", 0, Sort::hol_type()), Ty::prop());
                 TypeInstantiation::try_new(bindings).unwrap()
             },
             vec![],
@@ -2710,3 +3759,7 @@ mod axiom_dep_tests {
         assert!(result.is_err(), "must reject incomplete type instantiation");
     }
 }
+
+#[cfg(test)]
+#[path = "theory_attack_tests.rs"]
+mod declaration_attacks;

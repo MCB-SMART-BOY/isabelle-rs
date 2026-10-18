@@ -239,8 +239,8 @@ fn extract_lemma_name(first_line: &str, lines: &[&str], start: usize) -> (String
             let name = words[1].to_string();
             // Find the end of the statement (where proof or qed is)
             let mut end_line = start as u32;
-            for j in start..lines.len().min(start + 20) {
-                let l = lines[j].trim();
+            for (j, line) in lines.iter().enumerate().skip(start).take(20) {
+                let l = line.trim();
                 if l == "qed" || l == "done" || l.starts_with("by ") {
                     end_line = j as u32;
                     break;

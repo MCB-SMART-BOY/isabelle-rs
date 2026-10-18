@@ -5,6 +5,6 @@ category: safety
 ---
 # /audit
 
-内核安全检查。运行 `scripts/dev-check.sh strict`，并使用
-`scripts/audit-compat.sh` 查看 legacy compatibility 调用点。审核契约见
+内核安全检查运行 `cargo +stable xtask strict`，兼容性调用点清单运行
+`cargo +stable xtask compat`。审核契约见
 `.claude/skills/audit-kernel.md`。

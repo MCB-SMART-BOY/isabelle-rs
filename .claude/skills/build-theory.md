@@ -9,12 +9,19 @@ permissions: [Bash:cargo test, Bash:cargo run, Read]
 # Build Theory
 
 Trace source through `src/hol/hol_loader.rs`, `src/isar/term_parser.rs`,
-`src/theory/loader.rs`, and `src/theory/session_builder.rs`. Preserve source
-proposition consumption, context, constant/free identity, explicit types, and
-meta/object connective distinctions.
+`src/theory/loader.rs`, and `src/theory/session_builder.rs`. Distinguish
+standalone checked source compilation from legacy complete-source loading
+and independent sampled/search collection.
 
-Current theory reports are transitional legacy statistics. Never describe
-`is_strict_closed_proved()` as new-kernel trust. Run `scripts/dev-check.sh core`
-for sampled claims and the appropriate `tier2`/`tier3` mode for broader claims.
-Put reusable diagnostics in Bash or Rust files under `scripts/` and remove them
-after use if they are not stable.
+`TheoryProcessor` succeeds only on its supported single-import, fully
+consumed command subset with a final `end`; any lemma must have an actual
+proved result. Failures publish no partial theory or index. A session may
+publish independent good files, not descendants of failed imports. Successful
+legacy results are transitional, never `KernelTrustedClosed`; searchable stats
+alone are not compilation. Run `cargo +stable xtask strict` for the kernel gate.
+For standalone source compiler changes, additionally run
+`cargo +stable xtask test --lib theory::trusted_loader::` and both real fixture
+CLI commands plus relevant rejection cases described in
+[`scripts/README.md`](../../scripts/README.md) and [Verify Lemma](verify.md).
+Run `core` for sampled claims and appropriate `tier2`/`tier3` modes for broader
+claims; report the exact results rather than assuming broad completion.

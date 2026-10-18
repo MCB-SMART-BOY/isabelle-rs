@@ -3,4 +3,6 @@
 //! Manages open files, command parsing, and snapshot-based
 //! incremental checking state.
 
-pub mod document;
+mod model;
+
+pub use model::{Command, CommandKind, Document, Node, Snapshot, UpdateResult};

@@ -5,8 +5,9 @@ Kernel Phase. It is a baseline for kernel-boundary work; it is not a claim of
 full Isabelle compatibility.
 
 This is a historical checkpoint. The completed strict-kernel work below is not
-the current next phase; use [ROADMAP.md](ROADMAP.md) for the active
-source-elaboration and authorized HOL-basis sequence.
+the current next phase; use [ROADMAP.md](../status/ROADMAP.md) and the
+[current delivery state](../status/PROJECT_STATUS.md#current-delivery-state)
+for active work.
 
 ## Baseline Commits
 
@@ -27,19 +28,27 @@ These commits separate:
 - minimal burden-aware proof replay;
 - project positioning and trust-model documentation.
 
-## Verified Gate
+## Verification Guidance Versus Baseline
 
-The current strict-kernel gate is `scripts/dev-check.sh strict`, backed by
-[check-strict-kernel.sh](../scripts/check-strict-kernel.sh).
+For current work, `cargo +stable xtask verify` is the deterministic repository
+gate; the independent global workstation/security gate is
+`~/.omp/agent/validate.sh`, not a step implied by `verify`.
+`cargo +stable xtask strict` remains the focused kernel diagnostic;
+`cargo +stable xtask core` remains the focused sampler;
+`cargo +stable xtask selftest` runs product-independent automation tests;
+`cargo +stable xtask test` runs complete workspace tests.
+See [engineering workflow](../guides/DEVELOPMENT.md#engineering-workflow)
+and the [current delivery state](../status/PROJECT_STATUS.md#current-delivery-state).
+Neither this baseline nor the historical sample proves native P2/P3/P4
+compatibility; implementation has resumed, but complete acceptance has not
+been established. The current `strict` implementation is in
+[xtask](../../xtask/src/tasks.rs); the following commands/counts are historical,
+not output of `xtask`. The recorded `scripts/check-kernel-firewall.sh` entry
+was removed in the xtask cutover; the current firewall check is part of
+`cargo +stable xtask strict` and `cargo +stable xtask verify`.
 
-This unified gate runs 7 numbered stages: `cargo +stable fmt --check`,
-`cargo +stable check --locked`, `bash scripts/check-kernel-firewall.sh`, and
-test suites covering kernel rewrite soundness, immutable context identity,
-kernel soundness, inline kernel units, and legacy core compatibility.
-
-Recorded baseline result (historical snapshot; use `scripts/dev-check.sh strict`
-for current counts):
-
+Recorded baseline result (historical commands and counts, **not** results of
+`cargo +stable xtask strict`):
 ```text
 cargo +stable fmt --check                        passed
 cargo +stable check                              passed
@@ -60,9 +69,10 @@ Strict Kernel Phase update: trusted kernel equality now uses
 `Hyps::kernel_alpha_eq`, so the Free/Const and Var/Free tests are ordinary
 passing tests. The old behavior remains only in `Hyps::compat_alpha_eq`.
 
-## Current Trust Semantics
+## Historical Legacy Trust Semantics
 
-Use these distinctions consistently:
+These predicates describe `src/core::Thm`, not the accepted theorem from
+`crates/kernel` re-exported through `src/kernel`. At this checkpoint:
 
 ```text
 is_fully_proved() == oracle-free
@@ -81,17 +91,19 @@ It does not construct:
 |- A
 ```
 
-Accepted unproved propositions must use:
+Historically, legacy `src/core::ThmKernel` represented unproved propositions
+through:
 
 ```text
 ThmKernel::admit(cterm, "admitted:specific_reason")
 ```
 
-and preserve the oracle footprint through later inference.
+It preserves the oracle footprint through inference. This is **not** accepted
+`crates/kernel::TrustedTheorem` authority.
 
-## Current T4 Replay Scope
+## Legacy T4 Replay Scope
 
-Independent replay currently supports:
+Independent legacy `src/core/proofterm.rs` replay supports:
 
 ```text
 assume
@@ -147,21 +159,22 @@ Thm invariant checker
 strict kernel mode
 ```
 
-Those boundaries, immutable context identity, exact-owner acceptance, and the
-data-only source proposition AST are now implemented. The current next entry is
-parser integration plus checked declaration/type-scheme elaboration. Do not
-broaden HOL/Isar coverage or extend legacy replay instead of closing that
-source-to-checked boundary.
+Those boundaries, immutable context identity, exact-owner acceptance, strict
+type-constructor/arity validation, installed axiom-schema checks, conservative
+definition replay, and the two narrow source-backed fixtures are now implemented.
+An audited sampled `HOL::TrueI` projection also reaches exact-owner acceptance
+(`KernelTrustedClosed: 1/125`); neither fixture counts in the sampled 125.
+This does not authorize whole-theory HOL compilation, broad HOL/Isar coverage,
+or more legacy trusted power.
 
 ## Broad-Suite Failure Baseline
 
-These 14 tests are marked `#[ignore]` with reason strings. They fail due to
-pre-existing limitations of the legacy parser, type environment, and
-proof-engine adapters, not regressions introduced by kernel acceptance or
-outcome work.
-
-CI runs them as an advisory gate (`cargo test --locked --lib -- --ignored`
-with `continue-on-error: true`). Green CI does not require these to pass.
+The tests below were recorded as ignored at this historical checkpoint,
+reflecting legacy parser/type/proof limitations rather than regressions in
+kernel acceptance. This is not an inventory of present ignored tests: several
+loader paths have since changed contracts or been removed. At that checkpoint,
+CI ran ignored tests only as an advisory gate with
+`continue-on-error: true`; consult current scripts for present CI behavior.
 
 | Test | Reason |
 |------|--------|
@@ -180,12 +193,18 @@ with `continue-on-error: true`). Green CI does not require these to pass.
 | `theory::loader::test_simple_lemma` | `theory loader batch compatibility` |
 | `theory::loader::test_structured_proof` | `theory loader batch compatibility` |
 | `integration_tests::test_theory_processor_pipeline` | `proof-context certification gap` |
+
 ## Post-Commit All-Targets Audit
 
 On 2026-07-19, `cargo +stable check --locked` and
 `scripts/check-strict-kernel.sh` passed independently at baseline `38c5f14`
 (then `origin/dev`) and candidate commits `502acd2`, `3c72167`, `929d04e`,
 `6840533`, and `6336271`.
+
+`scripts/check-strict-kernel.sh` was an old entry point and was removed in the
+xtask cutover; for present checks use `cargo +stable xtask strict` or the
+complete repository gate `cargo +stable xtask verify`. The recorded historical
+results above are not results of either current command.
 
 `cargo +stable check --locked --all-targets` failed identically at all six
 points with four errors in `benches/kernel_benchmarks.rs`:

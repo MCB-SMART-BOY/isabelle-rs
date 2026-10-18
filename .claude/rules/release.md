@@ -7,9 +7,12 @@ updated: 2026-07-18
 ---
 # Release Rules
 
-Release only on explicit request. Synchronize versions and all status/trust
-documents, run `scripts/dev-check.sh all` or document the approved narrower
-scope, and report actual failures/skips.
+Release only on explicit request. Synchronize versions and canonical status/trust
+documents. `cargo +stable xtask release-check --tag TAG` checks the version and
+then runs `verify` on supported platforms; it never creates a tag or publishes.
+Run `selftest`, independent security audits and the complete global validator;
+report failures, omissions and unavailable prerequisites separately. `core` and
+Tier diagnostics are explicit, not implicit release checks.
 
 Do not describe `TransitionalStrictClosed` as kernel trust or claim full
 Isabelle compatibility. Use normal commits and annotated tags; never rewrite

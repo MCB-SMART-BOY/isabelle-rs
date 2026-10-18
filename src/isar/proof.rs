@@ -27,6 +27,9 @@
 
 use std::sync::Arc;
 
+use super::proof_result::{
+    GoalExportError, apply_goal_method, export_scoped_result, validate_proof_result,
+};
 use crate::{
     core::{
         error::KernelError,
@@ -35,6 +38,7 @@ use crate::{
         thm::{CTerm, KernelCheckMode, Thm, ThmKernel},
         types::Typ,
     },
+    hol::hol_loader::HolTheoremDb,
     isar::proof_context::{IsarContext, ProofCertContext},
 };
 
@@ -83,28 +87,12 @@ pub struct Goal {
     /// The parent goal's statement (for `show` refinement).
     /// When non-empty, the `show` result must match this.
     pub refines: Option<Term>,
-}
-
-fn free_vars_of(term: &Term) -> Vec<(String, Typ)> {
-    let mut out = Vec::new();
-    let mut stack = vec![term];
-    while let Some(t) = stack.pop() {
-        match t {
-            Term::Free { name, typ } => {
-                let s = name.as_ref().to_string();
-                if !out.iter().any(|(n, _)| n == &s) {
-                    out.push((s, typ.clone()));
-                }
-            },
-            Term::Abs { body, .. } => stack.push(body),
-            Term::App { func, arg } => {
-                stack.push(arg);
-                stack.push(func);
-            },
-            _ => {},
-        }
-    }
-    out
+    name: String,
+    proof_result: Option<Thm>,
+    proof_error: Option<GoalExportError>,
+    assumptions_len: usize,
+    fixes_len: usize,
+    allowed_hypotheses: Vec<CTerm>,
 }
 
 impl Goal {
@@ -117,7 +105,19 @@ impl Goal {
         let statement = stmt_ct.term().clone();
         let goal_thm = ThmKernel::assume(stmt_ct)?;
         goal_thm.check_kernel_invariants(KernelCheckMode::Strict)?;
-        Ok(Goal { kind: kind.to_string(), statement, using: Vec::new(), goal_thm, refines: None })
+        Ok(Goal {
+            kind: kind.to_string(),
+            statement,
+            using: Vec::new(),
+            goal_thm,
+            refines: None,
+            proof_result: None,
+            proof_error: None,
+            assumptions_len: 0,
+            fixes_len: 0,
+            allowed_hypotheses: Vec::new(),
+            name: String::new(),
+        })
     }
 
     /// Initialize a goal from a statement term certified against an explicit
@@ -145,11 +145,16 @@ impl Goal {
         stmt: Term,
         ctx: &IsarContext,
     ) -> Result<Self, KernelError> {
-        let mut cert_ctx = ProofCertContext::from_isar_context(ctx);
-        for (name, typ) in free_vars_of(&stmt) {
-            cert_ctx.declare_free(&name, typ);
-        }
-        Self::init_checked_in_context(&cert_ctx, kind, stmt)
+        let cert_ctx = ProofCertContext::from_isar_context(ctx);
+        let mut goal = Self::init_checked_in_context(&cert_ctx, kind, stmt)?;
+        goal.allowed_hypotheses = ctx
+            .assumptions()
+            .iter()
+            .map(|term| cert_ctx.certify_prop(term.clone()))
+            .collect::<Result<_, _>>()?;
+        goal.assumptions_len = ctx.assumptions().len();
+        goal.fixes_len = ctx.fixes().len();
+        Ok(goal)
     }
 
     /// Initialize a goal from a statement term.
@@ -171,21 +176,24 @@ impl Goal {
         cprop: &crate::kernel::CProp,
         ctx: &ProofCertContext,
     ) -> Result<Self, KernelError> {
-        let core_term = crate::kernel::convert::kernel_term_to_core(cprop.term()).map_err(|e| {
-            KernelError::BetaConversion(format!("kernel term conversion failed: {}", e))
-        })?;
+        let core_term =
+            crate::core::kernel_convert::kernel_term_to_core(cprop.term()).map_err(|e| {
+                KernelError::BetaConversion(format!("kernel term conversion failed: {}", e))
+            })?;
         let stmt_ct = ctx.certify_prop(core_term)?;
         Self::from_checked_prop(kind, stmt_ct)
     }
 
     /// Number of remaining subgoals.
     pub fn nprems(&self) -> usize {
-        self.goal_thm.nprems()
+        usize::from(!self.is_finished())
     }
 
-    /// Is the goal completely proved (no subgoals left)?
+    /// A goal is finished only by a checked derivation of its entire statement.
     pub fn is_finished(&self) -> bool {
-        self.nprems() == 0
+        self.proof_result.as_ref().is_some_and(|result| {
+            validate_proof_result(&self.statement, result, &self.allowed_hypotheses).is_ok()
+        })
     }
 }
 
@@ -431,22 +439,43 @@ impl IsarProof {
 
     // ── Isar commands ──
 
-    /// `fix x y :: τ` — fix local variables.
-    pub fn fix(&mut self, vars: &[(&str, Typ)]) {
-        self.assert_forward();
-        for &(name, ref typ) in vars {
+    /// `fix x y :: τ` — introduce fresh, explicitly typed local variables.
+    pub fn fix(&mut self, vars: &[(&str, Typ)]) -> Result<(), GoalExportError> {
+        self.require_forward()?;
+        for (index, (name, typ)) in vars.iter().enumerate() {
+            if typ.contains_dummy()
+                || self.top().context.fixes().iter().any(|(old, _)| old.as_ref() == *name)
+                || vars[..index].iter().any(|(old, _)| old == name)
+            {
+                return Err(GoalExportError::InvalidScript { line: 1 });
+            }
+        }
+        for (name, typ) in vars {
             Arc::make_mut(&mut self.top_mut().context).fix(name, typ.clone());
         }
         self.reset_facts();
+        Ok(())
     }
 
-    /// `assume "A"` — add a local assumption.
-    pub fn assume(&mut self, props: &[Term]) {
-        self.assert_forward();
+    /// `assume "A"` — authorize only propositions certified in the real context.
+    pub fn assume(&mut self, props: &[Term]) -> Result<(), GoalExportError> {
+        self.require_forward()?;
+        let context = ProofCertContext::from_isar_context(&self.top().context);
+        for prop in props {
+            context.certify_prop(prop.clone())?;
+        }
         for prop in props {
             Arc::make_mut(&mut self.top_mut().context).assume(prop.clone());
         }
         self.reset_facts();
+        Ok(())
+    }
+
+    fn require_forward(&self) -> Result<(), GoalExportError> {
+        if self.mode() == ProofMode::Backward {
+            return Err(GoalExportError::InvalidScript { line: 1 });
+        }
+        Ok(())
     }
 
     /// `let x = t` — local abbreviation.
@@ -492,64 +521,92 @@ impl IsarProof {
         self.chain();
     }
 
-    /// `hence` = `then have`
-    /// `thus` = `then show`
-
     // ── Block structure ──
 
-    /// `proof` — enter a proof block.
-    pub fn proof(&mut self) {
-        self.assert_backward();
+    /// `proof` opens a scope without supplying any proof evidence.
+    pub fn proof(&mut self) -> Result<(), GoalExportError> {
+        if self.mode() != ProofMode::Backward || self.current_goal().is_none() {
+            return Err(GoalExportError::InvalidScript { line: 1 });
+        }
         self.open_block();
-        self.enter_forward();
-        self.reset_goal();
+        Ok(())
     }
 
-    /// `qed` — close the current proof block.
-    /// If the closed block had a `show` goal, refine the parent goal
-    /// using proper bicomposition.
-    pub fn qed(&mut self) {
-        self.assert_forward();
-        if self.level() <= 2 {
-            panic!("Not at bottom of proof");
+    /// Close a structured block only after its enclosing goal has a real result.
+    pub fn qed(&mut self) -> Result<(), GoalExportError> {
+        self.require_forward()?;
+        if self.level() <= 2 || self.top().goal.is_some() {
+            return Err(GoalExportError::MissingProofResult);
         }
-        // Take the proved goal before closing
-        let proved_goal = self.top().goal.clone();
+        let parent = &self.stack[self.stack.len() - 2];
+        let goal = parent.goal.as_ref().ok_or(GoalExportError::MissingProofResult)?;
+        Self::validate_goal_result(goal)?;
         self.close_block();
-        self.assert_current_goal(true);
+        self.finish_current_goal()
+    }
 
-        // Refine the parent goal with the proved result
-        if let (Some(goal), Some(parent_goal)) = (proved_goal, self.top_mut().goal.as_mut()) {
-            match &goal.refines {
-                Some(expected) => {
-                    // show: the proved goal's statement should refine the parent.
-                    // Use bicompose: if the proved theorem's conclusion matches
-                    // the parent goal's expected statement, resolve them.
-                    let proved_stmt = goal.statement;
-                    let parent_stmt = expected.clone();
+    fn validate_goal_result(goal: &Goal) -> Result<&Thm, GoalExportError> {
+        let result = goal.proof_result.as_ref().ok_or_else(|| {
+            goal.proof_error.clone().unwrap_or(GoalExportError::MissingProofResult)
+        })?;
+        validate_proof_result(&goal.statement, result, &goal.allowed_hypotheses)?;
+        Ok(result)
+    }
 
-                    // Check if the proved statement matches the expected parent statement
-                    if proved_stmt == parent_stmt {
-                        // Close the parent goal: the show has been proved
-                        let parent_ct = CTerm::certify(parent_stmt);
-                        if let Ok(closed) = ThmKernel::trivial(parent_ct) {
-                            parent_goal.goal_thm = closed;
-                        }
-                    } else {
-                        // Statements differ — in a full implementation,
-                        // we'd use bicompose with export to match contexts
-                        // For now, still close the parent (simplified)
-                        let parent_ct = CTerm::certify(parent_stmt);
-                        if let Ok(closed) = ThmKernel::trivial(parent_ct) {
-                            parent_goal.goal_thm = closed;
-                        }
-                    }
-                },
-                None => {
-                    // have: result accumulates as facts, no parent refinement
-                },
-            }
+    fn finish_current_goal(&mut self) -> Result<(), GoalExportError> {
+        let goal = self.current_goal().ok_or(GoalExportError::MissingProofResult)?;
+        let result = Self::validate_goal_result(goal)?.clone();
+        if goal.refines.is_some() {
+            self.export_show_result(&result)?;
+            self.close_block();
+        } else if goal.kind == "have" {
+            self.close_block();
+            self.set_facts(vec![result]);
         }
+        self.enter_forward();
+        Ok(())
+    }
+
+    fn export_show_result(&mut self, result: &Thm) -> Result<(), GoalExportError> {
+        let current = self.stack.len() - 1;
+        let parent = self.stack[..current]
+            .iter()
+            .rposition(|node| node.goal.is_some())
+            .ok_or(GoalExportError::UnsupportedComposition)?;
+        let goal = self.stack[parent].goal.as_ref().ok_or(GoalExportError::MissingProofResult)?;
+        let context = &self.top().context;
+        let assumptions = Self::certify_assumptions(context)?;
+        let local = assumptions
+            .get(goal.assumptions_len..)
+            .ok_or(GoalExportError::UnsupportedComposition)?;
+        let fixes = context
+            .fixes()
+            .get(goal.fixes_len..)
+            .ok_or(GoalExportError::UnsupportedComposition)?
+            .iter()
+            .map(|(name, typ)| (name.to_string(), typ.clone()))
+            .collect::<Vec<_>>();
+        let exported = export_scoped_result(
+            goal.goal_thm.prop(),
+            result,
+            local,
+            &fixes,
+            &goal.allowed_hypotheses,
+        )?;
+        if let Some(goal) = self.stack[parent].goal.as_mut() {
+            goal.proof_result = Some(exported);
+            goal.proof_error = None;
+        }
+        Ok(())
+    }
+
+    fn certify_assumptions(context: &IsarContext) -> Result<Vec<CTerm>, GoalExportError> {
+        let cert = ProofCertContext::from_isar_context(context);
+        context
+            .assumptions()
+            .iter()
+            .map(|term| cert.certify_prop(term.clone()).map_err(GoalExportError::from))
+            .collect()
     }
 
     /// `next` — close the current sub-block and open a new one.
@@ -577,136 +634,119 @@ impl IsarProof {
 
     // ── Goal statements ──
 
-    /// `lemma name: "statement"` — state a theorem to prove.
-    pub fn lemma(&mut self, _name: &str, stmt: Term) {
-        self.assert_forward();
-        self.open_block();
-        self.enter_backward();
-        let goal = Goal::init_in_isar_context("lemma", stmt.clone(), &self.top().context)
-            .expect("lemma statement requires proof-context certification");
-        self.set_goal(goal);
-        self.reset_facts();
-    }
-
-    /// `theorem name: "statement"` — same as lemma.
-    pub fn theorem(&mut self, name: &str, stmt: Term) {
-        self.lemma(name, stmt);
-        if let Some(g) = self.top_mut().goal.as_mut() {
-            g.kind = "theorem".to_string();
+    /// State a theory-level goal without granting its synthetic hypothesis.
+    pub fn lemma(&mut self, name: &str, stmt: Term) -> Result<(), GoalExportError> {
+        if self.find_goal().is_some() {
+            return Err(GoalExportError::UnsupportedComposition);
         }
+        self.begin_goal("lemma", name, stmt, None)
     }
 
-    /// `have name: "statement"` — state an intermediate goal.
-    pub fn have(&mut self, _name: &str, stmt: Term) -> &mut Self {
-        self.assert_forward();
-        self.open_block();
-        self.enter_backward();
-        let goal = Goal::init_in_isar_context("have", stmt, &self.top().context)
-            .expect("have statement requires proof-context certification");
-        self.set_goal(goal);
-        self.reset_facts();
-        self
+    pub fn theorem(&mut self, name: &str, stmt: Term) -> Result<(), GoalExportError> {
+        self.lemma(name, stmt)?;
+        if let Some(goal) = self.find_goal_mut() {
+            goal.kind = "theorem".into();
+        }
+        Ok(())
     }
 
-    /// `show name: "statement"` — state a goal that must match the enclosing goal.
-    /// After proving, the result is used to refine the parent goal.
-    pub fn show(&mut self, name: &str, stmt: Term) {
-        self.assert_forward();
-        // Record the parent goal statement for refinement during qed
-        let parent_stmt = self.find_goal().map(|g| g.statement.clone());
+    /// State an intermediate goal; only its actual result becomes a fact.
+    pub fn have(&mut self, name: &str, stmt: Term) -> Result<(), GoalExportError> {
+        self.begin_goal("have", name, stmt, None)
+    }
+
+    /// The actual show result must export to the complete enclosing goal.
+    pub fn show(&mut self, name: &str, stmt: Term) -> Result<(), GoalExportError> {
+        let parent = self.find_goal().ok_or(GoalExportError::MissingProofResult)?.statement.clone();
+        self.begin_goal("show", name, stmt, Some(parent))
+    }
+
+    fn begin_goal(
+        &mut self,
+        kind: &str,
+        name: &str,
+        statement: Term,
+        refines: Option<Term>,
+    ) -> Result<(), GoalExportError> {
+        self.require_forward()?;
+        let mut goal = Goal::init_in_isar_context(kind, statement, &self.top().context)?;
+        goal.refines = refines;
+        goal.name = name.to_string();
         self.open_block();
-        self.enter_backward();
-        let mut goal = Goal::init_in_isar_context("show", stmt.clone(), &self.top().context)
-            .expect("show statement requires proof-context certification");
-        goal.kind = format!("show({name})");
-        goal.refines = parent_stmt; // Track what we need to refine
         self.set_goal(goal);
-        self.reset_facts();
+        self.enter_backward();
+        Ok(())
     }
 
     // ── Method application ──
 
-    /// `apply method` — apply a proof method to the current goal.
-    /// Delegates to the actual method system in `method.rs`.
-    pub fn apply(&mut self, method_name: &str) -> usize {
-        self.assert_backward();
-        let method_name = method_name.trim();
-        // Collect premises before borrowing self mutably for find_goal_mut
-        let premises: Vec<Arc<Thm>> = self.collect_premises();
-        if let Some(goal) = self.find_goal_mut() {
-            // Try built-in quick methods first
-            match method_name {
-                "assumption" | "." => {
-                    let stmt_ct = CTerm::certify(goal.statement.clone());
-                    if goal.goal_thm.hyps().contains(&stmt_ct)
-                        && let Ok(closed) = ThmKernel::trivial(stmt_ct)
-                    {
-                        goal.goal_thm = closed;
-                    }
-                },
-                "this" | "skip" => {
-                    let stmt_ct = CTerm::certify(goal.statement.clone());
-                    if let Ok(closed) = ThmKernel::trivial(stmt_ct) {
-                        goal.goal_thm = closed;
-                    }
-                },
-                _ => {
-                    // Dispatch to the actual method engine
-                    crate::isar::method::AUTO_DEPTH.with(|c| c.set(0));
-                    crate::isar::method::AUTO_LIMIT.with(|c| c.set(50));
-                    let results = crate::isar::method::exec_single_method(
-                        &goal.goal_thm,
-                        method_name,
-                        &premises,
-                    );
-                    if let Some(thm) = results.into_iter().find(|r| r.nprems() == 0) {
-                        goal.goal_thm = thm;
-                    }
-                    // If method fails, leave goal unchanged (proof fails)
-                },
-            }
-            goal.nprems()
-        } else {
-            0
+    /// Apply exactly the requested method; failed attempts leave the obligation open.
+    pub fn apply(&mut self, method_name: &str, db: &HolTheoremDb) -> usize {
+        let attempt = self.apply_checked(method_name, db);
+        if let Err(error) = attempt
+            && let Some(goal) = self.find_goal_mut()
+        {
+            goal.proof_result = None;
+            goal.proof_error = Some(error);
         }
+        self.remaining_subgoals()
     }
 
-    /// Collect premises from the context for method dispatch.
-    fn collect_premises(&self) -> Vec<Arc<Thm>> {
-        let mut prems = Vec::new();
-        for node in self.stack.iter() {
-            if let Some((ref thms, _)) = node.facts {
-                prems.extend(thms.iter().map(|t| Arc::new(t.clone())));
+    pub(crate) fn apply_checked(
+        &mut self,
+        method: &str,
+        db: &HolTheoremDb,
+    ) -> Result<(), GoalExportError> {
+        if self.mode() != ProofMode::Backward {
+            return Err(GoalExportError::InvalidScript { line: 1 });
+        }
+        let assumptions = Self::certify_assumptions(&self.top().context)?;
+        let premises = self.collect_premises(&assumptions)?;
+        let goal = self.find_goal_mut().ok_or(GoalExportError::MissingProofResult)?;
+        goal.proof_result = None;
+        goal.proof_error = None;
+        let result = apply_goal_method(goal.goal_thm.prop(), method, &premises, &assumptions, db)?
+            .ok_or(GoalExportError::MissingProofResult)?;
+        goal.proof_result = Some(result);
+        Ok(())
+    }
+
+    fn collect_premises(&self, assumptions: &[CTerm]) -> Result<Vec<Arc<Thm>>, GoalExportError> {
+        let mut premises = Vec::new();
+        for node in &self.stack {
+            if let Some((facts, _)) = &node.facts {
+                premises.extend(facts.iter().cloned().map(Arc::new));
             }
         }
-        prems
-    }
-
-    /// `by method` — terminal proof (apply + close current sub-goal).
-    /// Closes exactly one level (the sub-goal block).
-    pub fn by(&mut self, method_name: &str) {
-        self.apply(method_name);
-        // Close the current sub-goal block (one level)
-        self.close_block();
-        self.enter_forward();
-        self.reset_goal();
-    }
-
-    /// `done` — finish proof with no remaining subgoals.
-    /// Closes all blocks back to the theory level (level 1).
-    /// Keeps the outermost goal so theorem extraction still works.
-    pub fn done(&mut self) {
-        // Close all blocks EXCEPT the outermost (which holds the lemma statement)
-        while self.level() > 2 {
-            self.close_block();
+        if let Some(goal) = self.find_goal() {
+            premises.extend(goal.using.iter().cloned().map(Arc::new));
         }
-        self.enter_forward();
+        for assumption in assumptions {
+            premises.push(Arc::new(ThmKernel::assume(assumption.clone())?));
+        }
+        Ok(premises)
     }
 
-    /// `sorry` — skip a proof (admit without proof).
+    /// Terminal method application, validated before any scope is closed.
+    pub fn by(&mut self, method: &str, db: &HolTheoremDb) -> Result<(), GoalExportError> {
+        self.apply_checked(method, db)?;
+        self.finish_current_goal()
+    }
+
+    /// Finish only an existing result; never manufacture or discard obligations.
+    pub fn done(&mut self) -> Result<(), GoalExportError> {
+        if self.current_goal().is_none() {
+            return self.qed();
+        }
+        self.finish_current_goal()
+    }
+
+    /// An admission is not a completed proof and cannot enter the theorem table.
     pub fn sorry(&mut self) {
-        // In Isabelle, sorry creates an oracle theorem.
-        self.by("skip");
+        if let Some(goal) = self.find_goal_mut() {
+            goal.proof_result = None;
+            goal.proof_error = Some(GoalExportError::OracleOrAdmitted);
+        }
     }
 
     /// `defer n` — defer a subgoal to the end.
@@ -778,11 +818,16 @@ impl IsarProof {
 
     /// `obtain x where "P x"` — existential elimination.
     /// Introduces a witness variable and an assumption into the context.
-    pub fn obtain(&mut self, var_name: &str, var_typ: Typ, prop: Term) {
-        self.assert_forward();
-        self.fix(&[(var_name, var_typ)]);
-        self.assume(&[prop]);
+    pub fn obtain(
+        &mut self,
+        var_name: &str,
+        var_typ: Typ,
+        prop: Term,
+    ) -> Result<(), GoalExportError> {
+        self.fix(&[(var_name, var_typ)])?;
+        self.assume(&[prop])?;
         self.reset_facts();
+        Ok(())
     }
 
     // ── Diagnostics ──
@@ -795,31 +840,29 @@ impl IsarProof {
 
     // ── Theory operations ──
 
-    /// Extract the final theorem after a lemma has been proved.
-    /// Returns (lemma_name, theorem).
-    /// Note: call this BEFORE closing all blocks.
-    pub fn extract_theorem(&self) -> Option<(String, Arc<Thm>)> {
-        // Find the outermost goal with a statement
-        for node in self.stack.iter().rev() {
-            if let Some(goal) = &node.goal {
-                let name = goal.kind.clone();
-                let stmt = goal.statement.clone();
-                let ct = CTerm::certify(stmt);
-                return ThmKernel::trivial(ct).ok().map(|thm| (name, Arc::new(thm)));
-            }
+    /// Extract only the actual, fully checked result of the outermost lemma.
+    pub fn extract_theorem(&self) -> Result<(String, Arc<Thm>), GoalExportError> {
+        let goal = self
+            .stack
+            .iter()
+            .find_map(|node| node.goal.as_ref())
+            .ok_or(GoalExportError::MissingProofResult)?;
+        let result = Self::validate_goal_result(goal)?;
+        if !matches!(self.stack.as_slice(), [_, ProofNode { mode: ProofMode::Forward, .. }]) {
+            return Err(GoalExportError::OpenSubgoals);
         }
-        None
+        validate_proof_result(&goal.statement, result, &[])?;
+        Ok((goal.name.clone(), Arc::new(result.clone())))
     }
 
-    /// Close a theory-level lemma and return the proved theorem.
-    pub fn close_lemma(&mut self) -> Option<Arc<Thm>> {
-        let thm = self.extract_theorem().map(|(_, t)| t);
+    pub fn close_lemma(&mut self) -> Result<Arc<Thm>, GoalExportError> {
+        let (_, theorem) = self.extract_theorem()?;
         while self.level() > 1 {
             self.close_block();
         }
         self.enter_forward();
         self.reset_goal();
-        thm
+        Ok(theorem)
     }
 
     /// Return to theory mode (without extracting a theorem).
@@ -850,30 +893,32 @@ impl IsarProof {
     }
 
     /// `case name` — apply a named case from the context.
-    pub fn case_(&mut self, name: &str) {
-        self.assert_forward();
+    pub fn case_(&mut self, name: &str) -> Result<(), GoalExportError> {
+        self.require_forward()?;
         let case_data = self.top().context.find_case(name).cloned();
         if let Some(case) = case_data {
             let vars: Vec<(&str, Typ)> =
                 case.fixes.iter().map(|(n, t)| (n.as_str(), t.clone())).collect();
             let assumes = case.assumes.clone();
             if !vars.is_empty() {
-                self.fix(&vars);
+                self.fix(&vars)?;
             }
             if !assumes.is_empty() {
-                self.assume(&assumes);
+                self.assume(&assumes)?;
             }
         }
+        Ok(())
     }
 
     /// `induct x` — apply induction on variable x.
     /// Tries to look up induction rules from the theorem database.
-    pub fn induct(&mut self, var: &str) {
+    pub fn induct(&mut self, var: &str, db: &HolTheoremDb) {
         self.assert_backward();
         // Collect induction rule names before borrowing
         let induct_names = [format!("{var}.induct"), format!("{var}_induct"), var.to_string()];
         // Look up rules (immutable borrow)
-        let rules: Vec<Option<Thm>> = induct_names.iter().map(|n| self.lookup_theorem(n)).collect();
+        let rules: Vec<Option<Thm>> =
+            induct_names.iter().map(|n| Self::lookup_theorem(n, db)).collect();
 
         // Apply rule (mutable borrow)
         if let Some(goal) = self.find_goal_mut() {
@@ -896,19 +941,17 @@ impl IsarProof {
         }
     }
 
-    /// Look up a theorem by name from the global theorem database.
-    fn lookup_theorem(&self, name: &str) -> Option<Thm> {
-        use crate::hol::hol_loader::HolTheoremDb;
-        let db = HolTheoremDb::get();
+    /// Look up a theorem by name from the supplied theorem database.
+    fn lookup_theorem(name: &str, db: &HolTheoremDb) -> Option<Thm> {
         db.by_name.get(name).map(|t| (**t).clone())
     }
 
     /// `cases x` — case analysis on variable x.
     /// Looks up `.cases` and `.exhaust` rules, then falls back to `.induct`.
-    pub fn cases(&mut self, var: &str) {
+    pub fn cases(&mut self, var: &str, db: &HolTheoremDb) {
         self.assert_backward();
         // Collect case analysis rule names
-        let case_names = vec![
+        let case_names = [
             format!("{var}.cases"),
             format!("{var}.exhaust"),
             // Fall back to induction rules
@@ -916,7 +959,8 @@ impl IsarProof {
             format!("{var}_induct"),
             var.to_string(),
         ];
-        let rules: Vec<Option<Thm>> = case_names.iter().map(|n| self.lookup_theorem(n)).collect();
+        let rules: Vec<Option<Thm>> =
+            case_names.iter().map(|n| Self::lookup_theorem(n, db)).collect();
 
         if let Some(goal) = self.find_goal_mut() {
             for rule_opt in &rules {
@@ -942,24 +986,8 @@ impl IsarProof {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use super::*;
     use crate::core::thm::ThmTrust;
-
-    fn init() -> IsarProof {
-        let theory = Theory::pure();
-        IsarProof::init(theory)
-    }
-
-    fn init_with_props(names: &[&str]) -> IsarProof {
-        let pure = Theory::pure();
-        let mut theory = Theory::begin("Test", vec![pure]);
-        for name in names {
-            theory.declare_const(*name, Typ::base("prop"));
-        }
-        IsarProof::init(Arc::new(theory))
-    }
 
     fn cert_ctx(names: &[&str]) -> ProofCertContext {
         let mut ctx = ProofCertContext::new();
@@ -1020,196 +1048,5 @@ mod tests {
 
         assert_eq!(goal.goal_thm.trust_status(), ThmTrust::Strict);
         assert!(!goal.goal_thm.is_strict_closed_proved());
-    }
-
-    #[test]
-    fn test_lemma_apply_done() {
-        let mut p = init_with_props(&["A"]);
-        assert_eq!(p.level(), 1);
-        assert_eq!(p.mode(), ProofMode::Forward);
-        p.lemma("foo", prop("A"));
-        assert_eq!(p.level(), 2);
-        assert_eq!(p.mode(), ProofMode::Backward);
-        // Script-style proof
-        p.apply("auto");
-        p.done();
-        assert_eq!(p.level(), 2); // lemma block still open
-        assert_eq!(p.mode(), ProofMode::Forward);
-    }
-
-    #[test]
-    fn test_have_show() {
-        let mut p = init_with_props(&["P", "A"]);
-        p.lemma("test", prop("P"));
-        p.proof(); // need to be in Forward mode for have
-        p.have("hA", prop("A"));
-        assert_eq!(p.mode(), ProofMode::Backward);
-        p.by("auto");
-        assert_eq!(p.mode(), ProofMode::Forward);
-    }
-
-    #[test]
-    fn test_fix_assume() {
-        let mut p = init_with_props(&["A", "Px"]);
-        p.lemma("test", prop("A"));
-        p.proof();
-        p.fix(&[("x", Typ::base("nat"))]);
-        assert_eq!(p.mode(), ProofMode::Forward);
-        p.assume(&[prop("Px")]);
-    }
-
-    #[test]
-    fn test_block_structure() {
-        let mut p = init_with_props(&["A"]);
-
-        p.lemma("main", prop("A"));
-
-        // proof -
-        p.proof();
-        assert_eq!(p.level(), 3);
-
-        // { nested block
-        p.open_brace();
-        assert_eq!(p.level(), 4);
-
-        // }
-        p.close_brace();
-        assert_eq!(p.level(), 3);
-
-        // qed
-        p.qed();
-        assert_eq!(p.level(), 2);
-    }
-
-    #[test]
-    fn test_next_block() {
-        let mut p = init_with_props(&["A", "P", "Q"]);
-        p.lemma("main", prop("A"));
-        p.proof();
-        p.have("first", prop("P"));
-        p.by("auto");
-        p.next();
-        assert_eq!(p.mode(), ProofMode::Forward);
-        p.have("second", prop("Q"));
-        p.by("auto");
-    }
-
-    #[test]
-    fn test_chaining() {
-        let mut p = init_with_props(&["P", "A"]);
-        p.lemma("test", prop("P"));
-        p.proof();
-        let thm = ThmKernel::assume_compat(CTerm::certify(prop("A")));
-        p.from(vec![thm]);
-        assert_eq!(p.mode(), ProofMode::Chain);
-    }
-
-    #[test]
-    fn test_sorry() {
-        let mut p = init_with_props(&["VeryHard"]);
-
-        p.lemma("unfinished", prop("VeryHard"));
-        p.sorry();
-        // After sorry, we should be back to forward mode
-        // The proof is admitted
-    }
-
-    #[test]
-    fn test_full_nesting() {
-        let mut p = init_with_props(&["A", "B"]);
-        assert_eq!(p.level(), 1);
-
-        p.lemma("outer", prop("A"));
-        assert_eq!(p.level(), 2);
-
-        p.proof();
-        assert_eq!(p.level(), 3);
-
-        p.have("inner", prop("B"));
-        assert_eq!(p.level(), 4);
-
-        p.by("auto");
-        assert_eq!(p.level(), 3);
-
-        p.qed();
-        assert_eq!(p.level(), 2);
-
-        p.done();
-        assert_eq!(p.level(), 2); // lemma block still open for extraction
-    }
-
-    #[test]
-    fn test_method_dispatch() {
-        let mut p = init_with_props(&["A"]);
-        p.lemma("test", prop("A"));
-        // Apply the actual "assumption" method
-        p.apply("assumption");
-        // Should try to use the method system from method.rs
-        assert_eq!(p.mode(), ProofMode::Backward);
-    }
-
-    #[test]
-    fn test_calculational() {
-        let mut p = init_with_props(&["a_eq_d", "a_eq_b", "b_eq_c"]);
-        p.lemma("calc", prop("a_eq_d"));
-        p.proof();
-
-        p.have("step1", prop("a_eq_b"));
-        p.by("auto");
-
-        // also have step2: "b = c"
-        p.also();
-        p.have("step2", prop("b_eq_c"));
-        p.by("auto");
-
-        // finally show the result
-        p.finally();
-        p.show("result", prop("a_eq_d"));
-        p.by("auto");
-    }
-
-    #[test]
-    fn test_obtain() {
-        let mut p = init_with_props(&["exists_conclusion", "Px"]);
-        p.lemma("main", prop("exists_conclusion"));
-        p.proof();
-
-        // obtain x where "P x"
-        p.obtain("x", Typ::base("nat"), prop("Px"));
-        assert_eq!(p.mode(), ProofMode::Forward);
-        // After obtain, "x" should be fixed and "P x" assumed
-    }
-
-    #[test]
-    fn test_theorem_extraction() {
-        let mut p = init_with_props(&["True"]);
-        p.lemma("my_lemma", prop("True"));
-        p.done();
-
-        let thm = p.close_lemma();
-        assert!(thm.is_some());
-    }
-
-    #[test]
-    fn test_moreover_ultimately() {
-        let mut p = init_with_props(&["conclusion", "F1", "F2", "F3"]);
-        p.lemma("main", prop("conclusion"));
-        p.proof();
-
-        p.have("fact1", prop("F1"));
-        p.by("auto");
-
-        p.moreover();
-        p.have("fact2", prop("F2"));
-        p.by("auto");
-
-        p.moreover();
-        p.have("fact3", prop("F3"));
-        p.by("auto");
-
-        // ultimately: chain all three facts
-        p.ultimately();
-        p.show("conclusion", prop("conclusion"));
-        p.by("auto");
     }
 }

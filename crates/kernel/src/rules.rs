@@ -1,17 +1,192 @@
-use std::collections::HashSet;
+use std::{
+    borrow::Cow,
+    collections::{BTreeSet, HashSet},
+};
 
 use super::{
-    CProp, CTerm, ClosedThm, ContextStamp, Derivation, InstEntry, KernelError, KernelThm, Name,
-    OpenThm, ProofContext, Term, TrustedTheorem, TrustedTheory, Ty,
+    CProp, CTerm, ClosedThm, ContextStamp, DependencySet, Derivation, InstEntry, KernelError,
+    KernelThm, Name, OpenThm, ProofContext, Term, TrustedTheorem, TrustedTheory, Ty,
+    obligations::ProofPayload,
     thm::{prop_from_term, remove_hyp, union_hyps},
     unify,
 };
 
 fn require_same_context(expected: ContextStamp, actual: ContextStamp) -> Result<(), KernelError> {
     if expected != actual {
-        return Err(KernelError::MixedContext { expected, actual });
+        return Err(KernelError::MixedContext {
+            expected: Box::new(expected),
+            actual: Box::new(actual),
+        });
     }
     Ok(())
+}
+
+pub(crate) fn validate_instantiation_entries(
+    context: ContextStamp,
+    validator: Option<&ProofContext>,
+    subst: &[InstEntry],
+) -> Result<(), KernelError> {
+    let mut identities = HashSet::with_capacity(subst.len());
+    for entry in subst {
+        require_same_context(context, entry.replacement().context())?;
+        if !identities.insert((entry.name(), entry.index(), entry.var_ty())) {
+            return Err(KernelError::DuplicateSubstitution {
+                name: entry.name().clone(),
+                index: entry.index(),
+            });
+        }
+        if entry.replacement().ty() != *entry.var_ty() {
+            return Err(KernelError::TypeMismatch {
+                expected: entry.var_ty().clone(),
+                actual: entry.replacement().ty(),
+            });
+        }
+        entry.replacement().term().validate_closed_bounds()?;
+        if let Some(validator) = validator {
+            validator.validate_cterm(entry.replacement())?;
+        }
+    }
+    Ok(())
+}
+
+// Only accepting replay supplies a validator; structural diagnostics cannot seal a token.
+pub(crate) fn replay_instantiation(
+    validator: Option<&ProofContext>,
+    thm: &KernelThm,
+    type_inst: &crate::logic::TypeInstantiation,
+    subst: &[InstEntry],
+) -> Result<KernelThm, KernelError> {
+    if thm.hyps().iter().any(|hyp| hyp.term().has_schematic_hypothesis()) {
+        return Err(KernelError::SchematicHypothesis);
+    }
+    let is_erased = matches!(thm.payload().mode(), crate::obligations::ProofMode::SortErased);
+    if let Some(context) = validator {
+        require_same_context(context.stamp(), thm.context())?;
+        context.validate_type_instantiation(type_inst)?;
+        validate_instantiated_prop(context, thm.prop(), is_erased)?;
+        for hyp in thm.hyps() {
+            context.validate_cprop(hyp)?;
+        }
+    }
+    validate_instantiation_entries(thm.context(), validator, subst)?;
+    let typed = if type_inst.iter().next().is_none() {
+        Cow::Borrowed(thm.prop())
+    } else {
+        Cow::Owned(CProp::new(thm.prop().term().instantiate_types(type_inst)?, thm.context())?)
+    };
+    if let Some(context) = validator {
+        validate_instantiated_prop(context, &typed, is_erased)?;
+    }
+    let prop = if subst.is_empty() {
+        typed.into_owned()
+    } else {
+        CProp::new(typed.term().instantiate_vars(subst), thm.context())?
+    };
+    if let Some(context) = validator {
+        validate_instantiated_prop(context, &prop, is_erased)?;
+    }
+    let payload = ProofPayload::instantiate(thm.payload(), type_inst, subst, thm.hyps(), &prop)?;
+    if validator.is_some() {
+        ProofContext::validate_theorem_type_identities(&prop, thm.hyps(), payload.flex_pairs())?;
+    }
+    Ok(KernelThm::new_with_payload(
+        thm.hyps().to_vec(),
+        prop,
+        payload,
+        Derivation::Instantiate {
+            type_inst: type_inst.clone(),
+            subst: subst.to_vec(),
+            premise: Box::new(thm.clone()),
+        },
+    ))
+}
+
+fn validate_instantiated_prop(
+    context: &ProofContext,
+    prop: &CProp,
+    is_erased: bool,
+) -> Result<(), KernelError> {
+    if is_erased { context.validate_sort_erased_cprop(prop) } else { context.validate_cprop(prop) }
+}
+
+pub(crate) fn transfer_with_dependencies(
+    owner: &TrustedTheory,
+    theorem: &KernelThm,
+) -> Result<(KernelThm, DependencySet), KernelError> {
+    if theorem.context().has_local_type_scope() {
+        return Err(KernelError::LocalTypeScopeEscape { context: Box::new(theorem.context()) });
+    }
+    let origin = owner
+        .find_ancestor_by_id(theorem.proved_in())
+        .ok_or(KernelError::UnknownTheoremDependency)?;
+    require_same_context(origin.stamp(), theorem.context())?;
+    let original_context = ProofContext::new(origin.snapshot().clone());
+    let mut dependencies = DependencySet::empty();
+    crate::invariant::replay_source_in(&origin, &original_context, theorem, &mut dependencies)?;
+    if origin.id() == owner.id() {
+        return Ok((theorem.clone(), dependencies));
+    }
+    let target = ProofContext::new(owner.snapshot().clone());
+    let prop = if matches!(theorem.payload().mode(), crate::obligations::ProofMode::SortErased) {
+        let prop = prop_from_term(theorem.prop().term().clone(), target.stamp());
+        target.validate_sort_erased_cprop(&prop)?;
+        prop
+    } else {
+        target.recertify_prop(theorem.prop())?
+    };
+    let hyps = theorem
+        .hyps()
+        .iter()
+        .map(|hyp| target.recertify_prop(hyp))
+        .collect::<Result<Vec<_>, _>>()?;
+    let payload = theorem.payload().transfer_to(&target)?;
+    Ok((
+        KernelThm::new_with_payload(
+            hyps,
+            prop,
+            payload,
+            Derivation::Transfer { premise: Box::new(theorem.clone()) },
+        ),
+        dependencies,
+    ))
+}
+
+pub(crate) fn export_scope_with_dependencies(
+    owner: &TrustedTheory,
+    source_context: &ProofContext,
+    theorem: &KernelThm,
+    dependencies: &mut DependencySet,
+) -> Result<KernelThm, KernelError> {
+    require_same_context(owner.stamp(), source_context.theory().stamp())?;
+    require_same_context(source_context.stamp(), theorem.context())?;
+    let source =
+        crate::invariant::replay_scoped_source_in(owner, source_context, theorem, dependencies)?;
+    let target = ProofContext::new(owner.snapshot().clone());
+    let prop = prop_from_term(source.prop().term().clone(), target.stamp());
+    validate_instantiated_prop(
+        &target,
+        &prop,
+        matches!(source.payload().mode(), crate::obligations::ProofMode::SortErased),
+    )?;
+    let hyps = source
+        .hyps()
+        .iter()
+        .map(|hyp| {
+            let hyp = prop_from_term(hyp.term().clone(), target.stamp());
+            target.validate_cprop(&hyp)?;
+            Ok(hyp)
+        })
+        .collect::<Result<Vec<_>, KernelError>>()?;
+    let payload = source.payload().transfer_to(&target)?;
+    Ok(KernelThm::new_with_payload(
+        hyps,
+        prop,
+        payload,
+        Derivation::ExportScope {
+            scope: source_context.snapshot_scope(),
+            premise: Box::new(source),
+        },
+    ))
 }
 
 /// Primitive inference rules of the strict kernel nucleus.
@@ -24,11 +199,17 @@ impl KernelRules {
         theory: &TrustedTheory,
         theorem: &TrustedTheorem,
     ) -> Result<ClosedThm, KernelError> {
-        if !theory.contains_theorem(theorem) {
-            return Err(KernelError::UnknownTheoremDependency);
-        }
+        let theorem =
+            theory.find_accepted_theorem(theorem).ok_or(KernelError::UnknownTheoremDependency)?;
         let context = ProofContext::new(theory.snapshot().clone());
-        let prop = context.recertify_prop(theorem.prop())?;
+        let prop = if matches!(
+            theorem.as_kernel().payload().mode(),
+            crate::obligations::ProofMode::SortErased,
+        ) {
+            crate::thm::prop_from_term(theorem.prop().term().clone(), context.stamp())
+        } else {
+            context.recertify_prop(theorem.prop())?
+        };
         Ok(ClosedThm::new(KernelThm::new(
             Vec::new(),
             prop,
@@ -36,9 +217,42 @@ impl KernelRules {
         )))
     }
 
-    pub fn assume(prop: CProp) -> OpenThm {
+    /// Re-certify a complete, replayed open or closed proof from a committed
+    /// ancestor into this owner. A sibling or locally scoped proof is not an
+    /// implicit theorem reference.
+    pub fn transfer(owner: &TrustedTheory, theorem: &KernelThm) -> Result<KernelThm, KernelError> {
+        Ok(transfer_with_dependencies(owner, theorem)?.0)
+    }
+
+    /// Export a fully replayed local proof without publishing local declarations.
+    /// Remaining fixed parameters or outstanding obligations are never erased.
+    pub fn export_scope(
+        owner: &TrustedTheory,
+        source_context: &ProofContext,
+        theorem: &KernelThm,
+    ) -> Result<KernelThm, KernelError> {
+        export_scope_with_dependencies(owner, source_context, theorem, &mut DependencySet::empty())
+    }
+
+    pub fn assume(prop: CProp) -> Result<OpenThm, KernelError> {
+        if prop.term().has_schematic_hypothesis() {
+            return Err(KernelError::SchematicHypothesis);
+        }
         let thm = KernelThm::new(vec![prop.clone()], prop.clone(), Derivation::Assume { prop });
-        OpenThm::new(thm)
+        Ok(OpenThm::new(thm))
+    }
+    /// Add a certified, schematic-free real hypothesis without discharging the source.
+    pub fn weaken(assumption: &CProp, thm: &KernelThm) -> Result<KernelThm, KernelError> {
+        require_same_context(thm.context(), assumption.context())?;
+        if assumption.term().has_schematic_hypothesis() {
+            return Err(KernelError::SchematicHypothesis);
+        }
+        let hyps = union_hyps(thm.hyps(), std::slice::from_ref(assumption));
+        Ok(KernelThm::new(
+            hyps,
+            thm.prop().clone(),
+            Derivation::Weaken { assumption: assumption.clone(), premise: Box::new(thm.clone()) },
+        ))
     }
 
     pub fn reflexive(term: CTerm) -> ClosedThm {
@@ -111,10 +325,17 @@ impl KernelRules {
         let thm = KernelThm::new(vec![], prop, Derivation::BetaConversion { redex: redex.clone() });
         Ok(ClosedThm::new(thm))
     }
+    /// The exact Pure eta redex `λx. f x == f`, not arbitrary eta normalization.
+    pub fn eta_conversion(redex: CTerm) -> Result<ClosedThm, KernelError> {
+        redex.term().validate_closed_bounds()?;
+        let contracted = contract_eta(redex.term())?;
+        let prop = prop_from_term(Term::mk_eq(redex.term().clone(), contracted)?, redex.context());
+        Ok(ClosedThm::new(KernelThm::new(vec![], prop, Derivation::EtaConversion { redex })))
+    }
 
     pub fn implies_intr(assumption: &CProp, thm: &KernelThm) -> Result<KernelThm, KernelError> {
         require_same_context(thm.context(), assumption.context())?;
-        let hyps = remove_hyp(thm.hyps(), assumption).ok_or(KernelError::HypothesisNotFound)?;
+        let hyps = remove_hyp(thm.hyps(), assumption);
         let prop = prop_from_term(
             Term::mk_imp(assumption.term().clone(), thm.prop().term().clone())?,
             thm.context(),
@@ -175,6 +396,9 @@ impl KernelRules {
             if hyp.term().free_in(&free_name, &free_ty) {
                 return Err(KernelError::FreeVarInHypotheses { name: free_name });
             }
+        }
+        if thm.payload().has_free_in_flex_pairs(&free_name, &free_ty) {
+            return Err(KernelError::FreeVarInHypotheses { name: free_name });
         }
 
         // 3. Abstract the variable from the conclusion.
@@ -308,6 +532,9 @@ impl KernelRules {
             if hyp.term().free_in(&var_name, &var_ty) {
                 return Err(KernelError::FreeVarInHypotheses { name: var_name.clone() });
             }
+        }
+        if thm.payload().has_free_in_flex_pairs(&var_name, &var_ty) {
+            return Err(KernelError::FreeVarInHypotheses { name: var_name.clone() });
         }
 
         // 3. Abstract the variable from both sides of the equality.
@@ -452,12 +679,12 @@ impl KernelRules {
         let (goal_prems, _) = goal_state.prop().term().dest_imp_chain();
         let n_goal_prems = goal_prems.len();
         let selected_subgoal =
-            goal_state.prop().term().select_subgoal(selected_subgoal_index).ok_or_else(|| {
+            goal_state.prop().term().select_subgoal(selected_subgoal_index).ok_or(
                 KernelError::SubgoalIndexOutOfRange {
                     index: selected_subgoal_index,
                     nprems: n_goal_prems,
-                }
-            })?;
+                },
+            )?;
 
         if !selected_subgoal.alpha_eq(lhs) {
             return Err(KernelError::AntecedentMismatch);
@@ -467,7 +694,7 @@ impl KernelRules {
             goal_state
                 .prop()
                 .term()
-                .replace_subgoal_with_premises(selected_subgoal_index, &[rhs.clone()])?,
+                .replace_subgoal_with_premises(selected_subgoal_index, std::slice::from_ref(rhs))?,
             goal_state.context(),
         );
 
@@ -482,56 +709,55 @@ impl KernelRules {
         ))
     }
 
-    /// Schematic generalisation: turn free variables into schematic variables.
-    ///
-    /// ```text
-    /// input:  Γ |- P
-    ///         frees: [(name₁, τ₁), ..., (nameₙ, τₙ)]
-    /// output: Γσ |- Pσ
-    ///         where each Free(nameᵢ, τᵢ) in Γ or P is replaced by
-    ///         Var(nameᵢ, start + i, τᵢ), with:
-    ///             start = 1 + max existing Var index in Γ and P
-    ///             (or start = 0 if no Var present)
-    /// ```
-    ///
-    /// Unmatched frees are silently ignored (no-op). The generated `Var` indices
-    /// avoid collision with any existing `Var` in the theorem.
-    ///
-    /// Propagation:
-    /// - Hypotheses are transformed in-place (same count).
-    /// - Theorem remains open/closed as before.
-    pub fn generalize(thm: &KernelThm, frees: &[(Name, Ty)]) -> Result<KernelThm, KernelError> {
-        let start = thm.max_var_index().map_or(0, |m| m + 1);
+    /// Set Isabelle's maxidx to the requested bound, clamped to every
+    /// schematic index still present in the theorem's complete payload.
+    /// A larger bound is metadata only: it never certifies new variables.
+    pub fn adjust_max_index(thm: &KernelThm, requested: Option<usize>) -> KernelThm {
+        KernelThm::new_with_payload(
+            thm.hyps().to_vec(),
+            thm.prop().clone(),
+            thm.payload().clone(),
+            Derivation::AdjustMaxIndex { premise: Box::new(thm.clone()), requested },
+        )
+    }
 
-        let new_prop =
-            prop_from_term(thm.prop().term().generalize_to_vars(frees, start), thm.context());
-        let new_hyps: Vec<CProp> = thm
-            .hyps()
-            .iter()
-            .map(|h| {
-                CProp::from_checked_term(h.term().generalize_to_vars(frees, start), thm.context())
-            })
+    /// Generalize selected fixed types and terms at one fresh schematic index.
+    /// Real hypotheses are unchanged and cannot mention selected parameters.
+    pub fn generalize(
+        thm: &KernelThm,
+        type_names: &BTreeSet<Name>,
+        term_names: &BTreeSet<Name>,
+        index: usize,
+    ) -> Result<KernelThm, KernelError> {
+        if type_names.is_empty() && term_names.is_empty() {
+            return Ok(thm.clone());
+        }
+        crate::typ::check_generalize_index(false, index, thm.max_var_index())?;
+        validate_generalize_hypotheses(thm, type_names, term_names)?;
+        let prop = prop_from_term(
+            thm.prop().term().generalize_vars(type_names, term_names, index)?,
+            thm.context(),
+        );
+        let source_frees = crate::bound_proof::collect_lexical_frees(thm)
+            .into_iter()
+            .filter(|(name, _)| term_names.contains(name))
             .collect();
-
-        Ok(KernelThm::new(
-            new_hyps,
-            new_prop,
+        Ok(KernelThm::new_with_payload(
+            thm.hyps().to_vec(),
+            prop,
+            thm.payload().generalize(type_names, term_names, index)?,
             Derivation::Generalize {
-                frees: frees.to_vec(),
-                start_index: start,
+                type_names: type_names.clone(),
+                term_names: term_names.clone(),
+                index,
+                source_frees,
                 premise: Box::new(thm.clone()),
             },
         ))
     }
 
-    /// Schematic instantiation: replace schematic variables with certified terms.
-    ///
-    /// ```text
-    /// input:  Γ |- P
-    ///         subst: [InstEntry{name₁, idx₁, τ₁, replacement₁}, ...]
-    /// output: Γσ |- Pσ
-    ///         where each Var(nameᵢ, idxᵢ, τᵢ) in Γ or P is replaced by replacementᵢ
-    /// ```
+    /// Apply finite, simultaneous type substitution, then term substitution to P.
+    /// Real hypotheses are fixed and cannot contain Var or TVar.
     ///
     /// # Trust boundary
     ///
@@ -540,10 +766,10 @@ impl KernelRules {
     /// KernelRules`. Bare `Term` values cannot be passed as replacements.
     ///
     /// Side conditions:
-    /// - Exact match on `(name, index, type)` for every substitution entry.
+    /// - Term keys match `(name, index, type)` after the complete type pass.
     /// - `replacement.ty() == var_ty` for every entry → `TypeMismatch`.
-    /// - No duplicate `(name, idx)` entries → `DuplicateSubstitution`.
-    /// - No `Bound` in any replacement → `BoundInSubstitution`.
+    /// - No duplicate `(name, index, type)` entries → `DuplicateSubstitution`.
+    /// - No loose `Bound` in any replacement → `BoundInSubstitution`.
     /// - Partial substitution is valid: unmatched Vars remain unchanged.
     ///
     /// # Substitution semantics
@@ -552,60 +778,17 @@ impl KernelRules {
     /// NOT substituted even if they match another entry. The replacement is a
     /// single-pass traversal.
     ///
-    /// Duplicate detection is keyed by `(name, index)` regardless of type.
-    /// Two entries with the same `(name, index)` but different `var_ty` are
-    /// still rejected as duplicates.
+    /// Duplicate detection uses the complete typed key after the type pass.
+    /// Equal names and indices at distinct types remain distinct substitutions.
     ///
-    /// Propagation:
-    /// - Hypotheses are transformed in-place (same count).
-    /// - The theorem remains open/closed as before.
-    pub fn instantiate(thm: &KernelThm, subst: &[InstEntry]) -> Result<KernelThm, KernelError> {
-        for entry in subst {
-            require_same_context(thm.context(), entry.replacement().context())?;
-        }
-
-        // 1. Check for duplicate (name, idx) entries.
-        for i in 0..subst.len() {
-            for j in (i + 1)..subst.len() {
-                if subst[i].name() == subst[j].name() && subst[i].index() == subst[j].index() {
-                    return Err(KernelError::DuplicateSubstitution {
-                        name: subst[i].name().clone(),
-                        index: subst[i].index(),
-                    });
-                }
-            }
-        }
-
-        // 2. Type check each replacement (defense-in-depth; CTerm already certified).
-        for entry in subst {
-            if entry.replacement().ty() != *entry.var_ty() {
-                return Err(KernelError::TypeMismatch {
-                    expected: entry.var_ty().clone(),
-                    actual: entry.replacement().ty(),
-                });
-            }
-        }
-
-        // 3. No Bound in any replacement.
-        for entry in subst {
-            if entry.replacement().term().contains_bound() {
-                return Err(KernelError::BoundInSubstitution);
-            }
-        }
-
-        // 4. Apply substitution to proposition and hypotheses.
-        let new_prop = prop_from_term(thm.prop().term().instantiate_vars(subst), thm.context());
-        let new_hyps: Vec<CProp> = thm
-            .hyps()
-            .iter()
-            .map(|h| CProp::from_checked_term(h.term().instantiate_vars(subst), thm.context()))
-            .collect();
-
-        Ok(KernelThm::new(
-            new_hyps,
-            new_prop,
-            Derivation::Instantiate { subst: subst.to_vec(), premise: Box::new(thm.clone()) },
-        ))
+    /// The real hypotheses are preserved exactly.
+    pub fn instantiate(
+        context: &ProofContext,
+        thm: &KernelThm,
+        type_inst: &crate::logic::TypeInstantiation,
+        subst: &[InstEntry],
+    ) -> Result<KernelThm, KernelError> {
+        replay_instantiation(Some(context), thm, type_inst, subst)
     }
 
     /// Internal certified-origin matcher for resolution rules.
@@ -699,12 +882,12 @@ impl KernelRules {
 
         // 3. Select the target subgoal.
         let selected_subgoal =
-            goal_state.prop().term().select_subgoal(selected_subgoal_index).ok_or_else(|| {
+            goal_state.prop().term().select_subgoal(selected_subgoal_index).ok_or(
                 KernelError::SubgoalIndexOutOfRange {
                     index: selected_subgoal_index,
                     nprems: n_goal_prems,
-                }
-            })?;
+                },
+            )?;
 
         // 4. Match rule conclusion against the selected subgoal.
         let subst = Self::match_terms_certified(&rule_concl, &selected_subgoal, rule.context())?;
@@ -742,10 +925,17 @@ impl KernelRules {
             .collect();
         let all_hyps = union_hyps(&rule_hyps_sigma, &goal_hyps_sigma);
 
-        // 9. Build the result theorem.
-        Ok(KernelThm::new(
+        let payload = ProofPayload::resolve_match(
+            rule.payload(),
+            goal_state.payload(),
+            &subst,
+            &all_hyps,
+            &result_prop,
+        )?;
+        Ok(KernelThm::new_with_payload(
             all_hyps,
             result_prop,
+            payload,
             Derivation::Resolve1Match {
                 rule: Box::new(rule.clone()),
                 goal_state: Box::new(goal_state.clone()),
@@ -753,20 +943,6 @@ impl KernelRules {
                 subst,
             },
         ))
-    }
-
-    /// Conservative `bicompose` v1.
-    ///
-    /// This is intentionally a thin public/named wrapper around
-    /// `resolve1_match`. It records the existing `Resolve1Match` derivation and
-    /// reuses the same matching, collision detection, subgoal splicing, and
-    /// invariant replay path. It is not full Isabelle `bicompose`.
-    pub fn bicompose(
-        rule: &KernelThm,
-        goal_state: &KernelThm,
-        selected_subgoal_index: usize,
-    ) -> Result<KernelThm, KernelError> {
-        Self::resolve1_match(rule, goal_state, selected_subgoal_index)
     }
 
     /// Conservative collision detection: return `RequiresLifting` if rule
@@ -818,6 +994,75 @@ impl KernelRules {
             }
         }
         Ok(())
+    }
+}
+
+fn validate_generalize_hypotheses(
+    theorem: &KernelThm,
+    type_names: &BTreeSet<Name>,
+    term_names: &BTreeSet<Name>,
+) -> Result<(), KernelError> {
+    for hyp in theorem.hyps() {
+        if hyp.term().has_schematic_hypothesis() {
+            return Err(KernelError::SchematicHypothesis);
+        }
+        let mut names = HashSet::new();
+        collect_free_names(hyp.term(), &mut names);
+        if let Some(name) = names.iter().filter(|name| term_names.contains(*name)).min() {
+            return Err(KernelError::FreeVarInHypotheses { name: name.clone() });
+        }
+        let mut selected = BTreeSet::new();
+        hyp.term().for_each_type_annotation(&mut |ty| {
+            ty.for_each_type_free(&mut |name, _| {
+                if type_names.contains(name) {
+                    selected.insert(name.clone());
+                }
+            });
+        });
+        if let Some(name) = selected.into_iter().next() {
+            return Err(KernelError::TypeFreeInHypotheses { name });
+        }
+    }
+    Ok(())
+}
+
+/// Check the binder's typed application and lower only indices outside that binder.
+pub(crate) fn contract_eta(redex: &Term) -> Result<Term, KernelError> {
+    let (_, param_ty, body) =
+        redex.dest_abs().ok_or_else(|| KernelError::EtaRedexExpected(redex.ty()))?;
+    let (function, argument) =
+        body.dest_app().ok_or_else(|| KernelError::EtaRedexExpected(redex.ty()))?;
+    if !matches!(argument, Term::Bound { index: 0, ty } if ty == param_ty)
+        || mentions_eta_binder(function, 0)
+    {
+        return Err(KernelError::EtaRedexExpected(redex.ty()));
+    }
+    let function_type = function.ty();
+    let (domain, range) = function_type
+        .dest_arrow()
+        .ok_or_else(|| KernelError::NotFunctionType(function_type.clone()))?;
+    if domain != param_ty {
+        return Err(KernelError::TypeMismatch {
+            expected: param_ty.clone(),
+            actual: domain.clone(),
+        });
+    }
+    if body.ty() != *range || redex.ty() != function_type {
+        return Err(KernelError::TypeMismatch { expected: range.clone(), actual: body.ty() });
+    }
+    Ok(Term::instantiate_bound0(function, argument))
+}
+
+fn mentions_eta_binder(term: &Term, depth: usize) -> bool {
+    match term {
+        Term::Bound { index, .. } => *index == depth,
+        Term::Abs { body, .. } | Term::Forall { body, .. } => mentions_eta_binder(body, depth + 1),
+        Term::App { func, arg, .. }
+        | Term::Eq { lhs: func, rhs: arg, .. }
+        | Term::Imp { premise: func, conclusion: arg } => {
+            mentions_eta_binder(func, depth) || mentions_eta_binder(arg, depth)
+        },
+        _ => false,
     }
 }
 
@@ -934,6 +1179,7 @@ mod tests {
     #[test]
     fn match_terms_certified_type_mismatch() {
         let mut sig = Signature::new();
+        sig = sig.extend_type_constructor("nat", 0).unwrap();
         sig = sig.extend_const("a", ty("nat")).unwrap();
         let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
         let a_nat = ctx.certify_term(super::super::RawTerm::const_("a", ty("nat"))).unwrap();
@@ -955,6 +1201,7 @@ mod tests {
     #[test]
     fn match_terms_certified_nested_app() {
         let mut sig = Signature::new();
+        sig = sig.extend_type_constructor("nat", 0).unwrap();
         sig = sig.extend_const("f", Ty::arrow(ty("nat"), Ty::prop())).unwrap();
         sig = sig.extend_const("a", ty("nat")).unwrap();
         let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
@@ -1033,14 +1280,6 @@ mod tests {
 
     // ── resolution-family test helpers ──
 
-    /// Closed theorem helper: use reflexive to make `|- A == A` (closed).
-    /// NOT used as a resolution rule — only for creating ground truths.
-    #[allow(dead_code)]
-    fn closed_thm(ctx: &ProofContext, name: &str) -> KernelThm {
-        let cterm = ctx.certify_term(super::super::RawTerm::const_(name, Ty::prop())).unwrap();
-        KernelRules::reflexive(cterm).into_kernel()
-    }
-
     fn imp_chain(ctx: &ProofContext, names: &[&str]) -> Term {
         assert!(!names.is_empty());
         let mut terms: Vec<Term> = names.iter().map(|n| prop_term(ctx, n)).collect();
@@ -1056,19 +1295,98 @@ mod tests {
         CProp::from_checked_term(term.clone(), ctx.stamp())
     }
 
+    #[test]
+    fn implies_intr_unused_assumption_preserves_closed_proof() {
+        let ctx = ctx_with_props(&["A", "B"]);
+        let reflexive = KernelRules::reflexive(
+            ctx.certify_term(super::super::RawTerm::const_("A", Ty::prop())).unwrap(),
+        );
+        let assumption = ctx.certify_prop(super::super::RawTerm::const_("B", Ty::prop())).unwrap();
+        let introduced = KernelRules::implies_intr(&assumption, reflexive.as_kernel()).unwrap();
+        assert!(introduced.hyps().is_empty());
+        let (antecedent, consequent) = introduced.prop().term().dest_imp().unwrap();
+        assert!(antecedent.alpha_eq(assumption.term()));
+        assert!(consequent.alpha_eq(reflexive.as_kernel().prop().term()));
+        super::super::invariant::check_kernel_thm(&introduced).unwrap();
+    }
+
     /// Create a theorem `[P] |- P` via assume. The conclusion is P (no imp chain).
     fn assume_thm(ctx: &ProofContext, name: &str) -> KernelThm {
         let cprop = certify_prop_term(ctx, &prop_term(ctx, name));
-        KernelRules::assume(cprop).into_kernel()
+        KernelRules::assume(cprop).unwrap().into_kernel()
     }
 
     fn assumed_eq(ctx: &ProofContext, lhs: &str, rhs: &str) -> KernelThm {
         let eq = Term::mk_eq(prop_term(ctx, lhs), prop_term(ctx, rhs)).unwrap();
-        KernelRules::assume(certify_prop_term(ctx, &eq)).into_kernel()
+        KernelRules::assume(certify_prop_term(ctx, &eq)).unwrap().into_kernel()
     }
 
     fn assumed_goal(ctx: &ProofContext, names: &[&str]) -> KernelThm {
-        KernelRules::assume(certify_prop_term(ctx, &imp_chain(ctx, names))).into_kernel()
+        KernelRules::assume(certify_prop_term(ctx, &imp_chain(ctx, names))).unwrap().into_kernel()
+    }
+
+    fn resolution_ctx(names: &[&str]) -> ProofContext {
+        let mut ctx = ctx_with_props(names);
+        for name in ["P", "Q", "G"] {
+            ctx.declare_free(name, Ty::prop());
+        }
+        ctx
+    }
+
+    fn schematic_identity_rule(ctx: &ProofContext) -> KernelThm {
+        let p = ctx.certify_prop(super::super::RawTerm::free("P", Ty::prop())).unwrap();
+        let assumed = KernelRules::assume(p.clone()).unwrap();
+        let discharged = KernelRules::implies_intr(&p, assumed.as_kernel()).unwrap();
+        KernelRules::generalize(&discharged, &BTreeSet::new(), &BTreeSet::from(["P".into()]), 0)
+            .unwrap()
+    }
+
+    fn schematic_eq_rule(ctx: &ProofContext) -> KernelThm {
+        let p = ctx.certify_prop(super::super::RawTerm::free("P", Ty::prop())).unwrap();
+        let q = ctx.certify_prop(super::super::RawTerm::free("Q", Ty::prop())).unwrap();
+        let eq = certify_prop_term(ctx, &Term::mk_eq(p.term().clone(), q.term().clone()).unwrap());
+        let assumed = KernelRules::assume(eq.clone()).unwrap();
+        let discharged_eq = KernelRules::implies_intr(&eq, assumed.as_kernel()).unwrap();
+        let discharged_p = KernelRules::implies_intr(&p, &discharged_eq).unwrap();
+        KernelRules::generalize(
+            &discharged_p,
+            &BTreeSet::new(),
+            &BTreeSet::from(["P".into(), "Q".into()]),
+            0,
+        )
+        .unwrap()
+    }
+
+    fn schematic_reflexive_rule(ctx: &ProofContext) -> KernelThm {
+        let variable = ctx.certify_term(super::super::RawTerm::var("P", 0, Ty::prop())).unwrap();
+        KernelRules::reflexive(variable).into_kernel()
+    }
+
+    fn goal_with_schematic_premise(
+        ctx: &ProofContext,
+        name: &str,
+        index: usize,
+        remaining: &[&str],
+    ) -> KernelThm {
+        let conclusion = remaining.last().unwrap();
+        let mut goal = assume_thm(ctx, conclusion);
+        for premise in remaining[..remaining.len() - 1].iter().rev() {
+            goal =
+                KernelRules::implies_intr(&certify_prop_term(ctx, &prop_term(ctx, premise)), &goal)
+                    .unwrap();
+        }
+        let free = ctx.certify_term(super::super::RawTerm::free("G", Ty::prop())).unwrap();
+        goal = KernelRules::implies_intr(&certify_prop_term(ctx, free.term()), &goal).unwrap();
+        let quantified = KernelRules::forall_intr(&free, &goal).unwrap();
+        let var = ctx.certify_term(super::super::RawTerm::var(name, index, Ty::prop())).unwrap();
+        KernelRules::forall_elim(&quantified, &var).unwrap()
+    }
+
+    fn rule_with_rigid_hypothesis(ctx: &ProofContext) -> KernelThm {
+        let h = certify_prop_term(ctx, &prop_term(ctx, "H"));
+        let conditional = KernelRules::implies_intr(&h, &schematic_reflexive_rule(ctx)).unwrap();
+        let assumed = KernelRules::assume(h).unwrap();
+        KernelRules::implies_elim(&conditional, assumed.as_kernel()).unwrap()
     }
 
     // ── subst_premise tests ──
@@ -1088,6 +1406,7 @@ mod tests {
     #[test]
     fn subst_premise_rejects_object_equality() {
         let mut sig = Signature::new();
+        sig = sig.extend_type_constructor("nat", 0).unwrap();
         sig = sig.extend_const("x", ty("nat")).unwrap();
         sig = sig.extend_const("y", ty("nat")).unwrap();
         sig = sig.extend_const("A", Ty::prop()).unwrap();
@@ -1099,7 +1418,7 @@ mod tests {
         let y =
             ctx.certify_term(super::super::RawTerm::const_("y", ty("nat"))).unwrap().term().clone();
         let object_eq = Term::mk_eq(x, y).unwrap();
-        let eq = KernelRules::assume(certify_prop_term(&ctx, &object_eq)).into_kernel();
+        let eq = KernelRules::assume(certify_prop_term(&ctx, &object_eq)).unwrap().into_kernel();
         let goal = assumed_goal(&ctx, &["A", "R"]);
 
         let err = KernelRules::subst_premise(&eq, &goal, 0).unwrap_err();
@@ -1216,7 +1535,7 @@ mod tests {
 
         let goal_imp = imp_chain(&ctx, &["A", "B"]);
         let goal_prop = certify_prop_term(&ctx, &goal_imp);
-        let goal = KernelRules::assume(goal_prop).into_kernel(); // [A==>B] |- A==>B
+        let goal = KernelRules::assume(goal_prop).unwrap().into_kernel(); // [A==>B] |- A==>B
 
         let result = KernelRules::resolve1_match(&rule, &goal, 0).unwrap();
         // Rule concl A matches subgoal A; rule has 0 premises → subgoal removed
@@ -1227,24 +1546,16 @@ mod tests {
 
     #[test]
     fn resolve1_basic_with_match() {
-        // Rule: [?P] |- ?P  (conclusion ?P, 0 premises)
-        // Goal: [A ==> B] |- A ==> B  (subgoal 0 = A, conclusion B)
-        // Match: ?P matches A → binds P→A
-        // Result: B (subgoal A removed, no rule premises)
         let ctx = ctx_with_props(&["A", "B"]);
-        let a_term = prop_term(&ctx, "A");
-        let b_term = prop_term(&ctx, "B");
+        let rule = schematic_reflexive_rule(&ctx);
+        let eq = Term::mk_eq(prop_term(&ctx, "A"), prop_term(&ctx, "A")).unwrap();
+        let goal_term = Term::mk_imp(eq, prop_term(&ctx, "B")).unwrap();
+        let goal = KernelRules::assume(certify_prop_term(&ctx, &goal_term)).unwrap();
 
-        let p_var = Term::Var { name: Name::from("P"), index: 0, ty: Ty::prop() };
-        let rule_prop = certify_prop_term(&ctx, &p_var);
-        let rule = KernelRules::assume(rule_prop).into_kernel();
-
-        let goal_imp = Term::Imp { premise: Box::new(a_term), conclusion: Box::new(b_term) };
-        let goal_prop = certify_prop_term(&ctx, &goal_imp);
-        let goal = KernelRules::assume(goal_prop).into_kernel();
-
-        let result = KernelRules::resolve1_match(&rule, &goal, 0).unwrap();
+        let result = KernelRules::resolve1_match(&rule, goal.as_kernel(), 0).unwrap();
         assert_eq!(result.prop(), &certify_prop_term(&ctx, &prop_term(&ctx, "B")));
+        assert_eq!(result.hyps(), goal.as_kernel().hyps());
+        super::super::invariant::check_kernel_thm(&result).unwrap();
     }
 
     #[test]
@@ -1254,7 +1565,7 @@ mod tests {
         let rule = assume_thm(&ctx, "A");
 
         let goal_imp = imp_chain(&ctx, &["B", "R"]);
-        let goal = KernelRules::assume(certify_prop_term(&ctx, &goal_imp)).into_kernel();
+        let goal = KernelRules::assume(certify_prop_term(&ctx, &goal_imp)).unwrap().into_kernel();
 
         let err = KernelRules::resolve1_match(&rule, &goal, 0).unwrap_err();
         assert!(matches!(err, KernelError::Invariant(_)), "expected match failure, got {err:?}");
@@ -1262,104 +1573,69 @@ mod tests {
 
     #[test]
     fn resolve1_empty_rule_premises_tamper_kept_subgoal_rejected() {
-        use super::super::thm::prop_from_term;
-
-        // Rule: [?P] |- ?P  (conclusion ?P, 0 premises)
-        // Goal: [A ==> B] |- A ==> B
-        //
-        // A successful resolve step removes the selected subgoal A and leaves B.
-        // If a theorem keeps A ==> B while recording the resolve derivation,
-        // invariant replay must reject it.
         let ctx = ctx_with_props(&["A", "B"]);
-        let p_var = Term::Var { name: Name::from("P"), index: 0, ty: Ty::prop() };
-        let rule = KernelRules::assume(certify_prop_term(&ctx, &p_var)).into_kernel();
-
-        let goal_imp = imp_chain(&ctx, &["A", "B"]);
-        let goal = KernelRules::assume(certify_prop_term(&ctx, &goal_imp)).into_kernel();
-
-        let result = KernelRules::resolve1_match(&rule, &goal, 0).unwrap();
+        let rule = schematic_reflexive_rule(&ctx);
+        let eq = Term::mk_eq(prop_term(&ctx, "A"), prop_term(&ctx, "A")).unwrap();
+        let goal_term = Term::mk_imp(eq, prop_term(&ctx, "B")).unwrap();
+        let goal = KernelRules::assume(certify_prop_term(&ctx, &goal_term)).unwrap();
+        let result = KernelRules::resolve1_match(&rule, goal.as_kernel(), 0).unwrap();
         assert_eq!(result.prop(), &certify_prop_term(&ctx, &prop_term(&ctx, "B")));
 
         let tampered = KernelThm::new(
             result.hyps().to_vec(),
-            prop_from_term(goal_imp, ctx.stamp()),
+            certify_prop_term(&ctx, &goal_term),
             result.derivation().clone(),
         );
-        let check = super::super::invariant::check_kernel_thm(&tampered);
-        assert!(check.is_err(), "replay must reject a result that keeps the solved subgoal");
+        assert!(super::super::invariant::check_kernel_thm(&tampered).is_err());
     }
 
     #[test]
     fn resolve1_applies_substitution_to_rule_premises() {
-        // Rule: [?P ==> (?P == ?Q)] |- ?P ==> (?P == ?Q)
-        // Goal: [H ==> (A == B) ==> R] |- H ==> (A == B) ==> R
-        //
-        // Matching (?P == ?Q) with (A == B) must substitute the rule premise
-        // ?P into A before splicing it into the selected subgoal position.
-        let ctx = ctx_with_props(&["H", "A", "B", "R"]);
-        let p_var = Term::Var { name: Name::from("P"), index: 0, ty: Ty::prop() };
-        let q_var = Term::Var { name: Name::from("Q"), index: 1, ty: Ty::prop() };
-        let rule_concl = Term::mk_eq(p_var.clone(), q_var).unwrap();
-        let rule_term = Term::mk_imp_chain(&[p_var], &rule_concl).unwrap();
-        let rule = KernelRules::assume(certify_prop_term(&ctx, &rule_term)).into_kernel();
-
-        let a_eq_b = Term::mk_eq(prop_term(&ctx, "A"), prop_term(&ctx, "B")).unwrap();
+        let ctx = resolution_ctx(&["H", "A", "B", "R"]);
+        let rule = schematic_eq_rule(&ctx);
+        let eq = Term::mk_eq(prop_term(&ctx, "A"), prop_term(&ctx, "B")).unwrap();
         let goal_term =
-            Term::mk_imp_chain(&[prop_term(&ctx, "H"), a_eq_b], &prop_term(&ctx, "R")).unwrap();
-        let goal = KernelRules::assume(certify_prop_term(&ctx, &goal_term)).into_kernel();
+            Term::mk_imp_chain(&[prop_term(&ctx, "H"), eq.clone()], &prop_term(&ctx, "R")).unwrap();
+        let goal = KernelRules::assume(certify_prop_term(&ctx, &goal_term)).unwrap();
 
-        let result = KernelRules::resolve1_match(&rule, &goal, 1).unwrap();
-        let expected = imp_chain(&ctx, &["H", "A", "R"]);
+        let result = KernelRules::resolve1_match(&rule, goal.as_kernel(), 1).unwrap();
+        let expected = Term::mk_imp_chain(
+            &[prop_term(&ctx, "H"), prop_term(&ctx, "A"), eq],
+            &prop_term(&ctx, "R"),
+        )
+        .unwrap();
         assert_eq!(result.prop(), &certify_prop_term(&ctx, &expected));
+        super::super::invariant::check_kernel_thm(&result).unwrap();
     }
 
     #[test]
     fn resolve1_rejects_goal_var_namespace_collision_without_lifting() {
-        // Rule: [?P] |- ?P
-        // Goal: [?P ==> A ==> R] |- ?P ==> A ==> R
-        //
-        // Matching rule conclusion ?P against selected subgoal A would also
-        // rewrite the remaining goal-side ?P subgoal to A. Conservative v1
-        // rejects this namespace merge until lifting/freshening exists.
-        let ctx = ctx_with_props(&["A", "R"]);
-        let p_var = Term::Var { name: Name::from("P"), index: 0, ty: Ty::prop() };
-        let rule = KernelRules::assume(certify_prop_term(&ctx, &p_var)).into_kernel();
-
-        let goal_term =
-            Term::mk_imp_chain(&[p_var, prop_term(&ctx, "A")], &prop_term(&ctx, "R")).unwrap();
-        let goal = KernelRules::assume(certify_prop_term(&ctx, &goal_term)).into_kernel();
+        let ctx = resolution_ctx(&["A", "R"]);
+        let rule = schematic_identity_rule(&ctx);
+        let goal = goal_with_schematic_premise(&ctx, "P", 0, &["A", "R"]);
 
         let err = KernelRules::resolve1_match(&rule, &goal, 1).unwrap_err();
         assert!(matches!(err, KernelError::RequiresLifting { .. }), "got {err:?}");
+        super::super::invariant::check_kernel_thm(&goal).unwrap();
     }
 
     #[test]
-    fn resolve1_applies_substitution_to_hypotheses() {
-        // Rule: [?P] |- ?P
-        // Goal: [A ==> R] |- A ==> R
-        //
-        // The rule hypothesis ?P must be substituted to A in the result
-        // burdens, not preserved as an uninstantiated schematic hypothesis.
-        let ctx = ctx_with_props(&["A", "R"]);
-        let p_var = Term::Var { name: Name::from("P"), index: 0, ty: Ty::prop() };
-        let rule = KernelRules::assume(certify_prop_term(&ctx, &p_var)).into_kernel();
+    fn resolve1_preserves_rigid_hypotheses_after_matching() {
+        let ctx = ctx_with_props(&["H", "A", "R"]);
+        let rule = rule_with_rigid_hypothesis(&ctx);
+        let eq = Term::mk_eq(prop_term(&ctx, "A"), prop_term(&ctx, "A")).unwrap();
+        let goal = KernelRules::assume(certify_prop_term(
+            &ctx,
+            &Term::mk_imp(eq, prop_term(&ctx, "R")).unwrap(),
+        ))
+        .unwrap();
+        let result = KernelRules::resolve1_match(&rule, goal.as_kernel(), 0).unwrap();
 
-        let goal_term = imp_chain(&ctx, &["A", "R"]);
-        let goal = KernelRules::assume(certify_prop_term(&ctx, &goal_term)).into_kernel();
-
-        let result = KernelRules::resolve1_match(&rule, &goal, 0).unwrap();
-        let substituted_hyp = certify_prop_term(&ctx, &prop_term(&ctx, "A"));
-        assert!(
-            result.hyps().iter().any(|hyp| hyp == &substituted_hyp),
-            "result hypotheses should contain substituted rule hyp A"
-        );
-        assert!(
-            result
-                .hyps()
-                .iter()
-                .all(|hyp| !matches!(hyp.term(), Term::Var { name, index: 0, .. } if name.as_str() == "P")),
-            "result hypotheses must not keep uninstantiated ?P"
-        );
+        assert_eq!(result.prop(), &certify_prop_term(&ctx, &prop_term(&ctx, "R")));
+        assert!(result.hyps().contains(&certify_prop_term(&ctx, &prop_term(&ctx, "H"))));
+        assert!(result.hyps().contains(goal.as_kernel().prop()));
+        assert!(result.hyps().iter().all(|hyp| !hyp.term().has_schematic_hypothesis()));
+        super::super::invariant::check_kernel_thm(&result).unwrap();
     }
 
     #[test]
@@ -1371,10 +1647,10 @@ mod tests {
         // must fail; index 1 selects C and succeeds.
         let ctx = ctx_with_props(&["A", "B", "C", "R"]);
         let rule_term = imp_chain(&ctx, &["A", "C"]);
-        let rule = KernelRules::assume(certify_prop_term(&ctx, &rule_term)).into_kernel();
+        let rule = KernelRules::assume(certify_prop_term(&ctx, &rule_term)).unwrap().into_kernel();
 
         let goal_term = imp_chain(&ctx, &["B", "C", "R"]);
-        let goal = KernelRules::assume(certify_prop_term(&ctx, &goal_term)).into_kernel();
+        let goal = KernelRules::assume(certify_prop_term(&ctx, &goal_term)).unwrap().into_kernel();
 
         let wrong_index = KernelRules::resolve1_match(&rule, &goal, 0).unwrap_err();
         assert!(
@@ -1397,11 +1673,11 @@ mod tests {
         let ctx = ctx_with_props(&["A", "B", "C", "R"]);
         let rule_imp = imp_chain(&ctx, &["B", "C"]);
         let rule_prop = certify_prop_term(&ctx, &rule_imp);
-        let rule = KernelRules::assume(rule_prop).into_kernel();
+        let rule = KernelRules::assume(rule_prop).unwrap().into_kernel();
 
         let goal_imp = imp_chain(&ctx, &["A", "C", "R"]);
         let goal_prop = certify_prop_term(&ctx, &goal_imp);
-        let goal = KernelRules::assume(goal_prop).into_kernel();
+        let goal = KernelRules::assume(goal_prop).unwrap().into_kernel();
 
         let result = KernelRules::resolve1_match(&rule, &goal, 1).unwrap();
         let expected_imp = imp_chain(&ctx, &["A", "B", "R"]);
@@ -1419,7 +1695,7 @@ mod tests {
 
         let goal_imp = imp_chain(&ctx, &["A", "B", "R"]);
         let goal_prop = certify_prop_term(&ctx, &goal_imp);
-        let goal = KernelRules::assume(goal_prop).into_kernel();
+        let goal = KernelRules::assume(goal_prop).unwrap().into_kernel();
 
         let result = KernelRules::resolve1_match(&rule, &goal, 1).unwrap();
         let expected_imp = imp_chain(&ctx, &["A", "R"]);
@@ -1432,7 +1708,7 @@ mod tests {
         let rule = assume_thm(&ctx, "B");
         let goal_imp = imp_chain(&ctx, &["A", "B"]);
         let goal_prop = certify_prop_term(&ctx, &goal_imp);
-        let goal = KernelRules::assume(goal_prop).into_kernel();
+        let goal = KernelRules::assume(goal_prop).unwrap().into_kernel();
 
         // Goal has 1 subgoal (A), index 1 ≥ nprems → out of range.
         let err = KernelRules::resolve1_match(&rule, &goal, 1).unwrap_err();
@@ -1444,7 +1720,7 @@ mod tests {
         let ctx = ctx_with_props(&["R"]);
         let rule = assume_thm(&ctx, "R");
         let r_prop = certify_prop_term(&ctx, &prop_term(&ctx, "R"));
-        let goal = KernelRules::assume(r_prop).into_kernel();
+        let goal = KernelRules::assume(r_prop).unwrap().into_kernel();
 
         let err = KernelRules::resolve1_match(&rule, &goal, 0).unwrap_err();
         assert!(format!("{err}").contains("out of range"));
@@ -1453,6 +1729,7 @@ mod tests {
     #[test]
     fn resolve1_rejects_variable_collision_without_lifting() {
         let mut sig = Signature::new();
+        sig = sig.extend_type_constructor("nat", 0).unwrap();
         sig = sig.extend_const("R", Ty::prop()).unwrap();
         let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
         ctx.declare_free("x", ty("nat"));
@@ -1470,7 +1747,7 @@ mod tests {
         let r_term = prop_term(&ctx, "R");
         let goal_imp = Term::Imp { premise: Box::new(eq_term), conclusion: Box::new(r_term) };
         let goal_prop = certify_prop_term(&ctx, &goal_imp);
-        let goal = KernelRules::assume(goal_prop).into_kernel();
+        let goal = KernelRules::assume(goal_prop).unwrap().into_kernel();
 
         // Rule conclusion (x == x) matches subgoal 0 (x == x) → OK
         // But both rule and goal contain Free("x") → RequiresLifting
@@ -1484,12 +1761,12 @@ mod tests {
         // Rule: [B ==> C] |- B ==> C
         let rule_imp = imp_chain(&ctx, &["B", "C"]);
         let rule_prop = certify_prop_term(&ctx, &rule_imp);
-        let rule = KernelRules::assume(rule_prop).into_kernel();
+        let rule = KernelRules::assume(rule_prop).unwrap().into_kernel();
 
         // Goal: [A ==> C ==> R] |- A ==> C ==> R  (2 subgoals: A, C)
         let goal_imp = imp_chain(&ctx, &["A", "C", "R"]);
         let goal_prop = certify_prop_term(&ctx, &goal_imp);
-        let goal = KernelRules::assume(goal_prop).into_kernel();
+        let goal = KernelRules::assume(goal_prop).unwrap().into_kernel();
 
         let result = KernelRules::resolve1_match(&rule, &goal, 1).unwrap();
         super::super::invariant::check_kernel_thm(&result).unwrap();
@@ -1497,24 +1774,30 @@ mod tests {
 
     #[test]
     fn resolve1_invariant_with_multiple_bindings_is_deterministic() {
-        let ctx = ctx_with_props(&["A", "B", "R"]);
-        let a = prop_term(&ctx, "A");
-        let b = prop_term(&ctx, "B");
-
-        // Rule: [?X == ?Y] |- ?X == ?Y
-        let x_var = Term::Var { name: Name::from("X"), index: 0, ty: Ty::prop() };
-        let y_var = Term::Var { name: Name::from("Y"), index: 1, ty: Ty::prop() };
-        let rule_eq = Term::mk_eq(x_var, y_var).unwrap();
-        let rule = KernelRules::assume(certify_prop_term(&ctx, &rule_eq)).into_kernel();
-
-        // Goal: [(A == B) ==> R] |- (A == B) ==> R
-        let goal_eq = Term::mk_eq(a, b).unwrap();
-        let goal_imp =
-            Term::Imp { premise: Box::new(goal_eq), conclusion: Box::new(prop_term(&ctx, "R")) };
-        let goal = KernelRules::assume(certify_prop_term(&ctx, &goal_imp)).into_kernel();
-
-        let result = KernelRules::resolve1_match(&rule, &goal, 0).unwrap();
+        let ctx = resolution_ctx(&["A", "B", "R"]);
+        let rule = schematic_eq_rule(&ctx);
+        let eq = Term::mk_eq(prop_term(&ctx, "A"), prop_term(&ctx, "B")).unwrap();
+        let goal_term = Term::mk_imp(eq.clone(), prop_term(&ctx, "R")).unwrap();
+        let goal = KernelRules::assume(certify_prop_term(&ctx, &goal_term)).unwrap();
+        let result = KernelRules::resolve1_match(&rule, goal.as_kernel(), 0).unwrap();
+        let expected =
+            Term::mk_imp_chain(&[prop_term(&ctx, "A"), eq], &prop_term(&ctx, "R")).unwrap();
+        assert_eq!(result.prop(), &certify_prop_term(&ctx, &expected));
         super::super::invariant::check_kernel_thm(&result).unwrap();
+
+        let Derivation::Resolve1Match { rule, goal_state, selected_subgoal_index, mut subst } =
+            result.derivation().clone()
+        else {
+            panic!("resolution must record matching bindings");
+        };
+        assert_eq!(subst.len(), 2);
+        subst.reverse();
+        let tampered = KernelThm::new(
+            result.hyps().to_vec(),
+            result.prop().clone(),
+            Derivation::Resolve1Match { rule, goal_state, selected_subgoal_index, subst },
+        );
+        assert!(super::super::invariant::check_kernel_thm(&tampered).is_err());
     }
 
     #[test]
@@ -1524,11 +1807,11 @@ mod tests {
         let ctx = ctx_with_props(&["A", "B", "C", "R", "WRONG"]);
         let rule_imp = imp_chain(&ctx, &["B", "C"]);
         let rule_prop = certify_prop_term(&ctx, &rule_imp);
-        let rule = KernelRules::assume(rule_prop).into_kernel();
+        let rule = KernelRules::assume(rule_prop).unwrap().into_kernel();
 
         let goal_imp = imp_chain(&ctx, &["A", "C", "R"]);
         let goal_prop = certify_prop_term(&ctx, &goal_imp);
-        let goal = KernelRules::assume(goal_prop).into_kernel();
+        let goal = KernelRules::assume(goal_prop).unwrap().into_kernel();
 
         let result = KernelRules::resolve1_match(&rule, &goal, 1).unwrap();
 
@@ -1550,11 +1833,11 @@ mod tests {
         let ctx = ctx_with_props(&["H", "A", "B", "R"]);
         let rule_imp = imp_chain(&ctx, &["B", "A"]);
         let rule_prop = certify_prop_term(&ctx, &rule_imp);
-        let rule = KernelRules::assume(rule_prop).into_kernel();
+        let rule = KernelRules::assume(rule_prop).unwrap().into_kernel();
 
         let goal_imp = imp_chain(&ctx, &["H", "A", "R"]);
         let goal_prop = certify_prop_term(&ctx, &goal_imp);
-        let goal = KernelRules::assume(goal_prop).into_kernel();
+        let goal = KernelRules::assume(goal_prop).unwrap().into_kernel();
 
         let result = KernelRules::resolve1_match(&rule, &goal, 1).unwrap();
         // Rule hyps: [B ==> A], Goal hyps: [H ==> A ==> R] → union
@@ -1563,21 +1846,14 @@ mod tests {
 
     #[test]
     fn resolve1_single_subgoal_with_vars() {
-        // Rule: [?P] |- ?P  (conclusion ?P, 0 premises)
-        // Goal: [A ==> R] |- A ==> R  (subgoal 0 = A)
-        // Match: ?P matches A → P binds to A
-        // Result: R (subgoal A removed)
-        let ctx = ctx_with_props(&["A", "R"]);
-        let p_var = Term::Var { name: Name::from("P"), index: 0, ty: Ty::prop() };
-        let rule_prop = certify_prop_term(&ctx, &p_var);
-        let rule = KernelRules::assume(rule_prop).into_kernel();
-
-        let goal_imp = imp_chain(&ctx, &["A", "R"]);
-        let goal_prop = certify_prop_term(&ctx, &goal_imp);
-        let goal = KernelRules::assume(goal_prop).into_kernel();
+        let ctx = resolution_ctx(&["A", "R"]);
+        let rule = schematic_identity_rule(&ctx);
+        let goal = assumed_goal(&ctx, &["A", "R"]);
 
         let result = KernelRules::resolve1_match(&rule, &goal, 0).unwrap();
-        assert_eq!(result.prop(), &certify_prop_term(&ctx, &prop_term(&ctx, "R")));
+        assert_eq!(result.prop(), &certify_prop_term(&ctx, &imp_chain(&ctx, &["A", "R"])));
+        assert_eq!(result.hyps(), goal.hyps());
+        super::super::invariant::check_kernel_thm(&result).unwrap();
     }
 
     #[test]
@@ -1590,11 +1866,11 @@ mod tests {
         let ctx = ctx_with_props(&["A", "P", "Q", "R", "S"]);
         let rule_imp = imp_chain(&ctx, &["P", "Q", "R"]);
         let rule_prop = certify_prop_term(&ctx, &rule_imp);
-        let rule = KernelRules::assume(rule_prop).into_kernel();
+        let rule = KernelRules::assume(rule_prop).unwrap().into_kernel();
 
         let goal_imp = imp_chain(&ctx, &["A", "R", "S"]);
         let goal_prop = certify_prop_term(&ctx, &goal_imp);
-        let goal = KernelRules::assume(goal_prop).into_kernel();
+        let goal = KernelRules::assume(goal_prop).unwrap().into_kernel();
 
         let result = KernelRules::resolve1_match(&rule, &goal, 1).unwrap();
         let expected_imp = imp_chain(&ctx, &["A", "P", "Q", "S"]);
@@ -1602,255 +1878,21 @@ mod tests {
     }
 
     #[test]
-    fn resolve1_matches_replace_subgoal_helper_semantics() {
-        // Rule: [?P ==> ?Q ==> (?P == ?Q)] |- ?P ==> ?Q ==> (?P == ?Q)
-        // Goal: [A ==> (B == C) ==> S] |- A ==> (B == C) ==> S
-        //
-        // Matching (?P == ?Q) against selected subgoal (B == C) creates
-        // multiple bindings. The result proposition must be exactly what the shared
-        // implication-chain helper computes after substituting the goal and
-        // splicing in the substituted rule premises.
-        let ctx = ctx_with_props(&["A", "B", "C", "S"]);
-        let p_var = Term::Var { name: Name::from("P"), index: 0, ty: Ty::prop() };
-        let q_var = Term::Var { name: Name::from("Q"), index: 1, ty: Ty::prop() };
-        let rule_concl = Term::mk_eq(p_var.clone(), q_var.clone()).unwrap();
-        let rule_term = Term::mk_imp_chain(&[p_var.clone(), q_var.clone()], &rule_concl).unwrap();
-        let rule = KernelRules::assume(certify_prop_term(&ctx, &rule_term)).into_kernel();
-
-        let b_eq_c = Term::mk_eq(prop_term(&ctx, "B"), prop_term(&ctx, "C")).unwrap();
+    fn resolve1_multiple_bindings_preserve_subgoal_order() {
+        let ctx = resolution_ctx(&["A", "B", "C", "S"]);
+        let rule = schematic_eq_rule(&ctx);
+        let eq = Term::mk_eq(prop_term(&ctx, "B"), prop_term(&ctx, "C")).unwrap();
         let goal_term =
-            Term::mk_imp_chain(&[prop_term(&ctx, "A"), b_eq_c.clone()], &prop_term(&ctx, "S"))
-                .unwrap();
-        let goal = KernelRules::assume(certify_prop_term(&ctx, &goal_term)).into_kernel();
+            Term::mk_imp_chain(&[prop_term(&ctx, "A"), eq.clone()], &prop_term(&ctx, "S")).unwrap();
+        let goal = KernelRules::assume(certify_prop_term(&ctx, &goal_term)).unwrap();
 
-        let result = KernelRules::resolve1_match(&rule, &goal, 1).unwrap();
-
-        let subst = KernelRules::match_terms_certified(&rule_concl, &b_eq_c, ctx.stamp()).unwrap();
-        let rule_prems_sigma: Vec<Term> =
-            [p_var, q_var].iter().map(|prem| prem.instantiate_vars(&subst)).collect();
-        let expected = goal
-            .prop()
-            .term()
-            .instantiate_vars(&subst)
-            .replace_subgoal_with_premises(1, &rule_prems_sigma)
-            .unwrap();
-
+        let result = KernelRules::resolve1_match(&rule, goal.as_kernel(), 1).unwrap();
+        let expected = Term::mk_imp_chain(
+            &[prop_term(&ctx, "A"), prop_term(&ctx, "B"), eq],
+            &prop_term(&ctx, "S"),
+        )
+        .unwrap();
         assert_eq!(result.prop(), &certify_prop_term(&ctx, &expected));
-        super::super::invariant::check_kernel_thm(&result).unwrap();
-    }
-
-    // ── conservative bicompose wrapper tests ──
-
-    #[test]
-    fn bicompose_basic_no_vars() {
-        let ctx = ctx_with_props(&["A", "B"]);
-        let rule = assume_thm(&ctx, "A");
-        let goal = KernelRules::assume(certify_prop_term(&ctx, &imp_chain(&ctx, &["A", "B"])))
-            .into_kernel();
-
-        let result = KernelRules::bicompose(&rule, &goal, 0).unwrap();
-
-        assert_eq!(result.prop(), &certify_prop_term(&ctx, &prop_term(&ctx, "B")));
-        assert!(matches!(result.derivation(), Derivation::Resolve1Match { .. }));
-    }
-
-    #[test]
-    fn bicompose_basic_with_rule_var_match() {
-        let ctx = ctx_with_props(&["A", "B"]);
-        let p_var = Term::Var { name: Name::from("P"), index: 0, ty: Ty::prop() };
-        let rule = KernelRules::assume(certify_prop_term(&ctx, &p_var)).into_kernel();
-        let goal = KernelRules::assume(certify_prop_term(&ctx, &imp_chain(&ctx, &["A", "B"])))
-            .into_kernel();
-
-        let result = KernelRules::bicompose(&rule, &goal, 0).unwrap();
-
-        assert_eq!(result.prop(), &certify_prop_term(&ctx, &prop_term(&ctx, "B")));
-        assert!(matches!(result.derivation(), Derivation::Resolve1Match { .. }));
-    }
-
-    #[test]
-    fn bicompose_rejects_match_failure() {
-        let ctx = ctx_with_props(&["A", "B", "R"]);
-        let rule = assume_thm(&ctx, "A");
-        let goal = KernelRules::assume(certify_prop_term(&ctx, &imp_chain(&ctx, &["B", "R"])))
-            .into_kernel();
-
-        let err = KernelRules::bicompose(&rule, &goal, 0).unwrap_err();
-
-        assert!(matches!(err, KernelError::Invariant(_)), "expected match failure, got {err:?}");
-    }
-
-    #[test]
-    fn bicompose_rejects_out_of_range() {
-        let ctx = ctx_with_props(&["A", "B"]);
-        let rule = assume_thm(&ctx, "B");
-        let goal = KernelRules::assume(certify_prop_term(&ctx, &imp_chain(&ctx, &["A", "B"])))
-            .into_kernel();
-
-        let err = KernelRules::bicompose(&rule, &goal, 1).unwrap_err();
-
-        assert!(matches!(err, KernelError::SubgoalIndexOutOfRange { index: 1, nprems: 1 }));
-    }
-
-    #[test]
-    fn bicompose_selected_index_is_goal_subgoal() {
-        let ctx = ctx_with_props(&["A", "B", "C", "R"]);
-        let rule = KernelRules::assume(certify_prop_term(&ctx, &imp_chain(&ctx, &["A", "C"])))
-            .into_kernel();
-        let goal = KernelRules::assume(certify_prop_term(&ctx, &imp_chain(&ctx, &["B", "C", "R"])))
-            .into_kernel();
-
-        let wrong_index = KernelRules::bicompose(&rule, &goal, 0).unwrap_err();
-        assert!(matches!(wrong_index, KernelError::Invariant(_)));
-
-        let result = KernelRules::bicompose(&rule, &goal, 1).unwrap();
-        assert_eq!(result.prop(), &certify_prop_term(&ctx, &imp_chain(&ctx, &["B", "A", "R"])));
-    }
-
-    #[test]
-    fn bicompose_replaces_selected_subgoal() {
-        let ctx = ctx_with_props(&["A", "B", "C", "R"]);
-        let rule = KernelRules::assume(certify_prop_term(&ctx, &imp_chain(&ctx, &["B", "C"])))
-            .into_kernel();
-        let goal = KernelRules::assume(certify_prop_term(&ctx, &imp_chain(&ctx, &["A", "C", "R"])))
-            .into_kernel();
-
-        let result = KernelRules::bicompose(&rule, &goal, 1).unwrap();
-
-        assert_eq!(result.prop(), &certify_prop_term(&ctx, &imp_chain(&ctx, &["A", "B", "R"])));
-    }
-
-    #[test]
-    fn bicompose_applies_substitution_to_rule_premises() {
-        let ctx = ctx_with_props(&["H", "A", "B", "R"]);
-        let p_var = Term::Var { name: Name::from("P"), index: 0, ty: Ty::prop() };
-        let q_var = Term::Var { name: Name::from("Q"), index: 1, ty: Ty::prop() };
-        let rule_concl = Term::mk_eq(p_var.clone(), q_var).unwrap();
-        let rule_term = Term::mk_imp_chain(&[p_var], &rule_concl).unwrap();
-        let rule = KernelRules::assume(certify_prop_term(&ctx, &rule_term)).into_kernel();
-        let goal_eq = Term::mk_eq(prop_term(&ctx, "A"), prop_term(&ctx, "B")).unwrap();
-        let goal_term =
-            Term::mk_imp_chain(&[prop_term(&ctx, "H"), goal_eq], &prop_term(&ctx, "R")).unwrap();
-        let goal = KernelRules::assume(certify_prop_term(&ctx, &goal_term)).into_kernel();
-
-        let result = KernelRules::bicompose(&rule, &goal, 1).unwrap();
-
-        assert_eq!(result.prop(), &certify_prop_term(&ctx, &imp_chain(&ctx, &["H", "A", "R"])));
-    }
-
-    #[test]
-    fn bicompose_rejects_goal_remaining_subgoal_substitution_without_lifting() {
-        let ctx = ctx_with_props(&["A", "R"]);
-        let p_var = Term::Var { name: Name::from("P"), index: 0, ty: Ty::prop() };
-        let rule = KernelRules::assume(certify_prop_term(&ctx, &p_var)).into_kernel();
-        let goal_term =
-            Term::mk_imp_chain(&[p_var, prop_term(&ctx, "A")], &prop_term(&ctx, "R")).unwrap();
-        let goal = KernelRules::assume(certify_prop_term(&ctx, &goal_term)).into_kernel();
-
-        let err = KernelRules::bicompose(&rule, &goal, 1).unwrap_err();
-
-        assert!(matches!(err, KernelError::RequiresLifting { .. }), "got {err:?}");
-    }
-
-    #[test]
-    fn bicompose_applies_substitution_to_hypotheses() {
-        let ctx = ctx_with_props(&["A", "R"]);
-        let p_var = Term::Var { name: Name::from("P"), index: 0, ty: Ty::prop() };
-        let rule = KernelRules::assume(certify_prop_term(&ctx, &p_var)).into_kernel();
-        let goal = KernelRules::assume(certify_prop_term(&ctx, &imp_chain(&ctx, &["A", "R"])))
-            .into_kernel();
-
-        let result = KernelRules::bicompose(&rule, &goal, 0).unwrap();
-        let substituted_hyp = certify_prop_term(&ctx, &prop_term(&ctx, "A"));
-
-        assert!(result.hyps().iter().any(|hyp| hyp == &substituted_hyp));
-        assert!(result.hyps().iter().all(
-            |hyp| !matches!(hyp.term(), Term::Var { name, index: 0, .. } if name.as_str() == "P")
-        ));
-    }
-
-    #[test]
-    fn bicompose_rejects_free_collision_without_lifting() {
-        let mut sig = Signature::new();
-        sig = sig.extend_const("R", Ty::prop()).unwrap();
-        let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
-        ctx.declare_free("x", ty("nat"));
-
-        let x_cterm = ctx.certify_term(super::super::RawTerm::free("x", ty("nat"))).unwrap();
-        let x_term = x_cterm.term().clone();
-        let rule = KernelRules::reflexive(x_cterm).into_kernel();
-        let goal_imp = Term::Imp {
-            premise: Box::new(Term::mk_eq(x_term.clone(), x_term).unwrap()),
-            conclusion: Box::new(prop_term(&ctx, "R")),
-        };
-        let goal = KernelRules::assume(certify_prop_term(&ctx, &goal_imp)).into_kernel();
-
-        let err = KernelRules::bicompose(&rule, &goal, 0).unwrap_err();
-
-        assert!(matches!(err, KernelError::RequiresLifting { .. }), "got {err:?}");
-    }
-
-    #[test]
-    fn bicompose_rejects_var_namespace_collision_without_lifting() {
-        let ctx = ctx_with_props(&["R"]);
-        let p_var = Term::Var { name: Name::from("P"), index: 0, ty: Ty::prop() };
-        let rule = KernelRules::assume(certify_prop_term(&ctx, &p_var)).into_kernel();
-        let goal_term = Term::mk_imp_chain(&[p_var], &prop_term(&ctx, "R")).unwrap();
-        let goal = KernelRules::assume(certify_prop_term(&ctx, &goal_term)).into_kernel();
-
-        let err = KernelRules::bicompose(&rule, &goal, 0).unwrap_err();
-
-        assert!(matches!(err, KernelError::RequiresLifting { .. }), "got {err:?}");
-    }
-
-    #[test]
-    fn bicompose_allows_same_var_name_different_index_without_lifting() {
-        let ctx = ctx_with_props(&["A", "R"]);
-        let rule_var = Term::Var { name: Name::from("P"), index: 0, ty: Ty::prop() };
-        let goal_var = Term::Var { name: Name::from("P"), index: 1, ty: Ty::prop() };
-        let rule = KernelRules::assume(certify_prop_term(&ctx, &rule_var)).into_kernel();
-        let goal_term =
-            Term::mk_imp_chain(&[goal_var.clone(), prop_term(&ctx, "A")], &prop_term(&ctx, "R"))
-                .unwrap();
-        let goal = KernelRules::assume(certify_prop_term(&ctx, &goal_term)).into_kernel();
-
-        let result = KernelRules::bicompose(&rule, &goal, 1).unwrap();
-
-        let expected = Term::mk_imp_chain(&[goal_var], &prop_term(&ctx, "R")).unwrap();
-        assert_eq!(result.prop(), &certify_prop_term(&ctx, &expected));
-        assert!(matches!(result.derivation(), Derivation::Resolve1Match { .. }));
-        super::super::invariant::check_kernel_thm(&result).unwrap();
-    }
-
-    #[test]
-    fn bicompose_allows_non_overlapping_goal_side_var() {
-        let ctx = ctx_with_props(&["A", "R"]);
-        let rule_var = Term::Var { name: Name::from("P"), index: 0, ty: Ty::prop() };
-        let goal_var = Term::Var { name: Name::from("Q"), index: 1, ty: Ty::prop() };
-        let rule = KernelRules::assume(certify_prop_term(&ctx, &rule_var)).into_kernel();
-        let goal_term =
-            Term::mk_imp_chain(&[goal_var.clone(), prop_term(&ctx, "A")], &prop_term(&ctx, "R"))
-                .unwrap();
-        let goal = KernelRules::assume(certify_prop_term(&ctx, &goal_term)).into_kernel();
-
-        let result = KernelRules::bicompose(&rule, &goal, 1).unwrap();
-
-        let expected = Term::mk_imp_chain(&[goal_var], &prop_term(&ctx, "R")).unwrap();
-        assert_eq!(result.prop(), &certify_prop_term(&ctx, &expected));
-        assert!(matches!(result.derivation(), Derivation::Resolve1Match { .. }));
-        super::super::invariant::check_kernel_thm(&result).unwrap();
-    }
-
-    #[test]
-    fn bicompose_invariant_check_passes() {
-        let ctx = ctx_with_props(&["A", "B", "C", "R"]);
-        let rule = KernelRules::assume(certify_prop_term(&ctx, &imp_chain(&ctx, &["B", "C"])))
-            .into_kernel();
-        let goal = KernelRules::assume(certify_prop_term(&ctx, &imp_chain(&ctx, &["A", "C", "R"])))
-            .into_kernel();
-
-        let result = KernelRules::bicompose(&rule, &goal, 1).unwrap();
-
         super::super::invariant::check_kernel_thm(&result).unwrap();
     }
 }

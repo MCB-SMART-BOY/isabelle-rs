@@ -1,0 +1,22 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96.0"
+license.workspace = true
+publish = false
+
+[dependencies]
+isabelle-evidence = { path = "../crates/evidence" }
+flate2 = "1"
+libc = "0.2"
+rusqlite = { version = "0.32", features = ["bundled"] }
+rustix = { version = "1", features = ["pipe", "fs"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["unbounded_depth"] }
+sha1 = "0.10"
+sha2 = "0.10"
+signal-hook = "0.3"
+tar = "0.4"
+tempfile = "3"
+zip = { version = "9", default-features = false, features = ["deflate"] }

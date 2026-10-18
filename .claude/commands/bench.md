@@ -1,12 +1,15 @@
 ---
 name: bench
-description: Run performance benchmarks and test matrix
+description: Select scoped theory diagnostics; benchmark performance only with separately measured runs
 category: meta
 ---
 # /bench
 
-运行维护的验证矩阵。使用 `scripts/dev-check.sh strict`；需要理论
-宽验证时使用 `core`、`tier2`、`tier3` 或 `broad` 模式。
-
-当前 sampled core 基线是 `TransitionalStrictClosed: 1/125` 和
-`KernelTrustedClosed: 0/125`，不得声称 `125/125` 可信证明。
+仓库级确定性验证使用 `cargo +stable xtask verify`；`selftest` 单独验证
+xtask。信任边界用 `strict`，125 定理采样用 `core`，理论统计诊断需显式
+选择 `tier2`、`tier3`、`broad` 或 `all`；后两者不是完整质量门，也不
+包含 workspace `test`。`lib` 仅是 root library suite，`test` 才是完整
+workspace 测试。外部安全审计与全局质量门独立执行和报告。
+实际性能 benchmark 另需单独测量并报告输入/输出。历史 bundled 125
+采样为 `KernelTrustedClosed: 1/125`（`HOL::TrueI` 源码投影）、
+`TransitionalStrictClosed: 0/125`，不是本次验证结果；统计完成不是证明成功。

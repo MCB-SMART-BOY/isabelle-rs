@@ -8,7 +8,7 @@ permissions: [Bash:cargo test, Bash:RUST_MIN_STACK, Read]
 ---
 # Debug Stack Overflow
 
-First reproduce with the appropriate `scripts/dev-check.sh` mode, which sets the
+First reproduce with the appropriate `cargo +stable xtask` mode; Cargo sets the
 standard large stack. If failure persists, distinguish deep finite input from
 non-progress recursion using a focused test and backtrace.
 

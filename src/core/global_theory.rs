@@ -52,7 +52,7 @@ mod tests {
     #[test]
     fn test_all_named_thms() {
         let pure = Theory::pure();
-        let mut thy = Theory::begin("Test", vec![pure]);
+        let mut thy = Theory::begin("Test", vec![pure]).unwrap();
         let mut env = TypeEnv::new();
         let prop_t = Typ::base("prop");
         env.declare_const("A", prop_t.clone());

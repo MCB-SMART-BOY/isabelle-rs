@@ -107,14 +107,13 @@ pub fn axclass_to_lemmas(cls: &AxClass) -> Vec<crate::hol::hol_loader::ParsedLem
     let class_def_term = Term::const_(class_def_name.as_str(), Typ::base("prop"));
     let thm = ThmKernel::assume_compat(CTerm::certify(class_def_term));
 
-    lemmas.push(crate::hol::hol_loader::ParsedLemma {
-        name: format!("{}.class_def", cls.name),
-        attributes: vec!["class_def".to_string()],
-        theorem: Arc::new(thm),
-        proof_script: None,
-        alias_for: None,
-        source_loc: None,
-    });
+    lemmas.push(crate::hol::hol_loader::ParsedLemma::new_synthetic(
+        format!("{}.class_def", cls.name),
+        vec!["class_def".to_string()],
+        Arc::new(thm),
+        None,
+        None,
+    ));
 
     lemmas
 }

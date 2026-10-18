@@ -52,6 +52,7 @@
 //! - Lean 4 Server: <https://github.com/leanprover/lean4/tree/master/src/Lean/Server>
 //! - Coq-lsp: <https://github.com/ejgallego/coq-lsp>
 
+mod check_scheduler;
 pub mod handler;
 pub mod isabelle_ext;
 pub mod lsp_types;

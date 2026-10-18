@@ -1,10 +1,16 @@
+use std::collections::BTreeSet;
+
 use isabelle_rs::kernel::{
-    Derivation, InstEntry, KernelError, KernelRules, Name, ProofContext, ProofObligation, RawTerm,
-    SearchFact, SearchFactDb, Signature, Term, TheorySnapshot, Ty, invariant::check_kernel_thm,
+    KernelError, KernelRules, ProofContext, ProofObligation, RawTerm, SearchFact, SearchFactDb,
+    Signature, Term, TheorySnapshot, Ty, invariant::check_kernel_thm,
 };
 
 fn ty(name: &str) -> Ty {
     Ty::base(name).unwrap()
+}
+
+fn signature_with_nat() -> Signature {
+    Signature::new().extend_type_constructor("nat", 0).unwrap()
 }
 
 fn prop(name: &str) -> RawTerm {
@@ -20,7 +26,7 @@ fn ctx_with_props(names: &[&str]) -> ProofContext {
 }
 
 fn ctx_with_nat_consts(names: &[&str]) -> ProofContext {
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     for name in names {
         sig = sig.extend_const(*name, ty("nat")).unwrap();
     }
@@ -31,7 +37,7 @@ fn ctx_with_nat_consts(names: &[&str]) -> ProofContext {
 fn strict_kernel_pure_imp_identity_closes() {
     let ctx = ctx_with_props(&["A"]);
     let a = ctx.certify_prop(prop("A")).unwrap();
-    let assumed = KernelRules::assume(a.clone()).into_kernel();
+    let assumed = KernelRules::assume(a.clone()).unwrap().into_kernel();
     let identity = KernelRules::implies_intr(&a, &assumed).unwrap();
 
     assert!(identity.hyps().is_empty());
@@ -58,7 +64,7 @@ fn undeclared_free_is_rejected() {
 
 #[test]
 fn reject_bool_as_theorem_proposition() {
-    let mut sig = Signature::new();
+    let mut sig = Signature::new().extend_type_constructor("bool", 0).unwrap();
     sig = sig.extend_const("b", ty("bool")).unwrap();
     let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
@@ -69,7 +75,7 @@ fn reject_bool_as_theorem_proposition() {
 
 #[test]
 fn reject_hol_true_bool_without_trueprop() {
-    let mut sig = Signature::new();
+    let mut sig = Signature::new().extend_type_constructor("bool", 0).unwrap();
     sig = sig.extend_const("HOL.True", ty("bool")).unwrap();
     let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
 
@@ -83,7 +89,7 @@ fn reject_hol_eq_bool_without_trueprop() {
     let nat = ty("nat");
     let bool_ty = ty("bool");
     let eq_ty = Ty::arrow(nat.clone(), Ty::arrow(nat.clone(), bool_ty.clone()));
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat().extend_type_constructor("bool", 0).unwrap();
     sig = sig.extend_const("HOL.eq", eq_ty.clone()).unwrap();
     sig = sig.extend_const("a", nat.clone()).unwrap();
     sig = sig.extend_const("b", nat.clone()).unwrap();
@@ -102,7 +108,7 @@ fn reject_hol_eq_bool_without_trueprop() {
 fn declared_trueprop_wraps_hol_true_as_cprop() {
     let bool_ty = ty("bool");
     let trueprop_ty = Ty::arrow(bool_ty.clone(), Ty::prop());
-    let mut sig = Signature::new();
+    let mut sig = Signature::new().extend_type_constructor("bool", 0).unwrap();
     sig = sig.extend_const("HOL.True", bool_ty.clone()).unwrap();
     sig = sig.extend_const("HOL.Trueprop", trueprop_ty.clone()).unwrap();
     let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
@@ -123,7 +129,7 @@ fn dummy_type_is_not_constructible() {
 
 #[test]
 fn ill_typed_application_is_rejected() {
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("f", Ty::arrow(ty("nat"), ty("nat"))).unwrap();
     sig = sig.extend_const("P", Ty::prop()).unwrap();
     let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
@@ -138,7 +144,7 @@ fn ill_typed_application_is_rejected() {
 
 #[test]
 fn declared_const_and_free_are_certified() {
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("A", Ty::prop()).unwrap();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
@@ -149,7 +155,7 @@ fn declared_const_and_free_are_certified() {
 
 #[test]
 fn free_const_middle_mismatch_is_rejected() {
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     for name in ["a", "b", "Groups.zero"] {
         sig = sig.extend_const(name, ty("nat")).unwrap();
     }
@@ -168,8 +174,8 @@ fn free_const_middle_mismatch_is_rejected() {
             RawTerm::const_("b", ty("nat")),
         ))
         .unwrap();
-    let left_thm = KernelRules::assume(left_eq).into_kernel();
-    let right_thm = KernelRules::assume(right_eq).into_kernel();
+    let left_thm = KernelRules::assume(left_eq).unwrap().into_kernel();
+    let right_thm = KernelRules::assume(right_eq).unwrap().into_kernel();
     assert!(matches!(
         KernelRules::transitive(&left_thm, &right_thm),
         Err(KernelError::MiddleMismatch)
@@ -178,16 +184,12 @@ fn free_const_middle_mismatch_is_rejected() {
 
 #[test]
 fn var_free_middle_mismatch_is_rejected() {
-    let mut ctx = ctx_with_nat_consts(&["a", "b"]);
+    let mut ctx = ctx_with_nat_consts(&[]);
     ctx.declare_free("x", ty("nat"));
-    let left_eq = ctx
-        .certify_prop(RawTerm::eq(RawTerm::const_("a", ty("nat")), RawTerm::var("x", 7, ty("nat"))))
-        .unwrap();
-    let right_eq = ctx
-        .certify_prop(RawTerm::eq(RawTerm::free("x", ty("nat")), RawTerm::const_("b", ty("nat"))))
-        .unwrap();
-    let left = KernelRules::assume(left_eq).into_kernel();
-    let right = KernelRules::assume(right_eq).into_kernel();
+    let variable = ctx.certify_term(RawTerm::var("x", 7, ty("nat"))).unwrap();
+    let fixed = ctx.certify_term(RawTerm::free("x", ty("nat"))).unwrap();
+    let left = KernelRules::reflexive(variable).into_kernel();
+    let right = KernelRules::reflexive(fixed).into_kernel();
     assert!(matches!(KernelRules::transitive(&left, &right), Err(KernelError::MiddleMismatch)));
 }
 
@@ -195,7 +197,7 @@ fn var_free_middle_mismatch_is_rejected() {
 fn assume_yields_strict_open_theorem() {
     let ctx = ctx_with_props(&["A"]);
     let a = ctx.certify_prop(prop("A")).unwrap();
-    let thm = KernelRules::assume(a).into_kernel();
+    let thm = KernelRules::assume(a).unwrap().into_kernel();
 
     assert!(thm.is_open());
     assert_eq!(thm.hyps().len(), 1);
@@ -216,7 +218,7 @@ fn reflexive_yields_closed_replayable_theorem() {
 fn implies_intr_discharges_hypothesis() {
     let ctx = ctx_with_props(&["A"]);
     let a = ctx.certify_prop(prop("A")).unwrap();
-    let assumed = KernelRules::assume(a.clone()).into_kernel();
+    let assumed = KernelRules::assume(a.clone()).unwrap().into_kernel();
     let identity = KernelRules::implies_intr(&a, &assumed).unwrap();
 
     assert!(identity.hyps().is_empty());
@@ -230,9 +232,9 @@ fn implies_elim_requires_exact_antecedent() {
     let ctx = ctx_with_props(&["A", "B"]);
     let a = ctx.certify_prop(prop("A")).unwrap();
     let b = ctx.certify_prop(prop("B")).unwrap();
-    let assumed_a = KernelRules::assume(a.clone()).into_kernel();
+    let assumed_a = KernelRules::assume(a.clone()).unwrap().into_kernel();
     let identity = KernelRules::implies_intr(&a, &assumed_a).unwrap();
-    let assumed_b = KernelRules::assume(b).into_kernel();
+    let assumed_b = KernelRules::assume(b).unwrap().into_kernel();
 
     assert!(matches!(
         KernelRules::implies_elim(&identity, &assumed_b),
@@ -244,9 +246,9 @@ fn implies_elim_requires_exact_antecedent() {
 fn implies_elim_preserves_open_minor_hypothesis() {
     let ctx = ctx_with_props(&["A"]);
     let a = ctx.certify_prop(prop("A")).unwrap();
-    let assumed_a = KernelRules::assume(a.clone()).into_kernel();
+    let assumed_a = KernelRules::assume(a.clone()).unwrap().into_kernel();
     let identity = KernelRules::implies_intr(&a, &assumed_a).unwrap();
-    let minor = KernelRules::assume(a).into_kernel();
+    let minor = KernelRules::assume(a).unwrap().into_kernel();
     let result = KernelRules::implies_elim(&identity, &minor).unwrap();
 
     assert_eq!(result.hyps().len(), 1);
@@ -262,8 +264,8 @@ fn transitive_requires_typed_middle_equality() {
     let right = ctx
         .certify_prop(RawTerm::eq(RawTerm::const_("c", ty("nat")), RawTerm::const_("a", ty("nat"))))
         .unwrap();
-    let left = KernelRules::assume(left).into_kernel();
-    let right = KernelRules::assume(right).into_kernel();
+    let left = KernelRules::assume(left).unwrap().into_kernel();
+    let right = KernelRules::assume(right).unwrap().into_kernel();
 
     assert!(matches!(KernelRules::transitive(&left, &right), Err(KernelError::MiddleMismatch)));
 }
@@ -296,7 +298,7 @@ fn search_fact_cannot_enter_trusted_theory() {
 
 #[test]
 fn beta_conversion_reduces_identity() {
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     // (λx:nat. x) a  ≡  a
@@ -317,7 +319,7 @@ fn beta_conversion_reduces_identity() {
 
 #[test]
 fn beta_conversion_rejects_non_application() {
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     let a = ctx.certify_term(RawTerm::const_("a", ty("nat"))).unwrap();
@@ -326,7 +328,7 @@ fn beta_conversion_rejects_non_application() {
 
 #[test]
 fn beta_conversion_rejects_non_lambda() {
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     sig = sig.extend_const("f", Ty::arrow(ty("nat"), ty("nat"))).unwrap();
     let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
@@ -356,7 +358,7 @@ fn beta_conversion_produces_closed_replayable_theorem() {
 
 #[test]
 fn beta_conversion_substitution_is_correct() {
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     sig = sig.extend_const("f", Ty::arrow(ty("nat"), ty("nat"))).unwrap();
     let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
@@ -388,7 +390,7 @@ fn beta_conversion_substitution_is_correct() {
 
 #[test]
 fn beta_conversion_inner_bound_preserved() {
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     // (λx:nat. (λy:nat. y) x) a  ≡  (λy:nat. y) a
@@ -432,7 +434,7 @@ fn beta_conversion_nested_lambda_preserves_outer() {
     // The inner lambda body (Bound(1) = x) is correctly substituted with `a`.
     // de Bruijn: outer Abs body = Abs("y", nat, Bound(1)).
     // instantiate_bound0 replaces Bound(0) → a, inner bound shift means Bound(1) → a.
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     let redex = ctx
@@ -459,7 +461,7 @@ fn beta_conversion_arg_with_bound_lifts_correctly() {
     // The argument (λx:nat. x) is itself an abstraction containing Bound(0).
     // When substituted into the body, lift must correctly shift the bound index
     // so it doesn't become captured by any inner binder.
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     let redex = ctx
@@ -488,7 +490,7 @@ fn beta_conversion_arg_with_bound_lifts_correctly() {
 fn beta_conversion_triple_nested() {
     // (λx:nat. (λy:nat. (λz:nat. x))) a  ≡  (λy:nat. (λz:nat. a))
     // Triple nesting stresses the lift/subst interaction across multiple binder layers.
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     let redex = ctx
@@ -518,7 +520,7 @@ fn beta_conversion_triple_nested() {
 // ---------------------------------------------------------------------------
 
 fn ctx_with_nat_free(name: &str) -> ProofContext {
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free(name, ty("nat"));
@@ -529,7 +531,7 @@ fn ctx_with_nat_free(name: &str) -> ProofContext {
 fn forall_intr_generalises_free_variable() {
     // x == a |- x == a  →  implies_intr discharges hyps  →  |- (x == a) ⇒ (x == a)
     // Then forall_intr(x)  →  |- ⋀x. ((x == a) ⇒ (x == a))
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
@@ -539,7 +541,7 @@ fn forall_intr_generalises_free_variable() {
         .unwrap();
 
     // Build a theorem whose conclusion mentions x but hypotheses don't.
-    let assumed = KernelRules::assume(eq_prop.clone()).into_kernel();
+    let assumed = KernelRules::assume(eq_prop.clone()).unwrap().into_kernel();
     let discharged = KernelRules::implies_intr(&eq_prop, &assumed).unwrap();
     assert!(discharged.hyps().is_empty());
 
@@ -566,7 +568,7 @@ fn forall_intr_rejects_variable_free_in_hypotheses() {
     let eq_prop = ctx
         .certify_prop(RawTerm::eq(RawTerm::free("x", ty("nat")), RawTerm::const_("a", ty("nat"))))
         .unwrap();
-    let open_thm = KernelRules::assume(eq_prop).into_kernel(); // {x == a} |- x == a
+    let open_thm = KernelRules::assume(eq_prop).unwrap().into_kernel(); // {x == a} |- x == a
 
     let x_var = ctx.certify_term(RawTerm::free("x", ty("nat"))).unwrap();
     assert!(matches!(
@@ -582,7 +584,7 @@ fn forall_intr_rejects_non_free_variable() {
     let eq_prop = ctx
         .certify_prop(RawTerm::eq(RawTerm::free("x", ty("nat")), RawTerm::const_("a", ty("nat"))))
         .unwrap();
-    let assumed = KernelRules::assume(eq_prop.clone()).into_kernel();
+    let assumed = KernelRules::assume(eq_prop.clone()).unwrap().into_kernel();
     let discharged = KernelRules::implies_intr(&eq_prop, &assumed).unwrap();
 
     let a_const = ctx.certify_term(RawTerm::const_("a", ty("nat"))).unwrap();
@@ -599,7 +601,7 @@ fn forall_intr_produces_closed_theorem_from_closed() {
     let eq_prop = ctx
         .certify_prop(RawTerm::eq(RawTerm::free("x", ty("nat")), RawTerm::const_("a", ty("nat"))))
         .unwrap();
-    let assumed = KernelRules::assume(eq_prop.clone()).into_kernel();
+    let assumed = KernelRules::assume(eq_prop.clone()).unwrap().into_kernel();
     let closed = KernelRules::implies_intr(&eq_prop, &assumed).unwrap().try_close().unwrap();
 
     let x_var = ctx.certify_term(RawTerm::free("x", ty("nat"))).unwrap();
@@ -615,7 +617,7 @@ fn forall_intr_invariant_check_passes() {
     let eq_prop = ctx
         .certify_prop(RawTerm::eq(RawTerm::free("x", ty("nat")), RawTerm::const_("a", ty("nat"))))
         .unwrap();
-    let assumed = KernelRules::assume(eq_prop.clone()).into_kernel();
+    let assumed = KernelRules::assume(eq_prop.clone()).unwrap().into_kernel();
     let discharged = KernelRules::implies_intr(&eq_prop, &assumed).unwrap();
 
     let x_var = ctx.certify_term(RawTerm::free("x", ty("nat"))).unwrap();
@@ -630,7 +632,7 @@ fn forall_intr_preserves_hypotheses() {
     let eq_prop = ctx
         .certify_prop(RawTerm::eq(RawTerm::free("x", ty("nat")), RawTerm::const_("a", ty("nat"))))
         .unwrap();
-    let assumed = KernelRules::assume(eq_prop.clone()).into_kernel();
+    let assumed = KernelRules::assume(eq_prop.clone()).unwrap().into_kernel();
     let discharged = KernelRules::implies_intr(&eq_prop, &assumed).unwrap();
     assert!(discharged.hyps().is_empty());
 
@@ -645,7 +647,7 @@ fn forall_intr_preserves_hypotheses() {
 #[test]
 fn forall_elim_instantiates_bound_variable() {
     // |- ⋀x: nat. (x == a) ⇒ (x == a)  →  forall_elim(a)  →  |- (a == a) ⇒ (a == a)
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
@@ -653,7 +655,7 @@ fn forall_elim_instantiates_bound_variable() {
     let eq_prop = ctx
         .certify_prop(RawTerm::eq(RawTerm::free("x", ty("nat")), RawTerm::const_("a", ty("nat"))))
         .unwrap();
-    let assumed = KernelRules::assume(eq_prop.clone()).into_kernel();
+    let assumed = KernelRules::assume(eq_prop.clone()).unwrap().into_kernel();
     let discharged = KernelRules::implies_intr(&eq_prop, &assumed).unwrap();
     let x_var = ctx.certify_term(RawTerm::free("x", ty("nat"))).unwrap();
     let forall_thm = KernelRules::forall_intr(&x_var, &discharged).unwrap();
@@ -686,7 +688,7 @@ fn forall_elim_rejects_non_forall_input() {
 #[test]
 fn forall_elim_rejects_binder_type_mismatch() {
     // ⋀x: nat. P(x)  with  arg: bool  →  type mismatch rejected.
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     sig = sig.extend_const("T", Ty::prop()).unwrap();
     sig = sig.extend_const("F", Ty::prop()).unwrap();
@@ -696,7 +698,7 @@ fn forall_elim_rejects_binder_type_mismatch() {
     let eq_prop = ctx
         .certify_prop(RawTerm::eq(RawTerm::free("x", ty("nat")), RawTerm::const_("a", ty("nat"))))
         .unwrap();
-    let assumed = KernelRules::assume(eq_prop.clone()).into_kernel();
+    let assumed = KernelRules::assume(eq_prop.clone()).unwrap().into_kernel();
     let discharged = KernelRules::implies_intr(&eq_prop, &assumed).unwrap();
     let x_var = ctx.certify_term(RawTerm::free("x", ty("nat"))).unwrap();
     let forall_thm = KernelRules::forall_intr(&x_var, &discharged).unwrap();
@@ -713,7 +715,7 @@ fn forall_elim_rejects_binder_type_mismatch() {
 fn forall_elim_preserves_hypotheses() {
     // Hypotheses should be preserved through forall_elim.
     // Build ⋀x:nat. ..., then assume it, then forall_elim — hyps stay.
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
@@ -721,14 +723,14 @@ fn forall_elim_preserves_hypotheses() {
     let eq_prop = ctx
         .certify_prop(RawTerm::eq(RawTerm::free("x", ty("nat")), RawTerm::const_("a", ty("nat"))))
         .unwrap();
-    let assumed = KernelRules::assume(eq_prop.clone()).into_kernel();
+    let assumed = KernelRules::assume(eq_prop.clone()).unwrap().into_kernel();
     let discharged = KernelRules::implies_intr(&eq_prop, &assumed).unwrap();
     let x_var = ctx.certify_term(RawTerm::free("x", ty("nat"))).unwrap();
     let forall_thm = KernelRules::forall_intr(&x_var, &discharged).unwrap();
 
     // Wrap with assume: {⋀x. ...} |- ⋀x. ...
     let forall_cprop = forall_thm.prop().clone();
-    let assumed_forall = KernelRules::assume(forall_cprop).into_kernel();
+    let assumed_forall = KernelRules::assume(forall_cprop).unwrap().into_kernel();
     assert_eq!(assumed_forall.hyps().len(), 1);
 
     // forall_elim should preserve the hypothesis.
@@ -742,7 +744,7 @@ fn forall_elim_preserves_hypotheses() {
 
 #[test]
 fn forall_elim_invariant_check_passes() {
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
@@ -750,7 +752,7 @@ fn forall_elim_invariant_check_passes() {
     let eq_prop = ctx
         .certify_prop(RawTerm::eq(RawTerm::free("x", ty("nat")), RawTerm::const_("a", ty("nat"))))
         .unwrap();
-    let assumed = KernelRules::assume(eq_prop.clone()).into_kernel();
+    let assumed = KernelRules::assume(eq_prop.clone()).unwrap().into_kernel();
     let discharged = KernelRules::implies_intr(&eq_prop, &assumed).unwrap();
     let x_var = ctx.certify_term(RawTerm::free("x", ty("nat"))).unwrap();
     let forall_thm = KernelRules::forall_intr(&x_var, &discharged).unwrap();
@@ -763,7 +765,7 @@ fn forall_elim_invariant_check_passes() {
 #[test]
 fn forall_elim_nested_forall_instantiate_outer() {
     // ⋀x:nat. ⋀y:nat. (x == y)  →  forall_elim(a)  →  ⋀y:nat. (a == y)
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
@@ -773,7 +775,7 @@ fn forall_elim_nested_forall_instantiate_outer() {
     let eq_prop = ctx
         .certify_prop(RawTerm::eq(RawTerm::free("x", ty("nat")), RawTerm::free("y", ty("nat"))))
         .unwrap();
-    let assumed = KernelRules::assume(eq_prop.clone()).into_kernel();
+    let assumed = KernelRules::assume(eq_prop.clone()).unwrap().into_kernel();
     let discharged = KernelRules::implies_intr(&eq_prop, &assumed).unwrap();
     let y_var = ctx.certify_term(RawTerm::free("y", ty("nat"))).unwrap();
     let forall_y = KernelRules::forall_intr(&y_var, &discharged).unwrap();
@@ -810,7 +812,7 @@ fn forall_elim_nested_forall_instantiate_outer() {
 #[test]
 fn forall_intr_elim_roundtrip() {
     // forall_intr(x) then forall_elim(x) should return the original proposition.
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
@@ -818,7 +820,7 @@ fn forall_intr_elim_roundtrip() {
     let eq_prop = ctx
         .certify_prop(RawTerm::eq(RawTerm::free("x", ty("nat")), RawTerm::const_("a", ty("nat"))))
         .unwrap();
-    let assumed = KernelRules::assume(eq_prop.clone()).into_kernel();
+    let assumed = KernelRules::assume(eq_prop.clone()).unwrap().into_kernel();
     let discharged = KernelRules::implies_intr(&eq_prop, &assumed).unwrap();
     // discharged: |- (x == a) ⇒ (x == a)
 
@@ -842,7 +844,7 @@ fn forall_elim_does_not_replace_bound1() {
     //   ⋀y. ⋀x. ((Bound(1) == Bound(0)) ⇒ (Bound(1) == Bound(0)))
     // Eliminating the outer y with a gives:
     //   ⋀x. ((a == Bound(0)) ⇒ (a == Bound(0)))
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
@@ -853,7 +855,7 @@ fn forall_elim_does_not_replace_bound1() {
     let eq_prop = ctx
         .certify_prop(RawTerm::eq(RawTerm::free("y", ty("nat")), RawTerm::free("x", ty("nat"))))
         .unwrap();
-    let assumed = KernelRules::assume(eq_prop.clone()).into_kernel();
+    let assumed = KernelRules::assume(eq_prop.clone()).unwrap().into_kernel();
     let discharged = KernelRules::implies_intr(&eq_prop, &assumed).unwrap();
     // discharged: |- (y == x) ⇒ (y == x)
     let x_var = ctx.certify_term(RawTerm::free("x", ty("nat"))).unwrap();
@@ -884,7 +886,7 @@ fn forall_elim_does_not_replace_bound1() {
 fn forall_elim_replaces_all_bound0_occurrences() {
     // ⋀x:nat. (x == x)  →  forall_elim(x, a)  →  (a == a)
     // Both Bound(0) occurrences must be replaced.
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
@@ -893,7 +895,7 @@ fn forall_elim_replaces_all_bound0_occurrences() {
     let eq_prop = ctx
         .certify_prop(RawTerm::eq(RawTerm::free("x", ty("nat")), RawTerm::free("x", ty("nat"))))
         .unwrap();
-    let assumed = KernelRules::assume(eq_prop.clone()).into_kernel();
+    let assumed = KernelRules::assume(eq_prop.clone()).unwrap().into_kernel();
     let discharged = KernelRules::implies_intr(&eq_prop, &assumed).unwrap();
     let x_var = ctx.certify_term(RawTerm::free("x", ty("nat"))).unwrap();
     let forall_thm = KernelRules::forall_intr(&x_var, &discharged).unwrap();
@@ -916,7 +918,7 @@ fn forall_elim_replaces_all_bound0_occurrences() {
 fn forall_elim_consecutive_nested() {
     // ⋀x:nat. ⋀y:nat. (x == y)  →  forall_elim(a)  →  ⋀y:nat. (a == y)
     // →  forall_elim(b)  →  (a == b)
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     sig = sig.extend_const("b", ty("nat")).unwrap();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
@@ -927,7 +929,7 @@ fn forall_elim_consecutive_nested() {
     let eq_prop = ctx
         .certify_prop(RawTerm::eq(RawTerm::free("x", ty("nat")), RawTerm::free("y", ty("nat"))))
         .unwrap();
-    let assumed = KernelRules::assume(eq_prop.clone()).into_kernel();
+    let assumed = KernelRules::assume(eq_prop.clone()).unwrap().into_kernel();
     let discharged = KernelRules::implies_intr(&eq_prop, &assumed).unwrap();
     let y_var = ctx.certify_term(RawTerm::free("y", ty("nat"))).unwrap();
     let forall_y = KernelRules::forall_intr(&y_var, &discharged).unwrap();
@@ -956,7 +958,7 @@ fn forall_elim_with_abs_argument() {
     // ⋀f:(nat→nat). (f a == a)  →  forall_elim(λx:nat. x)  →  ((λx:nat. x) a == a)
     // Teast that an Abs term as argument substitutes correctly.
     let nat_to_nat = Ty::arrow(ty("nat"), ty("nat"));
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("f", nat_to_nat.clone());
@@ -966,7 +968,7 @@ fn forall_elim_with_abs_argument() {
     let f_app = RawTerm::app(f_var.clone(), RawTerm::const_("a", ty("nat")));
     let eq_prop =
         ctx.certify_prop(RawTerm::eq(f_app.clone(), RawTerm::const_("a", ty("nat")))).unwrap();
-    let assumed = KernelRules::assume(eq_prop.clone()).into_kernel();
+    let assumed = KernelRules::assume(eq_prop.clone()).unwrap().into_kernel();
     let discharged = KernelRules::implies_intr(&eq_prop, &assumed).unwrap();
     let f_cterm = ctx.certify_term(f_var).unwrap();
     let forall_thm = KernelRules::forall_intr(&f_cterm, &discharged).unwrap();
@@ -996,7 +998,7 @@ fn beta_conversion_then_forall_elim() {
     //   4. forall_intr(x)
     //   5. forall_elim(x, a) → |- ((λz. z) a) == a
     // Verify substitution and beta don't interfere.
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
@@ -1013,7 +1015,7 @@ fn beta_conversion_then_forall_elim() {
 
     // Step 2: assume this equality, then implies_intr to discharge.
     let beta_prop = beta_thm.as_kernel().prop().clone();
-    let assumed = KernelRules::assume(beta_prop.clone()).into_kernel();
+    let assumed = KernelRules::assume(beta_prop.clone()).unwrap().into_kernel();
     let discharged = KernelRules::implies_intr(&beta_prop, &assumed).unwrap();
 
     // Step 3: forall_intr(x)
@@ -1044,7 +1046,7 @@ fn combination_basic_application() {
     // Assume {f == g}, assume {a == b}
     // combination → {f==g, a==b} |- f a == g b
     let fn_ty = Ty::arrow(ty("nat"), ty("nat"));
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("f", fn_ty.clone()).unwrap();
     sig = sig.extend_const("g", fn_ty.clone()).unwrap();
     sig = sig.extend_const("a", ty("nat")).unwrap();
@@ -1061,8 +1063,8 @@ fn combination_basic_application() {
         .certify_prop(RawTerm::eq(RawTerm::const_("a", ty("nat")), RawTerm::const_("b", ty("nat"))))
         .unwrap();
 
-    let th_f = KernelRules::assume(f_eq_g).into_kernel();
-    let th_x = KernelRules::assume(a_eq_b).into_kernel();
+    let th_f = KernelRules::assume(f_eq_g).unwrap().into_kernel();
+    let th_x = KernelRules::assume(a_eq_b).unwrap().into_kernel();
 
     let result = KernelRules::combination(&th_f, &th_x).unwrap();
 
@@ -1084,7 +1086,7 @@ fn combination_basic_application() {
 #[test]
 fn combination_rejects_non_equality_function_premise() {
     // First premise is an implication, not equality.
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("P", Ty::prop()).unwrap();
     sig = sig.extend_const("Q", Ty::prop()).unwrap();
     sig = sig.extend_const("a", ty("nat")).unwrap();
@@ -1100,8 +1102,8 @@ fn combination_rejects_non_equality_function_premise() {
         .certify_prop(RawTerm::eq(RawTerm::const_("a", ty("nat")), RawTerm::const_("a", ty("nat"))))
         .unwrap();
 
-    let th_bad = KernelRules::assume(p_imp_q).into_kernel();
-    let th_x = KernelRules::assume(a_eq_a).into_kernel();
+    let th_bad = KernelRules::assume(p_imp_q).unwrap().into_kernel();
+    let th_x = KernelRules::assume(a_eq_a).unwrap().into_kernel();
 
     let err = KernelRules::combination(&th_bad, &th_x).unwrap_err();
     assert!(matches!(err, KernelError::NotEquality));
@@ -1111,7 +1113,7 @@ fn combination_rejects_non_equality_function_premise() {
 fn combination_rejects_non_equality_argument_premise() {
     // Second premise is an implication, not equality.
     let fn_ty = Ty::arrow(ty("nat"), ty("nat"));
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("f", fn_ty.clone()).unwrap();
     sig = sig.extend_const("P", Ty::prop()).unwrap();
     sig = sig.extend_const("Q", Ty::prop()).unwrap();
@@ -1130,8 +1132,8 @@ fn combination_rejects_non_equality_argument_premise() {
         ))
         .unwrap();
 
-    let th_f = KernelRules::assume(f_eq_f).into_kernel();
-    let th_bad = KernelRules::assume(p_imp_q).into_kernel();
+    let th_f = KernelRules::assume(f_eq_f).unwrap().into_kernel();
+    let th_bad = KernelRules::assume(p_imp_q).unwrap().into_kernel();
 
     let err = KernelRules::combination(&th_f, &th_bad).unwrap_err();
     assert!(matches!(err, KernelError::NotEquality));
@@ -1140,7 +1142,7 @@ fn combination_rejects_non_equality_argument_premise() {
 #[test]
 fn combination_rejects_non_function_lhs_rhs() {
     // f, g have type nat (not function).
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("f", ty("nat")).unwrap();
     sig = sig.extend_const("g", ty("nat")).unwrap();
     sig = sig.extend_const("a", ty("nat")).unwrap();
@@ -1153,8 +1155,8 @@ fn combination_rejects_non_function_lhs_rhs() {
         .certify_prop(RawTerm::eq(RawTerm::const_("a", ty("nat")), RawTerm::const_("a", ty("nat"))))
         .unwrap();
 
-    let th_f = KernelRules::assume(f_eq_g).into_kernel();
-    let th_x = KernelRules::assume(a_eq_a).into_kernel();
+    let th_f = KernelRules::assume(f_eq_g).unwrap().into_kernel();
+    let th_x = KernelRules::assume(a_eq_a).unwrap().into_kernel();
 
     let err = KernelRules::combination(&th_f, &th_x).unwrap_err();
     assert!(matches!(err, KernelError::NotFunctionType(_)));
@@ -1164,7 +1166,7 @@ fn combination_rejects_non_function_lhs_rhs() {
 fn combination_rejects_argument_domain_mismatch() {
     // f: nat → nat, but argument equality is bool == bool.
     let fn_ty = Ty::arrow(ty("nat"), ty("nat"));
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat().extend_type_constructor("bool", 0).unwrap();
     sig = sig.extend_const("f", fn_ty.clone()).unwrap();
     sig = sig.extend_const("g", fn_ty.clone()).unwrap();
     sig = sig.extend_const("x", ty("bool")).unwrap();
@@ -1184,8 +1186,8 @@ fn combination_rejects_argument_domain_mismatch() {
         ))
         .unwrap();
 
-    let th_f = KernelRules::assume(f_eq_g).into_kernel();
-    let th_x = KernelRules::assume(x_eq_y).into_kernel();
+    let th_f = KernelRules::assume(f_eq_g).unwrap().into_kernel();
+    let th_x = KernelRules::assume(x_eq_y).unwrap().into_kernel();
 
     let err = KernelRules::combination(&th_f, &th_x).unwrap_err();
     assert!(matches!(err, KernelError::TypeMismatch { .. }));
@@ -1196,7 +1198,7 @@ fn combination_preserves_hypotheses() {
     // f == g is assumed; a == a is reflexive (closed).
     // Result hyps = {f == g}.
     let fn_ty = Ty::arrow(ty("nat"), ty("nat"));
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("f", fn_ty.clone()).unwrap();
     sig = sig.extend_const("g", fn_ty.clone()).unwrap();
     sig = sig.extend_const("a", ty("nat")).unwrap();
@@ -1210,7 +1212,7 @@ fn combination_preserves_hypotheses() {
         .unwrap();
     let a_term = ctx.certify_term(RawTerm::const_("a", ty("nat"))).unwrap();
 
-    let th_f = KernelRules::assume(f_eq_g.clone()).into_kernel(); // {f==g} |- f==g
+    let th_f = KernelRules::assume(f_eq_g.clone()).unwrap().into_kernel(); // {f==g} |- f==g
     let th_a = KernelRules::reflexive(a_term).into_kernel(); // |- a == a
 
     let result = KernelRules::combination(&th_f, &th_a).unwrap();
@@ -1224,7 +1226,7 @@ fn combination_preserves_hypotheses() {
 fn combination_invariant_check_passes() {
     // Build valid combination, verify invariant replay succeeds.
     let fn_ty = Ty::arrow(ty("nat"), ty("nat"));
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("f", fn_ty.clone()).unwrap();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
@@ -1249,7 +1251,7 @@ fn combination_composes_with_reflexive_closed() {
     // reflexive a gives |- a == a
     // combination: |- f a == f a (closed, trusted)
     let fn_ty = Ty::arrow(ty("nat"), ty("nat"));
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("f", fn_ty.clone()).unwrap();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
@@ -1282,7 +1284,7 @@ fn combination_with_forall_elim_result() {
     //   4. reflexive(a) → |- a == a
     //   5. combination(f==f, a==a) → |- f a == f a (forall_elim result as function premise)
     let nat_to_nat = Ty::arrow(ty("nat"), ty("nat"));
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("f", nat_to_nat.clone()).unwrap();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
@@ -1325,7 +1327,7 @@ fn combination_codomain_not_nat() {
     // f, g: nat → bool, a, b: nat.
     // The result f a and g b should have type bool (not nat).
     let nat_to_bool = Ty::arrow(ty("nat"), ty("bool"));
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat().extend_type_constructor("bool", 0).unwrap();
     sig = sig.extend_const("f", nat_to_bool.clone()).unwrap();
     sig = sig.extend_const("g", nat_to_bool.clone()).unwrap();
     sig = sig.extend_const("a", ty("nat")).unwrap();
@@ -1342,8 +1344,8 @@ fn combination_codomain_not_nat() {
         .certify_prop(RawTerm::eq(RawTerm::const_("a", ty("nat")), RawTerm::const_("b", ty("nat"))))
         .unwrap();
 
-    let th_f = KernelRules::assume(f_eq_g).into_kernel();
-    let th_x = KernelRules::assume(a_eq_b).into_kernel();
+    let th_f = KernelRules::assume(f_eq_g).unwrap().into_kernel();
+    let th_x = KernelRules::assume(a_eq_b).unwrap().into_kernel();
     let result = KernelRules::combination(&th_f, &th_x).unwrap();
 
     // Result: |- f a == g b, both sides are App with ty bool.
@@ -1369,7 +1371,7 @@ fn combination_function_domain() {
     // combination: |- f h == g k
     let nat_to_nat = Ty::arrow(ty("nat"), ty("nat"));
     let fn_fn_ty = Ty::arrow(nat_to_nat.clone(), ty("nat"));
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("f", fn_fn_ty.clone()).unwrap();
     sig = sig.extend_const("g", fn_fn_ty.clone()).unwrap();
     sig = sig.extend_const("h", nat_to_nat.clone()).unwrap();
@@ -1389,8 +1391,8 @@ fn combination_function_domain() {
         ))
         .unwrap();
 
-    let th_f = KernelRules::assume(f_eq_g).into_kernel();
-    let th_x = KernelRules::assume(h_eq_k).into_kernel();
+    let th_f = KernelRules::assume(f_eq_g).unwrap().into_kernel();
+    let th_x = KernelRules::assume(h_eq_k).unwrap().into_kernel();
     let result = KernelRules::combination(&th_f, &th_x).unwrap();
 
     // Result: |- f h == g k
@@ -1418,7 +1420,7 @@ fn combination_argument_from_beta_conversion() {
     // 2. reflexive on f: nat→nat gives |- f == f
     // 3. combination(f==f, ((λx. x) a)==a) → |- f ((λx. x) a) == f a
     let fn_ty = Ty::arrow(ty("nat"), ty("nat"));
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("f", fn_ty.clone()).unwrap();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
@@ -1464,7 +1466,7 @@ fn combination_nested_app() {
     //   2. reflexive(h) → |- h == h
     //   3. combination(h==h, f a == g b) → |- h (f a) == h (g b)
     let fn_ty = Ty::arrow(ty("nat"), ty("nat"));
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("f", fn_ty.clone()).unwrap();
     sig = sig.extend_const("g", fn_ty.clone()).unwrap();
     sig = sig.extend_const("h", fn_ty.clone()).unwrap();
@@ -1483,8 +1485,8 @@ fn combination_nested_app() {
         .certify_prop(RawTerm::eq(RawTerm::const_("a", ty("nat")), RawTerm::const_("b", ty("nat"))))
         .unwrap();
 
-    let th_f = KernelRules::assume(f_eq_g).into_kernel();
-    let th_x = KernelRules::assume(a_eq_b).into_kernel();
+    let th_f = KernelRules::assume(f_eq_g).unwrap().into_kernel();
+    let th_x = KernelRules::assume(a_eq_b).unwrap().into_kernel();
 
     // First combination: ⊢ f a == g b
     let inner = KernelRules::combination(&th_f, &th_x).unwrap();
@@ -1525,7 +1527,7 @@ fn combination_nested_app() {
 #[test]
 fn abstraction_basic() {
     // x not free in Γ → Γ |- (λx. t) == (λx. u) from Γ |- t == u
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     sig = sig.extend_const("b", ty("nat")).unwrap();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
@@ -1535,7 +1537,7 @@ fn abstraction_basic() {
     let a_eq_b = ctx
         .certify_prop(RawTerm::eq(RawTerm::const_("a", ty("nat")), RawTerm::const_("b", ty("nat"))))
         .unwrap();
-    let thm = KernelRules::assume(a_eq_b).into_kernel();
+    let thm = KernelRules::assume(a_eq_b).unwrap().into_kernel();
 
     // Abstract x:nat (x not free in "a == b")
     let result = KernelRules::abstraction("x".into(), ty("nat"), &thm).unwrap();
@@ -1561,7 +1563,7 @@ fn abstraction_basic() {
 #[test]
 fn abstraction_rejects_free_in_hypotheses() {
     // x is free in a hypothesis → rejected.
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
@@ -1570,7 +1572,7 @@ fn abstraction_rejects_free_in_hypotheses() {
     let x_eq_a = ctx
         .certify_prop(RawTerm::eq(RawTerm::free("x", ty("nat")), RawTerm::const_("a", ty("nat"))))
         .unwrap();
-    let thm = KernelRules::assume(x_eq_a).into_kernel();
+    let thm = KernelRules::assume(x_eq_a).unwrap().into_kernel();
 
     // Try to abstract x:nat — x IS free in hypothesis "x == a"
     let err = KernelRules::abstraction("x".into(), ty("nat"), &thm).unwrap_err();
@@ -1580,7 +1582,7 @@ fn abstraction_rejects_free_in_hypotheses() {
 #[test]
 fn abstraction_preserves_hypotheses() {
     // Γ = {A, B}, abstract x:nat (x not free in A or B)
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     sig = sig.extend_const("b", ty("nat")).unwrap();
     sig = sig.extend_const("A", Ty::prop()).unwrap();
@@ -1592,7 +1594,7 @@ fn abstraction_preserves_hypotheses() {
     let a_eq_b = ctx
         .certify_prop(RawTerm::eq(RawTerm::const_("a", ty("nat")), RawTerm::const_("b", ty("nat"))))
         .unwrap();
-    let thm = KernelRules::assume(a_eq_b).into_kernel();
+    let thm = KernelRules::assume(a_eq_b).unwrap().into_kernel();
 
     // Add extra hypotheses to check preservation
     // We'll use implies_intr to discharge a==b, then assume extra hyps.
@@ -1610,7 +1612,7 @@ fn abstraction_rejects_non_equality() {
     let ctx = ctx_with_props(&["P", "Q"]);
     let p = ctx.certify_prop(prop("P")).unwrap();
     let _q = ctx.certify_prop(prop("Q")).unwrap();
-    let thm = KernelRules::assume(p.clone()).into_kernel();
+    let thm = KernelRules::assume(p.clone()).unwrap().into_kernel();
     let discharged = KernelRules::implies_intr(&p, &thm).unwrap();
     // discharged: |- P ==> P (not equality)
 
@@ -1621,7 +1623,7 @@ fn abstraction_rejects_non_equality() {
 #[test]
 fn abstraction_invariant_check_passes() {
     // Build a valid abstraction and verify invariant replay succeeds.
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
@@ -1640,7 +1642,7 @@ fn abstraction_invariant_check_passes() {
 #[test]
 fn abstraction_closed_from_closed() {
     // Closed input → closed output.
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("y", ty("nat"));
@@ -1658,7 +1660,7 @@ fn abstraction_closed_from_closed() {
 #[test]
 fn abstraction_nested() {
     // Abstract x:nat, then y:nat — two binders in sequence.
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
@@ -1693,7 +1695,7 @@ fn abstraction_with_forall_elim_and_combination() {
     //   3. forall_elim with f: |- f == f
     //   4. abstraction on x:nat: |- (λx:nat. f x) == (λx:nat. f x)
     let fn_ty = Ty::arrow(ty("nat"), ty("nat"));
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("f", fn_ty.clone()).unwrap();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
@@ -1737,7 +1739,7 @@ fn abstraction_replaces_free_with_bound0() {
     // Premise |- x == x, abstraction on x must produce
     // |- (λx:nat. Bound(0)) == (λx:nat. Bound(0))
     // NOT |- (λx:nat. Free("x")) == (λx:nat. Free("x"))
-    let sig = Signature::new();
+    let sig = signature_with_nat();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
 
@@ -1775,7 +1777,7 @@ fn abstraction_only_replaces_target_free() {
     // Abstraction on x must replace Free(x) with Bound(0) while Free(y) stays.
     // Result: (λx. pair Bound(0) y) == (λx. pair Bound(0) y)
     let pair_ty = Ty::arrow(ty("nat"), Ty::arrow(ty("nat"), ty("nat")));
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("pair", pair_ty.clone()).unwrap();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
@@ -1838,7 +1840,7 @@ fn abstraction_over_application() {
     // abstraction on x must produce:
     // |- (λx:nat. f Bound(0)) == (λx:nat. f Bound(0))
     let fn_ty = Ty::arrow(ty("nat"), ty("nat"));
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("f", fn_ty.clone()).unwrap();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
@@ -1889,7 +1891,7 @@ fn abstraction_over_application() {
 fn abstraction_replaces_multiple_occurrences() {
     // pair x x == pair x x, abstraction on x must replace BOTH x→Bound(0).
     let pair_ty = Ty::arrow(ty("nat"), Ty::arrow(ty("nat"), ty("nat")));
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("pair", pair_ty.clone()).unwrap();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
@@ -1926,7 +1928,7 @@ fn abstraction_replaces_multiple_occurrences() {
 fn abstraction_under_existing_abs_does_not_capture() {
     // Body already has (λy:nat. x). Abstract x → Bound(1) under existing λy.
     // Result: λx:nat. λy:nat. Bound(1)
-    let sig = Signature::new();
+    let sig = signature_with_nat();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
 
@@ -1958,7 +1960,7 @@ fn abstraction_type_sensitive() {
     // Abstract x:nat — verify z:bool (different name + different type) is untouched.
     // Proves abstract_over checks both name AND type, not just name.
     let pair_ty = Ty::arrow(ty("nat"), Ty::arrow(ty("bool"), ty("nat")));
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat().extend_type_constructor("bool", 0).unwrap();
     sig = sig.extend_const("pair", pair_ty.clone()).unwrap();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
@@ -2005,8 +2007,8 @@ fn equal_intr_basic() {
     let a_imp_b = ctx.certify_prop(RawTerm::imp(prop("A"), prop("B"))).unwrap();
     let b_imp_a = ctx.certify_prop(RawTerm::imp(prop("B"), prop("A"))).unwrap();
 
-    let left = KernelRules::assume(a_imp_b).into_kernel();
-    let right = KernelRules::assume(b_imp_a).into_kernel();
+    let left = KernelRules::assume(a_imp_b).unwrap().into_kernel();
+    let right = KernelRules::assume(b_imp_a).unwrap().into_kernel();
 
     let result = KernelRules::equal_intr(&left, &right).unwrap();
 
@@ -2024,8 +2026,8 @@ fn equal_intr_rejects_non_implication_left() {
     let a_eq_b = ctx.certify_prop(RawTerm::eq(prop("A"), prop("B"))).unwrap();
     let b_imp_a = ctx.certify_prop(RawTerm::imp(prop("B"), prop("A"))).unwrap();
 
-    let left = KernelRules::assume(a_eq_b).into_kernel();
-    let right = KernelRules::assume(b_imp_a).into_kernel();
+    let left = KernelRules::assume(a_eq_b).unwrap().into_kernel();
+    let right = KernelRules::assume(b_imp_a).unwrap().into_kernel();
 
     let err = KernelRules::equal_intr(&left, &right).unwrap_err();
     assert!(matches!(err, KernelError::NotImplication));
@@ -2037,8 +2039,8 @@ fn equal_intr_rejects_non_implication_right() {
     let a_imp_b = ctx.certify_prop(RawTerm::imp(prop("A"), prop("B"))).unwrap();
     let b_eq_a = ctx.certify_prop(RawTerm::eq(prop("B"), prop("A"))).unwrap();
 
-    let left = KernelRules::assume(a_imp_b).into_kernel();
-    let right = KernelRules::assume(b_eq_a).into_kernel();
+    let left = KernelRules::assume(a_imp_b).unwrap().into_kernel();
+    let right = KernelRules::assume(b_eq_a).unwrap().into_kernel();
 
     let err = KernelRules::equal_intr(&left, &right).unwrap_err();
     assert!(matches!(err, KernelError::NotImplication));
@@ -2050,8 +2052,8 @@ fn equal_intr_rejects_mismatched_implications() {
     let a_imp_b = ctx.certify_prop(RawTerm::imp(prop("A"), prop("B"))).unwrap();
     let c_imp_a = ctx.certify_prop(RawTerm::imp(prop("C"), prop("A"))).unwrap();
 
-    let left = KernelRules::assume(a_imp_b).into_kernel();
-    let right = KernelRules::assume(c_imp_a).into_kernel();
+    let left = KernelRules::assume(a_imp_b).unwrap().into_kernel();
+    let right = KernelRules::assume(c_imp_a).unwrap().into_kernel();
 
     let err = KernelRules::equal_intr(&left, &right).unwrap_err();
     assert!(matches!(err, KernelError::AntecedentMismatch));
@@ -2063,8 +2065,8 @@ fn equal_intr_preserves_hypotheses() {
     let a_imp_b = ctx.certify_prop(RawTerm::imp(prop("A"), prop("B"))).unwrap();
     let b_imp_a = ctx.certify_prop(RawTerm::imp(prop("B"), prop("A"))).unwrap();
 
-    let left = KernelRules::assume(a_imp_b).into_kernel();
-    let right = KernelRules::assume(b_imp_a).into_kernel();
+    let left = KernelRules::assume(a_imp_b).unwrap().into_kernel();
+    let right = KernelRules::assume(b_imp_a).unwrap().into_kernel();
 
     let result = KernelRules::equal_intr(&left, &right).unwrap();
     assert_eq!(result.hyps().len(), 2);
@@ -2079,8 +2081,8 @@ fn equal_elim_basic() {
     let b = ctx.certify_prop(prop("B")).unwrap();
 
     let a_eq_b = ctx.certify_prop(RawTerm::eq(prop("A"), prop("B"))).unwrap();
-    let eq_thm = KernelRules::assume(a_eq_b.clone()).into_kernel();
-    let a_assumed = KernelRules::assume(a.clone()).into_kernel();
+    let eq_thm = KernelRules::assume(a_eq_b.clone()).unwrap().into_kernel();
+    let a_assumed = KernelRules::assume(a.clone()).unwrap().into_kernel();
 
     let result = KernelRules::equal_elim(&eq_thm, &a_assumed).unwrap();
 
@@ -2096,8 +2098,8 @@ fn equal_elim_rejects_non_equality() {
     let a_imp_b = ctx.certify_prop(RawTerm::imp(prop("A"), prop("B"))).unwrap();
     let a = ctx.certify_prop(prop("A")).unwrap();
 
-    let major = KernelRules::assume(a_imp_b).into_kernel();
-    let minor = KernelRules::assume(a).into_kernel();
+    let major = KernelRules::assume(a_imp_b).unwrap().into_kernel();
+    let minor = KernelRules::assume(a).unwrap().into_kernel();
 
     let err = KernelRules::equal_elim(&major, &minor).unwrap_err();
     assert!(matches!(err, KernelError::NotEquality));
@@ -2109,8 +2111,8 @@ fn equal_elim_rejects_minor_mismatch() {
     let a_eq_b = ctx.certify_prop(RawTerm::eq(prop("A"), prop("B"))).unwrap();
     let c = ctx.certify_prop(prop("C")).unwrap();
 
-    let eq_thm = KernelRules::assume(a_eq_b).into_kernel();
-    let minor = KernelRules::assume(c).into_kernel();
+    let eq_thm = KernelRules::assume(a_eq_b).unwrap().into_kernel();
+    let minor = KernelRules::assume(c).unwrap().into_kernel();
 
     let err = KernelRules::equal_elim(&eq_thm, &minor).unwrap_err();
     assert!(matches!(err, KernelError::AntecedentMismatch));
@@ -2121,7 +2123,7 @@ fn equal_elim_rejects_object_equality() {
     // equal_elim requires propositional equality (A == B where A,B: prop).
     // Object equality (x == y where x,y: nat) must be rejected even if
     // the minor premise happens to match the LHS term.
-    let sig = Signature::new()
+    let sig = signature_with_nat()
         .extend_const("a", ty("nat"))
         .unwrap()
         .extend_const("b", ty("nat"))
@@ -2135,12 +2137,12 @@ fn equal_elim_rejects_object_equality() {
     let obj_eq = ctx
         .certify_prop(RawTerm::eq(RawTerm::free("x", ty("nat")), RawTerm::free("x", ty("nat"))))
         .unwrap();
-    let eq_thm = KernelRules::assume(obj_eq).into_kernel();
+    let eq_thm = KernelRules::assume(obj_eq).unwrap().into_kernel();
 
     // A propositional theorem in the same checked context (will fail alpha_eq
     // anyway, but the explicit prop-equality check must fire first).
     let a = ctx.certify_prop(prop("A")).unwrap();
-    let minor = KernelRules::assume(a).into_kernel();
+    let minor = KernelRules::assume(a).unwrap().into_kernel();
 
     let err = KernelRules::equal_elim(&eq_thm, &minor).unwrap_err();
     assert!(matches!(err, KernelError::NotProposition(_)));
@@ -2154,11 +2156,11 @@ fn equal_intr_elim_roundtrip() {
 
     let a_imp_b = ctx.certify_prop(RawTerm::imp(prop("A"), prop("B"))).unwrap();
     let b_imp_a = ctx.certify_prop(RawTerm::imp(prop("B"), prop("A"))).unwrap();
-    let left = KernelRules::assume(a_imp_b).into_kernel();
-    let right = KernelRules::assume(b_imp_a).into_kernel();
+    let left = KernelRules::assume(a_imp_b).unwrap().into_kernel();
+    let right = KernelRules::assume(b_imp_a).unwrap().into_kernel();
     let eq = KernelRules::equal_intr(&left, &right).unwrap();
 
-    let a_assumed = KernelRules::assume(a).into_kernel();
+    let a_assumed = KernelRules::assume(a).unwrap().into_kernel();
     let result = KernelRules::equal_elim(&eq, &a_assumed).unwrap();
 
     assert_eq!(result.hyps().len(), 3);
@@ -2173,8 +2175,8 @@ fn equal_elim_preserves_open_minor_hypothesis() {
     let a = ctx.certify_prop(prop("A")).unwrap();
 
     let a_eq_b = ctx.certify_prop(RawTerm::eq(prop("A"), prop("B"))).unwrap();
-    let eq_thm = KernelRules::assume(a_eq_b).into_kernel();
-    let a_thm = KernelRules::assume(a).into_kernel();
+    let eq_thm = KernelRules::assume(a_eq_b).unwrap().into_kernel();
+    let a_thm = KernelRules::assume(a).unwrap().into_kernel();
 
     let result = KernelRules::equal_elim(&eq_thm, &a_thm).unwrap();
     assert_eq!(result.hyps().len(), 2);
@@ -2200,9 +2202,11 @@ fn raw_imp_chain(names: &[&str]) -> RawTerm {
 fn subst_premise_basic() {
     let ctx = ctx_with_props(&["A", "B", "R"]);
     let eq = KernelRules::assume(ctx.certify_prop(RawTerm::eq(prop("A"), prop("B"))).unwrap())
+        .unwrap()
         .into_kernel();
-    let goal =
-        KernelRules::assume(ctx.certify_prop(raw_imp_chain(&["A", "R"])).unwrap()).into_kernel();
+    let goal = KernelRules::assume(ctx.certify_prop(raw_imp_chain(&["A", "R"])).unwrap())
+        .unwrap()
+        .into_kernel();
 
     let result = KernelRules::subst_premise(&eq, &goal, 0).unwrap();
 
@@ -2212,7 +2216,7 @@ fn subst_premise_basic() {
 
 #[test]
 fn subst_premise_rejects_object_equality() {
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("x", ty("nat")).unwrap();
     sig = sig.extend_const("y", ty("nat")).unwrap();
     sig = sig.extend_const("A", Ty::prop()).unwrap();
@@ -2226,9 +2230,11 @@ fn subst_premise_rejects_object_equality() {
         ))
         .unwrap(),
     )
+    .unwrap()
     .into_kernel();
-    let goal =
-        KernelRules::assume(ctx.certify_prop(raw_imp_chain(&["A", "R"])).unwrap()).into_kernel();
+    let goal = KernelRules::assume(ctx.certify_prop(raw_imp_chain(&["A", "R"])).unwrap())
+        .unwrap()
+        .into_kernel();
 
     let err = KernelRules::subst_premise(&eq, &goal, 0).unwrap_err();
     assert!(matches!(err, KernelError::NotProposition(_)));
@@ -2238,9 +2244,11 @@ fn subst_premise_rejects_object_equality() {
 fn subst_premise_rejects_out_of_range() {
     let ctx = ctx_with_props(&["A", "B", "R"]);
     let eq = KernelRules::assume(ctx.certify_prop(RawTerm::eq(prop("A"), prop("B"))).unwrap())
+        .unwrap()
         .into_kernel();
-    let goal =
-        KernelRules::assume(ctx.certify_prop(raw_imp_chain(&["A", "R"])).unwrap()).into_kernel();
+    let goal = KernelRules::assume(ctx.certify_prop(raw_imp_chain(&["A", "R"])).unwrap())
+        .unwrap()
+        .into_kernel();
 
     let err = KernelRules::subst_premise(&eq, &goal, 1).unwrap_err();
     assert!(matches!(err, KernelError::SubgoalIndexOutOfRange { index: 1, nprems: 1 }));
@@ -2250,9 +2258,11 @@ fn subst_premise_rejects_out_of_range() {
 fn subst_premise_rejects_mismatch() {
     let ctx = ctx_with_props(&["A", "B", "C", "R"]);
     let eq = KernelRules::assume(ctx.certify_prop(RawTerm::eq(prop("A"), prop("B"))).unwrap())
+        .unwrap()
         .into_kernel();
-    let goal =
-        KernelRules::assume(ctx.certify_prop(raw_imp_chain(&["C", "R"])).unwrap()).into_kernel();
+    let goal = KernelRules::assume(ctx.certify_prop(raw_imp_chain(&["C", "R"])).unwrap())
+        .unwrap()
+        .into_kernel();
 
     let err = KernelRules::subst_premise(&eq, &goal, 0).unwrap_err();
     assert!(matches!(err, KernelError::AntecedentMismatch));
@@ -2262,9 +2272,11 @@ fn subst_premise_rejects_mismatch() {
 fn subst_premise_rejects_symmetric_direction() {
     let ctx = ctx_with_props(&["A", "B", "R"]);
     let eq = KernelRules::assume(ctx.certify_prop(RawTerm::eq(prop("A"), prop("B"))).unwrap())
+        .unwrap()
         .into_kernel();
-    let goal =
-        KernelRules::assume(ctx.certify_prop(raw_imp_chain(&["B", "R"])).unwrap()).into_kernel();
+    let goal = KernelRules::assume(ctx.certify_prop(raw_imp_chain(&["B", "R"])).unwrap())
+        .unwrap()
+        .into_kernel();
 
     let err = KernelRules::subst_premise(&eq, &goal, 0).unwrap_err();
     assert!(matches!(err, KernelError::AntecedentMismatch));
@@ -2274,8 +2286,10 @@ fn subst_premise_rejects_symmetric_direction() {
 fn subst_premise_selected_index_is_goal_subgoal() {
     let ctx = ctx_with_props(&["A", "C", "D", "R"]);
     let eq = KernelRules::assume(ctx.certify_prop(RawTerm::eq(prop("C"), prop("D"))).unwrap())
+        .unwrap()
         .into_kernel();
     let goal = KernelRules::assume(ctx.certify_prop(raw_imp_chain(&["A", "C", "R"])).unwrap())
+        .unwrap()
         .into_kernel();
 
     let wrong_index = KernelRules::subst_premise(&eq, &goal, 0).unwrap_err();
@@ -2289,8 +2303,10 @@ fn subst_premise_selected_index_is_goal_subgoal() {
 fn subst_premise_preserves_other_subgoals_and_hypotheses() {
     let ctx = ctx_with_props(&["H", "A", "B", "C", "R"]);
     let eq = KernelRules::assume(ctx.certify_prop(RawTerm::eq(prop("A"), prop("B"))).unwrap())
+        .unwrap()
         .into_kernel();
     let goal = KernelRules::assume(ctx.certify_prop(raw_imp_chain(&["H", "A", "C", "R"])).unwrap())
+        .unwrap()
         .into_kernel();
 
     let result = KernelRules::subst_premise(&eq, &goal, 1).unwrap();
@@ -2300,56 +2316,13 @@ fn subst_premise_preserves_other_subgoals_and_hypotheses() {
     check_kernel_thm(&result).unwrap();
 }
 
-// ---------------------------------------------------------------------------
-// conservative bicompose wrapper
-// ---------------------------------------------------------------------------
-
-#[test]
-fn bicompose_wrapper_basic_no_vars() {
-    let ctx = ctx_with_props(&["A", "B"]);
-    let rule = KernelRules::assume(ctx.certify_prop(prop("A")).unwrap()).into_kernel();
-    let goal =
-        KernelRules::assume(ctx.certify_prop(raw_imp_chain(&["A", "B"])).unwrap()).into_kernel();
-
-    let result = KernelRules::bicompose(&rule, &goal, 0).unwrap();
-
-    assert_eq!(result.prop(), &ctx.certify_prop(prop("B")).unwrap());
-    assert!(matches!(result.derivation(), Derivation::Resolve1Match { .. }));
-    check_kernel_thm(&result).unwrap();
-}
-
-#[test]
-fn bicompose_wrapper_rejects_var_namespace_collision() {
-    let ctx = ctx_with_props(&["R"]);
-    let p_var = RawTerm::var("P", 0, Ty::prop());
-    let rule = KernelRules::assume(ctx.certify_prop(p_var.clone()).unwrap()).into_kernel();
-    let goal = KernelRules::assume(ctx.certify_prop(RawTerm::imp(p_var, prop("R"))).unwrap())
-        .into_kernel();
-
-    let err = KernelRules::bicompose(&rule, &goal, 0).unwrap_err();
-
-    assert!(matches!(err, KernelError::RequiresLifting { .. }), "got {err:?}");
-}
-
-#[test]
-fn bicompose_wrapper_rejects_match_failure() {
-    let ctx = ctx_with_props(&["A", "B", "R"]);
-    let rule = KernelRules::assume(ctx.certify_prop(prop("A")).unwrap()).into_kernel();
-    let goal =
-        KernelRules::assume(ctx.certify_prop(raw_imp_chain(&["B", "R"])).unwrap()).into_kernel();
-
-    let err = KernelRules::bicompose(&rule, &goal, 0).unwrap_err();
-
-    assert!(matches!(err, KernelError::Invariant(_)), "expected match failure, got {err:?}");
-}
-
 // ============================================================
 // generalize — Free → Var (schematic generalisation)
 // ============================================================
 
 #[test]
 fn generalize_basic() {
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
@@ -2357,7 +2330,8 @@ fn generalize_basic() {
     let x_term = ctx.certify_term(RawTerm::free("x", ty("nat"))).unwrap();
     let thm = KernelRules::reflexive(x_term).into_kernel();
 
-    let result = KernelRules::generalize(&thm, &[("x".into(), ty("nat"))]).unwrap();
+    let result =
+        KernelRules::generalize(&thm, &BTreeSet::new(), &BTreeSet::from(["x".into()]), 0).unwrap();
 
     // Free("x", nat) → Var("x", 0, nat)
     assert_eq!(result.hyps().len(), 0);
@@ -2373,63 +2347,117 @@ fn generalize_basic() {
 }
 
 #[test]
-fn generalize_preserves_hypotheses() {
+fn generalize_highest_representable_index_succeeds() {
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", signature_with_nat()));
+    ctx.declare_free("x", ty("nat"));
+    let proposition = RawTerm::eq(
+        RawTerm::var("existing", usize::MAX - 1, ty("nat")),
+        RawTerm::free("x", ty("nat")),
+    );
+    let thm = KernelRules::reflexive(ctx.certify_term(proposition).unwrap()).into_kernel();
+
+    let result =
+        KernelRules::generalize(&thm, &BTreeSet::new(), &BTreeSet::from(["x".into()]), usize::MAX)
+            .unwrap();
+    assert_eq!(result.max_var_index(), Some(usize::MAX));
+    check_kernel_thm(&result).unwrap();
+}
+
+#[test]
+fn generalize_full_index_range_overflow_returns_structured_error() {
+    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", signature_with_nat()));
+    ctx.declare_free("x_", ty("nat"));
+    let proposition = RawTerm::eq(
+        RawTerm::var("existing", usize::MAX - 1, ty("nat")),
+        RawTerm::free("x_", ty("nat")),
+    );
+    let thm = KernelRules::reflexive(ctx.certify_term(proposition).unwrap()).into_kernel();
+
+    let error = KernelRules::generalize(
+        &thm,
+        &BTreeSet::new(),
+        &BTreeSet::from(["x_".into(), "missing".into()]),
+        usize::MAX,
+    );
+    assert_eq!(
+        error.unwrap_err(),
+        KernelError::GeneralizeIndexOverflow { index: usize::MAX, offset: 1 }
+    );
+    let empty =
+        KernelRules::generalize(&thm, &BTreeSet::new(), &BTreeSet::new(), usize::MAX).unwrap();
+    assert_eq!(empty.prop(), thm.prop());
+    check_kernel_thm(&empty).unwrap();
+}
+
+#[test]
+fn generalize_exhausted_existing_index_only_rejects_nonempty_selection() {
+    let ctx = ProofContext::new(TheorySnapshot::root("Test", Signature::new()));
+    let term = ctx.certify_term(RawTerm::var("P", usize::MAX, Ty::prop())).unwrap();
+    let thm = KernelRules::reflexive(term).into_kernel();
+    let empty = KernelRules::generalize(&thm, &BTreeSet::new(), &BTreeSet::new(), 0).unwrap();
+    assert_eq!(empty.prop(), thm.prop());
+    assert_eq!(
+        KernelRules::generalize(&thm, &BTreeSet::new(), &BTreeSet::from(["missing".into()]), 0)
+            .unwrap_err(),
+        KernelError::GeneralizeIndexNotFresh { index: 0, max_index: usize::MAX }
+    );
+}
+
+#[test]
+fn generalize_vars_uses_shared_index_without_allocating_for_unmatched_names() {
+    let term = Term::Free { name: "x".into(), ty: ty("nat") };
+    let names = BTreeSet::from(["x".into(), "missing".into()]);
+    assert_eq!(
+        term.generalize_vars(&BTreeSet::new(), &names, usize::MAX),
+        Ok(Term::Var { name: "x".into(), index: usize::MAX, ty: ty("nat") })
+    );
+    assert_eq!(term.generalize_vars(&BTreeSet::new(), &BTreeSet::new(), usize::MAX), Ok(term));
+}
+
+#[test]
+fn generalize_free_in_real_hypothesis_rejects() {
     let mut ctx = ctx_with_nat_consts(&["a"]);
     ctx.declare_free("x", ty("nat"));
 
     let eq_term = ctx
         .certify_prop(RawTerm::eq(RawTerm::free("x", ty("nat")), RawTerm::const_("a", ty("nat"))))
         .unwrap();
-    let thm = KernelRules::assume(eq_term).into_kernel();
+    let thm = KernelRules::assume(eq_term).unwrap().into_kernel();
     assert_eq!(thm.hyps().len(), 1);
 
-    let result = KernelRules::generalize(&thm, &[("x".into(), ty("nat"))]).unwrap();
-
-    // Hypothesis must also be transformed
-    assert_eq!(result.hyps().len(), 1);
-    let hyp = &result.hyps()[0];
-    assert_eq!(
-        hyp.term(),
-        &Term::mk_eq(
-            Term::Var { name: "x".into(), index: 0, ty: ty("nat") },
-            Term::Const { name: "a".into(), ty: ty("nat") },
-        )
-        .unwrap()
-    );
-    check_kernel_thm(&result).unwrap();
+    let error = KernelRules::generalize(&thm, &BTreeSet::new(), &BTreeSet::from(["x".into()]), 0)
+        .unwrap_err();
+    assert!(matches!(error, KernelError::FreeVarInHypotheses { name } if name.as_str() == "x"));
 }
 
 #[test]
 fn generalize_multiple_frees() {
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
     ctx.declare_free("y", ty("nat"));
 
     let xy_eq = ctx
-        .certify_prop(RawTerm::eq(RawTerm::free("x", ty("nat")), RawTerm::free("y", ty("nat"))))
+        .certify_term(RawTerm::eq(RawTerm::free("x", ty("nat")), RawTerm::free("y", ty("nat"))))
         .unwrap();
-    let thm = KernelRules::assume(xy_eq).into_kernel();
+    let thm = KernelRules::reflexive(xy_eq).into_kernel();
 
-    let frees: Vec<(Name, Ty)> = vec![("x".into(), ty("nat")), ("y".into(), ty("nat"))];
-    let result = KernelRules::generalize(&thm, &frees).unwrap();
+    let names = BTreeSet::from(["x".into(), "y".into()]);
+    let result = KernelRules::generalize(&thm, &BTreeSet::new(), &names, 0).unwrap();
 
-    // x → Var("x", 0, nat), y → Var("y", 1, nat)
-    assert_eq!(
-        result.prop().term(),
-        &Term::mk_eq(
-            Term::Var { name: "x".into(), index: 0, ty: ty("nat") },
-            Term::Var { name: "y".into(), index: 1, ty: ty("nat") },
-        )
-        .unwrap()
-    );
+    let inner = Term::mk_eq(
+        Term::Var { name: "x".into(), index: 0, ty: ty("nat") },
+        Term::Var { name: "y".into(), index: 0, ty: ty("nat") },
+    )
+    .unwrap();
+    assert_eq!(result.prop().term(), &Term::mk_eq(inner.clone(), inner).unwrap());
     check_kernel_thm(&result).unwrap();
 }
 
 #[test]
 fn generalize_non_free_unchanged() {
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
@@ -2438,7 +2466,8 @@ fn generalize_non_free_unchanged() {
     let x_term = ctx.certify_term(RawTerm::free("x", ty("nat"))).unwrap();
     let thm = KernelRules::reflexive(x_term).into_kernel();
 
-    let result = KernelRules::generalize(&thm, &[("y".into(), ty("nat"))]).unwrap();
+    let result =
+        KernelRules::generalize(&thm, &BTreeSet::new(), &BTreeSet::from(["y".into()]), 0).unwrap();
 
     // "y" doesn't appear, so the theorem should be unchanged (still Free, not Var)
     assert_eq!(
@@ -2453,33 +2482,31 @@ fn generalize_non_free_unchanged() {
 
 #[test]
 fn generalize_only_target_free() {
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
     ctx.declare_free("z", ty("nat"));
 
     let xz_eq = ctx
-        .certify_prop(RawTerm::eq(RawTerm::free("x", ty("nat")), RawTerm::free("z", ty("nat"))))
+        .certify_term(RawTerm::eq(RawTerm::free("x", ty("nat")), RawTerm::free("z", ty("nat"))))
         .unwrap();
-    let thm = KernelRules::assume(xz_eq).into_kernel();
+    let thm = KernelRules::reflexive(xz_eq).into_kernel();
 
-    let result = KernelRules::generalize(&thm, &[("x".into(), ty("nat"))]).unwrap();
+    let result =
+        KernelRules::generalize(&thm, &BTreeSet::new(), &BTreeSet::from(["x".into()]), 0).unwrap();
 
-    // Only x generalized; z stays as Free
-    assert_eq!(
-        result.prop().term(),
-        &Term::mk_eq(
-            Term::Var { name: "x".into(), index: 0, ty: ty("nat") },
-            Term::Free { name: "z".into(), ty: ty("nat") },
-        )
-        .unwrap()
-    );
+    let inner = Term::mk_eq(
+        Term::Var { name: "x".into(), index: 0, ty: ty("nat") },
+        Term::Free { name: "z".into(), ty: ty("nat") },
+    )
+    .unwrap();
+    assert_eq!(result.prop().term(), &Term::mk_eq(inner.clone(), inner).unwrap());
 }
 
 #[test]
 fn generalize_closed_remains_closed() {
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
@@ -2488,42 +2515,45 @@ fn generalize_closed_remains_closed() {
     let thm = KernelRules::reflexive(x_term).into_kernel();
     assert!(!thm.is_open());
 
-    let result = KernelRules::generalize(&thm, &[("x".into(), ty("nat"))]).unwrap();
+    let result =
+        KernelRules::generalize(&thm, &BTreeSet::new(), &BTreeSet::from(["x".into()]), 0).unwrap();
     assert!(!result.is_open());
 }
 
 #[test]
-fn generalize_open_remains_open() {
+fn generalize_open_hypothesis_with_target_free_rejects() {
     let mut ctx = ctx_with_nat_consts(&["a"]);
     ctx.declare_free("x", ty("nat"));
 
     let eq_term = ctx
         .certify_prop(RawTerm::eq(RawTerm::free("x", ty("nat")), RawTerm::const_("a", ty("nat"))))
         .unwrap();
-    let thm = KernelRules::assume(eq_term).into_kernel();
+    let thm = KernelRules::assume(eq_term).unwrap().into_kernel();
     assert!(thm.is_open());
 
-    let result = KernelRules::generalize(&thm, &[("x".into(), ty("nat"))]).unwrap();
-    assert!(result.is_open());
+    let error = KernelRules::generalize(&thm, &BTreeSet::new(), &BTreeSet::from(["x".into()]), 0)
+        .unwrap_err();
+    assert!(matches!(error, KernelError::FreeVarInHypotheses { name } if name.as_str() == "x"));
 }
 
 #[test]
 fn generalize_invariant_check_passes() {
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
 
     let x_term = ctx.certify_term(RawTerm::free("x", ty("nat"))).unwrap();
     let thm = KernelRules::reflexive(x_term).into_kernel();
-    let result = KernelRules::generalize(&thm, &[("x".into(), ty("nat"))]).unwrap();
+    let result =
+        KernelRules::generalize(&thm, &BTreeSet::new(), &BTreeSet::from(["x".into()]), 0).unwrap();
 
     check_kernel_thm(&result).unwrap();
 }
 
 #[test]
 fn generalize_empty_frees_noop() {
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
@@ -2531,17 +2561,16 @@ fn generalize_empty_frees_noop() {
     let x_term = ctx.certify_term(RawTerm::free("x", ty("nat"))).unwrap();
     let thm = KernelRules::reflexive(x_term).into_kernel();
 
-    let empty: Vec<(Name, Ty)> = vec![];
-    let result = KernelRules::generalize(&thm, &empty).unwrap();
+    let result = KernelRules::generalize(&thm, &BTreeSet::new(), &BTreeSet::new(), 0).unwrap();
 
-    // Empty list = identity
+    // Empty selections leave the theorem unchanged.
     assert_eq!(result.prop(), thm.prop());
     assert_eq!(result.hyps(), thm.hyps());
 }
 
 #[test]
 fn generalize_ignores_unmatched_free() {
-    let mut sig = Signature::new();
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
@@ -2550,84 +2579,74 @@ fn generalize_ignores_unmatched_free() {
     let thm = KernelRules::reflexive(x_term).into_kernel();
 
     // "z" doesn't appear anywhere — should be silently ignored
-    let result = KernelRules::generalize(&thm, &[("z".into(), ty("nat"))]).unwrap();
+    let result =
+        KernelRules::generalize(&thm, &BTreeSet::new(), &BTreeSet::from(["z".into()]), 0).unwrap();
 
     // Theorem should be unchanged (Free "x" stays as Free, not generalized)
     assert_eq!(result.prop(), thm.prop());
 }
 
 #[test]
-fn generalize_avoids_existing_var_index() {
-    // Theorem already has Var("v", 0, nat) from an assume.
-    // generalize Free("x") must use start = max_var_index + 1 = 1,
-    // producing Var("x", 1, nat) to avoid collision.
-    let mut sig = Signature::new();
+fn generalize_explicit_fresh_index_avoids_existing_var() {
+    // The caller selects a fresh index without touching pre-existing schematic variables.
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
 
-    // Build: Var("v", 0, nat) == Free("x", nat)
-    let raw_prop = RawTerm::eq(RawTerm::var("v", 0, ty("nat")), RawTerm::free("x", ty("nat")));
-    let cprop = ctx.certify_prop(raw_prop).unwrap();
-    let thm = KernelRules::assume(cprop).into_kernel();
+    let original = ctx
+        .certify_term(RawTerm::eq(RawTerm::var("v", 0, ty("nat")), RawTerm::free("x", ty("nat"))))
+        .unwrap();
+    let thm = KernelRules::reflexive(original).into_kernel();
 
     // Before generalize: has Var("v", 0) and Free("x")
     assert_eq!(thm.max_var_index(), Some(0));
 
-    // Generalize Free("x", nat) — should become Var("x", 1, nat)
-    let result = KernelRules::generalize(&thm, &[("x".into(), ty("nat"))]).unwrap();
+    let result =
+        KernelRules::generalize(&thm, &BTreeSet::new(), &BTreeSet::from(["x".into()]), 1).unwrap();
 
-    assert_eq!(
-        result.prop().term(),
-        &Term::mk_eq(
-            Term::Var { name: "v".into(), index: 0, ty: ty("nat") },
-            Term::Var { name: "x".into(), index: 1, ty: ty("nat") },
-        )
-        .unwrap()
-    );
+    let inner = Term::mk_eq(
+        Term::Var { name: "v".into(), index: 0, ty: ty("nat") },
+        Term::Var { name: "x".into(), index: 1, ty: ty("nat") },
+    )
+    .unwrap();
+    assert_eq!(result.prop().term(), &Term::mk_eq(inner.clone(), inner).unwrap());
     check_kernel_thm(&result).unwrap();
 }
 
 #[test]
-fn generalize_uses_global_max_var_index() {
-    // Theorem has Var("x", 0, nat) and Var("y", 3, nat).
-    // generalize Free("z", nat) must use start = global_max + 1 = 4,
-    // producing Var("z", 4, nat) — not Var("z", 1) or any per-name local count.
-    let mut sig = Signature::new();
+fn generalize_explicit_index_above_global_max() {
+    // The explicit index must be above the maximum of every variable in the theorem.
+    let mut sig = signature_with_nat();
     sig = sig.extend_const("a", ty("nat")).unwrap();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("z", ty("nat"));
 
-    // Build: (Var("x",0) == Var("y",3)) ==> (Free("z") == Free("z"))
     let left = RawTerm::eq(RawTerm::var("x", 0, ty("nat")), RawTerm::var("y", 3, ty("nat")));
     let right = RawTerm::eq(RawTerm::free("z", ty("nat")), RawTerm::free("z", ty("nat")));
-    let raw_prop = RawTerm::imp(left, right);
-    let cprop = ctx.certify_prop(raw_prop).unwrap();
-    let thm = KernelRules::assume(cprop).into_kernel();
+    let term = ctx.certify_term(RawTerm::imp(left, right)).unwrap();
+    let thm = KernelRules::reflexive(term).into_kernel();
 
     // Before generalize: global max Var index is 3 (from Var("y", 3))
     assert_eq!(thm.max_var_index(), Some(3));
 
-    // Generalize Free("z", nat) — should become Var("z", 4, nat)
-    let result = KernelRules::generalize(&thm, &[("z".into(), ty("nat"))]).unwrap();
+    let result =
+        KernelRules::generalize(&thm, &BTreeSet::new(), &BTreeSet::from(["z".into()]), 4).unwrap();
 
-    // Result prop: (Var("x",0) == Var("y",3)) ==> (Var("z",4) == Var("z",4))
-    assert_eq!(
-        result.prop().term(),
-        &Term::mk_imp(
-            Term::mk_eq(
-                Term::Var { name: "x".into(), index: 0, ty: ty("nat") },
-                Term::Var { name: "y".into(), index: 3, ty: ty("nat") },
-            )
-            .unwrap(),
-            Term::mk_eq(
-                Term::Var { name: "z".into(), index: 4, ty: ty("nat") },
-                Term::Var { name: "z".into(), index: 4, ty: ty("nat") },
-            )
-            .unwrap(),
+    let inner = Term::mk_imp(
+        Term::mk_eq(
+            Term::Var { name: "x".into(), index: 0, ty: ty("nat") },
+            Term::Var { name: "y".into(), index: 3, ty: ty("nat") },
         )
-        .unwrap()
-    );
+        .unwrap(),
+        Term::mk_eq(
+            Term::Var { name: "z".into(), index: 4, ty: ty("nat") },
+            Term::Var { name: "z".into(), index: 4, ty: ty("nat") },
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(result.prop().term(), &Term::mk_eq(inner.clone(), inner).unwrap());
 
     // Global max should now be 4 (from Var("z", 4))
     assert_eq!(result.max_var_index(), Some(4));
@@ -2637,496 +2656,24 @@ fn generalize_uses_global_max_var_index() {
 }
 
 #[test]
-fn generalize_type_sensitive_same_name() {
-    let mut sig = Signature::new();
-    sig = sig.extend_const("a", ty("nat")).unwrap();
-    sig = sig.extend_const("P", Ty::prop()).unwrap();
+fn generalize_name_selection_preserves_other_atom_kinds() {
+    let mut sig = signature_with_nat();
+    sig = sig.extend_const("x", ty("nat")).unwrap();
     let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
     ctx.declare_free("x", ty("nat"));
-    // Can't declare Free("x", bool) — ProofContext rejects same-name different-type
-    // So we test that only Free("x", nat) is generalized, not Free("x", bool)
-    // by using a prop-level "x" as a Const instead
-    let x_nat = RawTerm::free("x", ty("nat"));
-    let x_nat_term = ctx.certify_term(x_nat.clone()).unwrap();
+    let free = RawTerm::free("x", ty("nat"));
+    let constant = RawTerm::const_("x", ty("nat"));
+    let term = ctx.certify_term(RawTerm::eq(free, constant)).unwrap();
+    let thm = KernelRules::reflexive(term).into_kernel();
 
-    let thm = KernelRules::reflexive(x_nat_term).into_kernel();
-
-    // Generalize only "x" at type nat — should work
-    let result = KernelRules::generalize(&thm, &[("x".into(), ty("nat"))]).unwrap();
-    assert_eq!(
-        result.prop().term(),
-        &Term::mk_eq(
-            Term::Var { name: "x".into(), index: 0, ty: ty("nat") },
-            Term::Var { name: "x".into(), index: 0, ty: ty("nat") },
-        )
-        .unwrap()
-    );
-
-    // Generalizing "x" at type bool (wrong type) should be a no-op
-    // since Free("x", bool) doesn't appear
-    let result2 = KernelRules::generalize(&thm, &[("x".into(), Ty::prop())]).unwrap();
-    assert_eq!(result2.prop(), thm.prop()); // unchanged
-}
-
-#[test]
-fn generalize_roundtrip_with_instantiate() {
-    // This test will be enabled once instantiate is implemented.
-    // For now it just verifies generalize is reversible in principle:
-    // the derivation records the start_index, which instantiate can use.
-    let mut sig = Signature::new();
-    sig = sig.extend_const("a", ty("nat")).unwrap();
-    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
-    ctx.declare_free("x", ty("nat"));
-
-    let x_term = ctx.certify_term(RawTerm::free("x", ty("nat"))).unwrap();
-    let thm = KernelRules::reflexive(x_term).into_kernel();
-    let result = KernelRules::generalize(&thm, &[("x".into(), ty("nat"))]).unwrap();
-
-    // Record the derivation for later round-trip verification
-    match result.derivation() {
-        Derivation::Generalize { frees, start_index, .. } => {
-            assert_eq!(frees.len(), 1);
-            assert_eq!(frees[0], ("x".into(), ty("nat")));
-            assert_eq!(*start_index, 0);
-        },
-        _ => panic!("expected Generalize derivation"),
-    }
-}
-
-// ── instantiate tests ────────────────────────────────────────────────
-
-#[test]
-fn instantiate_basic() {
-    // Var("x", 0, nat) := Const("a", nat) — basic single replacement.
-    let mut sig = Signature::new();
-    sig = sig.extend_const("a", ty("nat")).unwrap();
-    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
-
-    // Build: Var("x", 0, nat) == a |- Var("x", 0, nat) == a
-    let raw_prop = RawTerm::eq(RawTerm::var("x", 0, ty("nat")), RawTerm::const_("a", ty("nat")));
-    let cprop = ctx.certify_prop(raw_prop).unwrap();
-    let thm = KernelRules::assume(cprop).into_kernel();
-
-    let a_cterm = ctx.certify_term(RawTerm::const_("a", ty("nat"))).unwrap();
-    let a_term = a_cterm.term().clone();
-    let entry = InstEntry::new("x", 0, ty("nat"), a_cterm);
-    let result = KernelRules::instantiate(&thm, &[entry]).unwrap();
-
-    assert_eq!(result.prop().term(), &Term::mk_eq(a_term.clone(), a_term.clone()).unwrap());
-    // Hypothesis Var also instantiated
-    assert_eq!(result.hyps().len(), 1);
-    assert_eq!(result.hyps()[0].term(), &Term::mk_eq(a_term.clone(), a_term).unwrap());
-}
-
-#[test]
-fn instantiate_rejects_type_mismatch() {
-    // Var(x,0,nat) := Const(P,prop) — type mismatch.
-    let mut sig = Signature::new();
-    sig = sig.extend_const("a", ty("nat")).unwrap();
-    sig = sig.extend_const("P", Ty::prop()).unwrap();
-    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
-
-    // Theorem: Var("x", 0, nat) == a |- Var("x", 0, nat) == a  (both sides nat-typed)
-    let raw_prop = RawTerm::eq(RawTerm::var("x", 0, ty("nat")), RawTerm::const_("a", ty("nat")));
-    let cprop = ctx.certify_prop(raw_prop).unwrap();
-    let thm = KernelRules::assume(cprop).into_kernel();
-
-    // Instantiation attempt: match Var("x", 0, nat) → Const("P", prop)
-    // types differ: nat ≠ prop — should fail with TypeMismatch
-    let p_cterm = ctx.certify_term(RawTerm::const_("P", Ty::prop())).unwrap();
-    let entry = InstEntry::new("x", 0, ty("nat"), p_cterm);
-    let err = KernelRules::instantiate(&thm, &[entry]).unwrap_err();
-    assert!(matches!(err, KernelError::TypeMismatch { .. }));
-}
-
-#[test]
-fn instantiate_respects_index() {
-    // Var("x", 0, nat) and Var("x", 1, nat) are distinct.
-    // Replace Var("x", 0) only — Var("x", 1) must remain.
-    let mut sig = Signature::new();
-    sig = sig.extend_const("a", ty("nat")).unwrap();
-    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
-
-    let raw_prop = RawTerm::eq(RawTerm::var("x", 0, ty("nat")), RawTerm::var("x", 1, ty("nat")));
-    let cprop = ctx.certify_prop(raw_prop).unwrap();
-    let thm = KernelRules::assume(cprop).into_kernel();
-
-    let a_cterm = ctx.certify_term(RawTerm::const_("a", ty("nat"))).unwrap();
-    let a_term = a_cterm.term().clone();
-    let entry = InstEntry::new("x", 0, ty("nat"), a_cterm);
-    let result = KernelRules::instantiate(&thm, &[entry]).unwrap();
-
-    // Only Var("x",0) replaced; Var("x",1) unchanged
-    assert_eq!(
-        result.prop().term(),
-        &Term::mk_eq(a_term, Term::Var { name: "x".into(), index: 1, ty: ty("nat") }).unwrap()
-    );
-}
-
-#[test]
-fn instantiate_type_sensitive_same_name_index() {
-    // Var("x", 0, nat) is NOT matched by a substitution entry for Var("x", 0, bool).
-    let mut sig = Signature::new();
-    sig = sig.extend_const("a", ty("nat")).unwrap();
-    sig = sig.extend_const("P", Ty::prop()).unwrap();
-    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
-
-    let raw_prop = RawTerm::eq(RawTerm::var("x", 0, ty("nat")), RawTerm::const_("a", ty("nat")));
-    let cprop = ctx.certify_prop(raw_prop).unwrap();
-    let thm = KernelRules::assume(cprop).into_kernel();
-
-    // Subst lists Var("x", 0, bool) → P — but the theorem has Var("x", 0, nat)
-    let p_cterm = ctx.certify_term(RawTerm::const_("P", Ty::prop())).unwrap();
-    let entry = InstEntry::new("x", 0, Ty::prop(), p_cterm);
-    let result = KernelRules::instantiate(&thm, &[entry]).unwrap();
-
-    // Unmatched → no change
-    assert_eq!(result.prop(), thm.prop());
-}
-
-#[test]
-fn instantiate_rejects_duplicate_substitution() {
-    // Same (name, idx) pair appears twice.
-    let mut sig = Signature::new();
-    sig = sig.extend_const("a", ty("nat")).unwrap();
-    sig = sig.extend_const("b", ty("nat")).unwrap();
-    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
-
-    let raw_prop = RawTerm::eq(RawTerm::var("x", 0, ty("nat")), RawTerm::const_("a", ty("nat")));
-    let cprop = ctx.certify_prop(raw_prop).unwrap();
-    let thm = KernelRules::assume(cprop).into_kernel();
-
-    let a_cterm = ctx.certify_term(RawTerm::const_("a", ty("nat"))).unwrap();
-    let b_cterm = ctx.certify_term(RawTerm::const_("b", ty("nat"))).unwrap();
-    let err = KernelRules::instantiate(
-        &thm,
-        &[InstEntry::new("x", 0, ty("nat"), a_cterm), InstEntry::new("x", 0, ty("nat"), b_cterm)],
-    )
-    .unwrap_err();
-    assert!(matches!(err, KernelError::DuplicateSubstitution { .. }));
-}
-
-#[test]
-fn instantiate_rejects_bound_in_replacement() {
-    // Bound-in-CTerm replacement is prevented at the certification boundary:
-    // CTerm::new is kernel-internal and ProofContext::certify_term rejects Bound.
-    // The defense-in-depth BoundInSubstitution check is tested inline in
-    // kernel::thm::tests::instantiate_rejects_bound_in_replacement_inline.
-    //
-    // Here we verify a normal certified replacement (without Bound) succeeds.
-    let mut sig = Signature::new();
-    sig = sig.extend_const("a", ty("nat")).unwrap();
-    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
-
-    let raw_prop = RawTerm::eq(RawTerm::var("x", 0, ty("nat")), RawTerm::const_("a", ty("nat")));
-    let cprop = ctx.certify_prop(raw_prop).unwrap();
-    let thm = KernelRules::assume(cprop).into_kernel();
-
-    let a_cterm = ctx.certify_term(RawTerm::const_("a", ty("nat"))).unwrap();
-    let entry = InstEntry::new("x", 0, ty("nat"), a_cterm);
-    let result = KernelRules::instantiate(&thm, &[entry]).unwrap();
-    assert!(matches!(result.prop().term(), Term::Eq { .. }));
-}
-
-#[test]
-fn instantiate_partial_substitution_keeps_unmatched_var() {
-    // Theorem has Var("x",0) and Var("y",1). Replace only Var("x",0).
-    let mut sig = Signature::new();
-    sig = sig.extend_const("a", ty("nat")).unwrap();
-    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
-
-    let raw_prop = RawTerm::eq(RawTerm::var("x", 0, ty("nat")), RawTerm::var("y", 1, ty("nat")));
-    let cprop = ctx.certify_prop(raw_prop).unwrap();
-    let thm = KernelRules::assume(cprop).into_kernel();
-
-    let a_cterm = ctx.certify_term(RawTerm::const_("a", ty("nat"))).unwrap();
-    let a_term = a_cterm.term().clone();
-    let entry = InstEntry::new("x", 0, ty("nat"), a_cterm);
-    let result = KernelRules::instantiate(&thm, &[entry]).unwrap();
-
-    // Var("x",0) → a, Var("y",1) unchanged
-    assert_eq!(
-        result.prop().term(),
-        &Term::mk_eq(a_term, Term::Var { name: "y".into(), index: 1, ty: ty("nat") }).unwrap()
-    );
-}
-
-#[test]
-fn instantiate_preserves_hypotheses() {
-    // Hypotheses transformed alongside prop.
-    let mut sig = Signature::new();
-    sig = sig.extend_const("A", Ty::prop()).unwrap();
-    sig = sig.extend_const("B", Ty::prop()).unwrap();
-    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
-
-    // Build a theorem with Var in both hyps and prop.
-    // assume(Var("x",0,prop) ==> B) yields: (x ==> B) |- (x ==> B)
-    let raw_prop = RawTerm::imp(RawTerm::var("x", 0, Ty::prop()), RawTerm::const_("B", Ty::prop()));
-    let cprop = ctx.certify_prop(raw_prop).unwrap();
-    let thm = KernelRules::assume(cprop).into_kernel();
-
-    // Instantiate: Var("x",0,prop) := A
-    let a_cterm = ctx.certify_term(RawTerm::const_("A", Ty::prop())).unwrap();
-    let a_term = a_cterm.term().clone();
-    let entry = InstEntry::new("x", 0, Ty::prop(), a_cterm);
-    let result = KernelRules::instantiate(&thm, &[entry]).unwrap();
-
-    // Both hyps and prop should have Var replaced with A
-    let expected =
-        Term::mk_imp(a_term.clone(), Term::Const { name: "B".into(), ty: Ty::prop() }).unwrap();
-    assert_eq!(result.hyps()[0].term(), &expected);
-    assert_eq!(result.prop().term(), &expected);
-}
-
-#[test]
-fn instantiate_invariant_check_passes() {
-    let mut sig = Signature::new();
-    sig = sig.extend_const("a", ty("nat")).unwrap();
-    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
-
-    let raw_prop = RawTerm::eq(RawTerm::var("x", 0, ty("nat")), RawTerm::const_("a", ty("nat")));
-    let cprop = ctx.certify_prop(raw_prop).unwrap();
-    let thm = KernelRules::assume(cprop).into_kernel();
-
-    let a_cterm = ctx.certify_term(RawTerm::const_("a", ty("nat"))).unwrap();
-    let entry = InstEntry::new("x", 0, ty("nat"), a_cterm);
-    let result = KernelRules::instantiate(&thm, &[entry]).unwrap();
-    check_kernel_thm(&result).unwrap();
-}
-
-#[test]
-fn instantiate_closed_remains_closed() {
-    // Closed theorem stays closed after instantiation.
-    let mut sig = Signature::new();
-    sig = sig.extend_const("a", ty("nat")).unwrap();
-    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
-
-    let a_cterm = ctx.certify_term(RawTerm::const_("a", ty("nat"))).unwrap();
-    let refl = KernelRules::reflexive(a_cterm.clone()).into_kernel();
-
-    // refl is closed (|- a == a). Instantiate a Var not present — no change.
-    let entry = InstEntry::new("x", 0, ty("nat"), a_cterm);
-    let result = KernelRules::instantiate(&refl, &[entry]).unwrap();
-
-    assert!(result.hyps().is_empty()); // still closed
-    assert_eq!(result.prop(), refl.prop()); // unchanged
-}
-
-#[test]
-fn instantiate_does_not_affect_const_or_free() {
-    // Only Vars replaced; Const and Free nodes unchanged.
-    let mut sig = Signature::new();
-    sig = sig.extend_const("a", ty("nat")).unwrap();
-    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
-    ctx.declare_free("y", ty("nat"));
-
-    let raw_prop = RawTerm::eq(RawTerm::var("x", 0, ty("nat")), RawTerm::free("y", ty("nat")));
-    let cprop = ctx.certify_prop(raw_prop).unwrap();
-    let thm = KernelRules::assume(cprop).into_kernel();
-
-    let a_cterm = ctx.certify_term(RawTerm::const_("a", ty("nat"))).unwrap();
-    let a_term = a_cterm.term().clone();
-    let entry = InstEntry::new("x", 0, ty("nat"), a_cterm);
-    let result = KernelRules::instantiate(&thm, &[entry]).unwrap();
-
-    // Var("x",0) → a, Free("y",nat) unchanged
-    assert_eq!(
-        result.prop().term(),
-        &Term::mk_eq(a_term, Term::Free { name: "y".into(), ty: ty("nat") }).unwrap()
-    );
-}
-
-#[test]
-fn instantiate_empty_subst_noop() {
-    // Empty substitution list = identity.
-    let mut sig = Signature::new();
-    sig = sig.extend_const("a", ty("nat")).unwrap();
-    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
-
-    let raw_prop = RawTerm::eq(RawTerm::var("x", 0, ty("nat")), RawTerm::const_("a", ty("nat")));
-    let cprop = ctx.certify_prop(raw_prop).unwrap();
-    let thm = KernelRules::assume(cprop).into_kernel();
-
-    let result = KernelRules::instantiate(&thm, &[]).unwrap();
-    assert_eq!(result.hyps(), thm.hyps());
-    assert_eq!(result.prop(), thm.prop());
-}
-
-#[test]
-fn instantiate_multiple_vars() {
-    // Replace two different Vars with different terms.
-    let mut sig = Signature::new();
-    sig = sig.extend_const("a", ty("nat")).unwrap();
-    sig = sig.extend_const("b", ty("nat")).unwrap();
-    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
-
-    let raw_prop = RawTerm::eq(RawTerm::var("x", 0, ty("nat")), RawTerm::var("y", 1, ty("nat")));
-    let cprop = ctx.certify_prop(raw_prop).unwrap();
-    let thm = KernelRules::assume(cprop).into_kernel();
-
-    let a_cterm = ctx.certify_term(RawTerm::const_("a", ty("nat"))).unwrap();
-    let a_term = a_cterm.term().clone();
-    let b_cterm = ctx.certify_term(RawTerm::const_("b", ty("nat"))).unwrap();
-    let b_term = b_cterm.term().clone();
-    let result = KernelRules::instantiate(
-        &thm,
-        &[InstEntry::new("x", 0, ty("nat"), a_cterm), InstEntry::new("y", 1, ty("nat"), b_cterm)],
+    let result =
+        KernelRules::generalize(&thm, &BTreeSet::new(), &BTreeSet::from(["x".into()]), 0).unwrap();
+    let inner = Term::mk_eq(
+        Term::Var { name: "x".into(), index: 0, ty: ty("nat") },
+        Term::Const { name: "x".into(), ty: ty("nat") },
     )
     .unwrap();
-
-    assert_eq!(result.prop().term(), &Term::mk_eq(a_term, b_term).unwrap());
-}
-
-#[test]
-fn instantiate_same_var_all_occurrences() {
-    // All occurrences of the same Var are replaced.
-    let mut sig = Signature::new();
-    sig = sig.extend_const("a", ty("nat")).unwrap();
-    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
-
-    // (Var("x",0) == Var("x",0))
-    let raw_prop = RawTerm::eq(RawTerm::var("x", 0, ty("nat")), RawTerm::var("x", 0, ty("nat")));
-    let cprop = ctx.certify_prop(raw_prop).unwrap();
-    let thm = KernelRules::assume(cprop).into_kernel();
-
-    let a_cterm = ctx.certify_term(RawTerm::const_("a", ty("nat"))).unwrap();
-    let a_term = a_cterm.term().clone();
-    let entry = InstEntry::new("x", 0, ty("nat"), a_cterm);
-    let result = KernelRules::instantiate(&thm, &[entry]).unwrap();
-
-    assert_eq!(result.prop().term(), &Term::mk_eq(a_term.clone(), a_term).unwrap());
-}
-
-#[test]
-fn instantiate_roundtrip_with_generalize() {
-    // generalize then instantiate = original (modulo hyps α-equivalence).
-    let mut sig = Signature::new();
-    sig = sig.extend_const("a", ty("nat")).unwrap();
-    let mut ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
-    ctx.declare_free("x", ty("nat"));
-
-    let x_cterm = ctx.certify_term(RawTerm::free("x", ty("nat"))).unwrap();
-    let thm = KernelRules::reflexive(x_cterm.clone()).into_kernel();
-
-    // generalize Free("x", nat) → Var("x", 0, nat)
-    let gen_thm = KernelRules::generalize(&thm, &[("x".into(), ty("nat"))]).unwrap();
-
-    // Recover the start_index from the derivation
-    let start = match gen_thm.derivation() {
-        Derivation::Generalize { start_index, .. } => *start_index,
-        _ => panic!("expected Generalize derivation"),
-    };
-
-    // instantiate Var("x", start, nat) := Free("x", nat)
-    // Free("x", nat) is a certified CTerm from our context
-    let entry = InstEntry::new("x", start, ty("nat"), x_cterm);
-    let back = KernelRules::instantiate(&gen_thm, &[entry]).unwrap();
-
-    assert_eq!(back.prop(), thm.prop());
-    assert_eq!(back.hyps(), thm.hyps());
-    check_kernel_thm(&back).unwrap();
-}
-
-#[test]
-fn instantiate_invariant_catches_tampered_result() {
-    // Tampering with instantiate output is tested inline in
-    // kernel::thm::tests::instantiate_tampered_prop_fails_invariant,
-    // since KernelThm::new is pub(crate) and inaccessible here.
-    // This integration test verifies the happy-path invariant instead.
-    let mut sig = Signature::new();
-    sig = sig.extend_const("a", ty("nat")).unwrap();
-    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
-
-    let raw_prop = RawTerm::eq(RawTerm::var("x", 0, ty("nat")), RawTerm::const_("a", ty("nat")));
-    let cprop = ctx.certify_prop(raw_prop).unwrap();
-    let thm = KernelRules::assume(cprop).into_kernel();
-
-    let a_cterm = ctx.certify_term(RawTerm::const_("a", ty("nat"))).unwrap();
-    let entry = InstEntry::new("x", 0, ty("nat"), a_cterm);
-    let result = KernelRules::instantiate(&thm, &[entry]).unwrap();
-
-    // Invariant check passes on valid instantiate output
-    check_kernel_thm(&result).unwrap();
-}
-
-#[test]
-fn instantiate_rejects_duplicate_same_name_index_different_type() {
-    // Duplicate detection is keyed by (name, index) regardless of type.
-    // Two entries with same (name, idx) but different var_ty are rejected.
-    let mut sig = Signature::new();
-    sig = sig.extend_const("a", ty("nat")).unwrap();
-    sig = sig.extend_const("P", Ty::prop()).unwrap();
-    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
-
-    let raw_prop = RawTerm::eq(RawTerm::var("x", 0, ty("nat")), RawTerm::const_("a", ty("nat")));
-    let cprop = ctx.certify_prop(raw_prop).unwrap();
-    let thm = KernelRules::assume(cprop).into_kernel();
-
-    // Entry 1: Var("x", 0, nat) := a::nat
-    let a_cterm = ctx.certify_term(RawTerm::const_("a", ty("nat"))).unwrap();
-    // Entry 2: Var("x", 0, nat) := a::nat (same name/index but we vary type in the next case)
-
-    // Case: same (name, idx) but one entry claims var_ty=nat, other claims var_ty=bool
-    // The duplicate check fires before type check — both are (x, 0)
-    let p_cterm = ctx.certify_term(RawTerm::const_("P", Ty::prop())).unwrap();
-    let err = KernelRules::instantiate(
-        &thm,
-        &[InstEntry::new("x", 0, ty("nat"), a_cterm), InstEntry::new("x", 0, Ty::prop(), p_cterm)],
-    )
-    .unwrap_err();
-    // Should be DuplicateSubstitution — keyed by (name, index) only
-    assert!(
-        matches!(err, KernelError::DuplicateSubstitution { .. }),
-        "expected DuplicateSubstitution, got {err:?}"
-    );
-}
-
-#[test]
-fn instantiate_is_simultaneous_not_sequential() {
-    // Substitution is simultaneous: the traversal replaces Var nodes found
-    // in the ORIGINAL theorem, not in the replaced results.
-    //
-    // Since the strict kernel's CTerm certification rejects Var nodes
-    // (Vars are schematic, not declared in Signature), replacements can't
-    // contain Vars that would trigger a sequential re-substitution.
-    //
-    // The guarantee is therefore structural: instantiate_vars() performs a
-    // single-pass iteration — it never recurses into replacement terms
-    // looking for more Vars to substitute.
-    //
-    // We demonstrate this with two independent Vars: replacing both in a
-    // single call produces the same result regardless of order.
-
-    let mut sig = Signature::new();
-    sig = sig.extend_const("a", ty("nat")).unwrap();
-    sig = sig.extend_const("b", ty("nat")).unwrap();
-    let ctx = ProofContext::new(TheorySnapshot::root("Test", sig));
-
-    // Theorem: Var("x",0,nat) == Var("y",1,nat) |- ...
-    let raw_prop = RawTerm::eq(RawTerm::var("x", 0, ty("nat")), RawTerm::var("y", 1, ty("nat")));
-    let cprop = ctx.certify_prop(raw_prop).unwrap();
-    let thm = KernelRules::assume(cprop).into_kernel();
-
-    let a_cterm = ctx.certify_term(RawTerm::const_("a", ty("nat"))).unwrap();
-    let b_cterm = ctx.certify_term(RawTerm::const_("b", ty("nat"))).unwrap();
-
-    // Simultaneous: both Vars replaced in one call.
-    // (Const replacements contain no Vars, so sequential vs simultaneous
-    // would produce the same result — but the implementation does a single
-    // pass, verified by Term::instantiate_vars' continuation-frame loop.)
-    let result = KernelRules::instantiate(
-        &thm,
-        &[
-            InstEntry::new("x", 0, ty("nat"), a_cterm.clone()),
-            InstEntry::new("y", 1, ty("nat"), b_cterm.clone()),
-        ],
-    )
-    .unwrap();
-
-    assert_eq!(
-        result.prop().term(),
-        &Term::mk_eq(a_cterm.term().clone(), b_cterm.term().clone()).unwrap()
-    );
+    assert_eq!(result.prop().term(), &Term::mk_eq(inner.clone(), inner).unwrap());
 }
 
 // ============================================================
@@ -3224,7 +2771,7 @@ fn nprems_counts_subgoals() {
     let c = prop_term(&ctx, "C");
 
     assert_eq!(c.nprems(), 0);
-    assert_eq!(Term::mk_imp_chain(&[a.clone()], &c).unwrap().nprems(), 1);
+    assert_eq!(Term::mk_imp_chain(std::slice::from_ref(&a), &c).unwrap().nprems(), 1);
     assert_eq!(Term::mk_imp_chain(&[a.clone(), b.clone()], &c).unwrap().nprems(), 2);
     assert_eq!(Term::mk_imp_chain(&[a, b], &c).unwrap().nprems(), 2);
 }
@@ -3278,7 +2825,7 @@ fn replace_subgoal_with_multiple_premises_last() {
 
     // A ==> B ==> C, replace subgoal 1 (B) with [D] → A ==> D ==> C
     let chain = Term::mk_imp_chain(&[a.clone(), b.clone()], &c).unwrap();
-    let result = chain.replace_subgoal_with_premises(1, &[d.clone()]).unwrap();
+    let result = chain.replace_subgoal_with_premises(1, std::slice::from_ref(&d)).unwrap();
 
     let (prems, concl) = result.dest_imp_chain();
     assert_eq!(prems.len(), 2);

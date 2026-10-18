@@ -133,7 +133,7 @@ mod tests {
     fn test_implies_intr_list() {
         let a = prop("A");
         let assumed = ThmKernel::assume_compat(a.clone());
-        let result = implies_intr_list(&[a.clone()], &assumed).unwrap();
+        let result = implies_intr_list(std::slice::from_ref(&a), &assumed).unwrap();
         assert!(result.is_unconditional());
     }
 

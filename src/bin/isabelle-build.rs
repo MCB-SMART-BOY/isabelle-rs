@@ -1,139 +1,63 @@
-//! `isabelle-build` — CLI tool for compiling Isabelle theory files.
-//!
-//! Usage:
-//!   isabelle-build Foo.thy              # compile a single theory
-//!   isabelle-build --dir theories/HOL/  # batch compile all .thy files in directory
-//!   isabelle-build --stats              # show compilation statistics
+//! Fail-closed source-to-kernel compiler.
 
-use std::path::PathBuf;
+use std::{path::Path, path::PathBuf, process::ExitCode};
 
 use clap::Parser;
 use isabelle_rs::{
-    core::theory::Theory,
-    theory::{loader::TheoryProcessor, session_builder::SessionBuilder},
+    hol::sampled_true_i::{SampledTrueIError, compile_sampled_true_i},
+    isar::source_ast::SourceId,
+    theory::trusted_loader::{TrustedLoadError, compile_trusted_source},
 };
+use thiserror::Error;
 
-/// Isabelle-rs build tool — compile .thy files.
 #[derive(Parser)]
 #[command(name = "isabelle-build", version = env!("CARGO_PKG_VERSION"))]
 struct Cli {
-    /// Theory file(s) to compile.
-    files: Vec<PathBuf>,
-
-    /// Batch compile all .thy files in this directory.
-    #[arg(long)]
-    dir: Option<PathBuf>,
-
-    /// Show statistics after compilation.
-    #[arg(long)]
-    stats: bool,
-
-    /// Quiet mode (only show errors).
-    #[arg(long)]
-    quiet: bool,
-
-    /// Accept all lemmas as axioms (skip proof replay, fast mode).
-    #[arg(long)]
-    accept_all: bool,
+    /// One theory file to compile through the strict kernel.
+    file: PathBuf,
+    /// Audit the narrow HOL.TrueI projection, not the complete HOL theory.
+    #[arg(long = "sampled-hol-true-i")]
+    is_sampled_hol_true_i: bool,
 }
 
-fn main() {
+#[derive(Debug, Error)]
+enum BuildError {
+    /// User-fixable input path or file contents.
+    #[error(
+        "E0401: failed to read theory `{path}`: {source}\n  = help: check the path and permissions"
+    )]
+    Read { path: PathBuf, source: std::io::Error },
+    /// Rejected whole-file source, preserving the compiler cause.
+    #[error(transparent)]
+    WholeFile(#[from] TrustedLoadError),
+    /// Rejected audited projection, preserving the compiler cause.
+    #[error(transparent)]
+    Projection(#[from] SampledTrueIError),
+}
+
+fn main() -> ExitCode {
     let cli = Cli::parse();
-
-    if let Some(dir) = &cli.dir {
-        batch_compile(dir, cli.quiet, cli.accept_all);
-        return;
-    }
-
-    if cli.files.is_empty() {
-        eprintln!("No files specified. Use --help for usage.");
-        eprintln!("  isabelle-build Foo.thy          # compile one file");
-        eprintln!("  isabelle-build --dir theories/  # batch compile directory");
-        std::process::exit(1);
-    }
-
-    let mut total_ok = 0;
-    let mut total_fail = 0;
-    let mut total_thms = 0;
-
-    for path in &cli.files {
-        match compile_file(path) {
-            Ok(thms) => {
-                total_ok += 1;
-                total_thms += thms;
-                if !cli.quiet {
-                    println!("✅ {} ({} TransitionalStrictClosed theorems)", path.display(), thms);
-                }
-            },
-            Err(errs) => {
-                total_fail += 1;
-                eprintln!("❌ {} ({} errors)", path.display(), errs.len());
-                if !cli.quiet {
-                    for err in &errs[..errs.len().min(5)] {
-                        eprintln!("   {}", err);
-                    }
-                }
-            },
-        }
-    }
-
-    if cli.stats || cli.files.len() > 1 {
-        println!(
-            "Total: {} ok, {} failed, {} TransitionalStrictClosed theorems",
-            total_ok, total_fail, total_thms
-        );
+    match compile_file(&cli.file, cli.is_sampled_hol_true_i) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::FAILURE
+        },
     }
 }
 
-fn compile_file(path: &PathBuf) -> Result<usize, Vec<String>> {
-    let parent = Theory::pure();
-    let file_name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("Unknown");
-    let mut proc = TheoryProcessor::with_parent(parent, file_name);
-    let source = std::fs::read_to_string(path).map_err(|e| vec![format!("Cannot read: {e}")])?;
-    let _thy = proc.process_source(&source);
-    if proc.errors().is_empty() {
-        Ok(proc.closed_theorem_count())
+fn compile_file(path: &Path, is_sampled_hol_true_i: bool) -> Result<(), BuildError> {
+    let source = std::fs::read_to_string(path)
+        .map_err(|source| BuildError::Read { path: path.to_path_buf(), source })?;
+    let source_id = SourceId::new(path.display().to_string());
+    let result = if is_sampled_hol_true_i {
+        compile_sampled_true_i(&source, source_id)?
     } else {
-        Err(proc.errors().to_vec())
+        compile_trusted_source(&source, source_id)?
+    };
+    if is_sampled_hol_true_i {
+        println!("Audited HOL.TrueI projection only; the complete theory was not compiled.");
     }
-}
-
-fn batch_compile(dir: &PathBuf, quiet: bool, accept_all: bool) {
-    let mut builder = SessionBuilder::new();
-    builder.set_accept_all(accept_all);
-    match builder.scan(dir) {
-        Ok(count) => {
-            if !quiet {
-                println!("Found {} .thy files in {}", count, dir.display());
-            }
-            let order = builder.resolve_dependencies();
-            if !quiet {
-                println!("Resolved {} theories in load order", order.len());
-            }
-
-            let result = builder.build();
-            println!("╔══════════════════════════════════════╗");
-            println!("║  Isabelle-rs Build Report            ║");
-            println!("╠══════════════════════════════════════╣");
-            println!("║  Total files:     {:<4}               ║", result.total);
-            println!("║  Succeeded:       {:<4}               ║", result.loaded);
-            println!("║  Failed:          {:<4}               ║", result.failed);
-            println!("║  Transitional:   {:<4}               ║", result.theorems);
-            println!("╚══════════════════════════════════════╝");
-
-            if !result.error_messages.is_empty() && !quiet {
-                println!("\nErrors:");
-                for err in &result.error_messages[..result.error_messages.len().min(10)] {
-                    println!("  {}", err);
-                }
-                if result.error_messages.len() > 10 {
-                    println!("  ... and {} more", result.error_messages.len() - 10);
-                }
-            }
-        },
-        Err(e) => {
-            eprintln!("Failed to scan {}: {}", dir.display(), e);
-            std::process::exit(1);
-        },
-    }
+    println!("KernelTrustedClosed: {} ({})", result.theorem.name().as_str(), path.display());
+    Ok(())
 }

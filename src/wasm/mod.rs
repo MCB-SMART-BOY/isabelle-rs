@@ -1,23 +1,13 @@
-//! WASM plugin system — sandboxed tactic execution.
+//! WASM plugin interface for legacy search and proposed tactic results.
 //!
-//! ## Architecture
-//!
-//! ```text
-//! plugin.wasm → WasmRuntime → host functions → kernel LCF API
-//!                  │
-//!                  ├── memory (64KB isolated)
-//!                  └── fuel (timeout via instruction counting)
-//! ```
-//!
-//! ## Security model
-//!
-//! - Memory isolation: WASM linear memory, cannot access host memory
-//! - Fuel metering: each instruction costs 1 fuel, hard limit enforced
-//! - Whitelist: only 13 registered host functions callable
-//! - No I/O: no filesystem, network, or environment access
+//! Wasmtime execution uses a fuel budget, but this runtime sets no explicit
+//! Store memory limit or wall-clock deadline. It is not a complete resource
+//! sandbox. No plugin result is a trusted theorem; tactic execution and proof
+//! reconstruction are not implemented.
 
 use std::sync::Arc;
 
+use self::host::LegacySearchFact;
 use crate::core::thm::Thm;
 
 pub mod host;
@@ -28,47 +18,40 @@ pub mod sdk;
 // Plugin trait
 // =========================================================================
 
-/// A WASM plugin that can be loaded and executed.
+/// A WASM plugin that can be loaded and queried.
 ///
-/// Plugins are .wasm binaries that implement a specific ABI.
-/// They communicate with the host via wasmtime host functions.
+/// The legacy tactic API is not an acceptance path. `apply` currently returns
+/// no results; future proposals must be reconstructed by the trusted kernel.
 pub trait Plugin: Send + Sync {
-    /// Plugin identifier.
     fn name(&self) -> &str;
-
-    /// Plugin version string.
     fn version(&self) -> &str;
-
-    /// Apply the plugin's tactic to a goal state.
-    ///
-    /// Returns a list of new goal states.
-    /// Empty list = tactic failed.
     fn apply(&self, state: &Thm, thms: &[Arc<Thm>]) -> Vec<Thm>;
 }
 
 // =========================================================================
-// PluginContext — restricted kernel access for plugins
+// PluginContext — legacy search view
 // =========================================================================
 
-/// Restricted view of the kernel available to plugins.
+/// Read-only legacy search metadata available to a plugin.
 ///
-/// Plugins cannot create arbitrary theorems — they can only:
-/// - Look up existing theorems by name
-/// - Apply resolution (kernel-mediated)
-/// - Access the goal's assumptions and conclusion
+/// Lookup does not supply a theorem object or certify its proposition.
 pub struct PluginContext {
-    /// Named theorems available to the plugin.
-    pub named_theorems: Vec<(String, Arc<Thm>)>,
+    named_facts: Vec<(String, Arc<LegacySearchFact>)>,
 }
 
 impl PluginContext {
     pub fn new() -> Self {
-        PluginContext { named_theorems: Vec::new() }
+        Self { named_facts: Vec::new() }
     }
 
-    /// Look up a theorem by name.
-    pub fn lookup(&self, name: &str) -> Option<&Arc<Thm>> {
-        self.named_theorems.iter().find(|(n, _)| n == name).map(|(_, thm)| thm)
+    /// Index a legacy fact for search, discarding its proof object.
+    pub fn index_legacy(&mut self, name: String, theorem: &Thm) {
+        self.named_facts.push((name, Arc::new(LegacySearchFact::from_legacy(theorem))));
+    }
+
+    /// Look up shared search metadata by name; never returns a theorem.
+    pub fn lookup(&self, name: &str) -> Option<&Arc<LegacySearchFact>> {
+        self.named_facts.iter().find(|(key, _)| key == name).map(|(_, fact)| fact)
     }
 }
 
@@ -93,15 +76,15 @@ mod tests {
     }
 
     #[test]
-    fn test_plugin_context_lookup() {
+    fn plugin_context_lookup_returns_legacy_metadata() {
         let mut ctx = PluginContext::new();
         let a_cterm = crate::core::thm::CTerm::certify(crate::core::term::Term::const_(
             "A",
             crate::core::types::Typ::base("prop"),
         ));
-        let thm = Arc::new(crate::core::thm::ThmKernel::trivial(a_cterm).unwrap());
-        ctx.named_theorems.push(("trivial".into(), Arc::clone(&thm)));
-        assert!(ctx.lookup("trivial").is_some());
+        let theorem = crate::core::thm::ThmKernel::admit(a_cterm, "test");
+        ctx.index_legacy("A".into(), &theorem);
+        assert_eq!(ctx.lookup("A").unwrap().kind(), host::LegacyFactKind::Admitted);
         assert!(ctx.lookup("other").is_none());
     }
 }

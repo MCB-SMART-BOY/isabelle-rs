@@ -1,4 +1,8 @@
-use super::{CTerm, InstEntry, KernelError, Name, Ty, identity::CanonicalEncoder};
+use std::collections::BTreeSet;
+
+use super::{
+    CProp, CTerm, InstEntry, KernelError, Name, ProofContext, Ty, identity::CanonicalEncoder,
+};
 
 /// Raw term accepted at the edge of the strict kernel.
 ///
@@ -147,6 +151,77 @@ impl RawTerm {
         }
         false
     }
+    pub(crate) fn referenced_consts(&self, names: &mut std::collections::BTreeSet<Name>) {
+        match self {
+            Self::Const { name, .. } => {
+                names.insert(name.clone());
+            },
+            Self::Abs { body, .. } | Self::Forall { body, .. } => body.referenced_consts(names),
+            Self::App { func, arg } => {
+                func.referenced_consts(names);
+                arg.referenced_consts(names);
+            },
+            Self::Eq { lhs, rhs } | Self::Imp { premise: lhs, conclusion: rhs } => {
+                lhs.referenced_consts(names);
+                rhs.referenced_consts(names);
+            },
+            _ => {},
+        }
+    }
+    pub(crate) fn for_each_annotation(&self, f: &mut impl FnMut(&Ty)) {
+        match self {
+            Self::Const { ty, .. } | Self::Free { ty, .. } | Self::Var { ty, .. } => f(ty),
+            Self::Abs { ty, body, .. } | Self::Forall { param_ty: ty, body, .. } => {
+                f(ty);
+                body.for_each_annotation(f);
+            },
+            Self::App { func, arg } => {
+                func.for_each_annotation(f);
+                arg.for_each_annotation(f);
+            },
+            Self::Eq { lhs, rhs } | Self::Imp { premise: lhs, conclusion: rhs } => {
+                lhs.for_each_annotation(f);
+                rhs.for_each_annotation(f);
+            },
+            Self::Bound(_) => {},
+        }
+    }
+}
+
+pub(crate) fn abstract_definition_frees(
+    raw: RawTerm,
+    parameters: &[(Name, Ty)],
+    depth: usize,
+) -> Result<RawTerm, KernelError> {
+    let recurse = |raw, depth| abstract_definition_frees(raw, parameters, depth);
+    Ok(match raw {
+        RawTerm::Free { name, ty } => {
+            let position = parameters
+                .iter()
+                .position(|(parameter, _)| *parameter == name)
+                .ok_or_else(|| KernelError::UndeclaredFree(name.clone()))?;
+            let declared = &parameters[position].1;
+            if declared != &ty {
+                return Err(KernelError::TypeMismatch { expected: declared.clone(), actual: ty });
+            }
+            let index = depth
+                .checked_add(parameters.len() - position - 1)
+                .ok_or_else(|| KernelError::Invariant("definition binder index overflow".into()))?;
+            RawTerm::Bound(index)
+        },
+        RawTerm::Bound(index) if index >= depth => return Err(KernelError::UnboundBound(index)),
+        RawTerm::Bound(index) => RawTerm::Bound(index),
+        RawTerm::Abs { name, ty, body } => RawTerm::abs(name, ty, recurse(*body, depth + 1)?),
+        RawTerm::Forall { name, param_ty, body } => {
+            RawTerm::forall(name, param_ty, recurse(*body, depth + 1)?)
+        },
+        RawTerm::App { func, arg } => RawTerm::app(recurse(*func, depth)?, recurse(*arg, depth)?),
+        RawTerm::Eq { lhs, rhs } => RawTerm::eq(recurse(*lhs, depth)?, recurse(*rhs, depth)?),
+        RawTerm::Imp { premise, conclusion } => {
+            RawTerm::imp(recurse(*premise, depth)?, recurse(*conclusion, depth)?)
+        },
+        other => other,
+    })
 }
 
 /// Apply type substitution to a RawTerm with validation.
@@ -155,46 +230,46 @@ pub fn subst_types(
     raw: &RawTerm,
     type_inst: &crate::logic::TypeInstantiation,
 ) -> Result<RawTerm, KernelError> {
-    // Collect all distinct type variables (name, index) in the term
-    let mut type_vars: Vec<(Name, usize)> = Vec::new();
+    // An occurrence is identified by name, index and exact sort.
+    let mut type_vars: Vec<(Name, usize, crate::Sort)> = Vec::new();
     collect_type_vars(raw, &mut type_vars);
-    // Check for duplicate (name, index) pairs.
-    // Same name with different index is allowed (e.g., 'a.0 and 'a.1 are distinct).
-    let mut seen: std::collections::BTreeSet<(Name, u32)> = std::collections::BTreeSet::new();
-    for (name, idx) in &type_vars {
-        let key = (name.clone(), *idx as u32);
-        if !seen.insert(key) {
-            return Err(KernelError::Invariant(
-                format!("duplicate type variable `{name}` at index {idx}").into(),
-            ));
+    let mut seen: std::collections::BTreeMap<(Name, usize), crate::Sort> =
+        std::collections::BTreeMap::new();
+    for (name, index, sort) in &type_vars {
+        if let Some(previous_sort) = seen.insert((name.clone(), *index), sort.clone())
+            && previous_sort != *sort
+        {
+            return Err(KernelError::Invariant(format!(
+                "schematic type variable `{name}` at index {index} has conflicting sorts"
+            )));
         }
-    }
-    // Validate: every inst entry must match a type variable present in the term
-    for (tvid, _) in type_inst.iter() {
-        if !type_vars.iter().any(|(n, i)| n == &tvid.name && *i == tvid.index as usize) {
-            return Err(KernelError::Invariant(
-                format!("type instantiation {:?} not present in schema", tvid).into(),
-            ));
-        }
-    }
-    // Validate: every type variable in the term must be resolved
-    for (name, index) in &type_vars {
-        let id = crate::logic::TypeVarId::new(name.clone(), *index as u32);
+        let index = u32::try_from(*index).map_err(|_| {
+            KernelError::TypeVariableIndexOutOfRange { name: name.clone(), index: *index }
+        })?;
+        let id = crate::logic::TypeVarId::new(name.clone(), index, sort.clone());
         if type_inst.get(&id).is_none() {
-            return Err(KernelError::Invariant(
-                format!("unresolved type variable `{name}` with index {index} in schema").into(),
-            ));
+            return Err(KernelError::Invariant(format!(
+                "unresolved schematic type variable {id:?} in schema"
+            )));
+        }
+    }
+    for (id, _) in type_inst.iter() {
+        if !type_vars.iter().any(|(name, index, sort)| {
+            name == &id.name && *index == id.index as usize && sort == &id.sort
+        }) {
+            return Err(KernelError::Invariant(format!(
+                "type instantiation {id:?} not present in schema"
+            )));
         }
     }
     apply_type_subst(raw, type_inst)
 }
 
-fn collect_type_vars(raw: &RawTerm, out: &mut Vec<(Name, usize)>) {
-    let push = |ty: &Ty, out: &mut Vec<(Name, usize)>| {
-        ty.for_each_type_var(&mut |name, index, _sort| {
-            let key = (name.clone(), index);
-            if !out.iter().any(|(n, i)| n == name && *i == index) {
-                out.push(key);
+fn collect_type_vars(raw: &RawTerm, out: &mut Vec<(Name, usize, crate::Sort)>) {
+    let push = |ty: &Ty, out: &mut Vec<(Name, usize, crate::Sort)>| {
+        ty.for_each_type_var(&mut |name, index, sort| {
+            if !out.iter().any(|(n, i, s)| n == name && *i == index && s == sort) {
+                out.push((name.clone(), index, sort.clone()));
             }
         });
     };
@@ -281,7 +356,7 @@ fn subst_terms_depth(
     depth: usize,
 ) -> Result<RawTerm, KernelError> {
     match raw {
-        RawTerm::Var { name, index: _, .. } => {
+        RawTerm::Var { name, .. } => {
             for (inst_name, replacement) in inst {
                 if name == inst_name {
                     return Ok(lift_raw(replacement.term(), depth));
@@ -372,74 +447,56 @@ fn lift_raw_depth(term: &Term, n: usize, depth: usize) -> RawTerm {
 /// For each entry, the outermost Forall is consumed, Bound(0) is
 /// substituted with the replacement, and all other Bound indices are lowered.
 pub fn instantiate_schema_binders(
-    schema: &RawTerm,
+    context: &ProofContext,
+    schema: RawTerm,
     term_inst: &[CTerm],
-) -> Result<RawTerm, KernelError> {
-    let mut body = schema.clone();
+) -> Result<CProp, KernelError> {
+    // Check the whole type pass before a vacuous binder can erase its annotations.
+    let mut proposition = context.certify_prop(schema)?;
     for replacement in term_inst {
-        body = consume_forall(&body, replacement)?;
+        context.validate_cterm(replacement)?;
     }
-    // Verify no remaining Forall binders
-    if matches!(&body, RawTerm::Forall { .. }) {
+    for replacement in term_inst {
+        proposition = consume_forall(context, &proposition, replacement)?;
+    }
+    if proposition.term().dest_forall().is_some() {
         return Err(KernelError::Invariant(
             "uninstantiated Forall binders remain in schema".into(),
         ));
     }
-    Ok(body)
+    Ok(proposition)
 }
 
 /// Consume the outermost Forall binder, substituting Bound(0).
-fn consume_forall(raw: &RawTerm, replacement: &CTerm) -> Result<RawTerm, KernelError> {
-    match raw {
-        RawTerm::Forall { param_ty, body, .. } => {
-            if &replacement.ty() != param_ty {
-                return Err(KernelError::TypeMismatch {
-                    expected: param_ty.clone(),
-                    actual: replacement.ty(),
-                });
-            }
-            subst_bound0_and_lower(body, replacement, 0)
-        },
-        _ => Err(KernelError::Invariant("expected Forall binder for term instantiation".into())),
+fn consume_forall(
+    context: &ProofContext,
+    proposition: &CProp,
+    replacement: &CTerm,
+) -> Result<CProp, KernelError> {
+    let (_, param_ty, body) = proposition.term().dest_forall().ok_or_else(|| {
+        KernelError::Invariant("expected Forall binder for term instantiation".into())
+    })?;
+    if replacement.ty() != *param_ty {
+        return Err(KernelError::TypeMismatch {
+            expected: param_ty.clone(),
+            actual: replacement.ty(),
+        });
     }
+    let result = CProp::new(Term::instantiate_bound0(body, replacement.term()), context.stamp())?;
+    context.validate_cprop(&result)?;
+    Ok(result)
 }
 
-/// Substitute Bound(0) with `replacement`, lowering all other Bound indices.
-fn subst_bound0_and_lower(
-    raw: &RawTerm,
-    replacement: &CTerm,
-    depth: usize,
-) -> Result<RawTerm, KernelError> {
-    match raw {
-        RawTerm::Bound(i) if *i == depth => Ok(lift_raw(replacement.term(), depth)),
-        RawTerm::Bound(i) if *i > depth => Ok(RawTerm::Bound(i - 1)),
-        RawTerm::Bound(_) => Ok(raw.clone()),
-        RawTerm::Abs { name, ty, body } => {
-            let body = subst_bound0_and_lower(body, replacement, depth + 1)?;
-            Ok(RawTerm::Abs { name: name.clone(), ty: ty.clone(), body: Box::new(body) })
-        },
-        RawTerm::Forall { name, param_ty, body } => {
-            let body = subst_bound0_and_lower(body, replacement, depth + 1)?;
-            Ok(RawTerm::Forall {
-                name: name.clone(),
-                param_ty: param_ty.clone(),
-                body: Box::new(body),
-            })
-        },
-        RawTerm::App { func, arg } => Ok(RawTerm::App {
-            func: Box::new(subst_bound0_and_lower(func, replacement, depth)?),
-            arg: Box::new(subst_bound0_and_lower(arg, replacement, depth)?),
-        }),
-        RawTerm::Eq { lhs, rhs } => Ok(RawTerm::Eq {
-            lhs: Box::new(subst_bound0_and_lower(lhs, replacement, depth)?),
-            rhs: Box::new(subst_bound0_and_lower(rhs, replacement, depth)?),
-        }),
-        RawTerm::Imp { premise, conclusion } => Ok(RawTerm::Imp {
-            premise: Box::new(subst_bound0_and_lower(premise, replacement, depth)?),
-            conclusion: Box::new(subst_bound0_and_lower(conclusion, replacement, depth)?),
-        }),
-        _ => Ok(raw.clone()),
+/// Isabelle Name.clean_index removes each trailing internal-name underscore.
+fn clean_generalize_name(name: &Name, index: usize) -> Result<(Name, usize), KernelError> {
+    let clean = name.as_str().trim_end_matches('_');
+    let offset = name.as_str().len() - clean.len();
+    let index =
+        index.checked_add(offset).ok_or(KernelError::GeneralizeIndexOverflow { index, offset })?;
+    if offset == 0 {
+        return Ok((name.clone(), index));
     }
+    Ok((Name::from(clean), index))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -456,6 +513,45 @@ pub enum Term {
 }
 
 impl Term {
+    /// Map every original annotation once; substitution RHS types are not traversed.
+    pub(crate) fn instantiate_types(
+        &self,
+        instance: &crate::logic::TypeInstantiation,
+    ) -> Result<Self, KernelError> {
+        let map_type = |ty: &Ty| ty.subst_type_vars(instance);
+        let map_term = |term: &Self| term.instantiate_types(instance).map(Box::new);
+        Ok(match self {
+            Self::Const { name, ty } => Self::Const { name: name.clone(), ty: map_type(ty)? },
+            Self::Free { name, ty } => Self::Free { name: name.clone(), ty: map_type(ty)? },
+            Self::Var { name, index, ty } => {
+                Self::Var { name: name.clone(), index: *index, ty: map_type(ty)? }
+            },
+            Self::Bound { index, ty } => Self::Bound { index: *index, ty: map_type(ty)? },
+            Self::Abs { name, param_ty, body, ty } => Self::Abs {
+                name: name.clone(),
+                param_ty: map_type(param_ty)?,
+                body: map_term(body)?,
+                ty: map_type(ty)?,
+            },
+            Self::Forall { name, param_ty, body } => Self::Forall {
+                name: name.clone(),
+                param_ty: map_type(param_ty)?,
+                body: map_term(body)?,
+            },
+            Self::App { func, arg, ty } => {
+                Self::App { func: map_term(func)?, arg: map_term(arg)?, ty: map_type(ty)? }
+            },
+            Self::Eq { object_ty, lhs, rhs } => Self::Eq {
+                object_ty: map_type(object_ty)?,
+                lhs: map_term(lhs)?,
+                rhs: map_term(rhs)?,
+            },
+            Self::Imp { premise, conclusion } => {
+                Self::Imp { premise: map_term(premise)?, conclusion: map_term(conclusion)? }
+            },
+        })
+    }
+
     pub fn ty(&self) -> Ty {
         match self {
             Term::Const { ty, .. }
@@ -465,6 +561,60 @@ impl Term {
             | Term::Abs { ty, .. }
             | Term::App { ty, .. } => ty.clone(),
             Term::Eq { .. } | Term::Imp { .. } | Term::Forall { .. } => Ty::prop(),
+        }
+    }
+    pub(crate) fn for_each_type_annotation<'a>(&'a self, f: &mut impl FnMut(&'a Ty)) {
+        match self {
+            Term::Const { ty, .. }
+            | Term::Free { ty, .. }
+            | Term::Var { ty, .. }
+            | Term::Bound { ty, .. } => f(ty),
+            Term::Abs { param_ty, body, ty, .. } => {
+                f(param_ty);
+                f(ty);
+                body.for_each_type_annotation(f);
+            },
+            Term::Forall { param_ty, body, .. } => {
+                f(param_ty);
+                body.for_each_type_annotation(f);
+            },
+            Term::App { func, arg, ty } => {
+                f(ty);
+                func.for_each_type_annotation(f);
+                arg.for_each_type_annotation(f);
+            },
+            Term::Eq { object_ty, lhs, rhs } => {
+                f(object_ty);
+                lhs.for_each_type_annotation(f);
+                rhs.for_each_type_annotation(f);
+            },
+            Term::Imp { premise, conclusion } => {
+                premise.for_each_type_annotation(f);
+                conclusion.for_each_type_annotation(f);
+            },
+        }
+    }
+    /// Visit every physical constant occurrence, including duplicates below binders.
+    pub(crate) fn visit_const_occurrences(
+        &self,
+        f: &mut impl FnMut(&Name, &Ty) -> Result<(), KernelError>,
+    ) -> Result<(), KernelError> {
+        match self {
+            Self::Const { name, ty } => f(name, ty),
+            Self::Free { .. } | Self::Var { .. } | Self::Bound { .. } => Ok(()),
+            Self::Abs { body, .. } | Self::Forall { body, .. } => body.visit_const_occurrences(f),
+            Self::App { func, arg, .. } => {
+                func.visit_const_occurrences(f)?;
+                arg.visit_const_occurrences(f)
+            },
+            Self::Eq { lhs, rhs, .. } => {
+                lhs.visit_const_occurrences(f)?;
+                rhs.visit_const_occurrences(f)
+            },
+            Self::Imp { premise, conclusion } => {
+                premise.visit_const_occurrences(f)?;
+                conclusion.visit_const_occurrences(f)
+            },
         }
     }
 
@@ -626,11 +776,13 @@ impl Term {
         results.pop().unwrap()
     }
 
-    /// Substitute `arg` for the outermost `Bound(0)`, decrementing all other
-    /// Bound indices by 1. This is the core operation of beta reduction.
+    /// Substitute `arg` for the outermost `Bound(0)`. Local binders keep their
+    /// indices; references outside the removed binder decrement by exactly one.
     ///
     /// For `(Abs { body: body', .. })(arg)`, this computes `body'[arg/x]`
     /// where `x` is represented as `Bound(0, param_ty)` in `body'`.
+    /// The exhaustive substitution/lift tables stay together so every term
+    /// constructor is handled identically in the two capture-avoiding walks.
     pub(crate) fn instantiate_bound0(body: &Term, arg: &Term) -> Term {
         fn subst(term: &Term, args: &[Term]) -> Term {
             match term {
@@ -638,7 +790,7 @@ impl Term {
                     if *index < args.len() {
                         lift(&args[*index], 0, 0)
                     } else {
-                        Term::Bound { index: index - args.len(), ty: ty.clone() }
+                        Term::Bound { index: index - 1, ty: ty.clone() }
                     }
                 },
                 Term::Abs { name, param_ty, body: inner, ty } => {
@@ -716,7 +868,7 @@ impl Term {
             }
         }
 
-        subst(body, &[arg.clone()])
+        subst(body, std::slice::from_ref(arg))
     }
 
     pub fn alpha_eq(&self, other: &Term) -> bool {
@@ -814,6 +966,51 @@ impl Term {
         }
     }
 
+    pub(crate) fn has_schematic_hypothesis(&self) -> bool {
+        let mut stack = vec![self];
+        while let Some(term) = stack.pop() {
+            match term {
+                Term::Var { .. } => return true,
+                Term::Const { ty, .. } | Term::Free { ty, .. } | Term::Bound { ty, .. } => {
+                    if ty.has_type_vars() {
+                        return true;
+                    }
+                },
+                Term::Abs { param_ty, body, ty, .. } => {
+                    if param_ty.has_type_vars() || ty.has_type_vars() {
+                        return true;
+                    }
+                    stack.push(body);
+                },
+                Term::Forall { param_ty, body, .. } => {
+                    if param_ty.has_type_vars() {
+                        return true;
+                    }
+                    stack.push(body);
+                },
+                Term::App { func, arg, ty } => {
+                    if ty.has_type_vars() {
+                        return true;
+                    }
+                    stack.push(arg);
+                    stack.push(func);
+                },
+                Term::Eq { object_ty, lhs, rhs } => {
+                    if object_ty.has_type_vars() {
+                        return true;
+                    }
+                    stack.push(rhs);
+                    stack.push(lhs);
+                },
+                Term::Imp { premise, conclusion } => {
+                    stack.push(conclusion);
+                    stack.push(premise);
+                },
+            }
+        }
+        false
+    }
+
     /// Return the highest `Var` index in the term, or `None` if there are no
     /// schematic variables.
     pub fn max_var_index(&self) -> Option<usize> {
@@ -843,92 +1040,63 @@ impl Term {
         max
     }
 
-    /// Replace each listed `Free(name, ty)` with a `Var(name, start + i, ty)`
-    /// where `i` is the position in the `frees` list.
+    /// Generalize selected fixed type and term names at a shared index.
     ///
-    /// Unmatched entries in `frees` are silently ignored (no-op). The caller is
-    /// responsible for setting `start` to avoid collisions with existing `Var`
-    /// indices — typically `start = max_var_index() + 1`.
-    pub fn generalize_to_vars(&self, frees: &[(Name, Ty)], start: usize) -> Term {
-        enum Frame {
-            Process(Term),
-            BuildAbs { name: Name, param_ty: Ty, abs_ty: Ty },
-            BuildForall { name: Name, param_ty: Ty },
-            BuildApp { ty: Ty },
-            BuildEq { object_ty: Ty },
-            BuildImp,
+    /// Selected `Free` names lose trailing underscores, increasing their own
+    /// schematic index by one per underscore. The caller checks freshness for
+    /// the complete certified object before transforming its components.
+    pub fn generalize_vars(
+        &self,
+        type_names: &BTreeSet<Name>,
+        term_names: &BTreeSet<Name>,
+        index: usize,
+    ) -> Result<Term, KernelError> {
+        if type_names.is_empty() && term_names.is_empty() {
+            return Ok(self.clone());
         }
-
-        let mut stack = vec![Frame::Process(self.clone())];
-        let mut results: Vec<Term> = vec![];
-
-        while let Some(frame) = stack.pop() {
-            match frame {
-                Frame::Process(term) => match term {
-                    Term::Free { name, ty } => {
-                        if let Some(i) = frees.iter().position(|(n, t)| n == &name && t == &ty) {
-                            results.push(Term::Var { name, index: start + i, ty });
-                        } else {
-                            results.push(Term::Free { name, ty });
-                        }
-                    },
-                    Term::Abs { name, param_ty, body, ty } => {
-                        stack.push(Frame::BuildAbs { name, param_ty, abs_ty: ty });
-                        stack.push(Frame::Process(*body));
-                    },
-                    Term::Forall { name, param_ty, body } => {
-                        stack.push(Frame::BuildForall { name, param_ty });
-                        stack.push(Frame::Process(*body));
-                    },
-                    Term::App { func, arg, ty } => {
-                        stack.push(Frame::BuildApp { ty });
-                        stack.push(Frame::Process(*arg));
-                        stack.push(Frame::Process(*func));
-                    },
-                    Term::Eq { object_ty, lhs, rhs } => {
-                        stack.push(Frame::BuildEq { object_ty });
-                        stack.push(Frame::Process(*rhs));
-                        stack.push(Frame::Process(*lhs));
-                    },
-                    Term::Imp { premise, conclusion } => {
-                        stack.push(Frame::BuildImp);
-                        stack.push(Frame::Process(*conclusion));
-                        stack.push(Frame::Process(*premise));
-                    },
-                    other => results.push(other),
-                },
-                Frame::BuildAbs { name, param_ty, abs_ty } => {
-                    let body = Box::new(results.pop().unwrap());
-                    results.push(Term::Abs { name, param_ty, body, ty: abs_ty });
-                },
-                Frame::BuildForall { name, param_ty } => {
-                    let body = Box::new(results.pop().unwrap());
-                    results.push(Term::Forall { name, param_ty, body });
-                },
-                Frame::BuildApp { ty } => {
-                    let arg = Box::new(results.pop().unwrap());
-                    let func = Box::new(results.pop().unwrap());
-                    results.push(Term::App { func, arg, ty });
-                },
-                Frame::BuildEq { object_ty } => {
-                    let rhs = Box::new(results.pop().unwrap());
-                    let lhs = Box::new(results.pop().unwrap());
-                    results.push(Term::Eq { object_ty, lhs, rhs });
-                },
-                Frame::BuildImp => {
-                    let conclusion = Box::new(results.pop().unwrap());
-                    let premise = Box::new(results.pop().unwrap());
-                    results.push(Term::Imp { premise, conclusion });
-                },
-            }
-        }
-        results.pop().unwrap()
+        let map_type = |ty: &Ty| ty.generalize_type(type_names, index);
+        let map_term =
+            |term: &Self| term.generalize_vars(type_names, term_names, index).map(Box::new);
+        Ok(match self {
+            Self::Const { name, ty } => Self::Const { name: name.clone(), ty: map_type(ty)? },
+            Self::Free { name, ty } if term_names.contains(name) => {
+                let (name, index) = clean_generalize_name(name, index)?;
+                Self::Var { name, index, ty: map_type(ty)? }
+            },
+            Self::Free { name, ty } => Self::Free { name: name.clone(), ty: map_type(ty)? },
+            Self::Var { name, index, ty } => {
+                Self::Var { name: name.clone(), index: *index, ty: map_type(ty)? }
+            },
+            Self::Bound { index, ty } => Self::Bound { index: *index, ty: map_type(ty)? },
+            Self::Abs { name, param_ty, body, ty } => Self::Abs {
+                name: name.clone(),
+                param_ty: map_type(param_ty)?,
+                body: map_term(body)?,
+                ty: map_type(ty)?,
+            },
+            Self::Forall { name, param_ty, body } => Self::Forall {
+                name: name.clone(),
+                param_ty: map_type(param_ty)?,
+                body: map_term(body)?,
+            },
+            Self::App { func, arg, ty } => {
+                Self::App { func: map_term(func)?, arg: map_term(arg)?, ty: map_type(ty)? }
+            },
+            Self::Eq { object_ty, lhs, rhs } => Self::Eq {
+                object_ty: map_type(object_ty)?,
+                lhs: map_term(lhs)?,
+                rhs: map_term(rhs)?,
+            },
+            Self::Imp { premise, conclusion } => {
+                Self::Imp { premise: map_term(premise)?, conclusion: map_term(conclusion)? }
+            },
+        })
     }
 
     /// Replace each matching `Var(name, idx, ty)` with its corresponding
     /// replacement term. Vars not listed in the substitution are preserved.
     ///
-    /// This is the inverse of `generalize_to_vars`.
+    /// This is the inverse of `generalize_vars`.
     pub fn instantiate_vars(&self, subst: &[InstEntry]) -> Term {
         enum Frame {
             Process(Term),
@@ -1008,6 +1176,35 @@ impl Term {
         results.pop().unwrap()
     }
 
+    /// Check capture freedom while allowing bound variables within their own binders.
+    pub(crate) fn validate_closed_bounds(&self) -> Result<(), KernelError> {
+        let mut pending = vec![(self, 0_usize)];
+        while let Some((term, depth)) = pending.pop() {
+            match term {
+                Self::Bound { index, .. } if *index >= depth => {
+                    return Err(KernelError::BoundInSubstitution);
+                },
+                Self::Abs { body, .. } | Self::Forall { body, .. } => {
+                    let nested = depth.checked_add(1).ok_or_else(|| {
+                        KernelError::Invariant("substitution binder depth overflow".into())
+                    })?;
+                    pending.push((body, nested));
+                },
+                Self::App { func, arg, .. } => {
+                    pending.extend([(func.as_ref(), depth), (arg.as_ref(), depth)]);
+                },
+                Self::Eq { lhs, rhs, .. } => {
+                    pending.extend([(lhs.as_ref(), depth), (rhs.as_ref(), depth)]);
+                },
+                Self::Imp { premise, conclusion } => {
+                    pending.extend([(premise.as_ref(), depth), (conclusion.as_ref(), depth)]);
+                },
+                _ => {},
+            }
+        }
+        Ok(())
+    }
+
     /// Check whether any `Bound` node occurs anywhere in this term.
     pub fn contains_bound(&self) -> bool {
         let mut stack = vec![self];
@@ -1044,14 +1241,9 @@ impl Term {
     pub fn dest_imp_chain(&self) -> (Vec<Term>, &Term) {
         let mut prems = Vec::new();
         let mut current = self;
-        loop {
-            match current {
-                Term::Imp { premise, conclusion } => {
-                    prems.push((**premise).clone());
-                    current = conclusion;
-                },
-                _ => break,
-            }
+        while let Term::Imp { premise, conclusion } = current {
+            prems.push((**premise).clone());
+            current = conclusion;
         }
         (prems, current)
     }
@@ -1135,17 +1327,70 @@ mod tests {
         let raw = RawTerm::const_(
             "f",
             Ty::arrow(
-                Ty::tvar("'a", 0, Sort::typ()),
-                Ty::arrow(Ty::tvar("'a", 1, Sort::typ()), Ty::prop()),
+                Ty::tvar("'a", 0, Sort::hol_type()),
+                Ty::arrow(Ty::tvar("'a", 1, Sort::hol_type()), Ty::prop()),
             ),
         );
 
         let mut bindings = std::collections::BTreeMap::new();
-        bindings.insert(TypeVarId::new("'a", 0), Ty::base("bool").unwrap());
-        bindings.insert(TypeVarId::new("'a", 1), Ty::base("nat").unwrap());
+        bindings.insert(TypeVarId::new("'a", 0, Sort::hol_type()), Ty::base("bool").unwrap());
+        bindings.insert(TypeVarId::new("'a", 1, Sort::hol_type()), Ty::base("nat").unwrap());
         let inst = TypeInstantiation::try_new(bindings).unwrap();
 
         let result = subst_types(&raw, &inst);
         assert!(result.is_ok(), "same-name-different-index must be allowed, got: {result:?}");
+    }
+    #[test]
+    fn generalize_vars_shared_index_cleans_names_and_all_annotations() {
+        let fixed = Ty::tfree("a", Sort::empty());
+        let function = Ty::arrow(fixed.clone(), fixed.clone());
+        let source = Term::Forall {
+            name: "z".into(),
+            param_ty: fixed.clone(),
+            body: Box::new(Term::Eq {
+                object_ty: fixed.clone(),
+                lhs: Box::new(Term::App {
+                    func: Box::new(Term::Free { name: "x__".into(), ty: function }),
+                    arg: Box::new(Term::Bound { index: 0, ty: fixed.clone() }),
+                    ty: fixed.clone(),
+                }),
+                rhs: Box::new(Term::Free { name: "x__".into(), ty: fixed }),
+            }),
+        };
+        let type_names = BTreeSet::from(["a".into()]);
+        let term_names = BTreeSet::from(["x__".into()]);
+        let generalized = source.generalize_vars(&type_names, &term_names, 0).unwrap();
+        let schematic = Ty::tvar("a", 0, Sort::empty());
+        let expected = Term::Forall {
+            name: "z".into(),
+            param_ty: schematic.clone(),
+            body: Box::new(Term::Eq {
+                object_ty: schematic.clone(),
+                lhs: Box::new(Term::App {
+                    func: Box::new(Term::Var {
+                        name: "x".into(),
+                        index: 2,
+                        ty: Ty::arrow(schematic.clone(), schematic.clone()),
+                    }),
+                    arg: Box::new(Term::Bound { index: 0, ty: schematic.clone() }),
+                    ty: schematic.clone(),
+                }),
+                rhs: Box::new(Term::Var { name: "x".into(), index: 2, ty: schematic }),
+            }),
+        };
+        assert_eq!(generalized, expected);
+        assert_eq!(
+            source.generalize_vars(&BTreeSet::new(), &BTreeSet::new(), usize::MAX),
+            Ok(source)
+        );
+    }
+
+    #[test]
+    fn generalize_vars_clean_index_overflow_rejects() {
+        let term = Term::Free { name: "x__".into(), ty: Ty::prop() };
+        assert_eq!(
+            term.generalize_vars(&BTreeSet::new(), &BTreeSet::from(["x__".into()]), usize::MAX),
+            Err(KernelError::GeneralizeIndexOverflow { index: usize::MAX, offset: 2 }),
+        );
     }
 }

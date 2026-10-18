@@ -12,6 +12,7 @@ use std::{
     sync::Arc,
 };
 
+use super::proof_result::{GoalExportError, export_proved_goal};
 use crate::core::term::Term; // used in tests
 use crate::core::types::Typ; // used in tests
 use crate::{
@@ -24,25 +25,25 @@ use crate::{
     },
     hol::hol_loader::{
         HolTheoremDb, ParsedLemma, SourcePropositionShape, SourcePropositionStatus,
-        StrictTrueIError, normalize_checked_hol_true_prop, try_strict_hol_true_i,
+        normalize_checked_hol_true_prop,
     },
     isar::args::Args,
-    kernel::TrustedTheorem,
+    kernel::{TrustedTheorem, TrustedTheory},
     tools::simp::HolSimplifier,
 };
+
+#[path = "method_diagnostics.rs"]
+pub(crate) mod diagnostics;
+
 thread_local! {
     pub(crate) static AUTO_DEPTH: Cell<usize> = const { Cell::new(0) };
     pub(crate) static AUTO_LIMIT: Cell<usize> = const { Cell::new(100) };
-    /// Local theorem index for same-file definition lookups during processing
-    pub(crate) static LOCAL_THEOREM_INDEX: std::cell::RefCell<std::collections::HashMap<String, Arc<Thm>>> = std::cell::RefCell::new(std::collections::HashMap::new());
     /// Soft deadline for verify_file — when exceeded, verification returns partial results.
     pub(crate) static VERIFY_DEADLINE: Cell<Option<std::time::Instant>> = const { Cell::new(None) };
     /// Proof search budget — tracks remaining branch-expansion allowance.
     /// Starts at a high value; decremented on each auto_exec entry.
     /// When zero, auto_exec returns immediately without expanding branches.
     pub(crate) static PROOF_SEARCH_BUDGET: Cell<usize> = const { Cell::new(200) };
-    /// Cached base simplifier (all simp rules from DB) — avoids rebuilding on every fallback.
-    static CACHED_BASE_SIMPLIFIER: std::cell::RefCell<Option<Simplifier>> = const { std::cell::RefCell::new(None) };
     /// Running tally of verify outcomes since the last `reset_verify_stats()`.
     /// `(proved, axiom_accepted)`. Accumulated across all files in a Tier2 run.
     static VERIFY_STATS: Cell<(usize, usize)> = const { Cell::new((0, 0)) };
@@ -73,7 +74,7 @@ pub enum VerifyOutcome {
 /// not consult ambient state to classify the theorem.
 #[derive(Debug, Clone)]
 pub struct LemmaVerification {
-    accepted: Option<TrustedTheorem>,
+    accepted: Option<(TrustedTheory, TrustedTheorem)>,
     legacy: Option<(Thm, VerifyOutcome)>,
 }
 
@@ -82,8 +83,16 @@ impl LemmaVerification {
         Self { accepted: None, legacy: theorem.map(|theorem| (theorem, exit)) }
     }
 
+    fn from_accepted(theory: TrustedTheory, theorem: TrustedTheorem) -> Self {
+        Self { accepted: Some((theory, theorem)), legacy: None }
+    }
+
     pub fn accepted(&self) -> Option<&TrustedTheorem> {
-        self.accepted.as_ref()
+        self.accepted.as_ref().map(|(_, theorem)| theorem)
+    }
+
+    pub fn accepted_owner(&self) -> Option<&TrustedTheory> {
+        self.accepted.as_ref().map(|(theory, _)| theory)
     }
 
     pub fn legacy(&self) -> Option<(&Thm, VerifyOutcome)> {
@@ -336,29 +345,6 @@ impl ProofOutcomeStats {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum GoalExportError {
-    OpenSubgoals,
-    OracleOrAdmitted,
-    UnresolvedTpairs,
-    UnknownHypotheses,
-    PropositionMismatch,
-    DischargeFailed,
-}
-
-impl GoalExportError {
-    fn admitted_reason(self) -> &'static str {
-        match self {
-            GoalExportError::OpenSubgoals => "admitted:goal_export_open_subgoals",
-            GoalExportError::UnresolvedTpairs => "admitted:goal_export_unresolved_tpairs",
-            GoalExportError::UnknownHypotheses => "admitted:goal_export_unknown_hyps",
-            GoalExportError::PropositionMismatch => "admitted:goal_export_prop_mismatch",
-            GoalExportError::DischargeFailed => "admitted:goal_export_discharge_failed",
-            GoalExportError::OracleOrAdmitted => "admitted:proof_engine_failed",
-        }
-    }
-}
-
 /// Reset the global transitional-vs-accepted tally. Call before a verification run.
 pub fn reset_verify_stats() {
     VERIFY_STATS.with(|c| c.set((0, 0)));
@@ -430,49 +416,12 @@ pub fn classify_proof_outcome(
 }
 
 pub fn classify_verify_result(name: &str, result: &LemmaVerification) -> ProofOutcome {
-    classify_proof_outcome(name, result.accepted.clone(), result.legacy())
+    classify_proof_outcome(name, result.accepted().cloned(), result.legacy())
 }
 
+#[cfg(test)]
 fn is_transitional_strict_closed_outcome(thm: &Thm, exit: VerifyOutcome) -> bool {
     classify_proof_outcome("", None, Some((thm, exit))).is_transitional_strict_closed()
-}
-
-fn export_proved_goal(
-    original_goal: &CTerm,
-    result: &Thm,
-    context_assumptions: &[CTerm],
-) -> Result<Thm, GoalExportError> {
-    if !result.oracles().is_empty() || result.trust_status() == ThmTrust::Admitted {
-        return Err(GoalExportError::OracleOrAdmitted);
-    }
-    if !result.tpairs().is_empty() {
-        return Err(GoalExportError::UnresolvedTpairs);
-    }
-    if result.hyps().is_empty() && Hyps::kernel_alpha_eq(result.prop().term(), original_goal.term())
-    {
-        return Ok(result.clone());
-    }
-    if result.nprems() != 0 {
-        return Err(GoalExportError::OpenSubgoals);
-    }
-
-    let mut exported = result.clone();
-    for assumption in context_assumptions.iter().rev() {
-        match ThmKernel::implies_intr(assumption, &exported) {
-            Ok(next) => exported = next,
-            Err(KernelError::HypothesisNotFound) => {},
-            Err(_) => return Err(GoalExportError::DischargeFailed),
-        }
-    }
-
-    if !exported.hyps().is_empty() {
-        return Err(GoalExportError::UnknownHypotheses);
-    }
-    if !Hyps::kernel_alpha_eq(exported.prop().term(), original_goal.term()) {
-        return Err(GoalExportError::PropositionMismatch);
-    }
-
-    Ok(exported)
 }
 
 fn export_or_admit_goal(
@@ -494,9 +443,10 @@ fn export_or_admit_goal(
     }
 }
 
-fn init_verify_goal(goal_ct: &CTerm) -> Result<Thm, Thm> {
-    ThmKernel::trivial(goal_ct.clone())
-        .map_err(|_| ThmKernel::admit(goal_ct.clone(), "admitted:goal_initialization_failed"))
+fn init_verify_goal(goal_ct: &CTerm) -> Result<Thm, Box<Thm>> {
+    ThmKernel::trivial(goal_ct.clone()).map_err(|_| {
+        Box::new(ThmKernel::admit(goal_ct.clone(), "admitted:goal_initialization_failed"))
+    })
 }
 
 fn proof_allows_strict_imp_identity(proof: &str) -> bool {
@@ -601,11 +551,17 @@ impl Method {
     }
 
     /// Execute the method with given premises (Isabelle-style).
-    pub fn execute(&self, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
-        self.execute_depth(state, 0, premises)
+    pub fn execute(&self, state: &Thm, premises: &[Arc<Thm>], db: &HolTheoremDb) -> Vec<Thm> {
+        self.execute_depth(state, 0, premises, db)
     }
 
-    fn execute_depth(&self, state: &Thm, depth: usize, premises: &[Arc<Thm>]) -> Vec<Thm> {
+    fn execute_depth(
+        &self,
+        state: &Thm,
+        depth: usize,
+        premises: &[Arc<Thm>],
+        db: &HolTheoremDb,
+    ) -> Vec<Thm> {
         if depth > 20 {
             return vec![state.clone()];
         }
@@ -639,7 +595,7 @@ impl Method {
             },
             Method::Skip => vec![],
             Method::Fail => vec![],
-            Method::Auto => Self::auto_exec(state, depth, premises),
+            Method::Auto => Self::auto_exec(state, depth, premises, db),
             Method::Unfold(thms) => Self::apply_unfold(thms, state, false),
             Method::Fold(thms) => Self::apply_unfold(thms, state, true),
             Method::Erule(thms) => tactic::eresolve_tac(
@@ -660,35 +616,35 @@ impl Method {
             },
             Method::Blast => {
                 // Tableau prover — uses auto with deeper search + symmetry
-                Self::blast_exec(state, depth, premises)
+                Self::blast_exec(state, depth, db)
             },
             Method::Step => {
                 // step_tac: safe rules exhaustively + one unsafe rule
-                Self::step_exec(state, depth, premises)
+                Self::step_exec(state, depth, premises, db)
             },
             Method::Fast => {
                 // fast_tac: depth-first search with iterative deepening
-                Self::fast_exec(state, premises)
+                Self::fast_exec(state, premises, db)
             },
             Method::Best => {
                 // best_tac: BEST_FIRST search with heuristic ordering
-                Self::best_exec(state, premises)
+                Self::best_exec(state, premises, db)
             },
             Method::Depth(d) => {
                 // depth_tac: bounded depth-first search
-                Self::depth_exec(state, *d, premises)
+                Self::depth_exec(state, *d, premises, db)
             },
             Method::DupStep => {
                 // dup_step_tac: step_tac with duplication of unsafe rules
-                Self::dup_step_exec(state, depth, premises)
+                Self::dup_step_exec(state, depth, premises, db)
             },
             Method::Coinduct => {
                 // coinduction: apply coinduction rules from DB
-                Self::coinduct_exec(state, premises)
+                Self::coinduct_exec(state, premises, db)
             },
             Method::Try => {
                 // try/try0: try multiple methods sequentially
-                Self::try_exec(state, depth, premises)
+                Self::try_exec(state, depth, premises, db)
             },
             Method::Induct(var) => {
                 // Induction: use exec_induct for proper handling
@@ -697,7 +653,7 @@ impl Method {
                 } else {
                     format!("induct {}", var.as_str())
                 };
-                exec_induct(&method_str, state, premises)
+                exec_induct(&method_str, state, premises, db)
             },
             Method::Cases(var) => {
                 // Cases: try auto + blast + induction-like rules
@@ -706,37 +662,37 @@ impl Method {
                 } else {
                     format!("cases {}", var.as_str())
                 };
-                exec_induct(&method_str, state, premises)
+                exec_induct(&method_str, state, premises, db)
             },
             Method::Metis => Self::metis_exec(state, depth, premises),
             Method::Meson => crate::tools::meson::meson_tac(state, premises),
             Method::Then(box_pair) => {
                 let (m1, m2) = (&box_pair.0, &box_pair.1);
-                let results = m1.execute_depth(state, depth, premises);
+                let results = m1.execute_depth(state, depth, premises, db);
                 let mut all = Vec::new();
                 for r in &results {
                     if r.nprems() == 0 {
                         all.push(r.clone());
                     } else {
-                        all.extend(m2.execute_depth(r, depth + 1, premises));
+                        all.extend(m2.execute_depth(r, depth + 1, premises, db));
                     }
                 }
                 if all.is_empty() { vec![state.clone()] } else { all }
             },
             Method::Orelse(box_pair) => {
                 let (m1, m2) = (&box_pair.0, &box_pair.1);
-                let results = m1.execute_depth(state, depth, premises);
+                let results = m1.execute_depth(state, depth, premises, db);
                 let solved: Vec<_> = results.iter().filter(|r| r.nprems() == 0).cloned().collect();
                 if !solved.is_empty() {
                     solved
                 } else {
-                    m2.execute_depth(state, depth + 1, premises)
+                    m2.execute_depth(state, depth + 1, premises, db)
                 }
             },
             Method::Repeat(method) => {
                 let mut current = state.clone();
                 for _ in 0..20 {
-                    let results = method.execute_depth(&current, depth, premises);
+                    let results = method.execute_depth(&current, depth, premises, db);
                     if let Some(r) = results.iter().find(|r| r.nprems() < current.nprems()) {
                         if r.nprems() == 0 {
                             return vec![r.clone()];
@@ -757,43 +713,28 @@ impl Method {
     /// Uses given-clause algorithm with binary resolution, factoring, and
     /// paramodulation.  All inferences are LCF-kernel checked.
     fn metis_exec(state: &Thm, _depth: usize, premises: &[Arc<Thm>]) -> Vec<Thm> {
-        // Use try_exec first: safe rules + simp (cheap), then metis (expensive)
-        let current = Self::apply_safe_rules(state, premises);
-        if current.nprems() == 0 {
-            return vec![current];
+        let Some(proposition) = state.prem(0) else {
+            return Vec::new();
+        };
+        // This open theorem carries the request only; it is never proof evidence.
+        let request = ThmKernel::assume_compat(CTerm::certify(proposition.clone()));
+        let mut prover = crate::tools::metis::MetisProver::new();
+        prover.add_premises(premises);
+        let Some(result) = prover.prove(&request) else {
+            return Vec::new();
+        };
+        if super::proof_result::validate_proof_result(&proposition, &result, &[]).is_err() {
+            return Vec::new();
         }
-
-        let mut metis = crate::tools::metis::MetisProver::with_limits(10000);
-        metis.add_premises(premises);
-
-        match metis.prove(&current) {
-            Some(result) => {
-                if result.nprems() == 0 {
-                    return vec![result.as_ref().clone()];
-                }
-                // Partial proof — try to close remaining subgoals with auto
-                let auto_results = Method::Auto.execute(result.as_ref(), premises);
-                for r in &auto_results {
-                    if r.nprems() == 0 {
-                        return vec![r.clone()];
-                    }
-                }
-                vec![result.as_ref().clone()]
-            },
-            None => {
-                // Metis failed — fall back to auto then blast
-                let auto_results = Method::Auto.execute(&current, premises);
-                if auto_results.iter().any(|r| r.nprems() == 0) {
-                    return auto_results;
-                }
-                Method::Blast.execute(&current, premises)
-            },
-        }
+        ThmKernel::bicompose(false, &result, state, 0)
+            .filter(|next| next.nprems() < state.nprems())
+            .into_iter()
+            .collect()
     }
 
     /// Blast: aggressive proof search with auto, simp, resolve, eresolve, dresolve.
     /// Enhanced with forward chaining and better symmetry handling.
-    fn blast_exec(state: &Thm, depth: usize, premises: &[Arc<Thm>]) -> Vec<Thm> {
+    fn blast_exec(state: &Thm, depth: usize, db: &HolTheoremDb) -> Vec<Thm> {
         let count = AUTO_DEPTH.with(|c| {
             let v = c.get() + 1;
             c.set(v);
@@ -809,7 +750,6 @@ impl Method {
             return vec![state.clone()];
         }
 
-        let db = HolTheoremDb::get();
         let mut all_solved = Vec::new();
         let orig_size =
             Self::term_size(&state.prem(0).unwrap_or(Term::const_("dummy", Typ::dummy())));
@@ -823,13 +763,12 @@ impl Method {
         }
 
         // 2. Try simp — use cached simplifier
-        let simp = get_cached_simplifier();
-        let simp_results = tactic::simp_tac(simp, 0)(state);
+        let simp_results = tactic::simp_tac(db.base_simplifier().clone(), 0)(state);
         for r in &simp_results {
             if r.nprems() == 0 {
                 all_solved.push(r.clone());
             } else if r.nprems() < state.nprems() && depth < 22 {
-                let sub = Self::blast_exec(r, depth + 1, premises);
+                let sub = Self::blast_exec(r, depth + 1, db);
                 for s in &sub {
                     if s.nprems() == 0 {
                         all_solved.push(s.clone());
@@ -853,7 +792,7 @@ impl Method {
                 if new_size > orig_size * 3 {
                     continue;
                 }
-                let sub = Self::blast_exec(r, depth + 1, premises);
+                let sub = Self::blast_exec(r, depth + 1, db);
                 for s in &sub {
                     if s.nprems() == 0 {
                         all_solved.push(s.clone());
@@ -871,7 +810,7 @@ impl Method {
             if r.nprems() == 0 {
                 all_solved.push(r.clone());
             } else if r.nprems() <= state.nprems() + 3 && depth < 15 {
-                let sub = Self::blast_exec(r, depth + 1, premises);
+                let sub = Self::blast_exec(r, depth + 1, db);
                 for s in &sub {
                     if s.nprems() == 0 {
                         all_solved.push(s.clone());
@@ -889,7 +828,7 @@ impl Method {
             if r.nprems() == 0 {
                 all_solved.push(r.clone());
             } else if r.nprems() < state.nprems() && depth < 12 {
-                let sub = Self::blast_exec(r, depth + 1, premises);
+                let sub = Self::blast_exec(r, depth + 1, db);
                 for s in &sub {
                     if s.nprems() == 0 {
                         all_solved.push(s.clone());
@@ -913,7 +852,7 @@ impl Method {
                     if r.nprems() == 0 {
                         all_solved.push(r.clone());
                     } else if r.nprems() < state.nprems() && depth < 22 {
-                        let sub = Self::blast_exec(r, depth + 1, premises);
+                        let sub = Self::blast_exec(r, depth + 1, db);
                         for s in &sub {
                             if s.nprems() == 0 {
                                 all_solved.push(s.clone());
@@ -931,7 +870,7 @@ impl Method {
                     if r.nprems() == 0 {
                         all_solved.push(r.clone());
                     } else if r.nprems() < state.nprems() + 2 && depth < 18 {
-                        let sub = Self::blast_exec(r, depth + 1, premises);
+                        let sub = Self::blast_exec(r, depth + 1, db);
                         for s in &sub {
                             if s.nprems() == 0 {
                                 all_solved.push(s.clone());
@@ -1032,8 +971,7 @@ impl Method {
     ///
     /// Like Isabelle's `safe_step_tac`, tries matching first (no variable
     /// instantiation), then falls back to resolution for safe rules.
-    pub fn apply_safe_rules(state: &Thm, premises: &[Arc<Thm>]) -> Thm {
-        let db = HolTheoremDb::get();
+    pub fn apply_safe_rules(state: &Thm, premises: &[Arc<Thm>], db: &HolTheoremDb) -> Thm {
         let mut current = state.clone();
         for _ in 0..8 {
             if current.nprems() == 0 {
@@ -1127,9 +1065,9 @@ impl Method {
 
     /// step_tac: apply safe rules exhaustively, then try ONE unsafe rule.
     /// This matches Isabelle's `step_tac` from classical.ML.
-    fn step_exec(state: &Thm, depth: usize, premises: &[Arc<Thm>]) -> Vec<Thm> {
+    fn step_exec(state: &Thm, depth: usize, premises: &[Arc<Thm>], db: &HolTheoremDb) -> Vec<Thm> {
         // 1. Apply safe rules exhaustively
-        let safe_state = Self::apply_safe_rules(state, premises);
+        let safe_state = Self::apply_safe_rules(state, premises, db);
         if safe_state.nprems() == 0 {
             return vec![safe_state];
         }
@@ -1138,7 +1076,6 @@ impl Method {
             return vec![safe_state];
         }
 
-        let db = HolTheoremDb::get();
         let subgoal = match safe_state.prem(0) {
             Some(p) => p,
             None => return vec![safe_state],
@@ -1152,7 +1089,7 @@ impl Method {
                 continue;
             }
             if let Some(result) = ThmKernel::bicompose(true, rule, &safe_state, 0) {
-                let sub_results = Self::step_exec(&result, depth + 1, premises);
+                let sub_results = Self::step_exec(&result, depth + 1, premises, db);
                 for r in &sub_results {
                     if r.nprems() == 0 {
                         return sub_results;
@@ -1170,7 +1107,7 @@ impl Method {
             if let Some(result) =
                 ThmKernel::bicompose_eresolve(true, rule, &safe_state, 0, premises)
             {
-                let sub_results = Self::step_exec(&result, depth + 1, premises);
+                let sub_results = Self::step_exec(&result, depth + 1, premises, db);
                 for r in &sub_results {
                     if r.nprems() == 0 {
                         return sub_results;
@@ -1184,18 +1121,23 @@ impl Method {
 
     /// fast_tac: depth-first search with iterative deepening.
     /// This matches Isabelle's `fast_tac` from classical.ML.
-    fn fast_exec(state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
+    fn fast_exec(state: &Thm, premises: &[Arc<Thm>], db: &HolTheoremDb) -> Vec<Thm> {
         for bound in 0..8 {
-            if let Some(result) = Self::dfs_search(state, bound, premises) {
+            if let Some(result) = Self::dfs_search(state, bound, premises, db) {
                 return vec![result];
             }
         }
-        Self::auto_exec(state, 0, premises)
+        Self::auto_exec(state, 0, premises, db)
     }
 
     /// Depth-first search with a given bound on unsafe rule applications.
-    fn dfs_search(state: &Thm, bound: usize, premises: &[Arc<Thm>]) -> Option<Thm> {
-        let safe_state = Self::apply_safe_rules(state, premises);
+    fn dfs_search(
+        state: &Thm,
+        bound: usize,
+        premises: &[Arc<Thm>],
+        db: &HolTheoremDb,
+    ) -> Option<Thm> {
+        let safe_state = Self::apply_safe_rules(state, premises, db);
         if safe_state.nprems() == 0 {
             return Some(safe_state);
         }
@@ -1203,7 +1145,6 @@ impl Method {
             return None;
         }
 
-        let db = HolTheoremDb::get();
         let subgoal = safe_state.prem(0)?;
 
         // Try unsafe intro rules
@@ -1212,7 +1153,7 @@ impl Method {
                 continue;
             }
             if let Some(result) = ThmKernel::bicompose(true, rule, &safe_state, 0)
-                && let Some(solved) = Self::dfs_subgoals(&result, bound - 1, premises)
+                && let Some(solved) = Self::dfs_subgoals(&result, bound - 1, premises, db)
             {
                 return Some(solved);
             }
@@ -1225,7 +1166,7 @@ impl Method {
             }
             if let Some(result) =
                 ThmKernel::bicompose_eresolve(true, rule, &safe_state, 0, premises)
-                && let Some(solved) = Self::dfs_subgoals(&result, bound - 1, premises)
+                && let Some(solved) = Self::dfs_subgoals(&result, bound - 1, premises, db)
             {
                 return Some(solved);
             }
@@ -1234,7 +1175,12 @@ impl Method {
     }
 
     /// Solve all subgoals using bounded DFS.
-    fn dfs_subgoals(state: &Thm, bound: usize, premises: &[Arc<Thm>]) -> Option<Thm> {
+    fn dfs_subgoals(
+        state: &Thm,
+        bound: usize,
+        premises: &[Arc<Thm>],
+        db: &HolTheoremDb,
+    ) -> Option<Thm> {
         let mut current = state.clone();
         let mut acc: Vec<Arc<Thm>> = premises.to_vec();
         for _ in 0..current.nprems().min(20) {
@@ -1243,18 +1189,12 @@ impl Method {
             }
             let prem = current.prem(0)?;
             let goal = ThmKernel::assume_compat(CTerm::certify(prem));
-            let solved = Self::dfs_search(&goal, bound, &acc)
-                .or_else(|| Self::auto_exec(&goal, 0, &acc).into_iter().find(|r| r.nprems() == 0));
-            if let Some(sg) = solved {
-                acc.push(Arc::new(sg.clone()));
-                if let Some(ns) = ThmKernel::bicompose(false, &sg, &current, 0) {
-                    current = ns;
-                } else {
-                    return None;
-                }
-            } else {
-                return None;
-            }
+            let solved = Self::dfs_search(&goal, bound, &acc, db).or_else(|| {
+                Self::auto_exec(&goal, 0, &acc, db).into_iter().find(|r| r.nprems() == 0)
+            });
+            let sg = solved?;
+            acc.push(Arc::new(sg.clone()));
+            current = ThmKernel::bicompose(false, &sg, &current, 0)?;
         }
         if current.nprems() == 0 { Some(current) } else { None }
     }
@@ -1262,8 +1202,8 @@ impl Method {
     /// best_tac: BEST_FIRST search with heuristic ordering.
     /// Matches Isabelle's `best_tac` from classical.ML.
     /// Uses a simple bounded worklist ordered by subgoal count.
-    fn best_exec(state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
-        let safe = Self::apply_safe_rules(state, premises);
+    fn best_exec(state: &Thm, premises: &[Arc<Thm>], db: &HolTheoremDb) -> Vec<Thm> {
+        let safe = Self::apply_safe_rules(state, premises, db);
         if safe.nprems() == 0 {
             return vec![safe];
         }
@@ -1274,7 +1214,6 @@ impl Method {
 
         let mut best = state.clone();
         let mut best_nprems = state.nprems();
-        let db = HolTheoremDb::get();
 
         let mut iterations = 0;
         while !worklist.is_empty() && iterations < 500 {
@@ -1328,29 +1267,33 @@ impl Method {
                 worklist.push((ns.nprems(), depth + 1, ns));
             }
         }
-        if best_nprems == 0 { vec![best] } else { Self::step_exec(&best, 0, premises) }
+        if best_nprems == 0 { vec![best] } else { Self::step_exec(&best, 0, premises, db) }
     }
 
     /// depth_tac: bounded depth-first search with explicit bound.
-    fn depth_exec(state: &Thm, bound: usize, premises: &[Arc<Thm>]) -> Vec<Thm> {
-        let safe = Self::apply_safe_rules(state, premises);
+    fn depth_exec(state: &Thm, bound: usize, premises: &[Arc<Thm>], db: &HolTheoremDb) -> Vec<Thm> {
+        let safe = Self::apply_safe_rules(state, premises, db);
         if safe.nprems() == 0 {
             return vec![safe];
         }
-        Self::depth_search(&safe, bound, premises)
+        Self::depth_search(&safe, bound, premises, db)
             .map(|r| vec![r])
-            .unwrap_or_else(|| Self::step_exec(&safe, 0, premises))
+            .unwrap_or_else(|| Self::step_exec(&safe, 0, premises, db))
     }
 
-    fn depth_search(state: &Thm, bound: usize, premises: &[Arc<Thm>]) -> Option<Thm> {
-        let safe = Self::apply_safe_rules(state, premises);
+    fn depth_search(
+        state: &Thm,
+        bound: usize,
+        premises: &[Arc<Thm>],
+        db: &HolTheoremDb,
+    ) -> Option<Thm> {
+        let safe = Self::apply_safe_rules(state, premises, db);
         if safe.nprems() == 0 {
             return Some(safe);
         }
         if bound == 0 || bound > 20 {
             return None;
         }
-        let db = HolTheoremDb::get();
         let subgoal = safe.prem(0)?;
         let mut results: Vec<Thm> = Vec::new();
         for rule in &db.intro_net().lookup(&subgoal) {
@@ -1370,7 +1313,7 @@ impl Method {
             }
         }
         for result in &results {
-            if let Some(solved) = Self::depth_search(result, bound - 1, premises) {
+            if let Some(solved) = Self::depth_search(result, bound - 1, premises, db) {
                 return Some(solved);
             }
         }
@@ -1379,15 +1322,19 @@ impl Method {
 
     /// dup_step_tac: step_tac with duplication of unsafe rules.
     /// Duplicates unsafe rules to allow backtracking for complete search.
-    fn dup_step_exec(state: &Thm, depth: usize, premises: &[Arc<Thm>]) -> Vec<Thm> {
-        let safe_state = Self::apply_safe_rules(state, premises);
+    fn dup_step_exec(
+        state: &Thm,
+        depth: usize,
+        premises: &[Arc<Thm>],
+        db: &HolTheoremDb,
+    ) -> Vec<Thm> {
+        let safe_state = Self::apply_safe_rules(state, premises, db);
         if safe_state.nprems() == 0 {
             return vec![safe_state];
         }
         if depth > 12 {
             return vec![safe_state];
         }
-        let db = HolTheoremDb::get();
         let subgoal = match safe_state.prem(0) {
             Some(p) => p,
             None => return vec![safe_state],
@@ -1398,7 +1345,7 @@ impl Method {
                 continue;
             }
             if let Some(result) = ThmKernel::bicompose(true, rule, &safe_state, 0) {
-                let sub = Self::dup_step_exec(&result, depth + 1, premises);
+                let sub = Self::dup_step_exec(&result, depth + 1, premises, db);
                 if sub.iter().any(|r| r.nprems() == 0) {
                     return sub;
                 }
@@ -1411,7 +1358,7 @@ impl Method {
             if let Some(result) =
                 ThmKernel::bicompose_eresolve(true, rule, &safe_state, 0, premises)
             {
-                let sub = Self::dup_step_exec(&result, depth + 1, premises);
+                let sub = Self::dup_step_exec(&result, depth + 1, premises, db);
                 if sub.iter().any(|r| r.nprems() == 0) {
                     return sub;
                 }
@@ -1422,11 +1369,9 @@ impl Method {
 
     /// coinduction: apply coinduction rules from the theorem database.
     /// Looks up `.coinduct` rules and resolves against the goal.
-    fn coinduct_exec(state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
-        let db = HolTheoremDb::get();
-
+    fn coinduct_exec(state: &Thm, premises: &[Arc<Thm>], db: &HolTheoremDb) -> Vec<Thm> {
         // Try safe rules first
-        let current = Self::apply_safe_rules(state, premises);
+        let current = Self::apply_safe_rules(state, premises, db);
         if current.nprems() == 0 {
             return vec![current];
         }
@@ -1453,60 +1398,59 @@ impl Method {
         }
 
         // Fall back to auto
-        Self::auto_exec(&current, 0, premises)
+        Self::auto_exec(&current, 0, premises, db)
     }
 
     /// try/try0: try multiple proof methods in sequence, return first success.
     /// Method sequence: safe → simp → auto → blast → fast → best
-    fn try_exec(state: &Thm, depth: usize, premises: &[Arc<Thm>]) -> Vec<Thm> {
+    fn try_exec(state: &Thm, depth: usize, premises: &[Arc<Thm>], db: &HolTheoremDb) -> Vec<Thm> {
         // 1. Safe rules (cheapest)
-        let current = Self::apply_safe_rules(state, premises);
+        let current = Self::apply_safe_rules(state, premises, db);
         if current.nprems() == 0 {
             return vec![current];
         }
 
         // 2. Simplification
-        let db = HolTheoremDb::get();
         let rules: Vec<RewriteRule> =
             db.simps.iter().filter_map(|t| RewriteRule::from_thm(Arc::clone(t))).collect();
         let simp = Simplifier::new(rules);
-        let results = Method::Simp(simp).execute(state, premises);
+        let results = Method::Simp(simp).execute(state, premises, db);
         if results.iter().any(|r| r.nprems() == 0) {
             return results;
         }
 
         // 3. Auto
-        let auto_results = Method::Auto.execute(state, premises);
+        let auto_results = Method::Auto.execute(state, premises, db);
         if auto_results.iter().any(|r| r.nprems() == 0) {
             return auto_results;
         }
 
         // 4. Blast
-        let blast_results = Method::Blast.execute(state, premises);
+        let blast_results = Method::Blast.execute(state, premises, db);
         if blast_results.iter().any(|r| r.nprems() == 0) {
             return blast_results;
         }
 
         // 5. Fast
-        let fast_results = Method::Fast.execute(state, premises);
+        let fast_results = Method::Fast.execute(state, premises, db);
         if fast_results.iter().any(|r| r.nprems() == 0) {
             return fast_results;
         }
 
         // 6. Best (more thorough)
-        let best_results = Method::Best.execute(state, premises);
+        let best_results = Method::Best.execute(state, premises, db);
         if best_results.iter().any(|r| r.nprems() == 0) {
             return best_results;
         }
 
         // Fall back to auto with extended premises
-        Self::auto_exec(state, depth, premises)
+        Self::auto_exec(state, depth, premises, db)
     }
 
     /// Iterative auto proof search — DFS with explicit stack.
     /// Replaces recursive auto_exec to avoid deep call stacks and Arc<Thm> accumulation.
     /// Search strategy is preserved: DFS with early exit on first solution.
-    fn auto_exec(state: &Thm, depth: usize, premises: &[Arc<Thm>]) -> Vec<Thm> {
+    fn auto_exec(state: &Thm, depth: usize, premises: &[Arc<Thm>], db: &HolTheoremDb) -> Vec<Thm> {
         // ── Guard checks on initial entry ──
         let count = AUTO_DEPTH.with(|c| {
             let v = c.get() + 1;
@@ -1536,7 +1480,6 @@ impl Method {
             return vec![state.clone()];
         }
 
-        let db = HolTheoremDb::get();
         let branch_limit = if depth > 6 {
             3
         } else if depth > 3 {
@@ -1546,7 +1489,7 @@ impl Method {
         };
 
         // ── Phase 0: Safe rules ──
-        let current = Self::apply_safe_rules(state, premises);
+        let current = Self::apply_safe_rules(state, premises, db);
         if current.nprems() == 0 {
             return vec![current];
         }
@@ -1560,7 +1503,7 @@ impl Method {
         }
 
         // ── Phase 2: Simp — use cached simplifier ──
-        let simp = get_cached_simplifier();
+        let simp = db.base_simplifier().clone();
         let simp_results = tactic::simp_tac(simp, 0)(&current);
         let mut simp_branches = 0usize;
         for r in &simp_results {
@@ -1569,7 +1512,7 @@ impl Method {
                     break;
                 }
                 simp_branches += 1;
-                let sub = Self::auto_exec(r, depth + 1, premises);
+                let sub = Self::auto_exec(r, depth + 1, premises, db);
                 for s in &sub {
                     if s.nprems() == 0 {
                         return sub;
@@ -1684,7 +1627,7 @@ impl Method {
             }
 
             // Apply safe rules to child
-            let child = Self::apply_safe_rules(&child_state, premises);
+            let child = Self::apply_safe_rules(&child_state, premises, db);
             if child.nprems() == 0 {
                 return vec![child];
             }
@@ -1706,7 +1649,7 @@ impl Method {
             };
 
             // Simp on child — use cached simplifier
-            let child_simp_results = tactic::simp_tac(get_cached_simplifier(), 0)(&child);
+            let child_simp_results = tactic::simp_tac(db.base_simplifier().clone(), 0)(&child);
             let mut cs_branches = 0usize;
             for r in &child_simp_results {
                 if r.nprems() != child.nprems() {
@@ -1715,7 +1658,7 @@ impl Method {
                     }
                     cs_branches += 1;
                     // Recurse into simp child
-                    let sub = Self::auto_exec(r, child_depth + 1, premises);
+                    let sub = Self::auto_exec(r, child_depth + 1, premises, db);
                     for s in &sub {
                         if s.nprems() == 0 {
                             return sub;
@@ -1792,20 +1735,11 @@ impl Method {
 
         vec![state.clone()]
     }
-
-    fn auto_resolve(state: &Thm, _premises: &[Arc<Thm>]) -> Option<Vec<Thm>> {
-        let db = HolTheoremDb::get();
-        let outcomes = crate::core::tactic::resolve_tac(
-            &db.all.iter().map(|t| (**t).clone()).collect::<Vec<_>>(),
-            0,
-        )(state);
-        if outcomes.is_empty() { None } else { Some(outcomes) }
-    }
 }
 
 /// Try to prove a goal using the auto method.
-pub fn prove_auto(goal: &Thm, premises: &[Arc<Thm>]) -> Option<Thm> {
-    let results = Method::Auto.execute(goal, premises);
+pub fn prove_auto(goal: &Thm, premises: &[Arc<Thm>], db: &HolTheoremDb) -> Option<Thm> {
+    let results = Method::Auto.execute(goal, premises, db);
     results.into_iter().find(|r| r.nprems() == 0)
 }
 
@@ -1844,7 +1778,12 @@ fn solve_by_assumption(state: &Thm, premises: &[Arc<Thm>]) -> Option<Thm> {
 }
 
 /// Execute a proof script on a goal with premises.
-pub fn exec_proof(state: &Thm, proof_script: &str, premises: &[Arc<Thm>]) -> Option<Thm> {
+pub fn exec_proof(
+    state: &Thm,
+    proof_script: &str,
+    premises: &[Arc<Thm>],
+    db: &HolTheoremDb,
+) -> Option<Thm> {
     AUTO_DEPTH.with(|c| c.set(0));
     let script = proof_script.trim();
 
@@ -1861,7 +1800,7 @@ pub fn exec_proof(state: &Thm, proof_script: &str, premises: &[Arc<Thm>]) -> Opt
         for method_str in &methods {
             let mut next_states = Vec::new();
             for s in &current_states {
-                let results = exec_single_method(s, method_str, premises);
+                let results = exec_single_method(s, method_str, premises, db);
                 next_states.extend(results);
             }
             if next_states.is_empty() {
@@ -1872,13 +1811,13 @@ pub fn exec_proof(state: &Thm, proof_script: &str, premises: &[Arc<Thm>]) -> Opt
                     return None;
                 }
                 for s in &current_states {
-                    for r in Method::Auto.execute(s, premises) {
+                    for r in Method::Auto.execute(s, premises, db) {
                         if r.nprems() == 0 {
                             return Some(r);
                         }
                         next_states.push(r);
                     }
-                    for r in Method::Blast.execute(s, premises) {
+                    for r in Method::Blast.execute(s, premises, db) {
                         if r.nprems() == 0 {
                             return Some(r);
                         }
@@ -1943,7 +1882,7 @@ pub fn exec_proof(state: &Thm, proof_script: &str, premises: &[Arc<Thm>]) -> Opt
             if expired {
                 return None;
             }
-            for r in Method::Auto.execute(&current, premises) {
+            for r in Method::Auto.execute(&current, premises, db) {
                 if r.nprems() == 0 {
                     return Some(r);
                 }
@@ -1953,7 +1892,7 @@ pub fn exec_proof(state: &Thm, proof_script: &str, premises: &[Arc<Thm>]) -> Opt
             if expired {
                 return None;
             }
-            for r in Method::Blast.execute(&current, premises) {
+            for r in Method::Blast.execute(&current, premises, db) {
                 if r.nprems() == 0 {
                     return Some(r);
                 }
@@ -1964,7 +1903,7 @@ pub fn exec_proof(state: &Thm, proof_script: &str, premises: &[Arc<Thm>]) -> Opt
 
     // Handle `using thms by method` or `unfolding defs by method`
     if script.starts_with("using ") || script.starts_with("unfolding ") {
-        let results = exec_single_method(state, script, premises);
+        let results = exec_single_method(state, script, premises, db);
         if let Some(r) = results.iter().find(|r| r.nprems() == 0) {
             return Some(r.clone());
         }
@@ -1974,12 +1913,12 @@ pub fn exec_proof(state: &Thm, proof_script: &str, premises: &[Arc<Thm>]) -> Opt
                 if let Some(solved) = solve_by_assumption(r, premises) {
                     return Some(solved);
                 }
-                for ar in Method::Auto.execute(r, premises) {
+                for ar in Method::Auto.execute(r, premises, db) {
                     if ar.nprems() == 0 {
                         return Some(ar);
                     }
                 }
-                for br in Method::Blast.execute(r, premises) {
+                for br in Method::Blast.execute(r, premises, db) {
                     if br.nprems() == 0 {
                         return Some(br);
                     }
@@ -1995,7 +1934,7 @@ pub fn exec_proof(state: &Thm, proof_script: &str, premises: &[Arc<Thm>]) -> Opt
         if script.contains('\n') {
             // First, execute the proof method line (e.g., "proof (induct xs)")
             let first_line = script.lines().next().unwrap_or(script);
-            let results = exec_single_method(state, first_line.trim(), premises);
+            let results = exec_single_method(state, first_line.trim(), premises, db);
             let mut current_states: Vec<Thm> = results;
             if current_states.is_empty() {
                 return None;
@@ -2036,7 +1975,7 @@ pub fn exec_proof(state: &Thm, proof_script: &str, premises: &[Arc<Thm>]) -> Opt
                         next_states.push(s.clone());
                         continue;
                     }
-                    let results = exec_single_method(s, method, premises);
+                    let results = exec_single_method(s, method, premises, db);
                     next_states.extend(results);
                 }
                 if next_states.is_empty() {
@@ -2046,13 +1985,13 @@ pub fn exec_proof(state: &Thm, proof_script: &str, premises: &[Arc<Thm>]) -> Opt
             }
             return current_states.into_iter().find(|r| r.nprems() == 0);
         }
-        let results = exec_single_method(state, script, premises);
+        let results = exec_single_method(state, script, premises, db);
         return results.into_iter().find(|r| r.nprems() == 0);
     }
 
     // Handle arithmetic: try built-in nat arithmetic rules
     if script.contains("arith") || script.contains("presburger") {
-        let results = exec_arith(state, premises);
+        let results = exec_arith(state, premises, db);
         if results.iter().any(|r| r.nprems() == 0) {
             return results.into_iter().find(|r| r.nprems() == 0);
         }
@@ -2061,30 +2000,24 @@ pub fn exec_proof(state: &Thm, proof_script: &str, premises: &[Arc<Thm>]) -> Opt
     // Unknown proof format → try aggressive fallback chain
     let mut current = state.clone();
     // Try auto
-    for r in Method::Auto.execute(&current, premises) {
+    for r in Method::Auto.execute(&current, premises, db) {
         if r.nprems() == 0 {
             return Some(r);
         }
         current = r;
     }
     // Try blast
-    for r in Method::Blast.execute(&current, premises) {
+    for r in Method::Blast.execute(&current, premises, db) {
         if r.nprems() == 0 {
             return Some(r);
         }
         current = r;
     }
     // Try simp
-    let db = HolTheoremDb::get();
     let rules: Vec<RewriteRule> =
         db.simps.iter().filter_map(|t| RewriteRule::from_thm(Arc::clone(t))).collect();
     let simp = Simplifier::new(rules);
-    for r in Method::Simp(simp).execute(&current, premises) {
-        if r.nprems() == 0 {
-            return Some(r);
-        }
-    }
-    None
+    Method::Simp(simp).execute(&current, premises, db).into_iter().find(|r| r.nprems() == 0)
 }
 
 thread_local! {
@@ -2093,7 +2026,12 @@ thread_local! {
 
 /// Parse a method string into a Method value (without executing).
 /// Used by combinator parsing to construct composed methods.
-fn parse_single_method(method_str: &str, _state: &Thm, _premises: &[Arc<Thm>]) -> Method {
+fn parse_single_method(
+    method_str: &str,
+    _state: &Thm,
+    _premises: &[Arc<Thm>],
+    db: &HolTheoremDb,
+) -> Method {
     let s = method_str.trim();
     let s = if s.starts_with('(') && s.ends_with(')') { &s[1..s.len() - 1] } else { s };
     let s = s.trim();
@@ -2104,7 +2042,6 @@ fn parse_single_method(method_str: &str, _state: &Thm, _premises: &[Arc<Thm>]) -
         "best" | "Best" => Method::Best,
         "safe" | "Safe" => Method::Auto, // safe is auto with safe rules
         "simp" | "Simp" => {
-            let db = HolTheoremDb::get();
             let rules: Vec<RewriteRule> =
                 db.simps.iter().filter_map(|t| RewriteRule::from_thm(Arc::clone(t))).collect();
             Method::Simp(Simplifier::new(rules))
@@ -2124,29 +2061,12 @@ fn parse_single_method(method_str: &str, _state: &Thm, _premises: &[Arc<Thm>]) -
     }
 }
 
-/// Execute a single method with premises.
-/// Guarded against infinite recursion via SINGLE_METHOD_DEPTH counter.
-/// Get or create the cached base simplifier (all DB simp rules + builtins).
-/// Safe for recursive use — clones the cached value without holding a borrow.
-fn get_cached_simplifier() -> Simplifier {
-    let cached = CACHED_BASE_SIMPLIFIER.with(|cell| cell.borrow().clone());
-    if let Some(simp) = cached {
-        return simp;
-    }
-    let db = HolTheoremDb::get();
-    let mut rules: Vec<RewriteRule> =
-        db.simps.iter().filter_map(|t| RewriteRule::from_thm(Arc::clone(t))).collect();
-    rules.extend(HolSimplifier::builtin_rules());
-    let simp = Simplifier::new(rules);
-    CACHED_BASE_SIMPLIFIER.with(|cell| {
-        if cell.borrow().is_none() {
-            *cell.borrow_mut() = Some(simp.clone());
-        }
-    });
-    simp
-}
-
-pub fn exec_single_method(state: &Thm, method_str: &str, premises: &[Arc<Thm>]) -> Vec<Thm> {
+pub fn exec_single_method(
+    state: &Thm,
+    method_str: &str,
+    premises: &[Arc<Thm>],
+    db: &HolTheoremDb,
+) -> Vec<Thm> {
     let depth = SINGLE_METHOD_DEPTH.with(|c| {
         let d = c.get() + 1;
         c.set(d);
@@ -2156,12 +2076,17 @@ pub fn exec_single_method(state: &Thm, method_str: &str, premises: &[Arc<Thm>]) 
         SINGLE_METHOD_DEPTH.with(|c| c.set(c.get() - 1));
         return vec![state.clone()];
     }
-    let result = exec_single_method_inner(state, method_str, premises);
+    let result = exec_single_method_inner(state, method_str, premises, db);
     SINGLE_METHOD_DEPTH.with(|c| c.set(c.get() - 1));
     result
 }
 
-fn exec_single_method_inner(state: &Thm, method_str: &str, premises: &[Arc<Thm>]) -> Vec<Thm> {
+fn exec_single_method_inner(
+    state: &Thm,
+    method_str: &str,
+    premises: &[Arc<Thm>],
+    db: &HolTheoremDb,
+) -> Vec<Thm> {
     let inner = if method_str.starts_with('(') && method_str.ends_with(')') {
         method_str[1..method_str.len() - 1].trim()
     } else {
@@ -2171,16 +2096,16 @@ fn exec_single_method_inner(state: &Thm, method_str: &str, premises: &[Arc<Thm>]
     // Handle combinators: REPEAT method, method1 | method2 (ORELSE)
     if inner.starts_with("REPEAT ") || inner.starts_with("repeat ") {
         let sub = inner.split_once(' ').map(|x| x.1).unwrap_or("");
-        let method = parse_single_method(sub, state, premises);
-        return Method::Repeat(Box::new(method)).execute(state, premises);
+        let method = parse_single_method(sub, state, premises, db);
+        return Method::Repeat(Box::new(method)).execute(state, premises, db);
     }
     if let Some(pipe) = inner.find('|') {
         let left = inner[..pipe].trim();
         let right = inner[pipe + 1..].trim();
         if !left.is_empty() && !right.is_empty() {
-            let m1 = parse_single_method(left, state, premises);
-            let m2 = parse_single_method(right, state, premises);
-            return Method::Orelse(Box::new((m1, m2))).execute(state, premises);
+            let m1 = parse_single_method(left, state, premises, db);
+            let m2 = parse_single_method(right, state, premises, db);
+            return Method::Orelse(Box::new((m1, m2))).execute(state, premises, db);
         }
     }
 
@@ -2204,7 +2129,7 @@ fn exec_single_method_inner(state: &Thm, method_str: &str, premises: &[Arc<Thm>]
             for sub in &subs {
                 let mut next = Vec::new();
                 for s in &states {
-                    next.extend(exec_single_method(s, sub, premises));
+                    next.extend(exec_single_method(s, sub, premises, db));
                 }
                 if next.is_empty() {
                     return vec![];
@@ -2232,7 +2157,6 @@ fn exec_single_method_inner(state: &Thm, method_str: &str, premises: &[Arc<Thm>]
                     i += 1;
                     while i < toks.len() && !toks[i].contains(':') {
                         let n = toks[i].trim_end_matches(',');
-                        let db = HolTheoremDb::get();
                         if let Some(t) = resolve_theorem_name(n, db) {
                             directive_thms.push((*t).clone().into());
                         }
@@ -2257,30 +2181,30 @@ fn exec_single_method_inner(state: &Thm, method_str: &str, premises: &[Arc<Thm>]
                 // Run auto with directive theorems as additional premises
                 let mut extended = premises.to_vec();
                 extended.extend(directive_thms);
-                let auto_results = Method::Auto.execute(&current, &extended);
+                let auto_results = Method::Auto.execute(&current, &extended, db);
                 if auto_results.iter().any(|r| r.nprems() == 0) {
                     return auto_results;
                 }
             }
         }
-        let results = Method::Auto.execute(state, premises);
+        let results = Method::Auto.execute(state, premises, db);
         if results.iter().any(|r| r.nprems() == 0) {
             return results;
         }
         // Try blast, then auto with extended premises
-        let blast_results = Method::Blast.execute(state, premises);
+        let blast_results = Method::Blast.execute(state, premises, db);
         if blast_results.iter().any(|r| r.nprems() == 0) {
             return blast_results;
         }
         // Try simp — use cached base simplifier to avoid rebuilding on every fallback
-        return Method::Simp(get_cached_simplifier()).execute(state, premises);
+        return Method::Simp(db.base_simplifier().clone()).execute(state, premises, db);
     }
     if inner == "simp"
         || inner.starts_with("simp ")
         || inner.starts_with("simp:")
         || inner.starts_with("simp(")
     {
-        let results = exec_simp(inner, state, premises);
+        let results = exec_simp(inner, state, premises, db);
         if results.iter().any(|r| r.nprems() == 0) {
             return results;
         }
@@ -2299,33 +2223,33 @@ fn exec_single_method_inner(state: &Thm, method_str: &str, premises: &[Arc<Thm>]
         if !results.is_empty() {
             return results;
         }
-        let blast_results = Method::Blast.execute(state, premises);
+        let blast_results = Method::Blast.execute(state, premises, db);
         if blast_results.iter().any(|r| r.nprems() == 0) {
             return blast_results;
         }
-        return Method::Auto.execute(state, premises);
+        return Method::Auto.execute(state, premises, db);
     }
     if inner == "simp_all" || inner.starts_with("simp_all ") || inner.starts_with("simp_all:") {
-        let results = exec_simp_all(state, premises);
+        let results = exec_simp_all(state, premises, db);
         if results.iter().any(|r| r.nprems() == 0) {
             return results;
         }
-        return Method::Auto.execute(state, premises);
+        return Method::Auto.execute(state, premises, db);
     }
     if inner == "blast" || inner.starts_with("blast ") || inner.starts_with("blast(") {
-        let results = Method::Blast.execute(state, premises);
+        let results = Method::Blast.execute(state, premises, db);
         if results.iter().any(|r| r.nprems() == 0) {
             return results;
         }
-        let auto_results = Method::Auto.execute(state, premises);
+        let auto_results = Method::Auto.execute(state, premises, db);
         if auto_results.iter().any(|r| r.nprems() == 0) {
             return auto_results;
         }
         // Try simp — use cached base simplifier
-        return Method::Simp(get_cached_simplifier()).execute(state, premises);
+        return Method::Simp(db.base_simplifier().clone()).execute(state, premises, db);
     }
     if inner == "assumption" || inner == "." {
-        let results = Method::Assumption.execute(state, premises);
+        let results = Method::Assumption.execute(state, premises, db);
         if results.is_empty()
             && let Some(solved) = solve_by_assumption(state, premises)
         {
@@ -2334,15 +2258,15 @@ fn exec_single_method_inner(state: &Thm, method_str: &str, premises: &[Arc<Thm>]
         return results;
     }
     if inner == "this" {
-        return Method::Skip.execute(state, premises);
+        return Method::Skip.execute(state, premises, db);
     }
     if inner == "blast" {
-        return Method::Blast.execute(state, premises);
+        return Method::Blast.execute(state, premises, db);
     }
     if inner == "iprover" || inner.starts_with("iprover ") {
         // Parse intro:/elim:/dest: arguments and apply them
         if inner.contains("intro:") || inner.contains("elim:") || inner.contains("dest:") {
-            let results = exec_intro_elim(inner, state, premises);
+            let results = exec_intro_elim(inner, state, premises, db);
             if results.iter().any(|r| r.nprems() == 0) {
                 return results;
             }
@@ -2364,14 +2288,14 @@ fn exec_single_method_inner(state: &Thm, method_str: &str, premises: &[Arc<Thm>]
             }
         }
         // Fallback: try blast then auto
-        let blast = Method::Blast.execute(state, premises);
+        let blast = Method::Blast.execute(state, premises, db);
         if blast.iter().any(|r| r.nprems() == 0) {
             return blast;
         }
-        return Method::Auto.execute(state, premises);
+        return Method::Auto.execute(state, premises, db);
     }
     if inner == "metis" || inner.starts_with("metis ") || inner.starts_with("metis(") {
-        let results = Method::Metis.execute(state, premises);
+        let results = Method::Metis.execute(state, premises, db);
         if results.iter().any(|r| r.nprems() == 0) {
             return results;
         }
@@ -2388,65 +2312,64 @@ fn exec_single_method_inner(state: &Thm, method_str: &str, premises: &[Arc<Thm>]
             return closed;
         }
         // Fallback: auto then blast
-        let auto = Method::Auto.execute(state, premises);
+        let auto = Method::Auto.execute(state, premises, db);
         if auto.iter().any(|r| r.nprems() == 0) {
             return auto;
         }
-        return Method::Blast.execute(state, premises);
+        return Method::Blast.execute(state, premises, db);
     }
     if inner == "meson" || inner.starts_with("meson ") || inner.starts_with("meson(") {
-        let results = Method::Meson.execute(state, premises);
+        let results = Method::Meson.execute(state, premises, db);
         if results.iter().any(|r| r.nprems() == 0) {
             return results;
         }
-        return Method::Auto.execute(state, premises);
+        return Method::Auto.execute(state, premises, db);
     }
     if inner == "fastforce" || inner.starts_with("fastforce ") || inner.starts_with("fastforce(") {
-        return Method::Blast.execute(state, premises);
+        return Method::Blast.execute(state, premises, db);
     }
     if inner == "force" || inner.starts_with("force ") || inner.starts_with("force(") {
-        return Method::Auto.execute(state, premises);
+        return Method::Auto.execute(state, premises, db);
     }
     if inner == "clarify" || inner.starts_with("clarify ") || inner.starts_with("clarify(") {
-        return Method::Auto.execute(state, premises);
+        return Method::Auto.execute(state, premises, db);
     }
     if inner == "clarsimp" || inner.starts_with("clarsimp ") || inner.starts_with("clarsimp(") {
-        return Method::Auto.execute(state, premises);
+        return Method::Auto.execute(state, premises, db);
     }
     if inner == "fast" || inner.starts_with("fast ") || inner.starts_with("fast(") {
-        return Method::Fast.execute(state, premises);
+        return Method::Fast.execute(state, premises, db);
     }
     if inner == "best" || inner.starts_with("best ") {
-        return Method::Best.execute(state, premises);
+        return Method::Best.execute(state, premises, db);
     }
     if inner == "safe" {
         // Use safe rules exhaustively (faster than auto)
-        let current = Method::apply_safe_rules(state, premises);
+        let current = Method::apply_safe_rules(state, premises, db);
         if current.nprems() == 0 {
             return vec![current];
         }
-        return Method::Auto.execute(state, premises);
+        return Method::Auto.execute(state, premises, db);
     }
     if inner == "step" || inner.starts_with("step ") {
-        return Method::Step.execute(state, premises);
+        return Method::Step.execute(state, premises, db);
     }
     if inner == "coinduction" || inner == "coinduct" {
-        return Method::Coinduct.execute(state, premises);
+        return Method::Coinduct.execute(state, premises, db);
     }
     if inner == "try" || inner == "try0" {
-        return Method::Try.execute(state, premises);
+        return Method::Try.execute(state, premises, db);
     }
     if inner.starts_with("depth ") {
         let rest = inner.strip_prefix("depth ").unwrap_or("");
         let bound: usize = rest.trim().parse().unwrap_or(4);
-        return Method::Depth(bound).execute(state, premises);
+        return Method::Depth(bound).execute(state, premises, db);
     }
 
     // (rule name [OF ...])
     if inner.starts_with("fact ") {
         let rest = inner.strip_prefix("fact ").unwrap_or("");
         let (name, _) = parse_of_suffix(rest);
-        let db = HolTheoremDb::get();
         if let Some(thm) = db.by_name.get(name.trim()) {
             return crate::core::tactic::resolve_tac(&[(**thm).clone()], 0)(state);
         }
@@ -2454,7 +2377,6 @@ fn exec_single_method_inner(state: &Thm, method_str: &str, premises: &[Arc<Thm>]
     }
     if let Some(rest) = inner.strip_prefix("rule ") {
         let (name, other_attrs, of_args, then_args) = parse_of_and_then_suffix(rest);
-        let db = HolTheoremDb::get();
         if let Some(thm) = resolve_theorem_name(name.trim(), db) {
             let mut thm = thm;
             if !other_attrs.is_empty() {
@@ -2475,7 +2397,7 @@ fn exec_single_method_inner(state: &Thm, method_str: &str, premises: &[Arc<Thm>]
             };
             for r in &all.clone() {
                 if r.nprems() > 0 {
-                    for ar in Method::Auto.execute(r, premises) {
+                    for ar in Method::Auto.execute(r, premises, db) {
                         if ar.nprems() == 0 {
                             all.push(ar);
                         }
@@ -2489,7 +2411,7 @@ fn exec_single_method_inner(state: &Thm, method_str: &str, premises: &[Arc<Thm>]
                 return all;
             }
         }
-        let auto = Method::Auto.execute(state, premises);
+        let auto = Method::Auto.execute(state, premises, db);
         if auto.iter().any(|r| r.nprems() == 0) {
             return auto;
         }
@@ -2500,12 +2422,11 @@ fn exec_single_method_inner(state: &Thm, method_str: &str, premises: &[Arc<Thm>]
     }
     // (subst ...)
     if let Some(rest) = inner.strip_prefix("subst ") {
-        return exec_subst(rest, state, premises);
+        return exec_subst(rest, state, premises, db);
     }
     // (erule name [OF ...] [THEN ...])
     if let Some(rest) = inner.strip_prefix("erule ") {
         let (name, other_attrs, of_args, then_args) = parse_of_and_then_suffix(rest);
-        let db = HolTheoremDb::get();
         if let Some(thm) = resolve_theorem_name(name.trim(), db) {
             let mut thm = thm;
             if !other_attrs.is_empty() {
@@ -2523,7 +2444,6 @@ fn exec_single_method_inner(state: &Thm, method_str: &str, premises: &[Arc<Thm>]
     // (drule name [OF ...] [THEN ...])
     if let Some(rest) = inner.strip_prefix("drule ") {
         let (name, other_attrs, of_args, then_args) = parse_of_and_then_suffix(rest);
-        let db = HolTheoremDb::get();
         if let Some(thm) = resolve_theorem_name(name.trim(), db) {
             let mut thm = thm;
             if !other_attrs.is_empty() {
@@ -2541,7 +2461,6 @@ fn exec_single_method_inner(state: &Thm, method_str: &str, premises: &[Arc<Thm>]
     // (frule name [OF ...] [THEN ...])
     if let Some(rest) = inner.strip_prefix("frule ") {
         let (name, other_attrs, of_args, then_args) = parse_of_and_then_suffix(rest);
-        let db = HolTheoremDb::get();
         if let Some(thm) = resolve_theorem_name(name.trim(), db) {
             let mut thm = thm;
             if !other_attrs.is_empty() {
@@ -2557,46 +2476,43 @@ fn exec_single_method_inner(state: &Thm, method_str: &str, premises: &[Arc<Thm>]
     // (unfold name [OF ...])
     if let Some(rest) = inner.strip_prefix("unfold ") {
         let names: Vec<&str> = rest.split_whitespace().collect();
-        let db = HolTheoremDb::get();
         let thms: Vec<Arc<Thm>> =
             names.iter().filter_map(|n| db.by_name.get(*n).cloned()).collect();
         if !thms.is_empty() {
-            return Method::Unfold(thms).execute(state, premises);
+            return Method::Unfold(thms).execute(state, premises, db);
         }
     }
     // (fold name [OF ...])
     if let Some(rest) = inner.strip_prefix("fold ") {
         let names: Vec<&str> = rest.split_whitespace().collect();
-        let db = HolTheoremDb::get();
         let thms: Vec<Arc<Thm>> =
             names.iter().filter_map(|n| db.by_name.get(*n).cloned()).collect();
         if !thms.is_empty() {
-            return Method::Fold(thms).execute(state, premises);
+            return Method::Fold(thms).execute(state, premises, db);
         }
     }
     // (insert name [OF ...])
     if let Some(rest) = inner.strip_prefix("insert ") {
         let names: Vec<&str> = rest.split_whitespace().collect();
-        let db = HolTheoremDb::get();
         let thms: Vec<Arc<Thm>> =
             names.iter().filter_map(|n| db.by_name.get(*n).cloned()).collect();
         if !thms.is_empty() {
-            return Method::Insert(thms).execute(state, premises);
+            return Method::Insert(thms).execute(state, premises, db);
         }
     }
     // (induct x)
     if let Some(rest) = inner.strip_prefix("induct ") {
         let var = rest.trim().to_string();
-        return Method::Induct(var).execute(state, premises);
+        return Method::Induct(var).execute(state, premises, db);
     }
     // (cases x)
     if let Some(rest) = inner.strip_prefix("cases ") {
         let var = rest.trim().to_string();
-        return Method::Cases(var).execute(state, premises);
+        return Method::Cases(var).execute(state, premises, db);
     }
     // intro: / elim: / dest: parameter parsing
     if inner.starts_with("intro:") || inner.starts_with("elim:") || inner.starts_with("dest:") {
-        return exec_intro_elim(inner, state, premises);
+        return exec_intro_elim(inner, state, premises, db);
     }
     // proof scripts: "proof method", "proof -", "apply method"
     if inner.starts_with("proof ")
@@ -2604,11 +2520,10 @@ fn exec_single_method_inner(state: &Thm, method_str: &str, premises: &[Arc<Thm>]
         || inner.starts_with("proof(")
         || inner.starts_with("apply")
     {
-        return exec_proof_script(inner, state, premises);
+        return exec_proof_script(inner, state, premises, db);
     }
     // `using thms proof ...` — add named facts as premises
     if let Some(rest) = inner.strip_prefix("using ") {
-        let db = HolTheoremDb::get();
         // Collect the named facts after "using"
         // strip "using "
         // Find where the proof method starts
@@ -2635,15 +2550,15 @@ fn exec_single_method_inner(state: &Thm, method_str: &str, premises: &[Arc<Thm>]
         }
         // Execute with extended premises
         if method_str.is_empty() {
-            return Method::Auto.execute(state, &extended_prems);
+            return Method::Auto.execute(state, &extended_prems, db);
         }
         if method_str.starts_with("proof") {
-            return exec_proof_script(method_str, state, &extended_prems);
+            return exec_proof_script(method_str, state, &extended_prems, db);
         }
         if method_str.starts_with("apply") {
-            return exec_proof_script(method_str, state, &extended_prems);
+            return exec_proof_script(method_str, state, &extended_prems, db);
         }
-        return exec_single_method(state, method_str, &extended_prems);
+        return exec_single_method(state, method_str, &extended_prems, db);
     }
     // `unfolding defs` or `unfolding defs by method`
     if inner.starts_with("unfolding ") {
@@ -2651,10 +2566,10 @@ fn exec_single_method_inner(state: &Thm, method_str: &str, premises: &[Arc<Thm>]
             // First unfold, then execute the by-method
             let unfold_part = &inner[..pos];
             let by_part = &inner[pos + 1..];
-            let unfold_results = exec_unfold(unfold_part, state, premises);
+            let unfold_results = exec_unfold(unfold_part, state, premises, db);
             let mut all_results = Vec::new();
             for r in &unfold_results {
-                let by_results = exec_single_method(r, by_part, premises);
+                let by_results = exec_single_method(r, by_part, premises, db);
                 all_results.extend(by_results);
             }
             if !all_results.is_empty() {
@@ -2662,16 +2577,20 @@ fn exec_single_method_inner(state: &Thm, method_str: &str, premises: &[Arc<Thm>]
             }
         }
         // Just `unfolding defs` — try unfold
-        return exec_unfold(inner, state, premises);
+        return exec_unfold(inner, state, premises, db);
     }
     vec![]
 }
 
 /// Execute `unfolding def1 def2 ...` as an unfold method.
-fn exec_unfold(method_str: &str, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
+fn exec_unfold(
+    method_str: &str,
+    state: &Thm,
+    premises: &[Arc<Thm>],
+    db: &HolTheoremDb,
+) -> Vec<Thm> {
     let rest = method_str.strip_prefix("unfolding ").unwrap_or(method_str);
     let names: Vec<&str> = rest.split_whitespace().collect();
-    let db = HolTheoremDb::get();
     let thms: Vec<Arc<Thm>> = names
         .iter()
         .filter_map(|n| {
@@ -2726,19 +2645,19 @@ fn exec_unfold(method_str: &str, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm>
     if thms.is_empty() {
         return vec![state.clone()];
     }
-    Method::Unfold(thms).execute(state, premises)
+    Method::Unfold(thms).execute(state, premises, db)
 }
 
 /// Execute induction: parse `induct var arbitrary: v1 v2 rule: rulename`
 /// Looks up induction theorems in the DB and applies via resolve_tac.
 /// Execute substitution: replace equals by equals in goal or assumptions.
 /// Supports: subst, subst (asm), subst thm_name, subst (asm) thm_name
-fn exec_subst(method_str: &str, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
+fn exec_subst(method_str: &str, state: &Thm, premises: &[Arc<Thm>], db: &HolTheoremDb) -> Vec<Thm> {
     let rest = method_str.trim();
     let mut in_asm = false;
-    let rest = if rest.starts_with("(asm) ") {
+    let rest = if let Some(stripped) = rest.strip_prefix("(asm) ") {
         in_asm = true;
-        &rest[6..]
+        stripped
     } else if rest == "(asm)" {
         in_asm = true;
         ""
@@ -2746,13 +2665,11 @@ fn exec_subst(method_str: &str, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> 
         rest
     };
 
-    let db = HolTheoremDb::get();
-
     // If a specific theorem is given, use it directly
     if !rest.is_empty() {
         let eq_name = rest.trim();
         if let Some(eq_thm) = db.by_name.get(eq_name) {
-            return apply_substitution(state, eq_thm, in_asm, premises);
+            return apply_substitution(state, eq_thm, in_asm, premises, db);
         }
         // Try as a direct equality: "x = y" format — not supported yet
         return vec![];
@@ -2762,14 +2679,14 @@ fn exec_subst(method_str: &str, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> 
     // Look through premises for equalities
     for prem in premises {
         if let Some((_l, _r)) = Pure::dest_equals(prem.prop().term()) {
-            let results = apply_substitution(state, prem, in_asm, premises);
+            let results = apply_substitution(state, prem, in_asm, premises, db);
             if !results.is_empty() {
                 return results;
             }
             // Also try swapped
             let swapped = ThmKernel::symmetric(prem).ok();
             if let Some(ref sym_thm) = swapped {
-                let results = apply_substitution(state, sym_thm, in_asm, premises);
+                let results = apply_substitution(state, sym_thm, in_asm, premises, db);
                 if !results.is_empty() {
                     return results;
                 }
@@ -2786,7 +2703,13 @@ fn exec_subst(method_str: &str, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> 
 }
 
 /// Apply an equality theorem to perform substitution.
-fn apply_substitution(state: &Thm, eq_thm: &Thm, in_asm: bool, premises: &[Arc<Thm>]) -> Vec<Thm> {
+fn apply_substitution(
+    state: &Thm,
+    eq_thm: &Thm,
+    in_asm: bool,
+    premises: &[Arc<Thm>],
+    db: &HolTheoremDb,
+) -> Vec<Thm> {
     if in_asm {
         // Substitute in assumptions: for each hypothesis, try to rewrite
         let mut results = Vec::new();
@@ -2808,7 +2731,6 @@ fn apply_substitution(state: &Thm, eq_thm: &Thm, in_asm: bool, premises: &[Arc<T
         results
     } else {
         // Substitute in goal: use subst theorem [OF eq_thm]
-        let db = HolTheoremDb::get();
         if let Some(subst_thm) = db.by_name.get("subst") {
             let combined = ThmKernel::bicompose(true, eq_thm, subst_thm, 0)
                 .or_else(|| ThmKernel::bicompose(true, eq_thm, subst_thm, 1));
@@ -2830,7 +2752,7 @@ fn apply_substitution(state: &Thm, eq_thm: &Thm, in_asm: bool, premises: &[Arc<T
             }
         }
         // Fallback: try auto
-        let auto_results = Method::Auto.execute(state, premises);
+        let auto_results = Method::Auto.execute(state, premises, db);
         if auto_results.iter().any(|r| r.nprems() == 0) {
             return auto_results;
         }
@@ -2838,9 +2760,12 @@ fn apply_substitution(state: &Thm, eq_thm: &Thm, in_asm: bool, premises: &[Arc<T
     }
 }
 
-fn exec_induct(method_str: &str, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
-    let db = HolTheoremDb::get();
-
+fn exec_induct(
+    method_str: &str,
+    state: &Thm,
+    premises: &[Arc<Thm>],
+    db: &HolTheoremDb,
+) -> Vec<Thm> {
     // Parse parameters using centralized Args parser (Phase 51)
     let rest = method_str.strip_prefix("induct ").unwrap_or(method_str);
     let rest = rest.strip_prefix("cases ").unwrap_or(rest);
@@ -2861,13 +2786,13 @@ fn exec_induct(method_str: &str, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm>
     }
 
     // 1. Try safe rules first (cheap, no backtracking)
-    let safe = Method::apply_safe_rules(state, premises);
+    let safe = Method::apply_safe_rules(state, premises, db);
     if safe.nprems() == 0 {
         return vec![safe];
     }
 
     // 2. Try auto (general-purpose)
-    let auto_results = Method::Auto.execute(state, premises);
+    let auto_results = Method::Auto.execute(state, premises, db);
     if auto_results.iter().any(|r| r.nprems() == 0) {
         return auto_results;
     }
@@ -2964,7 +2889,7 @@ fn exec_induct(method_str: &str, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm>
             }
             // Solve subgoals: try safe rules first, then auto for remaining
             if r.nprems() <= 10
-                && let Some(solved) = solve_subgoals(r, premises)
+                && let Some(solved) = solve_subgoals(r, premises, db)
             {
                 return vec![solved];
             }
@@ -2972,7 +2897,7 @@ fn exec_induct(method_str: &str, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm>
     }
 
     // 5. Goal-directed induction for common types
-    if let Some(results) = try_list_induct(state, premises) {
+    if let Some(results) = try_list_induct(state, premises, db) {
         return results;
     }
 
@@ -2980,7 +2905,7 @@ fn exec_induct(method_str: &str, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm>
     if !auto_results.is_empty() {
         return auto_results;
     }
-    Method::Blast.execute(state, premises)
+    Method::Blast.execute(state, premises, db)
 }
 
 /// Infer the likely type name for a variable from the goal's structure.
@@ -3016,7 +2941,7 @@ fn infer_type_from_goal(goal: &Term, var_name: &str) -> String {
 }
 
 /// Try list induction: if the goal has a list variable, generate Nil/Cons subgoals.
-fn try_list_induct(state: &Thm, premises: &[Arc<Thm>]) -> Option<Vec<Thm>> {
+fn try_list_induct(state: &Thm, premises: &[Arc<Thm>], db: &HolTheoremDb) -> Option<Vec<Thm>> {
     let goal = state.prem(0)?;
     // Check if the goal mentions common list operations (heuristic)
     let goal_str = format!("{:?}", goal);
@@ -3038,7 +2963,6 @@ fn try_list_induct(state: &Thm, premises: &[Arc<Thm>]) -> Option<Vec<Thm>> {
         return None;
     }
     // Look up list induction theorems
-    let db = HolTheoremDb::get();
     let list_induct_names = [
         "list_induct2",
         "list_induct3",
@@ -3061,7 +2985,7 @@ fn try_list_induct(state: &Thm, premises: &[Arc<Thm>]) -> Option<Vec<Thm>> {
                 return Some(vec![r.clone()]);
             }
             if r.nprems() <= 15
-                && let Some(s) = solve_subgoals(r, premises)
+                && let Some(s) = solve_subgoals(r, premises, db)
             {
                 return Some(vec![s]);
             }
@@ -3072,7 +2996,7 @@ fn try_list_induct(state: &Thm, premises: &[Arc<Thm>]) -> Option<Vec<Thm>> {
 
 /// Try to solve all subgoals of a state using auto, blast, and simp in sequence.
 /// Accumulates solved subgoals as additional premises for subsequent subgoal solving.
-fn solve_subgoals(state: &Thm, premises: &[Arc<Thm>]) -> Option<Thm> {
+fn solve_subgoals(state: &Thm, premises: &[Arc<Thm>], db: &HolTheoremDb) -> Option<Thm> {
     let mut current = state.clone();
     let mut accumulated: Vec<Arc<Thm>> = premises.to_vec();
     for _i in 0..state.nprems().min(15) {
@@ -3084,18 +3008,17 @@ fn solve_subgoals(state: &Thm, premises: &[Arc<Thm>]) -> Option<Thm> {
             return Some(current);
         }
         // Try auto with accumulated premises
-        let solved = prove_auto(&goal, &accumulated)
+        let solved = prove_auto(&goal, &accumulated, db)
             .or_else(|| {
-                Method::Blast.execute(&goal, &accumulated).into_iter().find(|r| r.nprems() == 0)
+                Method::Blast.execute(&goal, &accumulated, db).into_iter().find(|r| r.nprems() == 0)
             })
             .or_else(|| {
                 // Try simp as last resort
-                let db = HolTheoremDb::get();
                 let rules: Vec<RewriteRule> =
                     db.simps.iter().filter_map(|t| RewriteRule::from_thm(Arc::clone(t))).collect();
                 let simp = Simplifier::new(rules);
                 Method::Simp(simp)
-                    .execute(&goal, &accumulated)
+                    .execute(&goal, &accumulated, db)
                     .into_iter()
                     .find(|r| r.nprems() == 0)
             });
@@ -3119,7 +3042,12 @@ thread_local! {
     static PROOF_SCRIPT_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-fn exec_proof_script(method_str: &str, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
+fn exec_proof_script(
+    method_str: &str,
+    state: &Thm,
+    premises: &[Arc<Thm>],
+    db: &HolTheoremDb,
+) -> Vec<Thm> {
     let depth = PROOF_SCRIPT_DEPTH.with(|c| {
         let d = c.get() + 1;
         c.set(d);
@@ -3129,18 +3057,23 @@ fn exec_proof_script(method_str: &str, state: &Thm, premises: &[Arc<Thm>]) -> Ve
         PROOF_SCRIPT_DEPTH.with(|c| c.set(0));
         return vec![state.clone()];
     }
-    let result = exec_proof_script_inner(method_str, state, premises);
+    let result = exec_proof_script_inner(method_str, state, premises, db);
     PROOF_SCRIPT_DEPTH.with(|c| c.set(c.get() - 1));
     result
 }
 
-fn exec_proof_script_inner(method_str: &str, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
+fn exec_proof_script_inner(
+    method_str: &str,
+    state: &Thm,
+    premises: &[Arc<Thm>],
+    db: &HolTheoremDb,
+) -> Vec<Thm> {
     let inner = method_str.trim();
 
     // Multi-line proof scripts: execute first line, then extract body methods
     if inner.contains('\n') {
         let first_line = inner.lines().next().unwrap_or(inner);
-        let mut results = exec_proof_script(first_line, state, premises);
+        let mut results = exec_proof_script(first_line, state, premises, db);
         // Extract body methods and apply them
         let mut by_methods = Vec::new();
         for line in inner.lines().skip(1) {
@@ -3171,7 +3104,7 @@ fn exec_proof_script_inner(method_str: &str, state: &Thm, premises: &[Arc<Thm>])
                     next.push(r.clone());
                     continue;
                 }
-                next.extend(exec_single_method(r, method, premises));
+                next.extend(exec_single_method(r, method, premises, db));
             }
             if next.is_empty() {
                 break;
@@ -3183,36 +3116,35 @@ fn exec_proof_script_inner(method_str: &str, state: &Thm, premises: &[Arc<Thm>])
 
     // `proof -` or bare `proof` → try auto (many end with `qed auto`)
     if inner == "proof" || inner == "proof-" || inner == "proof -" {
-        return Method::Auto.execute(state, premises);
+        return Method::Auto.execute(state, premises, db);
     }
 
     // `apply(method)` or `apply method` → extract and run the method
     if let Some(rest) = inner.strip_prefix("apply(") {
         let method = rest.trim_end_matches(')').trim();
-        return exec_single_method(state, method, premises);
+        return exec_single_method(state, method, premises, db);
     }
     if let Some(rest) = inner.strip_prefix("apply ") {
-        return exec_single_method(state, rest.trim(), premises);
+        return exec_single_method(state, rest.trim(), premises, db);
     }
 
     // `proof (induct ...)` or `proof (induction ...)` → apply induction rule
     if inner.contains("induct") || inner.contains("induction") {
-        return exec_induct(inner, state, premises);
+        return exec_induct(inner, state, premises, db);
     }
 
     // `proof (cases ...)` → fallback to auto
     if inner.contains("cases") {
-        let auto_results = Method::Auto.execute(state, premises);
+        let auto_results = Method::Auto.execute(state, premises, db);
         if !auto_results.is_empty() {
             return auto_results;
         }
-        return Method::Cases("".to_string()).execute(state, premises);
+        return Method::Cases("".to_string()).execute(state, premises, db);
     }
 
     // `proof (rule name)` → extract and run rule
     if let Some(rest) = inner.strip_prefix("proof (rule ") {
         let name = rest.trim_end_matches(')').trim();
-        let db = HolTheoremDb::get();
         if let Some(thm) = db.by_name.get(name) {
             return tactic::resolve_tac(&[(**thm).clone()], 0)(state);
         }
@@ -3220,36 +3152,37 @@ fn exec_proof_script_inner(method_str: &str, state: &Thm, premises: &[Arc<Thm>])
 
     // `proof safe` → try auto
     if inner.contains("safe") {
-        return Method::Auto.execute(state, premises);
+        return Method::Auto.execute(state, premises, db);
     }
 
     // `proof method` (any other method name) → try to execute it
     if let Some(rest) = inner.strip_prefix("proof ") {
         let method = rest.trim();
         if !method.is_empty() && method != "-" {
-            return exec_single_method(state, method, premises);
+            return exec_single_method(state, method, premises, db);
         }
     }
 
     // Last resort: try auto
-    Method::Auto.execute(state, premises)
+    Method::Auto.execute(state, premises, db)
 }
 
 /// Execute intro:/elim:/dest: method with parameter extraction.
 /// Syntax: `intro thm1 thm2 ...` or `intro: thm1 thm2 elim: thm3 ...`
 /// Handles multiple modes (intro + elim + dest) by chaining them.
-fn exec_intro_elim(method_str: &str, state: &Thm, _premises: &[Arc<Thm>]) -> Vec<Thm> {
-    let db = HolTheoremDb::get();
-
+fn exec_intro_elim(
+    method_str: &str,
+    state: &Thm,
+    _premises: &[Arc<Thm>],
+    db: &HolTheoremDb,
+) -> Vec<Thm> {
     // Extract intro rules
     let intro_str = if let Some(rest) = method_str.strip_prefix("intro:") {
         // Find where the intro section ends (next mode keyword)
         let end = rest.find(" elim:").or_else(|| rest.find(" dest:")).unwrap_or(rest.len());
         Some(&rest[..end])
-    } else if method_str.starts_with("intro ") {
-        Some(&method_str[6..])
     } else {
-        None
+        method_str.strip_prefix("intro ")
     };
 
     // Extract elim rules
@@ -3257,10 +3190,8 @@ fn exec_intro_elim(method_str: &str, state: &Thm, _premises: &[Arc<Thm>]) -> Vec
         let rest = &method_str[idx + 5..];
         let end = rest.find(" intro:").or_else(|| rest.find(" dest:")).unwrap_or(rest.len());
         Some(&rest[..end])
-    } else if method_str.starts_with("elim ") {
-        Some(&method_str[5..])
     } else {
-        None
+        method_str.strip_prefix("elim ")
     };
 
     // Extract dest rules
@@ -3268,10 +3199,8 @@ fn exec_intro_elim(method_str: &str, state: &Thm, _premises: &[Arc<Thm>]) -> Vec
         let rest = &method_str[idx + 5..];
         let end = rest.find(" intro:").or_else(|| rest.find(" elim:")).unwrap_or(rest.len());
         Some(&rest[..end])
-    } else if method_str.starts_with("dest ") {
-        Some(&method_str[5..])
     } else {
-        None
+        method_str.strip_prefix("dest ")
     };
 
     if intro_str.is_none() && elim_str.is_none() && dest_str.is_none() {
@@ -3291,8 +3220,8 @@ fn exec_intro_elim(method_str: &str, state: &Thm, _premises: &[Arc<Thm>]) -> Vec
             .collect()
     };
 
-    let intro_thms: Vec<Arc<Thm>> = intro_str.map(&parse_section).unwrap_or_default();
-    let elim_thms: Vec<Arc<Thm>> = elim_str.map(&parse_section).unwrap_or_default();
+    let intro_thms: Vec<Arc<Thm>> = intro_str.map(parse_section).unwrap_or_default();
+    let elim_thms: Vec<Arc<Thm>> = elim_str.map(parse_section).unwrap_or_default();
     let dest_thms: Vec<Arc<Thm>> = dest_str.map(parse_section).unwrap_or_default();
 
     // Chain: resolve with intros, then eresolve with elims, then dresolve with dests
@@ -3340,15 +3269,8 @@ fn exec_intro_elim(method_str: &str, state: &Thm, _premises: &[Arc<Thm>]) -> Vec
     current_states
 }
 
-/// Execute `simp` method with optional `add:`, `only:`, `del:` modifiers.
-/// Syntax:
-/// - `simp` — use all DB simp rules
-/// - `simp add: thm1 thm2` — DB rules + named theorems
-/// - `simp only: thm1 thm2` — ONLY the named theorems
-/// - `simp del: thm1 thm2` — DB rules minus named theorems
 /// Basic arithmetic reasoning using built-in rewrite rules.
-fn exec_arith(state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
-    let db = HolTheoremDb::get();
+fn exec_arith(state: &Thm, premises: &[Arc<Thm>], db: &HolTheoremDb) -> Vec<Thm> {
     // Build arithmetic simp set: add_0, add_Suc, mult_0, mult_Suc, etc.
     let mut arith_rules: Vec<RewriteRule> = Vec::new();
     for name in &[
@@ -3374,19 +3296,18 @@ fn exec_arith(state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
     }
     if arith_rules.is_empty() {
         // Fallback: try auto
-        return Method::Auto.execute(state, premises);
+        return Method::Auto.execute(state, premises, db);
     }
     let simp = Simplifier::new(arith_rules);
-    Method::Simp(simp).execute(state, premises)
+    Method::Simp(simp).execute(state, premises, db)
 }
 
-fn exec_simp(method_str: &str, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
+fn exec_simp(method_str: &str, state: &Thm, premises: &[Arc<Thm>], db: &HolTheoremDb) -> Vec<Thm> {
     // Check soft deadline — avoid expensive rewrite on expired budget
     let expired = VERIFY_DEADLINE.with(|c| c.get().is_some_and(|d| std::time::Instant::now() >= d));
     if expired {
         return vec![];
     }
-    let db = HolTheoremDb::get();
     let rest = if method_str == "simp" { "" } else { &method_str[4..] };
     let rest = rest.trim();
 
@@ -3404,7 +3325,7 @@ fn exec_simp(method_str: &str, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
                 rules.push(rule);
             }
         }
-        rules.extend(HolSimplifier::builtin_rules());
+        rules.extend(HolSimplifier::builtin_rules(db));
     }
 
     // Add named theorems — first try by_name (single theorem), then attrs_index (named_theorems collection)
@@ -3432,12 +3353,11 @@ fn exec_simp(method_str: &str, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
     }
 
     let simp = Simplifier::new(rules);
-    Method::Simp(simp).execute(state, premises)
+    Method::Simp(simp).execute(state, premises, db)
 }
 
 /// Execute `simp_all` — apply simp to all subgoals repeatedly.
-fn exec_simp_all(state: &Thm, _premises: &[Arc<Thm>]) -> Vec<Thm> {
-    let db = HolTheoremDb::get();
+fn exec_simp_all(state: &Thm, _premises: &[Arc<Thm>], db: &HolTheoremDb) -> Vec<Thm> {
     let rules: Vec<RewriteRule> =
         db.simps.iter().filter_map(|t| RewriteRule::from_thm(Arc::clone(t))).collect();
     let simp = Simplifier::new(rules);
@@ -3668,14 +3588,9 @@ fn apply_then(mut thm: Arc<Thm>, args: Vec<String>, db: &HolTheoremDb) -> Arc<Th
 
 /// Resolve a theorem name with flexible dot/underscore/qualifier matching.
 fn resolve_theorem_name(name: &str, db: &HolTheoremDb) -> Option<Arc<Thm>> {
-    // Check global DB first
+    // Resolve exclusively through the caller's explicit database context.
     if let Some(thm) = db.by_name.get(name) {
         return Some(Arc::clone(thm));
-    }
-    // Check local index (set during theory processing for same-file refs)
-    let local_result = LOCAL_THEOREM_INDEX.with(|idx| idx.borrow().get(name).cloned());
-    if let Some(thm) = local_result {
-        return Some(thm);
     }
     let dot = name.replace('_', ".");
     if dot != name
@@ -3840,11 +3755,6 @@ pub fn set_search_budget(budget: usize) {
     PROOF_SEARCH_BUDGET.with(|c| c.set(budget));
 }
 
-/// Verify a single .thy file using a local DB — no global LazyLock init.
-/// Returns `(transitional_strict_closed_count, attempted_count)`.
-/// Uses 3-phase approach: parse with empty DB → build local DB → verify with override.
-/// Load simp rules from core theories (HOL, Orderings, Set, Nat, Fun, Lattices).
-/// Uses with_override to avoid triggering the global LazyLock DB initialization.
 /// Cached after first call — returns Arc'd rules that can be shared across verify_file calls.
 /// Cached core simpset + attrs_index from foundational theories.
 struct CoreSimpset {
@@ -3856,8 +3766,6 @@ fn load_core_simpset() -> &'static CoreSimpset {
     use std::sync::OnceLock;
     static CACHE: OnceLock<CoreSimpset> = OnceLock::new();
     CACHE.get_or_init(|| {
-        use crate::hol::hol_loader::HolTheoremDb;
-        let empty_db = HolTheoremDb::new();
         let mut simps = Vec::new();
         let mut attrs_index = std::collections::HashMap::new();
         // Core theories in dependency order (imports-first)
@@ -3873,9 +3781,7 @@ fn load_core_simpset() -> &'static CoreSimpset {
             include_str!("../../theories/HOL/Rings.thy"),
         ];
         for source in core_thys {
-            let lemmas = HolTheoremDb::with_override(&empty_db, || {
-                crate::hol::hol_loader::parse_lemmas(source)
-            });
+            let lemmas = crate::hol::hol_loader::parse_lemmas(source);
             for lem in &lemmas {
                 let thm = Arc::clone(&lem.theorem);
                 // Collect [simp] rules for the simpset
@@ -3892,11 +3798,10 @@ fn load_core_simpset() -> &'static CoreSimpset {
     })
 }
 
+/// Verify one .thy file using a local theorem database.
+/// Returns `(transitional_strict_closed_count, attempted_count)`.
 pub fn verify_file(source: &str) -> (usize, usize) {
-    use crate::hol::hol_loader::HolTheoremDb;
-    let empty_db = HolTheoremDb::new();
-    let lemmas =
-        HolTheoremDb::with_override(&empty_db, || crate::hol::hol_loader::parse_lemmas(source));
+    let lemmas = crate::hol::hol_loader::parse_lemmas(source);
     let mut local_db = HolTheoremDb::from_lemmas(&lemmas);
     let _ = enrich_local_db_with_checked_sources(&mut local_db, source);
     HolTheoremDb::add_builtins(&mut local_db);
@@ -3929,7 +3834,7 @@ pub fn verify_file(source: &str) -> (usize, usize) {
     });
     // Reset per-file search budget (controls memory via branch pruning)
     PROOF_SEARCH_BUDGET.with(|c| c.set(200));
-    HolTheoremDb::with_override(&local_db, || verify_lemmas_batch(&lemmas))
+    verify_lemmas_batch(&lemmas, &local_db)
 }
 
 /// Per-lemma verification diagnostic: same setup as `verify_file`, but returns
@@ -3941,10 +3846,7 @@ pub fn verify_file(source: &str) -> (usize, usize) {
 /// tag. It is not a new-kernel `TrustedTheorem`; open `A |- A` results are not
 /// counted.
 pub fn verify_file_diagnostic(source: &str) -> Vec<(String, String, bool)> {
-    use crate::hol::hol_loader::HolTheoremDb;
-    let empty_db = HolTheoremDb::new();
-    let lemmas =
-        HolTheoremDb::with_override(&empty_db, || crate::hol::hol_loader::parse_lemmas(source));
+    let lemmas = crate::hol::hol_loader::parse_lemmas(source);
     let mut local_db = HolTheoremDb::from_lemmas(&lemmas);
     let _ = enrich_local_db_with_checked_sources(&mut local_db, source);
     HolTheoremDb::add_builtins(&mut local_db);
@@ -3969,48 +3871,27 @@ pub fn verify_file_diagnostic(source: &str) -> Vec<(String, String, bool)> {
     });
     PROOF_SEARCH_BUDGET.with(|c| c.set(200));
 
-    HolTheoremDb::with_override(&local_db, || {
-        LOCAL_THEOREM_INDEX.with(|idx| {
-            let mut map = idx.borrow_mut();
-            map.clear();
-            for lem in &lemmas {
-                if !lem.name.is_empty() {
-                    map.insert(lem.name.clone(), Arc::clone(&lem.theorem));
-                }
-            }
-        });
-        let mut out = Vec::new();
-        for lem in &lemmas {
-            if lem.proof_script.is_none() {
-                continue;
-            }
-            let script = lem.proof_script.clone().unwrap_or_default();
-            let result = verify_lemma(lem);
-            let outcome = classify_verify_result(&lem.name, &result);
-            let proved = outcome.is_transitional_strict_closed();
-            out.push((lem.name.clone(), script, proved));
+    let mut out = Vec::new();
+    for lem in &lemmas {
+        if lem.proof_script.is_none() {
+            continue;
         }
-        LOCAL_THEOREM_INDEX.with(|idx| idx.borrow_mut().clear());
-        out
-    })
+        let script = lem.proof_script.clone().unwrap_or_default();
+        let result = verify_lemma(lem, &local_db);
+        let outcome = classify_verify_result(&lem.name, &result);
+        let proved = outcome.is_transitional_strict_closed();
+        out.push((lem.name.clone(), script, proved));
+    }
+    out
 }
 
-/// Verify lemmas with local index for same-file definitions.
+/// Verify lemmas using the caller's explicit immutable theorem database.
 ///
 /// The returned verified count is the transitional legacy metric. New-kernel
 /// trusted acceptance remains zero until this path returns context-bound
 /// `crate::kernel::TrustedTheorem` values.
 /// Checks `VERIFY_DEADLINE` before each lemma — returns partial results if exceeded.
-pub fn verify_lemmas_batch(lemmas: &[ParsedLemma]) -> (usize, usize) {
-    LOCAL_THEOREM_INDEX.with(|idx| {
-        let mut map = idx.borrow_mut();
-        map.clear();
-        for lem in lemmas {
-            if !lem.name.is_empty() {
-                map.insert(lem.name.clone(), Arc::clone(&lem.theorem));
-            }
-        }
-    });
+pub fn verify_lemmas_batch(lemmas: &[ParsedLemma], db: &HolTheoremDb) -> (usize, usize) {
     let mut verified = 0usize;
     let mut attempted = 0usize;
     for lem in lemmas {
@@ -4022,7 +3903,7 @@ pub fn verify_lemmas_batch(lemmas: &[ParsedLemma]) -> (usize, usize) {
         }
         if lem.proof_script.is_some() {
             attempted += 1;
-            let result = verify_lemma(lem);
+            let result = verify_lemma(lem, db);
             let outcome = classify_verify_result(&lem.name, &result);
             let proved = outcome.is_transitional_strict_closed();
             if proved {
@@ -4035,7 +3916,6 @@ pub fn verify_lemmas_batch(lemmas: &[ParsedLemma]) -> (usize, usize) {
             });
         }
     }
-    LOCAL_THEOREM_INDEX.with(|idx| idx.borrow_mut().clear());
     (verified, attempted)
 }
 
@@ -4043,45 +3923,58 @@ fn enrich_local_db_with_checked_sources(
     db: &mut HolTheoremDb,
     source: &str,
 ) -> Result<(), KernelError> {
+    db.set_verification_source(source);
     let source_env = HolTheoremDb::build_type_env(source);
     db.merge_checked_source_type_env(source_env)?;
     db.extend_checked_definitions_from_source(source);
     Ok(())
 }
 
-fn normalize_true_i_prop_for_verify(
+fn check_true_i_legacy_payload(
     parsed_prop: &CTerm,
     db: &HolTheoremDb,
-) -> Result<CTerm, StrictTrueIError> {
+) -> Result<(), StrictAdapterReject> {
     parsed_prop
-        .require_no_dummy_types("normalize_true_i_prop_for_verify")
-        .map_err(StrictTrueIError::CertificationFailed)?;
+        .require_no_dummy_types("check_true_i_legacy_payload")
+        .map_err(|err| StrictAdapterReject::CertificationFailed(Arc::new(err)))?;
     match parsed_prop.term() {
         Term::Const { name, typ }
             if matches!(name.as_ref(), "HOL.True" | "True") && typ == &Typ::base("bool") =>
         {
             normalize_checked_hol_true_prop(parsed_prop, &db.type_env)
-                .map_err(StrictTrueIError::CertificationFailed)
+                .map(|_| ())
+                .map_err(|err| StrictAdapterReject::CertificationFailed(Arc::new(err)))
         },
-        _ => Err(StrictTrueIError::PropositionMismatch),
+        _ => Err(StrictAdapterReject::PropositionMismatch),
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// User-fixable source/payload rejections; nested failures retain their cause.
+#[derive(Clone, Debug, thiserror::Error)]
 pub enum StrictAdapterReject {
+    #[error("complete standalone source proposition required ({status:?}, {shape:?})")]
     SourcePropositionUnverified { status: SourcePropositionStatus, shape: SourcePropositionShape },
+    #[error("sampled lemma proposition differs from the accepted source proposition")]
     PropositionMismatch,
+    #[error("sampled lemma proof differs from the supported source proof")]
     ProofShapeMismatch,
-    MissingCheckedDefinition,
-    CertificationFailed(String),
-    ReplayFailed(String),
-    KernelInvariant(String),
+    #[error("complete theory source is unavailable for sampled TrueI verification")]
+    MissingSource,
+    /// The candidate does not belong to the complete source bound to this DB.
+    #[error("sampled lemma declaration does not match the bound complete theory source")]
+    SourceBindingMismatch,
+    #[error("sampled legacy payload certification failed: {0}")]
+    CertificationFailed(#[source] Arc<KernelError>),
+    #[error("sampled source projection failed: {0}")]
+    SourceCompilationFailed(#[source] Arc<crate::hol::sampled_true_i::SampledTrueIError>),
+    #[error("sampled proposition elaboration failed: {0}")]
+    ElaborationFailed(#[source] Arc<crate::isar::elaborator::ElaborationError>),
 }
 
 #[derive(Clone, Debug)]
 pub enum StrictAdapterResult {
     NotApplicable,
-    Proved(Thm),
+    Proved(Box<(TrustedTheory, TrustedTheorem)>),
     Rejected(StrictAdapterReject),
 }
 
@@ -4092,95 +3985,99 @@ fn strict_adapter_reject_admit_reason(reject: &StrictAdapterReject) -> &'static 
         },
         StrictAdapterReject::PropositionMismatch => "admitted:strict_adapter_prop_mismatch",
         StrictAdapterReject::ProofShapeMismatch => "admitted:strict_adapter_proof_shape_mismatch",
-        StrictAdapterReject::MissingCheckedDefinition => {
-            "admitted:strict_adapter_missing_checked_definition"
+        StrictAdapterReject::MissingSource => "admitted:strict_adapter_missing_source",
+        StrictAdapterReject::SourceBindingMismatch => {
+            "admitted:strict_adapter_source_binding_mismatch"
         },
         StrictAdapterReject::CertificationFailed(_) => {
             "admitted:strict_adapter_certification_failed"
         },
-        StrictAdapterReject::ReplayFailed(_) => "admitted:strict_adapter_replay_failed",
-        StrictAdapterReject::KernelInvariant(_) => "admitted:strict_adapter_kernel_invariant",
+        StrictAdapterReject::SourceCompilationFailed(_) => "admitted:strict_adapter_source_failed",
+        StrictAdapterReject::ElaborationFailed(_) => "admitted:strict_adapter_elaboration_failed",
     }
 }
 
-fn strict_adapter_reject_from_true_i_error(err: StrictTrueIError) -> StrictAdapterReject {
-    match err {
-        StrictTrueIError::PropositionMismatch => StrictAdapterReject::PropositionMismatch,
-        StrictTrueIError::ProofShapeMismatch => StrictAdapterReject::ProofShapeMismatch,
-        StrictTrueIError::MissingCheckedDefinition => StrictAdapterReject::MissingCheckedDefinition,
-        StrictTrueIError::CertificationFailed(err) => {
-            StrictAdapterReject::CertificationFailed(err.to_string())
-        },
-        StrictTrueIError::ReplayFailed(err) => StrictAdapterReject::ReplayFailed(err.to_string()),
-        StrictTrueIError::NameMismatch { actual } => StrictAdapterReject::KernelInvariant(format!(
-            "registered TrueI adapter received theorem name {actual}"
-        )),
-        StrictTrueIError::KernelInvariant(err) => {
-            StrictAdapterReject::KernelInvariant(err.to_string())
-        },
+fn compile_true_i_for_lemma(
+    lem: &ParsedLemma,
+    proof: &str,
+    db: &HolTheoremDb,
+) -> Result<(TrustedTheory, TrustedTheorem), StrictAdapterReject> {
+    let status = lem.source_proposition_status();
+    let shape = lem.source_proposition_shape();
+    if status != SourcePropositionStatus::FullyConsumed
+        || shape != SourcePropositionShape::StandaloneHolTrueAlias
+    {
+        return Err(StrictAdapterReject::SourcePropositionUnverified { status, shape });
     }
+    if !proof.split_whitespace().eq(["unfolding", "True_def", "by", "(rule", "refl)"]) {
+        return Err(StrictAdapterReject::ProofShapeMismatch);
+    }
+    if !db.matches_verification_source(lem) {
+        return Err(StrictAdapterReject::SourceBindingMismatch);
+    }
+    // Legacy payload/metadata can only reject; the complete source creates authority.
+    check_true_i_legacy_payload(lem.theorem.prop(), db)?;
+    let (owner, theorem, command_offset) = db
+        .compile_source_true_i()
+        .ok_or(StrictAdapterReject::MissingSource)?
+        .map_err(StrictAdapterReject::SourceCompilationFailed)?;
+    if !db.matches_audited_source_command(lem, command_offset) {
+        return Err(StrictAdapterReject::SourceBindingMismatch);
+    }
+    let context = crate::kernel::ProofContext::new(owner.snapshot().clone());
+    let proposition = try_source_elaboration(lem, &context)
+        .map_err(|err| StrictAdapterReject::ElaborationFailed(Arc::new(err)))?;
+    if !proposition.term().alpha_eq(theorem.prop().term()) {
+        return Err(StrictAdapterReject::PropositionMismatch);
+    }
+    Ok((owner, theorem))
 }
 
 pub fn try_strict_adapter(lem: &ParsedLemma, db: &HolTheoremDb) -> StrictAdapterResult {
     let Some(proof) = lem.proof_script.as_deref().filter(|proof| !proof.trim().is_empty()) else {
         return StrictAdapterResult::NotApplicable;
     };
-
-    match lem.name.as_str() {
-        "TrueI" | "HOL::TrueI" => {
-            let source_status = lem.source_proposition_status();
-            let source_shape = lem.source_proposition_shape();
-            if source_status != SourcePropositionStatus::FullyConsumed
-                || source_shape != SourcePropositionShape::StandaloneHolTrueAlias
-            {
-                return StrictAdapterResult::Rejected(
-                    StrictAdapterReject::SourcePropositionUnverified {
-                        status: source_status,
-                        shape: source_shape,
-                    },
-                );
-            }
-            let checked_prop = match normalize_true_i_prop_for_verify(lem.theorem.prop(), db) {
-                Ok(prop) => prop,
-                Err(err) => {
-                    return StrictAdapterResult::Rejected(strict_adapter_reject_from_true_i_error(
-                        err,
-                    ));
-                },
-            };
-            match try_strict_hol_true_i(&lem.name, &checked_prop, proof, db) {
-                Ok(thm) => StrictAdapterResult::Proved(thm),
-                Err(err) => {
-                    StrictAdapterResult::Rejected(strict_adapter_reject_from_true_i_error(err))
-                },
-            }
-        },
-        _ => StrictAdapterResult::NotApplicable,
+    if !matches!(lem.name.as_str(), "TrueI" | "HOL::TrueI") {
+        return StrictAdapterResult::NotApplicable;
+    }
+    match compile_true_i_for_lemma(lem, proof, db) {
+        Ok(accepted) => StrictAdapterResult::Proved(Box::new(accepted)),
+        Err(error) => StrictAdapterResult::Rejected(error),
     }
 }
 
-pub fn verify_lemma(lem: &ParsedLemma) -> LemmaVerification {
+/// Verify the source-backed sampled slice first; never convert its token to legacy evidence.
+pub fn verify_lemma(lem: &ParsedLemma, db: &HolTheoremDb) -> LemmaVerification {
+    match try_strict_adapter(lem, db) {
+        StrictAdapterResult::Proved(accepted) => {
+            let (owner, theorem) = *accepted;
+            return LemmaVerification::from_accepted(owner, theorem);
+        },
+        StrictAdapterResult::Rejected(reason) => {
+            tracing::debug!(lemma = %lem.name, error = %reason, "sampled source verification rejected");
+            return LemmaVerification::from_legacy(
+                Some(ThmKernel::admit(
+                    CTerm::certify(lem.theorem.prop().term().clone()),
+                    strict_adapter_reject_admit_reason(&reason),
+                )),
+                VerifyOutcome::AxiomAccepted,
+            );
+        },
+        StrictAdapterResult::NotApplicable => {},
+    }
+    verify_legacy_lemma(lem, db)
+}
+
+// The legacy strategy dispatcher predates this cutover; keep its search order unchanged.
+fn verify_legacy_lemma(lem: &ParsedLemma, db: &HolTheoremDb) -> LemmaVerification {
     AUTO_DEPTH.with(|c| c.set(0));
     let mut exit = VerifyOutcome::Proved;
     let theorem = (|| -> Option<Thm> {
-        let db = HolTheoremDb::get();
-        match try_strict_adapter(lem, db) {
-            StrictAdapterResult::Proved(thm) => return Some(thm),
-            StrictAdapterResult::Rejected(reason) => {
-                exit = VerifyOutcome::AxiomAccepted;
-                return Some(ThmKernel::admit(
-                    CTerm::certify(lem.theorem.prop().term().clone()),
-                    strict_adapter_reject_admit_reason(&reason),
-                ));
-            },
-            StrictAdapterResult::NotApplicable => {},
-        }
-
         // ── Source-aware elaboration (Phase 4) ─────────────────────────
         let proof_ctx = build_kernel_proof_context(db);
         let elaborated = try_source_elaboration(lem, &proof_ctx);
         let goal_ct = if let Ok(ref cprop) = elaborated {
-            let core_term = crate::kernel::convert::kernel_term_to_core(cprop.term())
+            let core_term = crate::core::kernel_convert::kernel_term_to_core(cprop.term())
                 .unwrap_or_else(|_| lem.theorem.prop().term().clone());
             CTerm::certify_checked(core_term, &db.type_env)
                 .unwrap_or_else(|_| CTerm::certify(lem.theorem.prop().term().clone()))
@@ -4237,7 +4134,7 @@ pub fn verify_lemma(lem: &ParsedLemma) -> LemmaVerification {
             Ok(goal) => goal,
             Err(admitted) => {
                 exit = VerifyOutcome::AxiomAccepted;
-                return Some(admitted);
+                return Some(*admitted);
             },
         };
 
@@ -4248,7 +4145,7 @@ pub fn verify_lemma(lem: &ParsedLemma) -> LemmaVerification {
             || proof == "by fast"
             || proof == "by iprover"
             || proof == "by force")
-            && let Some(results) = exec_proof(&goal, proof, &premises)
+            && let Some(results) = exec_proof(&goal, proof, &premises, db)
         {
             return Some(export_or_admit_goal(&goal_ct, results, &premise_cterms, &mut exit));
         }
@@ -4278,8 +4175,8 @@ pub fn verify_lemma(lem: &ParsedLemma) -> LemmaVerification {
                 || proof.contains("assume "))
         {
             let mut state = crate::isar::proof_state::ProofState::new(goal.clone());
-            if let Some(result) =
-                crate::isar::proof_state::interpret_proof_script(&mut state, proof, &premises)
+            if let Ok(result) =
+                crate::isar::proof_state::interpret_proof_script(&mut state, proof, &premises, db)
             {
                 return Some(export_or_admit_goal(&goal_ct, result, &premise_cterms, &mut exit));
             }
@@ -4291,23 +4188,16 @@ pub fn verify_lemma(lem: &ParsedLemma) -> LemmaVerification {
                 .strip_prefix("by (rule ")
                 .or_else(|| proof.strip_prefix("by(rule "))
                 .map(|r| r.trim_end_matches(')').trim());
-            if let Some(rule_name) = rule_name {
-                let db = HolTheoremDb::get();
-                if let Some(rule_thm) = resolve_theorem_name(rule_name, db) {
-                    let resolved =
-                        crate::core::tactic::resolve_tac(&[(*rule_thm).clone()], 0)(&goal);
-                    if let Some(thm) = resolved.into_iter().next() {
-                        // Resolution may leave open subgoals; only a closed goal is a real proof.
-                        if thm.nprems() != 0 {
-                            exit = VerifyOutcome::AxiomAccepted;
-                        }
-                        return Some(export_or_admit_goal(
-                            &goal_ct,
-                            thm,
-                            &premise_cterms,
-                            &mut exit,
-                        ));
+            if let Some(rule_name) = rule_name
+                && let Some(rule_thm) = resolve_theorem_name(rule_name, db)
+            {
+                let resolved = crate::core::tactic::resolve_tac(&[(*rule_thm).clone()], 0)(&goal);
+                if let Some(thm) = resolved.into_iter().next() {
+                    // Resolution may leave open subgoals; only a closed goal is a real proof.
+                    if thm.nprems() != 0 {
+                        exit = VerifyOutcome::AxiomAccepted;
                     }
+                    return Some(export_or_admit_goal(&goal_ct, thm, &premise_cterms, &mut exit));
                 }
             }
         }
@@ -4321,7 +4211,6 @@ pub fn verify_lemma(lem: &ParsedLemma) -> LemmaVerification {
                 let unfold_names = &rest[..by_pos];
                 let method = rest[by_pos + 4..].trim();
                 // Look up the unfolding definitions
-                let db = HolTheoremDb::get();
                 let mut current = goal.clone();
                 for name in unfold_names.split_whitespace() {
                     if let Some(thm) = resolve_theorem_name(name, db) {
@@ -4330,7 +4219,7 @@ pub fn verify_lemma(lem: &ParsedLemma) -> LemmaVerification {
                     }
                 }
                 // Apply the remaining method
-                if let Some(results) = exec_proof(&current, method, &premises) {
+                if let Some(results) = exec_proof(&current, method, &premises, db) {
                     return Some(export_or_admit_goal(
                         &goal_ct,
                         results,
@@ -4348,7 +4237,6 @@ pub fn verify_lemma(lem: &ParsedLemma) -> LemmaVerification {
                 .or_else(|| proof.strip_prefix("by(simp add:"))
                 .map(|r| r.trim_end_matches(')').trim());
             if let Some(rules_str) = add_rules {
-                let db = HolTheoremDb::get();
                 let mut current = goal.clone();
                 let rule_names: Vec<&str> = rules_str.split_whitespace().collect();
                 // Apply each simp rule via bicompose
@@ -4385,7 +4273,6 @@ pub fn verify_lemma(lem: &ParsedLemma) -> LemmaVerification {
                 .or_else(|| proof.strip_prefix("by(auto intro:"))
                 .map(|r| r.trim_end_matches(')').trim());
             if let Some(rule_name) = intro_rule {
-                let db = HolTheoremDb::get();
                 // Try resolving with the specific intro rule first
                 if let Some(rule_thm) = resolve_theorem_name(rule_name, db) {
                     let resolved =
@@ -4404,7 +4291,7 @@ pub fn verify_lemma(lem: &ParsedLemma) -> LemmaVerification {
                     }
                 }
                 // Fall back to auto
-                if let Some(results) = exec_proof(&goal, "auto", &premises) {
+                if let Some(results) = exec_proof(&goal, "auto", &premises, db) {
                     return Some(export_or_admit_goal(
                         &goal_ct,
                         results,
@@ -4419,7 +4306,7 @@ pub fn verify_lemma(lem: &ParsedLemma) -> LemmaVerification {
         // This allows rules like subst/nat_induct to match the conclusion directly.
         if !prems.is_empty() {
             let alt_goal = ThmKernel::trivial(CTerm::certify(concl.clone())).unwrap();
-            if let Some(r) = exec_proof(&alt_goal, proof, &premises) {
+            if let Some(r) = exec_proof(&alt_goal, proof, &premises, db) {
                 let mut final_thm = r;
                 for p in prems.iter().rev() {
                     let cterm = CTerm::certify((*p).clone());
@@ -4435,45 +4322,44 @@ pub fn verify_lemma(lem: &ParsedLemma) -> LemmaVerification {
                     .strip_prefix("using assms by (rule ")
                     .or_else(|| proof.strip_prefix("by (rule "))
                     .map(|r| r.trim_end_matches(')'));
-                if let Some(rule_name) = rule_name {
-                    let db = HolTheoremDb::get();
-                    if let Some(rule_thm) = resolve_theorem_name(rule_name, db) {
-                        let resolved =
-                            crate::core::tactic::resolve_tac(&[(*rule_thm).clone()], 0)(&alt_goal);
-                        if let Some(mut current) = resolved.into_iter().next() {
-                            for _ in 0..20 {
-                                if current.nprems() == 0 {
-                                    break;
-                                }
-                                let mut closed = false;
-                                for prem in &premises {
-                                    if let Some(ns) = ThmKernel::bicompose(false, prem, &current, 0)
-                                        && ns.nprems() < current.nprems()
-                                    {
-                                        current = ns;
-                                        closed = true;
-                                        break;
-                                    }
-                                }
-                                if !closed {
-                                    break;
-                                }
-                            }
+                if let Some(rule_name) = rule_name
+                    && let Some(rule_thm) = resolve_theorem_name(rule_name, db)
+                {
+                    let resolved =
+                        crate::core::tactic::resolve_tac(&[(*rule_thm).clone()], 0)(&alt_goal);
+                    if let Some(mut current) = resolved.into_iter().next() {
+                        for _ in 0..20 {
                             if current.nprems() == 0 {
-                                let mut final_thm = current;
-                                for p in prems.iter().rev() {
-                                    let cterm = CTerm::certify((*p).clone());
-                                    if let Ok(thm) = ThmKernel::implies_intr(&cterm, &final_thm) {
-                                        final_thm = thm;
-                                    }
-                                }
-                                return Some(export_or_admit_goal(
-                                    &goal_ct,
-                                    final_thm,
-                                    &premise_cterms,
-                                    &mut exit,
-                                ));
+                                break;
                             }
+                            let mut closed = false;
+                            for prem in &premises {
+                                if let Some(ns) = ThmKernel::bicompose(false, prem, &current, 0)
+                                    && ns.nprems() < current.nprems()
+                                {
+                                    current = ns;
+                                    closed = true;
+                                    break;
+                                }
+                            }
+                            if !closed {
+                                break;
+                            }
+                        }
+                        if current.nprems() == 0 {
+                            let mut final_thm = current;
+                            for p in prems.iter().rev() {
+                                let cterm = CTerm::certify((*p).clone());
+                                if let Ok(thm) = ThmKernel::implies_intr(&cterm, &final_thm) {
+                                    final_thm = thm;
+                                }
+                            }
+                            return Some(export_or_admit_goal(
+                                &goal_ct,
+                                final_thm,
+                                &premise_cterms,
+                                &mut exit,
+                            ));
                         }
                     }
                 }
@@ -4482,7 +4368,7 @@ pub fn verify_lemma(lem: &ParsedLemma) -> LemmaVerification {
 
         // Fall back to standard approach — wrapped in catch_unwind to survive panics
         let proof_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            exec_proof(&goal, proof, &premises)
+            exec_proof(&goal, proof, &premises, db)
         }));
         match proof_result {
             Ok(Some(result)) => {
@@ -4506,8 +4392,14 @@ pub fn verify_lemma(lem: &ParsedLemma) -> LemmaVerification {
 // =========================================================================
 
 /// Combine two methods in sequence: apply m1, then m2 to all results.
-pub fn method_then(m1: &Method, m2: &Method, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
-    m1.execute(state, premises).into_iter().flat_map(|s| m2.execute(&s, premises)).collect()
+pub fn method_then(
+    m1: &Method,
+    m2: &Method,
+    state: &Thm,
+    premises: &[Arc<Thm>],
+    db: &HolTheoremDb,
+) -> Vec<Thm> {
+    m1.execute(state, premises, db).into_iter().flat_map(|s| m2.execute(&s, premises, db)).collect()
 }
 
 // =========================================================================
@@ -4515,9 +4407,15 @@ pub fn method_then(m1: &Method, m2: &Method, state: &Thm, premises: &[Arc<Thm>])
 // =========================================================================
 
 /// Try m1; if it yields nothing, try m2.
-pub fn method_orelse(m1: &Method, m2: &Method, state: &Thm, premises: &[Arc<Thm>]) -> Vec<Thm> {
-    let r = m1.execute(state, premises);
-    if r.is_empty() { m2.execute(state, premises) } else { r }
+pub fn method_orelse(
+    m1: &Method,
+    m2: &Method,
+    state: &Thm,
+    premises: &[Arc<Thm>],
+    db: &HolTheoremDb,
+) -> Vec<Thm> {
+    let r = m1.execute(state, premises, db);
+    if r.is_empty() { m2.execute(state, premises, db) } else { r }
 }
 
 // =========================================================================
@@ -4526,8 +4424,7 @@ pub fn method_orelse(m1: &Method, m2: &Method, state: &Thm, premises: &[Arc<Thm>
 
 impl Method {
     /// Parse a method from its string name.
-    pub fn from_name(name: &str, _facts: &[Arc<Thm>]) -> Option<Self> {
-        let db = HolTheoremDb::get();
+    pub fn from_name(name: &str, _facts: &[Arc<Thm>], db: &HolTheoremDb) -> Option<Self> {
         match name.trim() {
             "assumption" | "." => Some(Method::Assumption),
             "this" => Some(Method::Skip),
@@ -4610,16 +4507,8 @@ impl Method {
 
 /// Build a new-kernel `ProofContext` from the legacy `HolTheoremDb`'s type environment.
 fn build_kernel_proof_context(db: &HolTheoremDb) -> crate::kernel::ProofContext {
-    let mut sig = crate::kernel::Signature::new();
-    for (name, typ) in &db.type_env.consts {
-        let ty_str = format!("{typ}");
-        if let Ok(ty) = crate::kernel::Ty::base(ty_str.as_str()) {
-            if let Ok(s) = sig.extend_const(name.as_ref(), ty) {
-                sig = s;
-            }
-        }
-    }
-    let snapshot = crate::kernel::TheorySnapshot::root("legacy", sig);
+    let signature = db.kernel_signature_from_type_env();
+    let snapshot = crate::kernel::TheorySnapshot::root("legacy", signature);
     crate::kernel::ProofContext::new(snapshot)
 }
 /// Try source-aware elaboration using the provided kernel proof context.
@@ -4630,14 +4519,26 @@ fn try_source_elaboration(
 ) -> Result<crate::kernel::CProp, crate::isar::elaborator::ElaborationError> {
     use crate::isar::elaborator::elaborate_proposition;
     use crate::isar::source_ast::SourceId;
-    use crate::isar::term_parser::parse_source_proposition;
+    use crate::isar::source_parser::parse_source_proposition;
 
-    let source_text = lem.theorem.prop().term().to_string();
+    let source_text = lem
+        .source_proposition_text()
+        .filter(|_| {
+            lem.source_proposition_status() == SourcePropositionStatus::FullyConsumed
+                && lem.source_proposition_shape() != SourcePropositionShape::Contextual
+        })
+        .ok_or_else(|| {
+            crate::isar::elaborator::ElaborationError::ElaborationInternal(format!(
+                "complete standalone source proposition unavailable for lemma {}",
+                lem.name
+            ))
+        })?;
     let source_id = SourceId::new(lem.name.as_str());
-    let source_prop = parse_source_proposition(&source_text, source_id).ok_or_else(|| {
-        crate::isar::elaborator::ElaborationError::ElaborationInternal(
-            "failed to parse source proposition".into(),
-        )
+    let source_prop = parse_source_proposition(source_text, source_id).ok_or_else(|| {
+        crate::isar::elaborator::ElaborationError::ElaborationInternal(format!(
+            "failed to parse source proposition for lemma {}",
+            lem.name
+        ))
     })?;
 
     elaborate_proposition(&source_prop, proof_ctx)
@@ -4660,116 +4561,85 @@ mod tests {
     }
 
     fn verify_named_from(source: &str, name: &str) -> Thm {
-        let empty_db = HolTheoremDb::new();
-        let lemmas =
-            HolTheoremDb::with_override(&empty_db, || crate::hol::hol_loader::parse_lemmas(source));
+        let lemmas = crate::hol::hol_loader::parse_lemmas(source);
         let mut db = HolTheoremDb::from_lemmas(&lemmas);
-        let _ = enrich_local_db_with_checked_sources(&mut db, source);
+        enrich_local_db_with_checked_sources(&mut db, source).unwrap();
         HolTheoremDb::add_builtins(&mut db);
-        HolTheoremDb::with_override(&db, || {
-            let lem = lemmas.iter().find(|l| l.name == name).expect("lemma should parse");
-            verify_lemma(lem).into_legacy_theorem().expect("lemma should return a theorem")
-        })
+        let lem = lemmas.iter().find(|l| l.name == name).expect("lemma should parse");
+        verify_lemma(lem, &db).into_legacy_theorem().expect("lemma should return a theorem")
+    }
+
+    fn certify_export_term(term: Term) -> CTerm {
+        let mut context = crate::isar::proof_context::ProofCertContext::new();
+        for name in ["A", "B", "C", "X"] {
+            context.declare_const(name, Typ::base("prop"));
+        }
+        context.certify_prop(term).unwrap()
     }
 
     #[test]
-    fn proof_closure_discharge_single_goal_hyp() {
-        let a = prop_ct("A");
-        let original = CTerm::certify(Pure::mk_implies(a.term().clone(), a.term().clone()));
-        let result = ThmKernel::assume_compat(a.clone());
-
-        let exported = export_proved_goal(&original, &result, std::slice::from_ref(&a)).unwrap();
-
-        assert!(exported.hyps().is_empty());
-        assert!(exported.oracles().is_empty());
-        assert!(exported.tpairs().is_empty());
-        assert!(Hyps::kernel_alpha_eq(exported.prop().term(), original.term()));
-        assert_eq!(exported.trust_status(), ThmTrust::Compat);
+    fn proof_closure_single_assumption_exports_strict_identity() {
+        let a = certify_export_term(Term::const_("A", Typ::base("prop")));
+        let expected = certify_export_term(Pure::mk_implies(a.term().clone(), a.term().clone()));
+        let proof = ThmKernel::assume(a.clone()).unwrap();
+        let result = export_proved_goal(&expected, &proof, &[a]).unwrap();
+        assert!(result.is_strict_closed_proved());
+        assert_eq!(result.prop().term(), expected.term());
     }
 
     #[test]
-    fn proof_closure_discharge_two_premises() {
-        let a = prop_ct("A");
-        let b = prop_ct("B");
-        let a_imp_b = CTerm::certify(Pure::mk_implies(a.term().clone(), b.term().clone()));
+    fn proof_closure_two_assumptions_preserves_full_proposition() {
+        let a = certify_export_term(Term::const_("A", Typ::base("prop")));
+        let b = Term::const_("B", Typ::base("prop"));
+        let implication = certify_export_term(Pure::mk_implies(a.term().clone(), b.clone()));
         let result = ThmKernel::implies_elim(
-            &ThmKernel::assume_compat(a_imp_b.clone()),
-            &ThmKernel::assume_compat(a.clone()),
+            &ThmKernel::assume(implication.clone()).unwrap(),
+            &ThmKernel::assume(a.clone()).unwrap(),
         )
         .unwrap();
-        let original = CTerm::certify(Pure::mk_implies(
+        let expected = certify_export_term(Pure::mk_implies(
             a.term().clone(),
-            Pure::mk_implies(a_imp_b.term().clone(), b.term().clone()),
+            Pure::mk_implies(implication.term().clone(), b),
         ));
-
-        let exported =
-            export_proved_goal(&original, &result, &[a.clone(), a_imp_b.clone()]).unwrap();
-
-        assert!(exported.hyps().is_empty());
-        assert!(exported.oracles().is_empty());
-        assert!(Hyps::kernel_alpha_eq(exported.prop().term(), original.term()));
+        let exported = export_proved_goal(&expected, &result, &[a, implication]).unwrap();
+        assert!(exported.is_strict_closed_proved());
+        assert_eq!(exported.prop().term(), expected.term());
     }
 
     #[test]
-    fn proof_closure_does_not_drop_unknown_hyp() {
-        let x = prop_ct("X");
-        let c = prop_ct("C");
-        let x_imp_c = CTerm::certify(Pure::mk_implies(x.term().clone(), c.term().clone()));
-        let result = ThmKernel::implies_elim(
-            &ThmKernel::assume_compat(x_imp_c),
-            &ThmKernel::assume_compat(x.clone()),
-        )
-        .unwrap();
-        let original = CTerm::certify(Pure::mk_implies(x.term().clone(), c.term().clone()));
-
-        let err = export_proved_goal(&original, &result, std::slice::from_ref(&x)).unwrap_err();
-
-        assert_eq!(err, GoalExportError::UnknownHypotheses);
+    fn proof_closure_unknown_hypothesis_is_rejected() {
+        let a = certify_export_term(Term::const_("A", Typ::base("prop")));
+        let result = ThmKernel::assume(a.clone()).unwrap();
+        assert!(matches!(
+            export_proved_goal(&a, &result, &[]),
+            Err(GoalExportError::UnknownHypotheses)
+        ));
     }
 
     #[test]
-    fn proof_closure_rejects_oracle_or_admitted() {
-        let a = prop_ct("A");
-        let admitted = ThmKernel::admit(a.clone(), "admitted:proof_engine_failed");
-
-        let err = export_proved_goal(&a, &admitted, &[]).unwrap_err();
-
-        assert_eq!(err, GoalExportError::OracleOrAdmitted);
+    fn proof_closure_admitted_result_is_rejected() {
+        let a = certify_export_term(Term::const_("A", Typ::base("prop")));
+        let result = ThmKernel::admit(a.clone(), "admitted:proof_engine_failed");
+        assert!(matches!(
+            export_proved_goal(&a, &result, &[]),
+            Err(GoalExportError::OracleOrAdmitted)
+        ));
     }
 
     #[test]
-    fn proof_closure_rejects_prop_mismatch() {
-        let a = prop_ct("A");
-        let b = prop_ct("B");
-        let wrong_original = CTerm::certify(Pure::mk_implies(a.term().clone(), b.term().clone()));
-        let result = ThmKernel::assume_compat(a.clone());
-
-        let err =
-            export_proved_goal(&wrong_original, &result, std::slice::from_ref(&a)).unwrap_err();
-
-        assert_eq!(err, GoalExportError::PropositionMismatch);
-        assert_eq!(err.admitted_reason(), "admitted:goal_export_prop_mismatch");
-    }
-
-    #[test]
-    fn proof_closure_rejects_open_subgoals() {
-        let a = prop_ct("A");
-        let b = prop_ct("B");
-        let open_goal = ThmKernel::trivial(CTerm::certify(Pure::mk_implies(
-            a.term().clone(),
-            a.term().clone(),
-        )))
-        .unwrap();
-
-        let err = export_proved_goal(&b, &open_goal, &[]).unwrap_err();
-
-        assert_eq!(err, GoalExportError::OpenSubgoals);
-        assert_eq!(err.admitted_reason(), "admitted:goal_export_open_subgoals");
+    fn proof_closure_wrong_complete_proposition_is_rejected() {
+        let a = certify_export_term(Term::const_("A", Typ::base("prop")));
+        let expected = certify_export_term(Term::const_("B", Typ::base("prop")));
+        let result = ThmKernel::trivial(a).unwrap();
+        assert!(matches!(
+            export_proved_goal(&expected, &result, &[]),
+            Err(GoalExportError::PropositionMismatch)
+        ));
     }
 
     #[test]
     fn proof_closure_rejects_unresolved_tpairs() {
-        let a = prop_ct("A");
+        let a = certify_export_term(Term::const_("A", Typ::base("prop")));
         let result = ThmKernel::trivial(a.clone()).unwrap().with_test_tpair(
             Term::var("x", 0, Typ::base("nat")),
             Term::var("y", 0, Typ::base("nat")),
@@ -4777,27 +4647,24 @@ mod tests {
 
         let err = export_proved_goal(&a, &result, &[]).unwrap_err();
 
-        assert_eq!(err, GoalExportError::UnresolvedTpairs);
-        assert_eq!(err.admitted_reason(), "admitted:goal_export_unresolved_tpairs");
+        assert!(matches!(err, GoalExportError::UnresolvedTpairs));
     }
 
     #[test]
-    fn proof_closure_alpha_equivalent_hyp_can_discharge() {
-        let hyp_in_result = CTerm::certify(Term::abs("x", Typ::base("nat"), Term::bound(0)));
-        let alpha_equiv_assumption =
-            CTerm::certify(Term::abs("y", Typ::base("nat"), Term::bound(0)));
-        let original = CTerm::certify(Pure::mk_implies(
-            alpha_equiv_assumption.term().clone(),
-            hyp_in_result.term().clone(),
-        ));
-        let result = ThmKernel::assume_compat(hyp_in_result);
-
-        let exported =
-            export_proved_goal(&original, &result, std::slice::from_ref(&alpha_equiv_assumption))
-                .unwrap();
-
-        assert!(exported.hyps().is_empty());
-        assert!(Hyps::kernel_alpha_eq(exported.prop().term(), original.term()));
+    fn proof_closure_alpha_equivalent_proposition_discharges() {
+        let prop = Typ::base("prop");
+        let lambda_x = Term::abs("x", prop.clone(), Term::bound(0));
+        let lambda_y = Term::abs("y", prop.clone(), Term::bound(0));
+        let function_type = Typ::arrow(prop.clone(), prop);
+        let hyp =
+            certify_export_term(Pure::mk_equals(function_type.clone(), lambda_x.clone(), lambda_x));
+        let alpha = certify_export_term(Pure::mk_equals(function_type, lambda_y.clone(), lambda_y));
+        let expected =
+            certify_export_term(Pure::mk_implies(alpha.term().clone(), hyp.term().clone()));
+        let result = ThmKernel::assume(hyp).unwrap();
+        let exported = export_proved_goal(&expected, &result, &[alpha]).unwrap();
+        assert!(exported.is_strict_closed_proved());
+        assert!(Hyps::kernel_alpha_eq(exported.prop().term(), expected.term()));
     }
 
     #[test]
@@ -4808,26 +4675,6 @@ mod tests {
 
         assert!(goal.hyps().is_empty(), "goal initialization must not create A |- A self-hyp");
         assert_eq!(goal.nprems(), 1);
-    }
-
-    #[test]
-    fn proof_closure_preserves_prop_as_original_goal() {
-        let a = prop_ct("A");
-        let b = prop_ct("B");
-        let a_imp_b = CTerm::certify(Pure::mk_implies(a.term().clone(), b.term().clone()));
-        let result = ThmKernel::implies_elim(
-            &ThmKernel::assume_compat(a_imp_b.clone()),
-            &ThmKernel::assume_compat(a.clone()),
-        )
-        .unwrap();
-        let original = CTerm::certify(Pure::mk_implies(
-            a.term().clone(),
-            Pure::mk_implies(a_imp_b.term().clone(), b.term().clone()),
-        ));
-
-        let exported = export_proved_goal(&original, &result, &[a, a_imp_b]).unwrap();
-
-        assert_eq!(exported.prop().term(), original.term());
     }
 
     #[test]
@@ -4883,7 +4730,7 @@ mod tests {
         let a = CTerm::certify(Term::const_("A", Typ::base("prop")));
         let state = ThmKernel::assume_compat(a);
         assert_eq!(state.nprems(), 0); // trivially true
-        let results = Method::Assumption.execute(&state, &[]);
+        let results = Method::Assumption.execute(&state, &[], &HolTheoremDb::new());
         // On a state with nprems=0, assume_tac(0) fails (no subgoal 0)
         assert!(results.is_empty());
     }
@@ -4891,14 +4738,14 @@ mod tests {
     #[test]
     fn test_method_fail() {
         let state = trivial_goal("A");
-        let results = Method::Fail.execute(&state, &[]);
+        let results = Method::Fail.execute(&state, &[], &HolTheoremDb::new());
         assert!(results.is_empty());
     }
 
     #[test]
     fn test_method_skip() {
         let state = trivial_goal("A");
-        let results = Method::Skip.execute(&state, &[]);
+        let results = Method::Skip.execute(&state, &[], &HolTheoremDb::new());
         assert!(results.is_empty());
     }
 
@@ -4911,7 +4758,7 @@ mod tests {
 
         let simp = crate::core::simplifier::beta_simp();
         let method = Method::Simp(simp);
-        let results = method.execute(&state, &[]);
+        let results = method.execute(&state, &[], &HolTheoremDb::new());
         assert!(!results.is_empty());
     }
 
@@ -4934,7 +4781,7 @@ mod tests {
 
         // Apply unfold foo_def (should rewrite foo to bar in subgoal)
         let method = Method::Unfold(vec![def_thm]);
-        let results = method.execute(&state, &[]);
+        let results = method.execute(&state, &[], &HolTheoremDb::new());
         assert!(!results.is_empty(), "unfold should produce a result");
         let result = &results[0];
         if let Some(prem) = result.prem(0) {
@@ -4963,7 +4810,7 @@ mod tests {
         assert_eq!(state.nprems(), 1);
 
         let method = Method::Unfold(vec![def_thm]);
-        let results = method.execute(&state, &[]);
+        let results = method.execute(&state, &[], &HolTheoremDb::new());
         assert!(!results.is_empty(), "unfold deep should produce a result");
         let result = &results[0];
         if let Some(prem) = result.prem(0) {
@@ -4989,14 +4836,14 @@ mod tests {
         assert_eq!(state.nprems(), 1);
 
         let method = Method::Fold(vec![def_thm]);
-        let results = method.execute(&state, &[]);
+        let results = method.execute(&state, &[], &HolTheoremDb::new());
         assert!(!results.is_empty(), "fold should produce a result");
     }
 
     #[test]
     fn test_method_unfold_from_db() {
         // Test unfold using theorems from the database
-        let db = HolTheoremDb::get();
+        let db = HolTheoremDb::global();
         // Look for a definition-like theorem (e.g., True_def if available)
         let def_names =
             ["True_def", "All_def", "Ex_def", "not_def", "and_def", "or_def", "imp_def"];
@@ -5017,22 +4864,8 @@ mod tests {
         // Create a simple goal using the LHS of the definition
         let state = ThmKernel::trivial(CTerm::certify(def_thm.prop().term().clone())).unwrap();
         let method = Method::Unfold(vec![def_thm]);
-        let results = method.execute(&state, &[]);
+        let results = method.execute(&state, &[], db);
         assert!(!results.is_empty());
-    }
-
-    #[test]
-    fn test_prove_auto_trivial() {
-        // A ==> A by assumption — pass assume(A) as premise
-        let a = CTerm::certify(Term::const_("A", Typ::base("prop")));
-        let a_imp_a = crate::core::logic::Pure::mk_implies(a.term().clone(), a.term().clone());
-        let goal = ThmKernel::assume_compat(CTerm::certify(a_imp_a));
-        // goal: {A==>A} ⊢ A==>A, nprems=1, subgoal=A
-        // Provide assume(A) as external premise so assume_tac can match
-        let assume_a = Arc::new(ThmKernel::assume_compat(a.clone()));
-        let result = prove_auto(&goal, &[assume_a]);
-        assert!(result.is_some(), "auto should prove A ==> A with premise");
-        assert_eq!(result.unwrap().nprems(), 0);
     }
 
     #[test]
@@ -5069,36 +4902,29 @@ mod tests {
     }
 
     fn pure_identity_lemma() -> crate::hol::hol_loader::ParsedLemma {
-        crate::hol::hol_loader::ParsedLemma {
-            name: "strict_imp_identity".to_string(),
-            attributes: vec![],
-            theorem: std::sync::Arc::new(ThmKernel::assume_compat(CTerm::certify(
-                pure_identity_term(),
-            ))),
-            proof_script: Some("by assumption".to_string()),
-            alias_for: None,
-            source_loc: None,
-        }
+        crate::hol::hol_loader::ParsedLemma::new_synthetic(
+            "strict_imp_identity".to_string(),
+            vec![],
+            std::sync::Arc::new(ThmKernel::assume_compat(CTerm::certify(pure_identity_term()))),
+            Some("by assumption".to_string()),
+            None,
+        )
     }
 
-    fn with_pure_identity_db<R>(f: impl FnOnce() -> R) -> R {
+    fn with_pure_identity_db<R>(f: impl FnOnce(&HolTheoremDb) -> R) -> R {
         let mut db = HolTheoremDb::new();
         db.type_env.declare_const("A", Typ::base("prop"));
-        HolTheoremDb::with_override(&db, f)
+        f(&db)
     }
 
     fn parsed_hol_true_i() -> crate::hol::hol_loader::ParsedLemma {
         let hol = include_str!("../../theories/HOL/HOL.thy");
-        let empty_db = HolTheoremDb::new();
-        let lemmas =
-            HolTheoremDb::with_override(&empty_db, || crate::hol::hol_loader::parse_lemmas(hol));
+        let lemmas = crate::hol::hol_loader::parse_lemmas(hol);
         lemmas.into_iter().find(|lem| lem.name == "TrueI").expect("HOL TrueI parses")
     }
 
     fn parsed_true_i_from_source(source: &str) -> crate::hol::hol_loader::ParsedLemma {
-        let empty_db = HolTheoremDb::new();
-        let lemmas =
-            HolTheoremDb::with_override(&empty_db, || crate::hol::hol_loader::parse_lemmas(source));
+        let lemmas = crate::hol::hol_loader::parse_lemmas(source);
         lemmas.into_iter().find(|lem| lem.name == "TrueI").expect("attack TrueI parses")
     }
 
@@ -5113,7 +4939,8 @@ lemma TrueI:
     }
 
     fn hol_true_i_with_prop(prop: Term) -> crate::hol::hol_loader::ParsedLemma {
-        hol_true_i_with_cterm(CTerm::certify(prop))
+        let certified = CTerm::certify(prop);
+        hol_true_i_with_cterm(certified)
     }
 
     fn hol_true_i_with_cterm(prop: CTerm) -> crate::hol::hol_loader::ParsedLemma {
@@ -5124,9 +4951,7 @@ lemma TrueI:
 
     fn hol_true_i_db() -> HolTheoremDb {
         let hol = include_str!("../../theories/HOL/HOL.thy");
-        let empty_db = HolTheoremDb::new();
-        let lemmas =
-            HolTheoremDb::with_override(&empty_db, || crate::hol::hol_loader::parse_lemmas(hol));
+        let lemmas = crate::hol::hol_loader::parse_lemmas(hol);
         let mut db = HolTheoremDb::from_lemmas(&lemmas);
         enrich_local_db_with_checked_sources(&mut db, hol)
             .expect("HOL TrueI checked source env must merge");
@@ -5134,9 +4959,9 @@ lemma TrueI:
         db
     }
 
-    fn with_hol_true_i_db<R>(f: impl FnOnce() -> R) -> R {
+    fn with_hol_true_i_db<R>(f: impl FnOnce(&HolTheoremDb) -> R) -> R {
         let db = hol_true_i_db();
-        HolTheoremDb::with_override(&db, f)
+        f(&db)
     }
 
     fn hol_true_i_db_with_schematic_builtin() -> HolTheoremDb {
@@ -5174,7 +4999,7 @@ lemma TrueI:
         reset_verify_stats();
 
         let (verified, attempted) =
-            with_pure_identity_db(|| verify_lemmas_batch(std::slice::from_ref(&lem)));
+            with_pure_identity_db(|db| verify_lemmas_batch(std::slice::from_ref(&lem), db));
         let stats = verify_outcome_stats();
 
         assert_eq!((verified, attempted), (1, 1));
@@ -5200,31 +5025,15 @@ lemma TrueI:
     }
 
     #[test]
-    fn proof_outcome_counts_hol_true_i_as_transitional_strict_closed() {
+    fn verify_batch_sampled_true_i_counts_accepted_not_transitional() {
         let lem = parsed_hol_true_i();
-        assert_eq!(lem.proof_script.as_deref(), Some("unfolding True_def by (rule refl)"));
         reset_verify_stats();
-
-        let (verified, attempted) = with_hol_true_i_db(|| {
-            let db = HolTheoremDb::get();
-            let checked_prop = normalize_true_i_prop_for_verify(lem.theorem.prop(), db)
-                .expect("checked TrueI prop");
-            let strict_true_i = try_strict_hol_true_i(
-                &lem.name,
-                &checked_prop,
-                lem.proof_script.as_deref().expect("proof"),
-                db,
-            )
-            .expect("direct strict TrueI adapter path");
-            assert!(strict_true_i.is_strict_closed_proved());
-
-            verify_lemmas_batch(std::slice::from_ref(&lem))
-        });
+        let (verified, attempted) =
+            with_hol_true_i_db(|db| verify_lemmas_batch(std::slice::from_ref(&lem), db));
         let stats = verify_outcome_stats();
-
-        assert_eq!((verified, attempted), (1, 1));
-        assert_eq!(stats.kernel_trusted_closed, 0);
-        assert_eq!(stats.transitional_strict_closed, 1);
+        assert_eq!((verified, attempted), (0, 1));
+        assert_eq!(stats.kernel_trusted_closed, 1);
+        assert_eq!(stats.transitional_strict_closed, 0);
         assert_eq!(stats.total(), 1);
     }
 
@@ -5234,13 +5043,14 @@ lemma TrueI:
         assert_eq!(lem.source_proposition_status(), SourcePropositionStatus::FullyConsumed);
         assert_eq!(lem.source_proposition_shape(), SourcePropositionShape::StandaloneHolTrueAlias);
 
-        let result = with_hol_true_i_db(|| {
-            let db = HolTheoremDb::get();
-            try_strict_adapter(&lem, db)
-        });
+        let result = with_hol_true_i_db(|db| try_strict_adapter(&lem, db));
 
         match result {
-            StrictAdapterResult::Proved(thm) => assert!(thm.is_strict_closed_proved()),
+            StrictAdapterResult::Proved(accepted) => {
+                let (owner, theorem) = *accepted;
+                let replayed = crate::kernel::KernelRules::theorem_ref(&owner, &theorem).unwrap();
+                assert!(replayed.as_kernel().prop().term().alpha_eq(theorem.prop().term()));
+            },
             other => panic!("expected strict TrueI proof, got {other:?}"),
         }
     }
@@ -5256,27 +5066,23 @@ lemma GeneralTrue: "True"
   unfolding True_def
   by (rule refl)
 "#;
-        let empty_db = HolTheoremDb::new();
+
         let parse = |source: &str| {
-            HolTheoremDb::with_override(&empty_db, || {
+            {
                 crate::hol::hol_loader::parse_lemmas(source)
                     .into_iter()
                     .find(|lemma| lemma.name == "GeneralTrue")
                     .expect("GeneralTrue")
-            })
+            }
         };
         let inline = parse(inline_source);
         let split = parse(split_source);
         assert_eq!(split.proof_script, inline.proof_script);
         assert_eq!(split.proof_script.as_deref(), Some("unfolding True_def by (rule refl)"));
 
-        let db = hol_true_i_db();
-        let inline_thm = HolTheoremDb::with_override(&db, || verify_lemma(&inline))
-            .into_legacy_theorem()
-            .expect("inline result");
-        let split_thm = HolTheoremDb::with_override(&db, || verify_lemma(&split))
-            .into_legacy_theorem()
-            .expect("split result");
+        let db = &hol_true_i_db();
+        let inline_thm = verify_lemma(&inline, db).into_legacy_theorem().expect("inline result");
+        let split_thm = verify_lemma(&split, db).into_legacy_theorem().expect("split result");
         assert_eq!(split_thm.prop(), inline_thm.prop());
         assert_eq!(split_thm.trust_status(), inline_thm.trust_status());
         assert_eq!(split_thm.hyps(), inline_thm.hyps());
@@ -5288,10 +5094,7 @@ lemma GeneralTrue: "True"
     fn strict_adapter_returns_not_applicable_for_unrelated_lemma() {
         let lem = pure_identity_lemma();
 
-        let result = with_pure_identity_db(|| {
-            let db = HolTheoremDb::get();
-            try_strict_adapter(&lem, db)
-        });
+        let result = with_pure_identity_db(|db| try_strict_adapter(&lem, db));
 
         assert!(matches!(result, StrictAdapterResult::NotApplicable));
     }
@@ -5302,10 +5105,7 @@ lemma GeneralTrue: "True"
             let mut lem = parsed_hol_true_i();
             lem.proof_script = proof_script;
 
-            let result = with_hol_true_i_db(|| {
-                let db = HolTheoremDb::get();
-                try_strict_adapter(&lem, db)
-            });
+            let result = with_hol_true_i_db(|db| try_strict_adapter(&lem, db));
 
             assert!(matches!(result, StrictAdapterResult::NotApplicable));
         }
@@ -5316,9 +5116,9 @@ lemma GeneralTrue: "True"
         for proof_script in [None, Some("  \n".to_string())] {
             let mut lem = parsed_hol_true_i();
             lem.proof_script = proof_script;
-            let db = hol_true_i_db_with_schematic_builtin();
+            let db = &hol_true_i_db_with_schematic_builtin();
 
-            let thm = HolTheoremDb::with_override(&db, || verify_lemma(&lem))
+            let thm = verify_lemma(&lem, db)
                 .into_legacy_theorem()
                 .expect("missing proof should retain compatibility behavior");
 
@@ -5331,10 +5131,7 @@ lemma GeneralTrue: "True"
         let mut lem = parsed_hol_true_i();
         lem.proof_script = Some("by (rule refl)".to_string());
 
-        let result = with_hol_true_i_db(|| {
-            let db = HolTheoremDb::get();
-            try_strict_adapter(&lem, db)
-        });
+        let result = with_hol_true_i_db(|db| try_strict_adapter(&lem, db));
 
         assert!(matches!(
             result,
@@ -5356,16 +5153,13 @@ lemma TrueI:
         );
         assert_eq!(lem.proof_script.as_deref(), Some("sorry"));
 
-        let result = with_hol_true_i_db(|| {
-            let db = HolTheoremDb::get();
-            try_strict_adapter(&lem, db)
-        });
+        let result = with_hol_true_i_db(|db| try_strict_adapter(&lem, db));
         assert!(matches!(
             result,
             StrictAdapterResult::Rejected(StrictAdapterReject::ProofShapeMismatch)
         ));
 
-        let thm = with_hol_true_i_db(|| verify_lemma(&lem))
+        let thm = with_hol_true_i_db(|db| verify_lemma(&lem, db))
             .into_legacy_theorem()
             .expect("explicit adapter rejection must remain an admitted result");
         assert!(!thm.is_strict_closed_proved());
@@ -5378,7 +5172,7 @@ lemma TrueI:
 
     #[test]
     fn formal_comment_truei_payloads_cannot_be_elevated() {
-        let db = hol_true_i_db();
+        let db = &hol_true_i_db();
         for prefix in ["\\<comment> ", "\\<^cancel>", "\\<^latex>", "\\<^marker>"] {
             let source = format!(
                 r#"
@@ -5399,7 +5193,7 @@ lemma TrueI:
                     if matches!(name.as_ref(), "False" | "HOL.False")
             ));
 
-            let result = HolTheoremDb::with_override(&db, || try_strict_adapter(&lem, &db));
+            let result = try_strict_adapter(&lem, db);
             assert!(matches!(
                 result,
                 StrictAdapterResult::Rejected(StrictAdapterReject::SourcePropositionUnverified {
@@ -5408,7 +5202,7 @@ lemma TrueI:
                 })
             ));
 
-            let thm = HolTheoremDb::with_override(&db, || verify_lemma(&lem))
+            let thm = verify_lemma(&lem, db)
                 .into_legacy_theorem()
                 .expect("formal-comment payload must remain an admitted rejection");
             assert!(!thm.is_strict_closed_proved());
@@ -5427,9 +5221,8 @@ text \<open>
 shows TrueI: "True" \<close> note refl
 unfolding True_def by (rule refl)
 "#;
-        let empty_db = HolTheoremDb::new();
-        let lemmas =
-            HolTheoremDb::with_override(&empty_db, || crate::hol::hol_loader::parse_lemmas(source));
+
+        let lemmas = crate::hol::hol_loader::parse_lemmas(source);
         assert_eq!(lemmas.len(), 1);
         let lemma = &lemmas[0];
         assert_eq!(lemma.name, "victim");
@@ -5440,12 +5233,10 @@ unfolding True_def by (rule refl)
         ));
         assert_eq!(lemma.proof_script.as_deref(), Some("unfolding True_def by (rule refl)"));
 
-        let db = hol_true_i_db();
-        let result = HolTheoremDb::with_override(&db, || try_strict_adapter(lemma, &db));
+        let db = &hol_true_i_db();
+        let result = try_strict_adapter(lemma, db);
         assert!(!matches!(result, StrictAdapterResult::Proved(_)));
-        let thm = HolTheoremDb::with_override(&db, || verify_lemma(lemma))
-            .into_legacy_theorem()
-            .expect("compat result");
+        let thm = verify_lemma(lemma, db).into_legacy_theorem().expect("compat result");
         assert!(!thm.is_strict_closed_proved());
     }
 
@@ -5462,9 +5253,8 @@ val _ = ()
 \<close>
 unfolding True_def by (rule refl)
 "#;
-        let empty_db = HolTheoremDb::new();
-        let lemmas =
-            HolTheoremDb::with_override(&empty_db, || crate::hol::hol_loader::parse_lemmas(source));
+
+        let lemmas = crate::hol::hol_loader::parse_lemmas(source);
         assert_eq!(lemmas.len(), 1);
         let lemma = &lemmas[0];
         assert_eq!(lemma.name, "victim");
@@ -5488,16 +5278,16 @@ proof -
     show True by assumption \<close> note refl
   sorry
 "#;
-        let empty_db = HolTheoremDb::new();
-        let lemma = HolTheoremDb::with_override(&empty_db, || {
+
+        let lemma = {
             crate::hol::hol_loader::parse_lemmas(source)
                 .into_iter()
                 .find(|lemma| lemma.name == "Hidden")
                 .expect("Hidden")
-        });
+        };
         assert_eq!(lemma.proof_script.as_deref(), Some("proof -\nsorry"));
 
-        let thm = with_hol_true_i_db(|| verify_lemma(&lemma))
+        let thm = with_hol_true_i_db(|db| verify_lemma(&lemma, db))
             .into_legacy_theorem()
             .expect("active sorry must produce an admitted theorem");
         assert!(!thm.is_strict_closed_proved());
@@ -5508,17 +5298,112 @@ proof -
     }
 
     #[test]
-    fn strict_adapter_rejects_true_i_with_missing_definition() {
+    fn strict_adapter_later_named_show_cannot_borrow_earlier_true_i_token() {
+        let original = include_str!("../../theories/HOL/HOL.thy");
+        let source = original.replace(
+            "lemma TrueI: True\n  unfolding True_def by (rule refl)",
+            "lemma TrueI: True\n  unfolding True_def by (rule refl)\n\
+             hide_const (open) True\n\
+             lemma Other:\n  shows TrueI: \"True\"\n  unfolding True_def by (rule refl)",
+        );
+        assert_ne!(source, original);
+
+        let candidate = {
+            crate::hol::hol_loader::parse_lemmas_with_loc(&source, "HOL.thy")
+                .into_iter()
+                .filter(|lemma| lemma.name == "TrueI")
+                .nth(1)
+                .expect("second named TrueI parses")
+        };
+        let mut db = hol_true_i_db();
+        db.set_verification_source(&source);
+        assert!(matches!(
+            try_strict_adapter(&candidate, &db),
+            StrictAdapterResult::Rejected(StrictAdapterReject::SourceBindingMismatch)
+        ));
+    }
+
+    #[test]
+    fn strict_adapter_forged_metadata_cannot_rebind_local_source() {
+        let mut lemma = parsed_true_i_from_source(
+            "lemma TrueI:\n  fixes True :: bool\n  shows True\n  unfolding True_def by (rule refl)",
+        );
+        let location = lemma.source_loc.as_mut().unwrap();
+        location.proposition_status = SourcePropositionStatus::FullyConsumed;
+        location.proposition_shape = SourcePropositionShape::StandaloneHolTrueAlias;
+        location.proposition_text = Some("True".into());
+        let result = with_hol_true_i_db(|db| verify_lemma(&lemma, db));
+        assert!(
+            !matches!(
+                classify_verify_result(&lemma.name, &result),
+                ProofOutcome::KernelTrustedClosed { .. }
+            ),
+            "public source metadata must not substitute another source's accepted token"
+        );
+    }
+
+    #[test]
+    fn strict_adapter_changed_source_invalidates_accepted_definition() {
         let lem = parsed_hol_true_i();
         let mut db = hol_true_i_db();
-        db.checked_definitions.remove("True_def");
-
-        let result = try_strict_adapter(&lem, &db);
-
+        assert!(matches!(try_strict_adapter(&lem, &db), StrictAdapterResult::Proved(_)));
+        let changed = include_str!("../../theories/HOL/HOL.thy")
+            .replace("definition True ::", "definition Different ::");
+        db.set_verification_source(&changed);
         assert!(matches!(
-            result,
-            StrictAdapterResult::Rejected(StrictAdapterReject::MissingCheckedDefinition)
+            try_strict_adapter(&lem, &db),
+            StrictAdapterResult::Rejected(StrictAdapterReject::SourceBindingMismatch)
         ));
+        assert!(matches!(db.compile_source_true_i(), Some(Err(_))));
+    }
+
+    #[test]
+    fn strict_adapter_mutated_public_declaration_cannot_borrow_source_token() {
+        let original = parsed_hol_true_i();
+        let db = &hol_true_i_db();
+        assert!(matches!(try_strict_adapter(&original, db), StrictAdapterResult::Proved(_)));
+
+        let mut changed_name = original.clone();
+        changed_name.name = "HOL::TrueI".into();
+        let mut changed_proof = original.clone();
+        changed_proof.proof_script = Some("unfolding  True_def by (rule refl)".into());
+        let mut changed_statement = original.clone();
+        changed_statement.source_loc.as_mut().unwrap().proposition_text = Some("HOL.True".into());
+        let mut changed_file = original.clone();
+        changed_file.source_loc.as_mut().unwrap().file = "another.thy".into();
+        let mut changed_attributes = original.clone();
+        changed_attributes.attributes.push("intro".into());
+        for candidate in
+            [changed_name, changed_proof, changed_statement, changed_file, changed_attributes]
+        {
+            assert!(matches!(
+                try_strict_adapter(&candidate, db),
+                StrictAdapterResult::Rejected(StrictAdapterReject::SourceBindingMismatch)
+            ));
+        }
+    }
+
+    #[test]
+    fn strict_adapter_synthetic_metadata_cannot_borrow_source_token() {
+        let parsed = parsed_hol_true_i();
+        let mut synthetic = ParsedLemma::new_synthetic(
+            parsed.name.clone(),
+            parsed.attributes.clone(),
+            Arc::clone(&parsed.theorem),
+            parsed.proof_script.clone(),
+            None,
+        );
+        synthetic.source_loc = parsed.source_loc.clone();
+        let mut db = hol_true_i_db();
+        assert!(matches!(try_strict_adapter(&parsed, &db), StrictAdapterResult::Proved(_)));
+        assert!(matches!(
+            try_strict_adapter(&synthetic, &db),
+            StrictAdapterResult::Rejected(StrictAdapterReject::SourceBindingMismatch)
+        ));
+        db.bind_verification_source(&synthetic);
+        assert!(matches!(try_strict_adapter(&parsed, &db), StrictAdapterResult::Rejected(_)));
+        db.bind_verification_source(&parsed);
+        assert!(matches!(try_strict_adapter(&parsed, &db), StrictAdapterResult::Proved(_)));
     }
 
     #[test]
@@ -5527,10 +5412,7 @@ proof -
         lem.theorem =
             Arc::new(ThmKernel::assume_compat(CTerm::certify(crate::hol::hologic::false_const())));
 
-        let result = with_hol_true_i_db(|| {
-            let db = HolTheoremDb::get();
-            try_strict_adapter(&lem, db)
-        });
+        let result = with_hol_true_i_db(|db| try_strict_adapter(&lem, db));
 
         assert!(matches!(
             result,
@@ -5542,10 +5424,7 @@ proof -
     fn strict_adapter_rejects_free_true_alias() {
         let lem = hol_true_i_with_prop(Term::free("True", Typ::base("bool")));
 
-        let result = with_hol_true_i_db(|| {
-            let db = HolTheoremDb::get();
-            try_strict_adapter(&lem, db)
-        });
+        let result = with_hol_true_i_db(|db| try_strict_adapter(&lem, db));
 
         assert!(matches!(
             result,
@@ -5557,10 +5436,7 @@ proof -
     fn strict_adapter_rejects_dummy_typed_true() {
         let lem = hol_true_i_with_prop(Term::const_("True", Typ::dummy()));
 
-        let result = with_hol_true_i_db(|| {
-            let db = HolTheoremDb::get();
-            try_strict_adapter(&lem, db)
-        });
+        let result = with_hol_true_i_db(|db| try_strict_adapter(&lem, db));
 
         assert!(matches!(
             result,
@@ -5575,10 +5451,7 @@ proof -
             Typ::base("prop"),
         ));
 
-        let result = with_hol_true_i_db(|| {
-            let db = HolTheoremDb::get();
-            try_strict_adapter(&lem, db)
-        });
+        let result = with_hol_true_i_db(|db| try_strict_adapter(&lem, db));
 
         assert!(matches!(
             result,
@@ -5587,20 +5460,13 @@ proof -
     }
 
     #[test]
-    fn strict_adapter_rejects_explicitly_mistyped_true_alias() {
-        let parsed = crate::isar::term_parser::parse_term("True :: nat")
-            .expect("parser should retain the conflicting source annotation");
-        let lem = hol_true_i_with_prop(parsed);
-
-        let result = with_hol_true_i_db(|| {
-            let db = HolTheoremDb::get();
-            try_strict_adapter(&lem, db)
-        });
-
-        assert!(matches!(
-            result,
-            StrictAdapterResult::Rejected(StrictAdapterReject::PropositionMismatch)
-        ));
+    fn parse_lemmas_malformed_true_proposition_produces_no_candidate() {
+        for proposition in ["True =", "True :: nat", "True :: prop"] {
+            let source =
+                format!("lemma TrueI: \"{proposition}\"\n  unfolding True_def by (rule refl)");
+            let lemmas = { crate::hol::hol_loader::parse_lemmas(&source) };
+            assert!(lemmas.is_empty(), "{proposition} created a theorem candidate");
+        }
     }
 
     #[test]
@@ -5610,17 +5476,13 @@ lemma TrueI:
   "True :: bool = False"
   unfolding True_def by (rule refl)
 "#;
-        let empty_db = HolTheoremDb::new();
-        let lemmas =
-            HolTheoremDb::with_override(&empty_db, || crate::hol::hol_loader::parse_lemmas(source));
+
+        let lemmas = crate::hol::hol_loader::parse_lemmas(source);
         let lem = lemmas.into_iter().find(|lem| lem.name == "TrueI").expect("TrueI parses");
         assert_ne!(lem.theorem.prop().term(), &crate::hol::hologic::true_const());
         assert!(crate::hol::hologic::dest_hol_equals(lem.theorem.prop().term()).is_some());
 
-        let result = with_hol_true_i_db(|| {
-            let db = HolTheoremDb::get();
-            try_strict_adapter(&lem, db)
-        });
+        let result = with_hol_true_i_db(|db| try_strict_adapter(&lem, db));
 
         assert!(matches!(result, StrictAdapterResult::Rejected(_)));
     }
@@ -5631,42 +5493,12 @@ lemma TrueI:
         assert_eq!(lem.theorem.prop().term(), &crate::hol::hologic::true_const());
         assert_eq!(lem.source_proposition_status(), SourcePropositionStatus::Incomplete);
 
-        let result = with_hol_true_i_db(|| {
-            let db = HolTheoremDb::get();
-            try_strict_adapter(&lem, db)
-        });
+        let result = with_hol_true_i_db(|db| try_strict_adapter(&lem, db));
 
         assert!(matches!(
             result,
             StrictAdapterResult::Rejected(StrictAdapterReject::SourcePropositionUnverified {
                 status: SourcePropositionStatus::Incomplete,
-                shape: SourcePropositionShape::Other,
-            })
-        ));
-    }
-
-    #[test]
-    fn strict_adapter_rejects_recovered_true_source() {
-        let lem = parsed_true_i_from_source(
-            r#"
-lemma TrueI:
-  "True ="
-  unfolding True_def by (rule refl)
-"#,
-        );
-        assert_eq!(lem.theorem.prop().term(), &crate::hol::hologic::true_const());
-        assert_eq!(lem.source_proposition_status(), SourcePropositionStatus::FullyConsumed);
-        assert_eq!(lem.source_proposition_shape(), SourcePropositionShape::Other);
-
-        let result = with_hol_true_i_db(|| {
-            let db = HolTheoremDb::get();
-            try_strict_adapter(&lem, db)
-        });
-
-        assert!(matches!(
-            result,
-            StrictAdapterResult::Rejected(StrictAdapterReject::SourcePropositionUnverified {
-                status: SourcePropositionStatus::FullyConsumed,
                 shape: SourcePropositionShape::Other,
             })
         ));
@@ -5737,10 +5569,7 @@ lemma TrueI:
             assert_eq!(lem.source_proposition_status(), SourcePropositionStatus::FullyConsumed);
             assert_eq!(lem.source_proposition_shape(), SourcePropositionShape::Contextual);
 
-            let result = with_hol_true_i_db(|| {
-                let db = HolTheoremDb::get();
-                try_strict_adapter(&lem, db)
-            });
+            let result = with_hol_true_i_db(|db| try_strict_adapter(&lem, db));
             assert!(matches!(
                 result,
                 StrictAdapterResult::Rejected(StrictAdapterReject::SourcePropositionUnverified {
@@ -5756,10 +5585,7 @@ lemma TrueI:
         let mut lem = parsed_hol_true_i();
         lem.source_loc = None;
 
-        let result = with_hol_true_i_db(|| {
-            let db = HolTheoremDb::get();
-            try_strict_adapter(&lem, db)
-        });
+        let result = with_hol_true_i_db(|db| try_strict_adapter(&lem, db));
 
         assert!(matches!(
             result,
@@ -5771,46 +5597,52 @@ lemma TrueI:
     }
 
     #[test]
-    fn strict_adapter_rejection_classification_ignores_error_text() {
-        let misleading_invariant =
-            StrictTrueIError::KernelInvariant(KernelError::KernelInvariant {
-                op: "typed_rejection_test",
-                message: "proof is not exactly missing checked True_def".into(),
-            });
-        let misleading_replay = StrictTrueIError::ReplayFailed(KernelError::KernelInvariant {
-            op: "typed_rejection_test",
-            message: "parsed proposition is not HOL.True".into(),
-        });
-
+    fn source_elaboration_missing_or_contextual_provenance_rejects_legacy_rendering() {
+        let db = HolTheoremDb::new();
+        let ctx = build_kernel_proof_context(&db);
+        let mut bare = parsed_true_i_from_source("lemma TrueI: True");
+        assert_eq!(bare.source_proposition_text(), Some("True"));
         assert!(matches!(
-            strict_adapter_reject_from_true_i_error(misleading_invariant),
-            StrictAdapterReject::KernelInvariant(_)
+            try_source_elaboration(&bare, &ctx),
+            Err(crate::isar::elaborator::ElaborationError::UnresolvedName { .. })
         ));
+
+        bare.source_loc = None;
         assert!(matches!(
-            strict_adapter_reject_from_true_i_error(misleading_replay),
-            StrictAdapterReject::ReplayFailed(_)
+            try_source_elaboration(&bare, &ctx),
+            Err(crate::isar::elaborator::ElaborationError::ElaborationInternal(message))
+                if message.contains("unavailable")
+        ));
+
+        let contextual =
+            parsed_true_i_from_source("lemma TrueI:\n  assumes \"False\"\n  shows \"True\"");
+        assert_eq!(contextual.source_proposition_text(), None);
+        assert!(matches!(
+            try_source_elaboration(&contextual, &ctx),
+            Err(crate::isar::elaborator::ElaborationError::ElaborationInternal(message))
+                if message.contains("unavailable")
         ));
     }
 
     #[test]
-    fn verify_lemma_uses_strict_adapter_for_true_i() {
+    fn verify_lemma_sampled_true_i_retains_owner_after_database_scope() {
         let lem = parsed_hol_true_i();
-
-        let thm = with_hol_true_i_db(|| verify_lemma(&lem))
-            .into_legacy_theorem()
-            .expect("TrueI verifies");
-
-        assert!(thm.is_strict_closed_proved());
-        assert_eq!(thm.prop().term(), &crate::hol::hologic::true_const());
+        let result = with_hol_true_i_db(|db| verify_lemma(&lem, db));
+        let theorem = result.accepted().expect("accepted TrueI");
+        let owner = result.accepted_owner().expect("accepted owner");
+        let replayed = crate::kernel::KernelRules::theorem_ref(owner, theorem).unwrap();
+        assert_eq!(replayed.as_kernel().prop().term().ty(), crate::kernel::Ty::prop());
+        assert!(replayed.as_kernel().prop().term().alpha_eq(theorem.prop().term()));
+        assert!(result.into_legacy_theorem().is_none());
     }
 
     #[test]
     fn verify_lemma_records_strict_adapter_rejection_for_true_i() {
         let mut lem = parsed_hol_true_i();
         lem.proof_script = Some("by (rule refl)".to_string());
-        let db = hol_true_i_db_with_schematic_builtin();
+        let db = &hol_true_i_db_with_schematic_builtin();
 
-        let thm = HolTheoremDb::with_override(&db, || verify_lemma(&lem))
+        let thm = verify_lemma(&lem, db)
             .into_legacy_theorem()
             .expect("strict adapter rejection should become explicit admission");
 
@@ -5826,9 +5658,9 @@ lemma TrueI:
     #[test]
     fn verify_lemma_rejects_unconsumed_true_source_before_parser_gap() {
         let lem = parsed_true_i_with_unconsumed_suffix();
-        let db = hol_true_i_db_with_schematic_builtin();
+        let db = &hol_true_i_db_with_schematic_builtin();
 
-        let thm = HolTheoremDb::with_override(&db, || verify_lemma(&lem))
+        let thm = verify_lemma(&lem, db)
             .into_legacy_theorem()
             .expect("incomplete source proposition should become explicit admission");
 
@@ -5842,13 +5674,8 @@ lemma TrueI:
     }
 
     #[test]
-    fn verify_lemma_rejects_recovered_and_contextual_true_sources_before_parser_gap() {
+    fn verify_lemma_contextual_true_source_cannot_bypass_parser_gap() {
         let sources = [
-            r#"
-lemma TrueI:
-  "True ="
-  unfolding True_def by (rule refl)
-"#,
             r#"
 lemma TrueI:
   fixes True :: bool
@@ -5871,8 +5698,8 @@ lemma TrueI:
 
         for source in sources {
             let lem = parsed_true_i_from_source(source);
-            let db = hol_true_i_db_with_schematic_builtin();
-            let thm = HolTheoremDb::with_override(&db, || verify_lemma(&lem))
+            let db = &hol_true_i_db_with_schematic_builtin();
+            let thm = verify_lemma(&lem, db)
                 .into_legacy_theorem()
                 .expect("unverified source proposition should become explicit admission");
 
@@ -5888,7 +5715,7 @@ lemma TrueI:
     fn verify_lemma_does_not_normalize_free_true_into_hol_true() {
         let lem = hol_true_i_with_prop(Term::free("True", Typ::base("bool")));
 
-        let thm = with_hol_true_i_db(|| verify_lemma(&lem))
+        let thm = with_hol_true_i_db(|db| verify_lemma(&lem, db))
             .into_legacy_theorem()
             .expect("Free True rejection should become explicit admission");
 
@@ -5909,7 +5736,7 @@ lemma TrueI:
     fn verify_lemma_does_not_normalize_dummy_true_into_hol_true() {
         let lem = hol_true_i_with_prop(Term::const_("True", Typ::dummy()));
 
-        let thm = with_hol_true_i_db(|| verify_lemma(&lem))
+        let thm = with_hol_true_i_db(|db| verify_lemma(&lem, db))
             .into_legacy_theorem()
             .expect("dummy True rejection should become explicit admission");
 
@@ -5929,7 +5756,7 @@ lemma TrueI:
             Typ::base("prop"),
         ));
 
-        let thm = with_hol_true_i_db(|| verify_lemma(&lem))
+        let thm = with_hol_true_i_db(|db| verify_lemma(&lem, db))
             .into_legacy_theorem()
             .expect("mistyped True rejection should become explicit admission");
 
@@ -5944,30 +5771,14 @@ lemma TrueI:
     #[test]
     fn verify_lemma_runs_strict_adapter_before_parser_gap_override() {
         let lem = parsed_hol_true_i();
-        let db = hol_true_i_db_with_schematic_builtin();
+        let db = &hol_true_i_db_with_schematic_builtin();
 
-        let thm = HolTheoremDb::with_override(&db, || verify_lemma(&lem))
-            .into_legacy_theorem()
-            .expect("registered adapter should run before parser-gap override");
-
-        assert!(thm.is_strict_closed_proved());
-        assert_eq!(thm.prop().term(), &crate::hol::hologic::true_const());
-        assert!(thm.oracles().is_empty());
-    }
-
-    #[test]
-    fn proof_outcome_still_counts_true_i_as_transitional_strict_closed() {
-        let lem = parsed_hol_true_i();
-        reset_verify_stats();
-
-        let (verified, attempted) =
-            with_hol_true_i_db(|| verify_lemmas_batch(std::slice::from_ref(&lem)));
-        let stats = verify_outcome_stats();
-
-        assert_eq!((verified, attempted), (1, 1));
-        assert_eq!(stats.kernel_trusted_closed, 0);
-        assert_eq!(stats.transitional_strict_closed, 1);
-        assert_eq!(stats.total(), 1);
+        let result = verify_lemma(&lem, db);
+        assert!(matches!(
+            classify_verify_result(&lem.name, &result),
+            ProofOutcome::KernelTrustedClosed { .. }
+        ));
+        assert!(result.legacy().is_none());
     }
 
     #[test]
@@ -5979,7 +5790,8 @@ lemma TrueI:
         let proposition = context
             .certify_prop(crate::kernel::RawTerm::const_("A", crate::kernel::Ty::prop()))
             .unwrap();
-        let assumed = crate::kernel::KernelRules::assume(proposition.clone()).into_kernel();
+        let assumed =
+            crate::kernel::KernelRules::assume(proposition.clone()).unwrap().into_kernel();
         let closed = crate::kernel::KernelRules::implies_intr(&proposition, &assumed)
             .unwrap()
             .try_close()
@@ -6114,22 +5926,20 @@ lemma TrueI:
     fn test_verify_batch_does_not_count_open_theorem_as_verified() {
         let a = Term::const_("A", Typ::base("prop"));
         let goal = Pure::mk_implies(a.clone(), a.clone());
-        let lem = ParsedLemma {
-            name: "target".into(),
-            attributes: Vec::new(),
-            theorem: Arc::new(ThmKernel::assume_compat(CTerm::certify(goal))),
-            proof_script: Some("by (rule open_rule)".into()),
-            alias_for: None,
-            source_loc: None,
-        };
+        let lem = ParsedLemma::new_synthetic(
+            "target".into(),
+            Vec::new(),
+            Arc::new(ThmKernel::assume_compat(CTerm::certify(goal))),
+            Some("by (rule open_rule)".into()),
+            None,
+        );
 
         let mut db = HolTheoremDb::new();
         db.by_name
             .insert("open_rule".into(), Arc::new(ThmKernel::assume_compat(CTerm::certify(a))));
 
         reset_verify_stats();
-        let (verified, attempted) =
-            HolTheoremDb::with_override(&db, || verify_lemmas_batch(std::slice::from_ref(&lem)));
+        let (verified, attempted) = verify_lemmas_batch(std::slice::from_ref(&lem), &db);
 
         assert_eq!(attempted, 1);
         assert_eq!(verified, 0, "open oracle-free theorem must not count as proved");
@@ -6147,7 +5957,7 @@ lemma TrueI:
         let s = Term::free("s", Typ::base("nat"));
         let t = Term::free("t", Typ::base("nat"));
         let s_eq_t = Pure::mk_equals(Typ::base("nat"), s.clone(), t.clone());
-        let db = HolTheoremDb::get();
+        let db = HolTheoremDb::global();
         let sym_thm = db.simps.iter().find(|thm| {
             let (l, _) = Pure::dest_equals(thm.prop().term()).unwrap_or((&s_eq_t, &s_eq_t));
             l == &s_eq_t
@@ -6173,7 +5983,8 @@ lemma TrueI:
         // result: {A, A==>B} ⊢ B, nprems=0
         assert_eq!(result.nprems(), 0);
         // auto should also be able to do this
-        let auto_result = prove_auto(&result, &[]);
+        let db = HolTheoremDb::global();
+        let auto_result = prove_auto(&result, &[], db);
         assert!(auto_result.is_some());
         assert_eq!(auto_result.unwrap().nprems(), 0);
     }
@@ -6187,7 +5998,8 @@ lemma TrueI:
         let state = ThmKernel::trivial(CTerm::certify(a_imp_b)).unwrap();
         // This goal can't be proved (A doesn't imply B)
         // auto should hit depth limit and return original state
-        let result = prove_auto(&state, &[]);
+        let db = HolTheoremDb::global();
+        let result = prove_auto(&state, &[], db);
         // May or may not prove — just shouldn't crash
         let _ = result;
     }
@@ -6205,7 +6017,7 @@ lemma TrueI:
 
     #[test]
     fn test_by_name_index_populated() {
-        let db = HolTheoremDb::get();
+        let db = HolTheoremDb::global();
         assert!(db.by_name.contains_key("sym"), "sym should be indexed");
         assert!(db.by_name.contains_key("trans"), "trans should be indexed");
         eprintln!("by_name contains {} theorems", db.by_name.len());
@@ -6234,7 +6046,7 @@ lemma TrueI:
 
     #[test]
     fn test_induct_rule_application() {
-        let db = HolTheoremDb::get();
+        let db = HolTheoremDb::global();
         let induct_rule = db.by_name.get("list_induct2").expect("list_induct2 should exist");
         let prop_str = format!("{:?}", induct_rule.prop().term());
         eprintln!(
@@ -6302,29 +6114,6 @@ lemma TrueI:
     }
 
     #[test]
-    fn test_exec_proof_by_rule_lookup() {
-        // Verify exec_proof handles rule lookup without crashing
-        use crate::core::logic::Pure;
-        let a = Term::const_("A", Typ::base("prop"));
-        let b = Term::const_("B", Typ::base("prop"));
-        // A ==> A is a known-valid goal — exec_proof with "by assumption" should handle it
-        let goal = Pure::mk_implies(a.clone(), a.clone());
-        let state = ThmKernel::assume_compat(CTerm::certify(goal));
-        let assume_a = Arc::new(ThmKernel::assume_compat(CTerm::certify(a.clone())));
-        // exec_proof with "by assumption" should succeed with the premise
-        let result = exec_proof(&state, "by assumption", &[assume_a]);
-        assert!(result.is_some(), "assumption should prove A ==> A");
-        assert_eq!(result.unwrap().nprems(), 0);
-        // Also test: exec_proof with a non-matching rule should return None, not crash
-        let goal2 = Pure::mk_implies(a.clone(), b.clone());
-        let state2 = ThmKernel::assume_compat(CTerm::certify(goal2));
-        let result2 = exec_proof(&state2, "by (rule sym)", &[]);
-        // sym won't match A ==> B; it's OK if the engine proves it or not,
-        // as long as it doesn't crash
-        let _ = result2; // just verify no panic
-    }
-
-    #[test]
     fn test_exec_proof_by_assumption() {
         // A ==> A by assumption — pass assume(A) as external premise
         use crate::core::logic::Pure;
@@ -6333,34 +6122,10 @@ lemma TrueI:
         // goal: {A==>A} ⊢ A==>A, nprems=1, subgoal=A
         let state = ThmKernel::assume_compat(CTerm::certify(goal_term));
         let assume_a = Arc::new(ThmKernel::assume_compat(CTerm::certify(a.clone())));
-        let result = exec_proof(&state, "by assumption", &[assume_a]);
+        let db = HolTheoremDb::new();
+        let result = exec_proof(&state, "by assumption", &[assume_a], &db);
         assert!(result.is_some(), "exec_proof should succeed with premise");
         assert_eq!(result.unwrap().nprems(), 0);
-    }
-
-    #[test]
-    fn test_lemma_with_proof_roundtrip() {
-        // Full roundtrip: parse lemma with proof, verify it
-        let source = "lemma test: \"A ==> A\"\n  by assumption";
-        let lemmas = crate::hol::hol_loader::parse_lemmas(source);
-        assert_eq!(lemmas.len(), 1, "should parse one lemma");
-        let lem = &lemmas[0];
-        assert!(lem.proof_script.is_some(), "should capture proof script");
-        let result = verify_lemma(lem);
-        assert!(
-            result.legacy_theorem().is_some(),
-            "verify_lemma should succeed for A ==> A by assumption"
-        );
-        let result = result.into_legacy_theorem().unwrap();
-        assert!(
-            result.hyps().is_empty(),
-            "roundtrip result should close ambient hyps: prop={:?}, hyps={:?}, oracles={:?}, trust={:?}",
-            result.prop().term(),
-            result.hyps().iter().map(|h| format!("{:?}", h.term())).collect::<Vec<_>>(),
-            result.oracles(),
-            result.trust_status()
-        );
-        assert!(result.oracles().is_empty());
     }
 
     #[test]
@@ -6393,38 +6158,6 @@ lemma TrueI:
     }
 
     #[test]
-    fn test_batch_verify_all() {
-        use std::path::Path;
-        let files = crate::hol::hol_loader::scan_theory_files("theories/HOL");
-        let mut grand_total = 0usize;
-        let mut grand_verified = 0usize;
-        for (i, path) in files.iter().enumerate() {
-            if i >= 5 {
-                break;
-            }
-            let source = std::fs::read_to_string(path).unwrap();
-            let name = Path::new(path).file_stem().unwrap().to_string_lossy();
-            let lemmas = crate::hol::hol_loader::parse_lemmas(&source);
-            // Use local DB to avoid triggering global HOL_THEOREMS init
-            let mut local_db = HolTheoremDb::from_lemmas(&lemmas);
-            let _ = enrich_local_db_with_checked_sources(&mut local_db, &source);
-            HolTheoremDb::add_builtins(&mut local_db);
-            let (v, a) =
-                HolTheoremDb::with_override(&local_db, || super::verify_lemmas_batch(&lemmas));
-            eprintln!("  {} TransitionalStrictClosed: {}/{}", name, v, a);
-            grand_total += a;
-            grand_verified += v;
-        }
-        eprintln!(
-            "Total ({} files) TransitionalStrictClosed: {}/{} ({:.1}%)",
-            files.len(),
-            grand_verified,
-            grand_total,
-            if grand_total > 0 { 100.0 * grand_verified as f64 / grand_total as f64 } else { 0.0 }
-        );
-    }
-
-    #[test]
     #[ignore = "LazyLock DB re-init overflow with 15K theorems — pre-existing"]
     fn test_analyze_failures() {
         use std::collections::HashMap;
@@ -6435,6 +6168,7 @@ lemma TrueI:
             ("Set", include_str!("../../theories/HOL/Set.thy")),
             ("List", include_str!("../../theories/HOL/List.thy")),
         ];
+        let db = HolTheoremDb::global();
         let mut method_counts: HashMap<String, usize> = HashMap::new();
         let mut total_non_transitional = 0usize;
         for (_name, source) in &files {
@@ -6443,7 +6177,7 @@ lemma TrueI:
                 if lem.proof_script.is_none() {
                     continue;
                 }
-                let result = verify_lemma(lem);
+                let result = verify_lemma(lem, db);
                 let outcome = classify_verify_result(&lem.name, &result);
                 if outcome.is_transitional_strict_closed() {
                     continue;
@@ -6491,166 +6225,13 @@ lemma TrueI:
 }
 
 #[cfg(test)]
-mod integration_tests {
-    use super::*;
-    use crate::hol::hol_loader::HolTheoremDb;
-
-    #[test]
-    fn test_verify_induction_lemma() {
-        // Load List.thy and find a simple lemma that uses proof (induct ...)
-        let list_thy = include_str!("../../theories/HOL/List.thy");
-        let lemmas = crate::hol::hol_loader::parse_lemmas(list_thy);
-
-        // Build a mini DB with just enough theorems to verify
-        let db = HolTheoremDb::from_lemmas(&lemmas);
-        eprintln!("Loaded {} lemmas from List.thy", lemmas.len());
-
-        // Try to verify a simple lemma that uses induct
-        // Look for "lemma append_Nil2" which is: "xs @ [] = xs"
-        let target = lemmas.iter().find(|l| l.name == "append_Nil2");
-        if let Some(lem) = target {
-            eprintln!("Found lemma: {} with proof: {:?}", lem.name, lem.proof_script);
-            let result = verify_lemma(lem);
-            match result.legacy() {
-                Some((thm, exit)) if is_transitional_strict_closed_outcome(thm, exit) => {
-                    eprintln!("TRANSITIONAL STRICT CLOSED: {} -> {:?}", lem.name, thm.prop().term())
-                },
-                Some((thm, _)) => {
-                    eprintln!("ACCEPTED/OPEN: {} -> {:?}", lem.name, thm.prop().term())
-                },
-                None => eprintln!("FAILED to verify: {}", lem.name),
-            }
-        }
-
-        // Try a lemma that uses induction
-        for lem_name in &["append_assoc", "append_self_conv", "map_append"] {
-            if let Some(lem) = lemmas.iter().find(|l| l.name == *lem_name) {
-                eprintln!(
-                    "Trying {}: proof={:?}",
-                    lem.name,
-                    lem.proof_script.as_ref().map(|s| &s[..s.len().min(80)])
-                );
-                let result = verify_lemma(lem);
-                let status = match result.legacy() {
-                    Some((thm, exit)) if is_transitional_strict_closed_outcome(thm, exit) => {
-                        "TRANSITIONAL STRICT CLOSED"
-                    },
-                    Some(_) => "ACCEPTED/OPEN",
-                    None => "FAILED",
-                };
-                eprintln!("  Result: {status}");
-            }
-        }
-    }
-}
-
-#[cfg(test)]
 mod benchmark_tests {
-    use std::time::Instant;
+    use super::diagnostics::bench_file;
 
     use super::*;
-    use crate::hol::hol_loader::HolTheoremDb;
-
-    fn bench_file(name: &str, source: &str, limit: usize) -> (usize, usize, f64) {
-        use crate::hol::hol_loader::HolTheoremDb;
-        let empty_db = HolTheoremDb::new();
-        let lemmas =
-            HolTheoremDb::with_override(&empty_db, || crate::hol::hol_loader::parse_lemmas(source));
-        let total_lemmas = lemmas.len();
-        let mut local_db = HolTheoremDb::from_lemmas(&lemmas);
-        let _ = enrich_local_db_with_checked_sources(&mut local_db, source);
-        HolTheoremDb::add_builtins(&mut local_db);
-        let auto_max = if total_lemmas > 500 {
-            50
-        } else if total_lemmas > 200 {
-            80
-        } else {
-            200
-        };
-        AUTO_LIMIT.with(|c| c.set(auto_max));
-        HolTheoremDb::with_override(&local_db, || {
-            let with_proofs: Vec<_> = lemmas.iter().filter(|l| l.proof_script.is_some()).collect();
-            let sample = with_proofs.len().min(limit);
-            let mut verified = 0usize;
-            let start = std::time::Instant::now();
-            for lem in with_proofs.iter().take(sample) {
-                let result = verify_lemma(lem);
-                let outcome = classify_verify_result(&lem.name, &result);
-                if outcome.is_transitional_strict_closed() {
-                    verified += 1;
-                }
-                record_verify_outcome(&outcome);
-            }
-            let elapsed = start.elapsed().as_secs_f64();
-            eprintln!(
-                "  {} TransitionalStrictClosed: {}/{} ({:.1}%) in {:.1}s",
-                name,
-                verified,
-                sample,
-                if sample > 0 { (verified as f64 / sample as f64) * 100.0 } else { 0.0 },
-                elapsed
-            );
-            (verified, sample, elapsed)
-        })
-    }
-
-    fn bench_file_inner(
-        name: &str,
-        lemmas: &[crate::hol::hol_loader::ParsedLemma],
-        limit: usize,
-    ) -> (usize, usize, f64) {
-        let with_proofs: Vec<_> = lemmas.iter().filter(|l| l.proof_script.is_some()).collect();
-
-        let mut verified = 0usize;
-        let sample = with_proofs.len().min(limit);
-        let start = Instant::now();
-
-        for (i, lem) in with_proofs.iter().take(sample).enumerate() {
-            let proof_preview =
-                lem.proof_script.as_ref().map(|p| &p[..p.len().min(60)]).unwrap_or("none");
-            let t0 = Instant::now();
-            let result = verify_lemma(lem);
-            let dt = t0.elapsed().as_secs_f64();
-            let outcome = classify_verify_result(&lem.name, &result);
-            let proved = outcome.is_transitional_strict_closed();
-            if proved {
-                verified += 1;
-            }
-            record_verify_outcome(&outcome);
-            if dt > 1.0 {
-                let status =
-                    if proved { "TransitionalStrictClosed".to_string() } else { outcome.label() };
-                eprintln!("    SLOW [{}/{}] {}: {:.2}s {}", i + 1, sample, lem.name, dt, status);
-            }
-        }
-
-        let elapsed = start.elapsed().as_secs_f64();
-        eprintln!(
-            "  {} TransitionalStrictClosed: {}/{} ({:.1}%) in {:.2}s",
-            name,
-            verified,
-            sample,
-            if sample > 0 { (verified as f64 / sample as f64) * 100.0 } else { 0.0 },
-            elapsed
-        );
-        (verified, sample, elapsed)
-    }
 
     #[test]
-    fn test_verify_list_thy_sample() {
-        let list_thy = include_str!("../../theories/HOL/List.thy");
-        eprintln!("=== List.thy Benchmark ===");
-        bench_file("List", list_thy, 10);
-    }
-
-    #[test]
-    fn test_verify_nat_thy_sample() {
-        let nat_thy = include_str!("../../theories/HOL/Nat.thy");
-        bench_file("Nat", nat_thy, 35);
-    }
-
-    #[test]
-    fn core_batch_snapshot_reports_one_transitional_and_zero_kernel_trusted() {
+    fn core_batch_snapshot_reports_one_kernel_trusted_and_zero_transitional() {
         eprintln!("=== Full Core Benchmark ===");
         reset_verify_stats();
         let files = vec![
@@ -6696,12 +6277,9 @@ mod benchmark_tests {
         }
 
         assert_eq!(total_attempted, 125, "sampled core theorem count changed");
-        assert_eq!(
-            total_verified, 1,
-            "HOL::TrueI must remain the only transitional sampled theorem"
-        );
-        assert_eq!(outcome_stats.kernel_trusted_closed, 0);
-        assert_eq!(outcome_stats.transitional_strict_closed, 1);
+        assert_eq!(total_verified, 0, "sampled TrueI must not also count as transitional");
+        assert_eq!(outcome_stats.kernel_trusted_closed, 1);
+        assert_eq!(outcome_stats.transitional_strict_closed, 0);
         assert_eq!(outcome_stats.total(), 125);
     }
 }

@@ -1,16 +1,22 @@
-use std::fmt;
+use std::{
+    fmt,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use sha2::{Digest, Sha256};
 
-use super::Name;
 use super::logic::LogicBasisId;
+use super::{KernelError, Name};
 
-// Canonical identity schema v1. Every tag, width, byte order, and field order
+// Canonical identities have separately versioned domains. Every tag and field
 // below is part of the persisted identity contract. Any byte-level encoding
 // change MUST use new `/vN` domains rather than silently changing existing IDs.
 // Variant tags are explicit and append-only within one schema version.
-pub(crate) const SIGNATURE_DOMAIN: &[u8] = b"isabelle-rs/signature/v1";
-pub(crate) const THEORY_DOMAIN: &[u8] = b"isabelle-rs/theory/v1";
+pub(crate) const SIGNATURE_DOMAIN: &[u8] = b"isabelle-rs/signature/v4";
+pub(crate) const THEORY_DOMAIN: &[u8] = b"isabelle-rs/theory/v4";
+
+// Monotone process-local identity only for unsealable proof scopes.
+static NEXT_LOCAL_TYPE_SCOPE: AtomicU64 = AtomicU64::new(0);
 
 /// Content identity of a checked strict-kernel signature.
 ///
@@ -18,16 +24,11 @@ pub(crate) const THEORY_DOMAIN: &[u8] = b"isabelle-rs/theory/v1";
 /// only from a validated [`super::Signature`].
 ///
 /// ```compile_fail
-/// use isabelle_rs::kernel::SignatureId;
+/// use isabelle_kernel::SignatureId;
 /// let _forged = SignatureId([0; 32]);
 /// ```
 ///
 /// IDs are deliberately not deserializable as trusted values.
-///
-/// ```compile_fail
-/// use isabelle_rs::kernel::SignatureId;
-/// let _: SignatureId = serde_json::from_str("[0, 1]").unwrap();
-/// ```
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SignatureId([u8; 32]);
 
@@ -51,13 +52,8 @@ impl SignatureId {
 /// history. The raw digest constructor is private to the strict kernel.
 ///
 /// ```compile_fail
-/// use isabelle_rs::kernel::TheoryId;
+/// use isabelle_kernel::TheoryId;
 /// let _forged = TheoryId([0; 32]);
-/// ```
-///
-/// ```compile_fail
-/// use isabelle_rs::kernel::TheoryId;
-/// let _: TheoryId = serde_json::from_str("[0, 1]").unwrap();
 /// ```
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TheoryId([u8; 32]);
@@ -82,6 +78,7 @@ pub struct ContextStamp {
     theory: TheoryId,
     signature: SignatureId,
     logic_basis: Option<LogicBasisId>,
+    local_type_scope: Option<u64>,
 }
 
 impl ContextStamp {
@@ -97,27 +94,62 @@ impl ContextStamp {
         self.logic_basis
     }
 
+    /// A kernel-issued local fixed-type scope; `None` is the canonical theory owner.
+    pub fn has_local_type_scope(self) -> bool {
+        self.local_type_scope.is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn local_type_scope(self) -> Option<u64> {
+        self.local_type_scope
+    }
+
     pub(crate) fn new(
         theory: TheoryId,
         signature: SignatureId,
         logic_basis: Option<LogicBasisId>,
     ) -> Self {
-        Self { theory, signature, logic_basis }
+        Self { theory, signature, logic_basis, local_type_scope: None }
+    }
+
+    pub(crate) fn fresh_local_type_scope(mut self, name: &Name) -> Result<Self, KernelError> {
+        let mut current = NEXT_LOCAL_TYPE_SCOPE.load(Ordering::Relaxed);
+        loop {
+            let scope = current
+                .checked_add(1)
+                .ok_or_else(|| KernelError::LocalTypeScopeExhausted { name: name.clone() })?;
+            match NEXT_LOCAL_TYPE_SCOPE.compare_exchange_weak(
+                current,
+                scope,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => {
+                    self.local_type_scope = Some(scope);
+                    return Ok(self);
+                },
+                Err(observed) => current = observed,
+            }
+        }
     }
 
     pub(crate) fn write_canonical(self, encoder: &mut CanonicalEncoder) {
+        encoder.write_bytes(b"isabelle-rs/context/v3");
         self.theory.write_canonical(encoder);
         self.signature.write_canonical(encoder);
-        // Include the logic basis so TheoremId commits to it.
-        // None is encoded as a 0-byte discriminator.
         match self.logic_basis {
             Some(basis) => {
                 encoder.write_u8(1);
                 basis.write_canonical(encoder);
             },
-            None => {
-                encoder.write_u8(0);
+            None => encoder.write_u8(0),
+        }
+        match self.local_type_scope {
+            Some(scope) => {
+                encoder.write_u8(1);
+                encoder.write_u64(scope);
             },
+            None => encoder.write_u8(0),
         }
     }
 }
@@ -140,6 +172,7 @@ impl fmt::Debug for ContextStamp {
             .field("theory", &self.theory)
             .field("signature", &self.signature)
             .field("logic_basis", &self.logic_basis)
+            .field("local_type_scope", &self.local_type_scope)
             .finish()
     }
 }

@@ -1,0 +1,21 @@
+--- a/src/Pure/ML/ml_compiler0.ML
++++ b/src/Pure/ML/ml_compiler0.ML
+@@ -118,10 +118,13 @@
+ end;
+ 
+ fun ML_file context {verbose, debug} file = Thread_Attributes.uninterruptible_body (fn run =>
+-  let
+-    val instream = TextIO.openIn file;
+-    val result = Exn.capture (run TextIO.inputAll) instream;
+-    val _ = TextIO.closeIn instream;
+-  in ML context {line = 1, file = file, verbose = verbose, debug = debug} (Exn.release result) end);
++  Reference_Observation.with_load file "Pure" ""
++    (fn () =>
++      let
++        val instream = TextIO.openIn file;
++        val result = Exn.capture (run TextIO.inputAll) instream;
++        val _ = TextIO.closeIn instream;
++      in Exn.release result end)
++    (ML context {line = 1, file = file, verbose = verbose, debug = debug}));
+ 
+ fun ML_file_operations (f: bool option -> string -> unit) =

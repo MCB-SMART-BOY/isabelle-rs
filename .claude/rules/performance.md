@@ -13,5 +13,5 @@ must not construct or accept theorems, erase trust classes, or alter the exact
 kernel check.
 
 Record benchmark inputs and correctness gates. Run the relevant
-`scripts/dev-check.sh` mode before and after. HPC/Burn/CubeCL remains a deferred,
+`cargo +stable xtask` mode before and after. HPC/Burn/CubeCL remains a deferred,
 untrusted design track.

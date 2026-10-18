@@ -1,10 +1,19 @@
 # isabelle-rs v1.8.1+ → v1.9.0 移交提示词
 
-> Archive note: this is a historical v1.9.0 handoff snapshot. Its percentages,
-> method counts, and “complete” labels are not current trust or compatibility
-> claims. Read root [AGENTS.md](../AGENTS.md),
-> [PROJECT_STATUS.md](PROJECT_STATUS.md), [TRUST.md](TRUST.md), and
-> [ROADMAP.md](ROADMAP.md) instead.
+> Archive note: this is a historical v1.9.0 handoff snapshot. Its 125/125 and
+> Tier2 “100%” labels did **not** establish kernel-proved theorems; the later
+> Isabelle2025 Tier2 audit recorded 0/3872 verified, 3872 axiom-accepted and
+> 4 timeouts across 97 files. The historical results below predate xtask
+> and are not attributed to any new command. For current sampled trust metrics
+> and separately observed xtask/global gate outcomes read [AGENTS.md](../../AGENTS.md),
+> [PROJECT_STATUS.md](../status/PROJECT_STATUS.md),
+> [xtask cutover](../status/PROJECT_STATUS.md#xtask-automation-cutover-2026-10-11),
+> [TRUST.md](../status/TRUST.md), and
+> [ROADMAP.md](../status/ROADMAP.md). Current commands are in
+> [engineering workflow](../guides/DEVELOPMENT.md#engineering-workflow).
+> Historical code and method counts below are not current API or compatibility
+> claims. The approved native program's future PIDE/Isabelle/ML compatibility
+> is not delivered by this v1.9.0 snapshot or by design-only ISIP.
 
 > 本会话：2026-06-04 | 主要成果：完成 Phases 49-54，v1.9.0 基础设施全部交付
 
@@ -86,17 +95,19 @@ Tier2 验证时 `method.rs:2916` panic（attempt to subtract with overflow），
 
 当时的建议依次是扩大 Tier2/Tier3 验证、连接 Metis，以及深化
 ATP/Sledgehammer。它们仅记录 v1.9.0 交接时的方向，现已被
-[`ROADMAP.md`](ROADMAP.md) 中以不可变 theory/signature identity 和唯一
-`KernelTrustedClosed` 接收入口为先的依赖顺序取代。
+[`ROADMAP.md`](../status/ROADMAP.md) 中以可信内核边界和实际证明结果为先的
+依赖顺序取代。
 ---
 
 ## 五、关键文件和命令
 
-### 验证命令
+### 当前命令导航（不重署历史运行结果）
 
-核心、lib、Tier2 与快速检查命令现分别由
-`scripts/dev-check.sh core`、`lib`、`tier2` 和 `fast` 维护。该归档保留
-历史结果，但不再复制可能失效的命令行。
+本档案中旧 125/125 与 Tier2 百分比来自当时会话，原执行命令无法从此档案
+核实；不得把这些结果改写为 xtask 运行所得。当前入口的核心、lib、Tier2 与
+快速检查分别见[工程工作流](../guides/DEVELOPMENT.md#engineering-workflow)；
+实际 `cargo +stable xtask` 运行结果另见
+[xtask 迁移记录](../status/PROJECT_STATUS.md#xtask-automation-cutover-2026-10-11)。
 
 ### 新增模块速查
 
@@ -154,6 +165,8 @@ ATP/Sledgehammer。它们仅记录 v1.9.0 交接时的方向，现已被
 ## 七、当前工作入口
 
 不要从本归档选择下一项任务。先阅读根
-[`AGENTS.md`](../AGENTS.md)、[`PROJECT_STATUS.md`](PROJECT_STATUS.md)、
-[`TRUST.md`](TRUST.md) 和 [`ROADMAP.md`](ROADMAP.md)，并按其中当前的
-可信主线和验证要求执行。
+[`AGENTS.md`](../../AGENTS.md)、[`PROJECT_STATUS.md`](../status/PROJECT_STATUS.md)、
+[`TRUST.md`](../status/TRUST.md) 和 [`ROADMAP.md`](../status/ROADMAP.md)，并按其中当前的
+可信主线和已批准的长期原生兼容计划执行。当前命令见
+[工程工作流](../guides/DEVELOPMENT.md#engineering-workflow)，其运行结果须
+单独取证，不能由本归档的旧统计推出。

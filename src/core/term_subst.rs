@@ -317,7 +317,7 @@ mod tests {
         let a = Term::free("a", Typ::dummy());
         let b = Term::free("b", Typ::dummy());
         // subst_bounds([v0,v1,...], Bound(i)) = v_i
-        assert_eq!(subst_bounds(&[a.clone()], &Term::bound(0)), a.clone());
+        assert_eq!(subst_bounds(std::slice::from_ref(&a), &Term::bound(0)), a.clone());
         assert_eq!(subst_bounds(&[a.clone(), b.clone()], &Term::bound(0)), a.clone());
         assert_eq!(subst_bounds(&[a.clone(), b.clone()], &Term::bound(1)), b);
     }

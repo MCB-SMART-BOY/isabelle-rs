@@ -1,0 +1,17 @@
+Isabelle-rs
+Copyright 2026 the Isabelle-rs contributors.
+
+Isabelle-rs is a separately maintained Rust project inspired by Isabelle/Pure.
+It is not an official Isabelle distribution and does not claim endorsement
+by the Isabelle developers or their institutions.
+
+Project-authored code, tests, automation, documentation and templates are
+made available under the Apache License, Version 2.0, except where a file
+or component states otherwise. See LICENSE.
+
+Third-party source, theory texts, excerpts and dependencies retain their
+respective copyright notices and applicable license terms. This attribution
+summary is not a provenance audit or a determination of derivative-work
+status. It is not a complete dependency notice inventory.
+
+This notice is informational and does not modify any license.

@@ -19,7 +19,7 @@ use isabelle_rs::core::*;
 
 fn bench_kernel_reflexive(c: &mut Criterion) {
     let mut group = c.benchmark_group("kernel/reflexive");
-    let types = vec![
+    let types = [
         types::Typ::base("bool"),
         types::Typ::base("nat"),
         types::Typ::arrow(types::Typ::base("bool"), types::Typ::base("bool")),

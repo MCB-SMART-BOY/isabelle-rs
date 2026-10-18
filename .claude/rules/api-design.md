@@ -1,17 +1,18 @@
 ---
 description: Public API and visibility rules for kernel and Isar boundaries.
-globs: src/kernel/**, src/core/thm.rs, src/isar/method.rs, src/isar/proof.rs
+globs: crates/kernel/**, src/kernel/**, src/core/thm.rs, src/isar/method.rs, src/isar/proof.rs, src/isar/proof_result.rs
 alwaysApply: false
 version: 2.0
 updated: 2026-07-18
 ---
 # API Design Rules
 
-Make invalid trust states unrepresentable. Keep strict unchecked constructors at
-`pub(in crate::kernel)` or narrower, keep theorem fields private, and expose
-typed `Result` errors at trust boundaries. Do not publish theorem-specific HOL
-constructors or implicit conversions from search/obligation types to trusted
-theorems.
+Make invalid trust states unrepresentable. Keep unchecked strict constructors
+private inside `crates/kernel`, theorem fields private, and expose typed
+`Result` errors at trust boundaries. New-kernel accepted tokens only come
+from exact-owner `accept_closed_theorem`, not legacy Strict, search, source
+spans, obligations, or copied token identities. Do not publish theorem-specific
+HOL constructors or implicit conversions to trusted theorems.
 
 Prefer theorem-independent APIs with explicit theory, proof context, burden,
 and provenance inputs. Large reusable API sketches belong in classified

@@ -1,0 +1,5 @@
+# 2026-10-03: Isabelle2025 Haskell.thy:3255 is a function definition,
+# not a literal credential. Confirmed with gitleaks 8.30.1 redacted JSON.
+# Recheck on upstream Gitlink changes or by 2026-11-03; this fingerprint
+# must not exempt any other line or rule.
+isabelle-source/src/Tools/Haskell/Haskell.thy:generic-api-key:3255

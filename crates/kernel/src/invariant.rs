@@ -1,7 +1,18 @@
+mod derive;
+mod rebuild;
+mod replay_environment;
+#[cfg(test)]
+mod variable_attacks;
+#[cfg(test)]
+mod variable_scope_attacks;
+
+use rebuild::ReplayFrame;
+use replay_environment::ReplayEnvironment;
+
 use super::{
-    CProp, CTerm, ContextStamp, Derivation, InstEntry, KernelError, KernelRules, KernelThm,
-    ProofContext, RawTerm,
-    theory::{DependencySet, TrustedTheory, validate_definition_certificate_in_parent},
+    CProp, CTerm, ContextStamp, Derivation, InstEntry, KernelError, KernelThm, ProofContext,
+    obligations::ProofPayload,
+    theory::{DependencySet, TrustedTheory},
 };
 
 /// Canonical result reconstructed by owner-parameterized accepting replay.
@@ -10,6 +21,8 @@ pub(crate) struct ReplayResult {
     hyps: Vec<CProp>,
     prop: CProp,
     dependencies: DependencySet,
+    payload: ProofPayload,
+    max_index: Option<usize>,
 }
 
 impl ReplayResult {
@@ -18,7 +31,9 @@ impl ReplayResult {
             context: theorem.context(),
             hyps: theorem.hyps().to_vec(),
             prop: theorem.prop().clone(),
+            payload: theorem.payload().clone(),
             dependencies,
+            max_index: theorem.max_var_index(),
         }
     }
 
@@ -33,6 +48,12 @@ impl ReplayResult {
     pub(crate) fn prop(&self) -> &CProp {
         &self.prop
     }
+    pub(crate) fn payload(&self) -> &ProofPayload {
+        &self.payload
+    }
+    pub(crate) fn max_var_index(&self) -> Option<usize> {
+        self.max_index
+    }
 
     pub(crate) fn dependencies(&self) -> &DependencySet {
         &self.dependencies
@@ -41,7 +62,10 @@ impl ReplayResult {
 
 fn require_same_context(expected: ContextStamp, actual: ContextStamp) -> Result<(), KernelError> {
     if expected != actual {
-        return Err(KernelError::MixedContext { expected, actual });
+        return Err(KernelError::MixedContext {
+            expected: Box::new(expected),
+            actual: Box::new(actual),
+        });
     }
     Ok(())
 }
@@ -58,12 +82,12 @@ fn preflight_substitution_contexts(
 
 fn validate_cprop(
     expected: ContextStamp,
-    validator: Option<&ProofContext>,
+    validator: Option<&ReplayEnvironment>,
     prop: &CProp,
 ) -> Result<(), KernelError> {
     require_same_context(expected, prop.context())?;
     if let Some(context) = validator {
-        context.validate_cprop(prop)?;
+        context.validate_cprop(prop, false)?;
     } else if !prop.term().ty().is_prop() {
         return Err(KernelError::NotProposition(prop.term().ty()));
     }
@@ -72,7 +96,7 @@ fn validate_cprop(
 
 fn validate_cterm(
     expected: ContextStamp,
-    validator: Option<&ProofContext>,
+    validator: Option<&ReplayEnvironment>,
     term: &CTerm,
 ) -> Result<(), KernelError> {
     require_same_context(expected, term.context())?;
@@ -84,7 +108,7 @@ fn validate_cterm(
 
 fn validate_substitution(
     expected: ContextStamp,
-    validator: Option<&ProofContext>,
+    validator: Option<&ReplayEnvironment>,
     subst: &[InstEntry],
 ) -> Result<(), KernelError> {
     preflight_substitution_contexts(expected, subst)?;
@@ -102,13 +126,16 @@ fn validate_substitution(
 
 fn validate_theorem_fields(
     expected: ContextStamp,
-    validator: Option<&ProofContext>,
+    validator: Option<&ReplayEnvironment>,
     theorem: &KernelThm,
 ) -> Result<(), KernelError> {
     require_same_context(expected, theorem.context())?;
     if theorem.prop().context() != expected {
         return Err(if validator.is_some() {
-            KernelError::MixedContext { expected, actual: theorem.prop().context() }
+            KernelError::MixedContext {
+                expected: Box::new(expected),
+                actual: Box::new(theorem.prop().context()),
+            }
         } else {
             KernelError::Invariant("theorem context does not match proposition context".into())
         });
@@ -116,16 +143,134 @@ fn validate_theorem_fields(
     for hypothesis in theorem.hyps() {
         if hypothesis.context() != expected {
             return Err(if validator.is_some() {
-                KernelError::MixedContext { expected, actual: hypothesis.context() }
+                KernelError::MixedContext {
+                    expected: Box::new(expected),
+                    actual: Box::new(hypothesis.context()),
+                }
             } else {
                 KernelError::Invariant("theorem context does not match hypothesis context".into())
             });
         }
     }
 
-    validate_cprop(expected, validator, theorem.prop())?;
+    validate_proposition_mode(expected, validator, theorem)?;
     for hypothesis in theorem.hyps() {
         validate_cprop(expected, validator, hypothesis)?;
+        if hypothesis.term().has_schematic_hypothesis() {
+            return Err(KernelError::SchematicHypothesis);
+        }
+    }
+    for (left, right) in theorem.payload().flex_pairs() {
+        validate_cterm(expected, validator, left)?;
+        validate_cterm(expected, validator, right)?;
+        if left.ty() != right.ty() {
+            return Err(KernelError::TypeMismatch { expected: left.ty(), actual: right.ty() });
+        }
+    }
+    if let Some(context) = validator {
+        for (ty, _) in theorem.payload().sort_obligations() {
+            context.context.validate_type(ty)?;
+        }
+    }
+    if theorem.max_var_index() < theorem.observed_max_var_index() {
+        return Err(KernelError::Invariant(
+            "declared theorem max index is smaller than an actual payload index".into(),
+        ));
+    }
+    if validator.is_some() {
+        ProofContext::validate_theorem_type_identities(
+            theorem.prop(),
+            theorem.hyps(),
+            theorem.payload().flex_pairs(),
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_proposition_mode(
+    expected: ContextStamp,
+    validator: Option<&ReplayEnvironment>,
+    theorem: &KernelThm,
+) -> Result<(), KernelError> {
+    if !matches!(theorem.payload().mode(), crate::obligations::ProofMode::SortErased) {
+        return validate_cprop(expected, validator, theorem.prop());
+    }
+    // Scheme-sort erasure is certified by the originating export replay;
+    // it does not exempt the resulting term from structural validation.
+    if let Some(context) = validator {
+        context.validate_cprop(theorem.prop(), true)
+    } else if theorem.prop().term().ty().is_prop() {
+        Ok(())
+    } else {
+        Err(KernelError::NotProposition(theorem.prop().term().ty()))
+    }
+}
+
+fn collect_const_term_evidence(
+    owner: &TrustedTheory,
+    term: &super::Term,
+    is_erased: bool,
+    dependencies: &mut DependencySet,
+) -> Result<(), KernelError> {
+    term.visit_const_occurrences(&mut |name, ty| {
+        if is_erased && owner.signature().certify_const_instance(name, ty).is_err() {
+            // The source-replayed export transport alone authorizes this use;
+            // validate_sort_erased_cprop already rejected monomorphic mismatch.
+            return Ok(());
+        }
+        let evidence = crate::class_proof::certify_const_scheme_evidence(owner, name, ty, &[])?;
+        dependencies.extend(evidence.dependencies());
+        Ok(())
+    })
+}
+
+fn collect_const_dependencies(
+    owner: &TrustedTheory,
+    theorem: &KernelThm,
+    dependencies: &mut DependencySet,
+) -> Result<(), KernelError> {
+    let is_erased = matches!(theorem.payload().mode(), crate::obligations::ProofMode::SortErased);
+    collect_const_term_evidence(owner, theorem.prop().term(), is_erased, dependencies)?;
+    for hypothesis in theorem.hyps() {
+        collect_const_term_evidence(owner, hypothesis.term(), false, dependencies)?;
+    }
+    for (left, right) in theorem.payload().flex_pairs() {
+        collect_const_term_evidence(owner, left.term(), false, dependencies)?;
+        collect_const_term_evidence(owner, right.term(), false, dependencies)?;
+    }
+    Ok(())
+}
+
+fn collect_recorded_operand_dependencies(
+    owner: &TrustedTheory,
+    derivation: &Derivation,
+    dependencies: &mut DependencySet,
+) -> Result<(), KernelError> {
+    let mut collect =
+        |term: &super::Term| collect_const_term_evidence(owner, term, false, dependencies);
+    match derivation {
+        Derivation::Assume { prop }
+        | Derivation::Weaken { assumption: prop, .. }
+        | Derivation::ImpliesIntr { assumption: prop, .. } => collect(prop.term())?,
+        Derivation::Reflexive { term }
+        | Derivation::BetaConversion { redex: term }
+        | Derivation::EtaConversion { redex: term }
+        | Derivation::ForallIntr { variable: term, .. }
+        | Derivation::ForallElim { arg: term, .. } => collect(term.term())?,
+        Derivation::LiftRule { goal, .. } => collect(goal.term())?,
+        Derivation::Instantiate { subst, .. }
+        | Derivation::SourceInstantiate { subst, .. }
+        | Derivation::Resolve1Match { subst, .. } => {
+            for entry in subst {
+                collect(entry.replacement().term())?;
+            }
+        },
+        Derivation::AxiomInstance { term_inst, .. } => {
+            for term in term_inst {
+                collect(term.term())?;
+            }
+        },
+        _ => {},
     }
     Ok(())
 }
@@ -138,26 +283,9 @@ fn rebuild_premise(
     logic_basis: Option<&super::LogicBasis>,
     owner: Option<&TrustedTheory>,
 ) -> Result<KernelThm, KernelError> {
-    validate_theorem_fields(expected, validator, theorem)?;
-    let replayed = replay_derivation(
-        expected,
-        validator,
-        dependencies,
-        theorem.derivation(),
-        logic_basis,
-        owner,
-    )?;
-    if replayed.context() != theorem.context()
-        || replayed.hyps() != theorem.hyps()
-        || replayed.prop() != theorem.prop()
-    {
-        return Err(if validator.is_some() {
-            KernelError::AcceptanceReplayMismatch
-        } else {
-            KernelError::Invariant("derivation replay does not match theorem fields".into())
-        });
-    }
-    Ok(replayed)
+    let environment = validator.map(ReplayEnvironment::new);
+    let frame = ReplayFrame { expected, environment: environment.as_ref(), logic_basis, owner };
+    Ok(frame.rebuild(dependencies, theorem)?.theorem)
 }
 
 /// Structural diagnostic replay. It proves no owning-theory authorization and
@@ -168,6 +296,42 @@ pub fn check_kernel_thm(theorem: &KernelThm) -> Result<(), KernelError> {
     Ok(())
 }
 
+/// Rebuild an open source under its exact owner before a proof transformation.
+pub(crate) fn replay_source_in(
+    owner: &TrustedTheory,
+    context: &ProofContext,
+    theorem: &KernelThm,
+    dependencies: &mut DependencySet,
+) -> Result<KernelThm, KernelError> {
+    require_same_context(owner.stamp(), context.stamp())?;
+    rebuild_premise(
+        context.stamp(),
+        Some(context),
+        dependencies,
+        theorem,
+        owner.logic_basis(),
+        Some(owner),
+    )
+}
+
+/// Replay a kernel-issued local capsule only in its exact owning world.
+pub(crate) fn replay_scoped_source_in(
+    owner: &TrustedTheory,
+    context: &ProofContext,
+    theorem: &KernelThm,
+    dependencies: &mut DependencySet,
+) -> Result<KernelThm, KernelError> {
+    require_same_context(owner.stamp(), context.theory().stamp())?;
+    rebuild_premise(
+        context.stamp(),
+        Some(context),
+        dependencies,
+        theorem,
+        owner.logic_basis(),
+        Some(owner),
+    )
+}
+
 /// Replay one closed candidate under the exact immutable owner context.
 pub(crate) fn replay_closed_theorem_in(
     theory: &TrustedTheory,
@@ -175,263 +339,22 @@ pub(crate) fn replay_closed_theorem_in(
 ) -> Result<ReplayResult, KernelError> {
     let expected = theory.stamp();
     let validator = ProofContext::new(theory.snapshot().clone());
-    validate_theorem_fields(expected, Some(&validator), theorem.as_kernel())?;
+    let environment = ReplayEnvironment::new(&validator);
+    theorem
+        .as_kernel()
+        .payload()
+        .validate_closed(theorem.as_kernel().prop(), theorem.as_kernel().hyps())?;
+    // Final accepted data is certified with no lexical or capsule permissions.
+    validate_theorem_fields(expected, Some(&environment), theorem.as_kernel())?;
     let mut dependencies = DependencySet::empty();
-    let replayed = replay_derivation(
+    let replayed = rebuild_premise(
         expected,
         Some(&validator),
         &mut dependencies,
-        theorem.as_kernel().derivation(),
+        theorem.as_kernel(),
         theory.logic_basis(),
         Some(theory),
     )?;
+    replayed.payload().validate_closed(replayed.prop(), replayed.hyps())?;
     Ok(ReplayResult::from_kernel(replayed, dependencies))
-}
-
-fn replay_derivation(
-    expected: ContextStamp,
-    validator: Option<&ProofContext>,
-    dependencies: &mut DependencySet,
-    derivation: &Derivation,
-    logic_basis: Option<&super::LogicBasis>,
-    owner: Option<&TrustedTheory>,
-) -> Result<KernelThm, KernelError> {
-    match derivation {
-        Derivation::TheoremRef { theorem } => {
-            let context = validator.ok_or(KernelError::UnsupportedAcceptanceDerivation)?;
-            if !context.theory().has_ancestor(theorem.accepted_in()) {
-                return Err(KernelError::UnknownTheoremDependency);
-            }
-            let prop = context.recertify_prop(theorem.prop())?;
-            dependencies.insert_theorem(theorem.id());
-            Ok(KernelThm::new(
-                Vec::new(),
-                prop,
-                Derivation::TheoremRef { theorem: theorem.clone() },
-            ))
-        },
-        Derivation::Assume { prop } => {
-            validate_cprop(expected, validator, prop)?;
-            Ok(KernelRules::assume(prop.clone()).into_kernel())
-        },
-        Derivation::Reflexive { term } => {
-            validate_cterm(expected, validator, term)?;
-            Ok(KernelRules::reflexive(term.clone()).into_kernel())
-        },
-        Derivation::Symmetric { premise } => {
-            require_same_context(expected, premise.context())?;
-            let premise =
-                rebuild_premise(expected, validator, dependencies, premise, logic_basis, owner)?;
-            KernelRules::symmetric(&premise)
-        },
-        Derivation::Transitive { left, right } => {
-            require_same_context(expected, left.context())?;
-            require_same_context(expected, right.context())?;
-            let left =
-                rebuild_premise(expected, validator, dependencies, left, logic_basis, owner)?;
-            let right =
-                rebuild_premise(expected, validator, dependencies, right, logic_basis, owner)?;
-            KernelRules::transitive(&left, &right)
-        },
-        Derivation::ImpliesIntr { assumption, premise } => {
-            require_same_context(expected, assumption.context())?;
-            require_same_context(expected, premise.context())?;
-            validate_cprop(expected, validator, assumption)?;
-            let premise =
-                rebuild_premise(expected, validator, dependencies, premise, logic_basis, owner)?;
-            KernelRules::implies_intr(assumption, &premise)
-        },
-        Derivation::ImpliesElim { major, minor } => {
-            require_same_context(expected, major.context())?;
-            require_same_context(expected, minor.context())?;
-            let major =
-                rebuild_premise(expected, validator, dependencies, major, logic_basis, owner)?;
-            let minor =
-                rebuild_premise(expected, validator, dependencies, minor, logic_basis, owner)?;
-            KernelRules::implies_elim(&major, &minor)
-        },
-        Derivation::BetaConversion { redex } => {
-            validate_cterm(expected, validator, redex)?;
-            Ok(KernelRules::beta_conversion(redex.clone())?.into_kernel())
-        },
-        Derivation::ForallIntr { variable, premise } => {
-            require_same_context(expected, variable.context())?;
-            require_same_context(expected, premise.context())?;
-            validate_cterm(expected, validator, variable)?;
-            let premise =
-                rebuild_premise(expected, validator, dependencies, premise, logic_basis, owner)?;
-            KernelRules::forall_intr(variable, &premise)
-        },
-        Derivation::ForallElim { forall, arg } => {
-            require_same_context(expected, forall.context())?;
-            require_same_context(expected, arg.context())?;
-            validate_cterm(expected, validator, arg)?;
-            let forall =
-                rebuild_premise(expected, validator, dependencies, forall, logic_basis, owner)?;
-            KernelRules::forall_elim(&forall, arg)
-        },
-        Derivation::Combination { function, argument } => {
-            require_same_context(expected, function.context())?;
-            require_same_context(expected, argument.context())?;
-            let function =
-                rebuild_premise(expected, validator, dependencies, function, logic_basis, owner)?;
-            let argument =
-                rebuild_premise(expected, validator, dependencies, argument, logic_basis, owner)?;
-            KernelRules::combination(&function, &argument)
-        },
-        Derivation::Abstraction { variable_name, variable_type, premise } => {
-            require_same_context(expected, premise.context())?;
-            let premise =
-                rebuild_premise(expected, validator, dependencies, premise, logic_basis, owner)?;
-            KernelRules::abstraction(variable_name.clone(), variable_type.clone(), &premise)
-        },
-        Derivation::EqualIntr { left, right } => {
-            require_same_context(expected, left.context())?;
-            require_same_context(expected, right.context())?;
-            let left =
-                rebuild_premise(expected, validator, dependencies, left, logic_basis, owner)?;
-            let right =
-                rebuild_premise(expected, validator, dependencies, right, logic_basis, owner)?;
-            KernelRules::equal_intr(&left, &right)
-        },
-        Derivation::EqualElim { equality, minor } => {
-            require_same_context(expected, equality.context())?;
-            require_same_context(expected, minor.context())?;
-            let equality =
-                rebuild_premise(expected, validator, dependencies, equality, logic_basis, owner)?;
-            let minor =
-                rebuild_premise(expected, validator, dependencies, minor, logic_basis, owner)?;
-            KernelRules::equal_elim(&equality, &minor)
-        },
-        Derivation::SubstPremise { equality, goal_state, selected_subgoal_index } => {
-            require_same_context(expected, equality.context())?;
-            require_same_context(expected, goal_state.context())?;
-            let equality =
-                rebuild_premise(expected, validator, dependencies, equality, logic_basis, owner)?;
-            let goal_state =
-                rebuild_premise(expected, validator, dependencies, goal_state, logic_basis, owner)?;
-            KernelRules::subst_premise(&equality, &goal_state, *selected_subgoal_index)
-        },
-        Derivation::Generalize { frees, start_index, premise } => {
-            require_same_context(expected, premise.context())?;
-            if validator.is_some()
-                && let Some((name, _)) = frees.first()
-            {
-                return Err(KernelError::UndeclaredFree(name.clone()));
-            }
-            let premise =
-                rebuild_premise(expected, validator, dependencies, premise, logic_basis, owner)?;
-            let expected_start = premise.max_var_index().map_or(0, |index| index + 1);
-            if expected_start != *start_index {
-                return Err(KernelError::Invariant(format!(
-                    "generalize start_index mismatch: expected {expected_start}, recorded {start_index}"
-                )));
-            }
-            KernelRules::generalize(&premise, frees)
-        },
-        Derivation::Instantiate { subst, premise } => {
-            require_same_context(expected, premise.context())?;
-            preflight_substitution_contexts(expected, subst)?;
-            validate_substitution(expected, validator, subst)?;
-            let premise =
-                rebuild_premise(expected, validator, dependencies, premise, logic_basis, owner)?;
-            KernelRules::instantiate(&premise, subst)
-        },
-        Derivation::Resolve1Match { rule, goal_state, selected_subgoal_index, subst } => {
-            require_same_context(expected, rule.context())?;
-            require_same_context(expected, goal_state.context())?;
-            preflight_substitution_contexts(expected, subst)?;
-            validate_substitution(expected, validator, subst)?;
-            let rule =
-                rebuild_premise(expected, validator, dependencies, rule, logic_basis, owner)?;
-            let goal_state =
-                rebuild_premise(expected, validator, dependencies, goal_state, logic_basis, owner)?;
-            let expected_subst = KernelRules::match_terms_certified(
-                &rule.prop().term().dest_imp_chain().1,
-                &goal_state.prop().term().select_subgoal(*selected_subgoal_index).ok_or_else(
-                    || KernelError::SubgoalIndexOutOfRange {
-                        index: *selected_subgoal_index,
-                        nprems: goal_state.prop().term().nprems(),
-                    },
-                )?,
-                expected,
-            )?;
-            if subst != &expected_subst {
-                return Err(KernelError::Invariant(
-                    "resolve1_match subst does not match re-derived substitution".into(),
-                ));
-            }
-            KernelRules::resolve1_match(&rule, &goal_state, *selected_subgoal_index)
-        },
-
-        Derivation::AxiomInstance { axiom_name, type_inst, term_inst } => {
-            let ctx = validator.ok_or(KernelError::UnsupportedAcceptanceDerivation)?;
-            let basis = logic_basis.ok_or_else(|| {
-                KernelError::Invariant("AxiomInstance requires an installed logic basis".into())
-            })?;
-            // Look up the axiom schema FROM THE BASIS (not from derivation)
-            let schema = basis.get_axiom(axiom_name).ok_or_else(|| {
-                KernelError::Invariant(
-                    format!("axiom `{axiom_name}` not found in installed logic basis").into(),
-                )
-            })?;
-            // Independently reconstruct: type subst → instantiate binders
-            let typed = crate::term::subst_types(&schema.prop, type_inst)?;
-            let body = crate::term::instantiate_schema_binders(&typed, term_inst)?;
-            // Certify the independently-reconstructed proposition
-            let replayed_prop = ctx.certify_prop(body)?;
-            let _schema_id = schema.id();
-            dependencies.insert_axiom(super::AxiomDependencyId::compute(basis.id(), schema.id()));
-            Ok(KernelThm::new(
-                Vec::new(),
-                replayed_prop,
-                Derivation::AxiomInstance {
-                    axiom_name: axiom_name.clone(),
-                    type_inst: type_inst.clone(),
-                    term_inst: term_inst.clone(),
-                },
-            ))
-        },
-
-        Derivation::ConservativeDefinition { definition: def_id } => {
-            let ctx = validator.ok_or(KernelError::UnsupportedAcceptanceDerivation)?;
-
-            // 1. Walk the owner's extension chain to find the matching certificate
-            let owner = owner.ok_or(KernelError::UnsupportedAcceptanceDerivation)?;
-            let (certificate, parent_id) =
-                owner.find_definition_certificate(def_id).ok_or_else(|| {
-                    KernelError::Invariant(
-                        format!("definition {def_id:?} not found in owner theory ancestry").into(),
-                    )
-                })?;
-            // 2. Reuse the unified definition-certificate validator.
-            // The parent snapshot is the definition-installing node's parent,
-            // not owner's parent. find_definition_certificate returns the
-            // correct parent_id — look up the snapshot for it.
-            validate_definition_certificate_in_parent(
-                owner.snapshot().find_snapshot_by_id(parent_id).ok_or_else(|| {
-                    KernelError::Invariant("definition parent not in owner ancestry".into())
-                })?,
-                &certificate,
-            )?;
-            // 5. Independently reconstruct: |- const_name == rhs
-            let reconstructed = RawTerm::Eq {
-                lhs: Box::new(RawTerm::Const {
-                    name: certificate.name.clone(),
-                    ty: certificate.declared_ty.clone(),
-                }),
-                rhs: Box::new(certificate.rhs_raw.clone()),
-            };
-            let replayed = ctx.certify_prop(reconstructed)?;
-
-            // 6. Insert the definition dependency
-            dependencies.insert_definition(*def_id);
-
-            Ok(KernelThm::new(
-                Vec::new(),
-                replayed,
-                Derivation::ConservativeDefinition { definition: *def_id },
-            ))
-        },
-    }
 }

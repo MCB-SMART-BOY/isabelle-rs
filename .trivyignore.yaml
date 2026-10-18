@@ -1,0 +1,72 @@
+# Risk acceptance for the pinned Isabelle2025 checkout's editor lockfiles only.
+# This Rust proof project does not build or ship these extensions. The upstream
+# extension does build a VSIX with these production dependencies; do not claim
+# they are false positives or safe to use in an editor. Reassess before using
+# the extensions, at expiry, or whenever the upstream Gitlink changes.
+# The full upstream lockfile scan is required for editor/VSIX release work.
+vulnerabilities:
+  - id: CVE-2026-102276
+    paths: [isabelle-source/src/Tools/VSCode/extension/yarn.lock]
+    purls: ["pkg:npm/brace-expansion@1.1.11"]
+    expired_at: 2026-11-03
+    statement: "Accepted for Rust verification only; upstream editor dependency remains vulnerable."
+  - id: CVE-2026-102278
+    paths: [isabelle-source/src/Tools/VSCode/extension/yarn.lock]
+    purls: ["pkg:npm/brace-expansion@1.1.11"]
+    expired_at: 2026-11-03
+    statement: "Accepted for Rust verification only; upstream editor dependency remains vulnerable."
+  - id: CVE-2026-13149
+    paths: [isabelle-source/src/Tools/VSCode/extension/yarn.lock]
+    purls: ["pkg:npm/brace-expansion@1.1.11"]
+    expired_at: 2026-11-03
+    statement: "Accepted for Rust verification only; upstream editor dependency remains vulnerable."
+  - id: CVE-2026-14257
+    paths: [isabelle-source/src/Tools/VSCode/extension/yarn.lock]
+    purls: ["pkg:npm/brace-expansion@1.1.11"]
+    expired_at: 2026-11-03
+    statement: "Accepted for Rust verification only; upstream editor dependency remains vulnerable."
+  - id: CVE-2026-69152
+    paths: [isabelle-source/src/Tools/VSCode/extension/yarn.lock]
+    purls: ["pkg:npm/brace-expansion@1.1.11"]
+    expired_at: 2026-11-03
+    statement: "Accepted for Rust verification only; upstream editor dependency remains vulnerable."
+  - id: CVE-2026-102277
+    paths: [isabelle-source/src/Tools/VSCode/extension/yarn.lock]
+    purls: ["pkg:npm/brace-expansion@1.1.11"]
+    expired_at: 2026-11-03
+    statement: "Accepted for Rust verification only; upstream editor dependency remains vulnerable."
+  - id: CVE-2026-33750
+    paths: [isabelle-source/src/Tools/VSCode/extension/yarn.lock]
+    purls: ["pkg:npm/brace-expansion@1.1.11"]
+    expired_at: 2026-11-03
+    statement: "Accepted for Rust verification only; upstream editor dependency remains vulnerable."
+  - id: CVE-2025-5889
+    paths: [isabelle-source/src/Tools/VSCode/extension/yarn.lock]
+    purls: ["pkg:npm/brace-expansion@1.1.11"]
+    expired_at: 2026-11-03
+    statement: "Accepted for Rust verification only; upstream editor dependency remains vulnerable."
+  - id: CVE-2026-26996
+    paths: [isabelle-source/src/Tools/VSCode/extension/yarn.lock]
+    purls: ["pkg:npm/minimatch@3.1.2"]
+    expired_at: 2026-11-03
+    statement: "Accepted for Rust verification only; upstream editor dependency remains vulnerable."
+  - id: CVE-2026-27903
+    paths: [isabelle-source/src/Tools/VSCode/extension/yarn.lock]
+    purls: ["pkg:npm/minimatch@3.1.2"]
+    expired_at: 2026-11-03
+    statement: "Accepted for Rust verification only; upstream editor dependency remains vulnerable."
+  - id: CVE-2026-27904
+    paths: [isabelle-source/src/Tools/VSCode/extension/yarn.lock]
+    purls: ["pkg:npm/minimatch@3.1.2"]
+    expired_at: 2026-11-03
+    statement: "Accepted for Rust verification only; upstream editor dependency remains vulnerable."
+  - id: CVE-2022-25883
+    paths: [isabelle-source/src/Tools/VSCode/extension/yarn.lock]
+    purls: ["pkg:npm/semver@7.3.5"]
+    expired_at: 2026-11-03
+    statement: "Accepted for Rust verification only; upstream editor dependency remains vulnerable."
+  - id: CVE-2022-25883
+    paths: [isabelle-source/src/Tools/VSCode/no_extension/package-lock.json]
+    purls: ["pkg:npm/semver@5.7.1"]
+    expired_at: 2026-11-03
+    statement: "Accepted for Rust verification only; obsolete upstream extension is not shipped by this crate."

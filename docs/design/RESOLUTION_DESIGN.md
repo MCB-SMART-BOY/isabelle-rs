@@ -1,29 +1,34 @@
 # Resolution / Bicompose Family — Design and Status
 
-This is the **design and implementation-status document** for the strict-kernel
-(`src/kernel/`) resolution family: `resolve1_match`, conservative
-`subst_premise`, conservative `bicompose`, and future `bicompose_eresolve`.
+This document records the current conservative resolution family in
+`crates/kernel` (re-exported at `src/kernel`): `resolve1_match` and propositional
+`subst_premise`. The historical `KernelRules::bicompose` wrapper is not exported
+by the current crate; its residual `src/kernel/rules.rs` file is outside the
+module tree. `resolve1_match` records `Derivation::Resolve1Match` and has no
+full unifier. Separately, the resumed
+P1 native-closure work provides `KernelRules::bicompose_candidate`, a bounded
+Pure composition checker that replays both complete source proofs, accepts a
+finite untrusted candidate and records `Derivation::Bicompose`; it can carry
+residual flex pairs, which prevent closed acceptance. This is not a complete
+Isabelle/ML `bicompose`/`biresolution` search or Seq facade. The conservative
+resolution contracts and historical design template below are not that newer API;
+see [P1 composition lowering](../kernel/KERNEL_PRIMITIVES.md#p1-composition-lowering)
+and [THM inventory](../status/NATIVE_THM_INTERFACE_INVENTORY.md).
 
-**STATUS**: Conservative prototype. `KernelRules::resolve1_match`,
-`KernelRules::subst_premise`, and `KernelRules::bicompose` are implemented with
-invariant replay and attack tests. `bicompose` v1 is a thin wrapper around
-`resolve1_match` and records the existing `Derivation::Resolve1Match`.
-`resolve1_match`/`bicompose` use strict one-way matching and deterministic
-substitutions; `subst_premise` is prop-equality only and fixed lhs -> rhs. Full
-Isabelle-style `bicompose`, `bicompose_eresolve`, lifting, freshening,
-flex-flex pairs, and higher-order unification remain design-phase.
-
-This document does not set the repository's current priority.
-`bicompose_eresolve`, lifting, freshening, and full unification remain deferred
-until immutable theory/signature identity, context-bound acceptance, and the
-first new-kernel `HOL::TrueI` loop are complete.
+This is not authorization to broaden resolution: alongside two standalone
+source-backed HOL/Pure fixtures, the pre-cutover bundled 125-lemma sample
+accepted only the audited `HOL::TrueI` projection (`KernelTrustedClosed: 1/125`,
+`TransitionalStrictClosed: 0/125`). The subsequently resumed P2/P3/P4
+native closure implementation has not rerun that sampler or established
+complete HOL/ML execution. See
+[PROJECT_STATUS.md](../status/PROJECT_STATUS.md).
 
 ## Relationship to `KERNEL_PRIMITIVES.md`
 
-`docs/KERNEL_PRIMITIVES.md` documents the 15 implemented base primitive rules with
-their contracts. The resolution family is tracked here because it is more complex:
-it requires premise selection, unification/matching, goal-state decomposition,
-and hypothesis propagation under substitution.
+[KERNEL_PRIMITIVES.md](../kernel/KERNEL_PRIMITIVES.md) documents the base
+Pure rules. This conservative resolution subset additionally handles premise
+selection, one-way matching and hypothesis substitution; it does not grant
+Isabelle-style complete bicomposition or general ATP replay.
 
 ## Core Conceptual Difference from Previous Draft
 
@@ -61,9 +66,9 @@ When a goal has zero subgoals (`m = 0`), it is `Δ |- R` — a terminal goal.
 ### Implication-Chain Utilities
 
 The strict kernel provides these utilities on `Term`. Their authoritative
-implementations live in [`src/kernel/term.rs`](../src/kernel/term.rs). A
+implementations live in [`crates/kernel/src/term.rs`](../../crates/kernel/src/term.rs). A
 standalone API sketch for experimentation is maintained in
-[resolution_api.rs](../scripts/templates/resolution_api.rs).
+[resolution_api.rs](../../scripts/templates/resolution_api.rs).
 
 These utilities are unit-tested and do not require unification.
 
@@ -118,17 +123,20 @@ to a subgoal in the implication chain, never the conclusion.
 
 ---
 
-## 2A. Conservative `bicompose` First Version (Implemented Wrapper)
+## 2A. Current `resolve1_match` and Historical `bicompose` Wrapper
 
-The first strict `bicompose` is implemented as a named, conservative
-backward-resolution wrapper that reuses the already-tested `resolve1_match`
-semantics. It does not copy legacy `ThmKernel::bicompose`, and it does not
-introduce full unification, lifting/freshening, e-resolution, or premise
-solving.
+The current conservative interface is `KernelRules::resolve1_match`.
+The earlier thin `KernelRules::bicompose` alias is not part of the isolated
+crate API. Its historical name must not be inferred from residual source files.
+The restrictions below do not describe `KernelRules::bicompose_candidate`,
+whose separate [P1 contract](../kernel/KERNEL_PRIMITIVES.md#p1-composition-lowering)
+covers finite candidate checking, source replay and residual obligations.
+`resolve1_match` does not copy legacy `ThmKernel::bicompose` and does not
+introduce full unification, lifting/freshening, e-resolution or premise solving.
 
 ### Relationship To `resolve1_match`
 
-`resolve1_match` is the current verified core:
+`resolve1_match` implements conservative backward resolution:
 
 ```text
 rule conclusion C  --strict one-way match-->  selected goal subgoal Gᵢ
@@ -137,17 +145,17 @@ substitution applies to rule premises, remaining goal, and hypotheses
 invariant replay recomputes the match and result proposition
 ```
 
-Conservative `bicompose` v1 is a thin public/named wrapper around
-`resolve1_match`.
+The historical `bicompose` alias delegated to this operation; current callers
+use `resolve1_match` directly.
 
 It must not duplicate subgoal-splicing logic. `Term::replace_subgoal_with_premises`
 remains the single ordering primitive for replacing a selected subgoal.
 
 ### Major / Minor Roles
 
-The first API keeps roles explicit. The exact signature is owned by
-[`KernelRules::bicompose`](../src/kernel/rules.rs); the standalone template uses
-the same `rule`, `goal_state`, and `selected_subgoal_index` roles.
+The current API keeps roles explicit. Its exact signature is owned by
+[`KernelRules::resolve1_match`](../../crates/kernel/src/rules.rs).
+The standalone template is design-only, not a callable `bicompose` API.
 
 Do not infer roles from theorem shape. The `rule` theorem supplies inserted
 premises; the `goal_state` theorem supplies the selected subgoal and retained
@@ -171,8 +179,8 @@ SubgoalIndexOutOfRange { index, nprems: m }
 
 ### Supported Subset
 
-The first version should support only the subset already validated by
-`resolve1_match`:
+Only `resolve1_match` is restricted to the following conservative subset,
+not the separate P1 candidate API:
 
 ```text
 strict one-way matching only
@@ -186,14 +194,14 @@ no flex-flex pairs
 no conclusion-resolution
 ```
 
-This means conservative `bicompose` v1 is not Isabelle's full `bicompose`.
-It is a stable strict-kernel name for the current backward-resolution core.
+This conservative operation is not Isabelle's full `bicompose`.
+The current backward-resolution entry point is `resolve1_match`.
 
 ### Variable Namespace Policy
 
 The first version must not silently merge rule and goal namespaces.
 
-Current `resolve1_match` / `bicompose` reject same-named Free collisions and
+Current `resolve1_match` rejects same-named Free collisions and
 overlapping rule/goal schematic variable `(name, index)` pairs with
 `RequiresLifting`.
 
@@ -203,7 +211,7 @@ trusted rule from depending on unstated freshening semantics.
 
 ### Unsupported Cases
 
-The first strict `bicompose` must reject or defer:
+`resolve1_match` must reject or leave unsupported:
 
 ```text
 goal has no selectable subgoal
@@ -219,11 +227,9 @@ legacy compatibility alpha-equivalence
 
 ### Derivation Replay Strategy
 
-Conservative `bicompose` v1 does **not** add a `Derivation::Bicompose` node
-carrying the two theorems, selected index, and substitution.
-
-It intentionally records `Derivation::Resolve1Match` until the rule grows beyond
-the existing core. Replay therefore remains the existing `Resolve1Match` replay:
+`resolve1_match` records `Derivation::Resolve1Match`, as its historical
+`bicompose` alias did. It does not record the separate `Derivation::Bicompose`
+used by the current P1 candidate checker. `Resolve1Match` replay must:
 
 1. recursively check `rule` and `goal_state`;
 2. reselect the goal subgoal by `selected_subgoal_index`;
@@ -232,24 +238,20 @@ the existing core. Replay therefore remains the existing `Resolve1Match` replay:
 5. rebuild the result via `replace_subgoal_with_premises`;
 6. compare replayed theorem fields with stored theorem fields.
 
-### Implemented Conservative `bicompose` Attack Tests
+### Current Conservative Resolution Attack Tests
 
-Implemented wrapper-level tests:
+Examples in [`crates/kernel/src/rules.rs`](../../crates/kernel/src/rules.rs):
 
-- `bicompose_basic_no_vars`
-- `bicompose_basic_with_rule_var_match`
-- `bicompose_rejects_match_failure`
-- `bicompose_rejects_out_of_range`
-- `bicompose_selected_index_is_goal_subgoal`
-- `bicompose_replaces_selected_subgoal`
-- `bicompose_applies_substitution_to_rule_premises`
-- `bicompose_rejects_goal_remaining_subgoal_substitution_without_lifting`
-- `bicompose_applies_substitution_to_hypotheses`
-- `bicompose_rejects_free_collision_without_lifting`
-- `bicompose_rejects_var_namespace_collision_without_lifting`
-- `bicompose_allows_same_var_name_different_index_without_lifting`
-- `bicompose_allows_non_overlapping_goal_side_var`
-- `bicompose_invariant_check_passes`
+- `resolve1_basic_no_vars`
+- `resolve1_basic_with_match`
+- `resolve1_selected_index_is_goal_subgoal_not_rule_premise`
+- `resolve1_rejects_goal_var_namespace_collision_without_lifting`
+- `resolve1_preserves_rigid_hypotheses_after_matching`
+- `resolve1_multiple_bindings_preserve_subgoal_order`
+- `resolve1_tampered_result_rejected`
+
+These are current test locations, not results from a new run. Old
+`bicompose_*` wrapper tests outside the module tree are not current coverage.
 
 ---
 
@@ -276,9 +278,11 @@ result:
     Gᵢ₊₁σ ==> ... ==> Gₘσ ==> Rσ
 ```
 
-Note: `bicompose_eresolve` is a higher-level operation that wraps `bicompose`
-with premise solving. It remains deferred; stability of the wrapper alone is
-not authorization to implement it before the trusted acceptance chain.
+Note: the proposed full `bicompose_eresolve` is a higher-level operation
+with premise solving and ML search semantics; `resolve1_match` does not
+implement it. The separate `bicompose_candidate` now checks a supplied finite
+elimination choice, but has no ML unifier or lazy `Seq` facade and does not
+establish full elimination-resolution compatibility.
 
 ---
 
@@ -390,7 +394,7 @@ smuggled into the first version.
 ### Implemented Attack Tests
 
 The first strict implementation covers these tests in
-`src/kernel/rules.rs` and `tests/kernel_rewrite_soundness.rs`.
+`crates/kernel/src/rules.rs` and `tests/kernel_rewrite_soundness.rs`.
 
 | Test | What it checks |
 |---|---|
@@ -420,35 +424,35 @@ Additional negative coverage:
 ### Hard constraint
 
 ```text
-src/kernel/ MUST NOT depend on crate::core::unify
+isabelle-kernel MUST NOT depend on legacy src/core
 ```
 
-The legacy core has unification (`src/core/unify.rs`, `src/core/pattern.rs`),
-but the strict kernel firewall forbids `use crate::core::...`.
+`src/kernel` is a re-export facade; `crates/kernel` owns this implementation.
 
 ### What the strict kernel needs
 
-A strict matcher/unifier module (`src/kernel/unify.rs`) provides the raw matcher,
-while `src/kernel/rules.rs` owns the certified-origin wrapper. Both remain
-`pub(in crate::kernel)`; there is intentionally no public bare-`Term` to
-`InstEntry` conversion. The reusable design skeleton is
-[resolution_api.rs](../scripts/templates/resolution_api.rs).
+The strict matcher in `crates/kernel/src/unify.rs` produces raw bindings;
+`crates/kernel/src/rules.rs` wraps replacements known to originate in a
+certified proposition as `InstEntry`. Both helpers are `pub(crate)` within
+the dedicated `isabelle-kernel` crate, not a public bare-`Term` to `InstEntry`
+conversion. The reusable design sketch is
+[resolution_api.rs](../../scripts/templates/resolution_api.rs).
 
 ### Implementation status
 
 | Component | Status |
 |---|---|
-| `unify::match_terms` (raw matcher, `pub(in crate::kernel)`) | ✅ Implemented (`src/kernel/unify.rs`) |
-| `MatchBinding` (raw binding, `pub(in crate::kernel)`) | ✅ Implemented |
-| `CTerm::from_certified_subterm` (`pub(in crate::kernel)`) | ✅ Implemented |
-| `KernelRules::match_terms_certified` (`pub(in crate::kernel)`) | ✅ Implemented |
-| Public `Term → CTerm` API | ❌ Intentionally absent |
-| Visibility: `src/core/` and upper-layer modules blocked | ✅ Enforced by `pub(in crate::kernel)` |
-| Full unification (`unify_terms`) | ❌ Not started (deferred) |
+| `unify::match_terms` (raw matcher, kernel-crate-private) | Implemented (`crates/kernel/src/unify.rs`) |
+| `MatchBinding` (raw binding, kernel-crate-private) | Implemented |
+| `CTerm::from_certified_subterm` (kernel-crate-private) | Implemented |
+| `KernelRules::match_terms_certified` (kernel-crate-private) | Implemented |
+| Public `Term → CTerm` API | Intentionally absent |
+| Legacy `src/core` and upper layers cannot call private match helpers | Enforced by separate crate |
+| Full unification (`unify_terms`) | Deferred, not implemented |
 
 The matcher is a **one-way structural matcher**, not full unification.
-The file is named `src/kernel/unify.rs` because full unification will be
-added there later, but the current implementation is matching-only.
+The file is named `crates/kernel/src/unify.rs`; higher-order/full
+unification remains deferred.
 
 ### Conservative first version
 
@@ -488,20 +492,19 @@ certified propositions**. Specifically:
 
 Because both inputs trace back to certified `CProp` values, their subterms
 inherit certification by origin. The matcher computes replacements from
-these subterms and wraps them using a `pub(in crate::kernel)` constructor that
-is NOT exposed outside `src/kernel/`. The authoritative contract and
-implementation are in [`src/kernel/cterm.rs`](../src/kernel/cterm.rs). Its
-constructor remains `pub(in crate::kernel)` and requires certified-subterm
-origin; external code must use `ProofContext::certify_term`.
+these subterms and wraps them through a `pub(crate)` constructor scoped to
+the dedicated `isabelle-kernel` crate. The implementation lives in
+[`crates/kernel/src/cterm.rs`](../../crates/kernel/src/cterm.rs).
+External code must use `ProofContext::certify_term`.
 
 Key properties:
 
 | Property | Guarantee |
 |---|---|
-| Visibility | `pub(in crate::kernel)` — only `src/kernel/` modules can call this |
+| Visibility | `pub(crate)` inside the dedicated strict kernel crate |
 | Certified-by-origin | Caller guarantees the term originated from a certified `CProp`/`KernelThm` |
 | No dummy types | The certified term already passed `ProofContext` checks |
-| Firewall integrity | `src/core/`, `src/isar/`, `src/tools/` and external crates blocked |
+| Firewall integrity | `src/core/`, `src/isar/`, `src/tools/` and external crates cannot call this helper |
 
 #### Alternative (rejected): pass `ProofContext` to the matcher
 
@@ -516,8 +519,8 @@ This is rejected for the first version because:
 - It adds parameter noise to what should be a pure structural operation.
 
 If later evidence shows that re-certification is valuable (e.g., for
-cross-theory matching), the `pub(in crate::kernel)` constructor can be
-replaced by explicit context-passing without changing the matcher's API.
+cross-theory matching), the crate-private constructor can be replaced
+by explicit context-passing without changing the matcher's API.
 
 #### Impact on `InstEntry`
 
@@ -533,7 +536,7 @@ When a rule is applied, its free variables may collide with those in the goal.
 The future `lift_rule` operation must increment bound indices and freshen free
 variables before combining the rule with a goal. Its non-executable API sketch
 is maintained in
-[`scripts/templates/resolution_api.rs`](../scripts/templates/resolution_api.rs).
+[`scripts/templates/resolution_api.rs`](../../scripts/templates/resolution_api.rs).
 
 **First version**: Do NOT implement lifting/freshening. However, the kernel
 MUST NOT silently proceed when a collision would cause incorrect results.
@@ -541,7 +544,7 @@ MUST NOT silently proceed when a collision would cause incorrect results.
 Instead, `resolve1_match` and conservative `bicompose` must **detect** when the
 rule and goal variable spaces collide in a way that requires lifting, and return
 `KernelError::RequiresLifting` rather than proceeding. The authoritative error
-definition is in [`src/kernel/mod.rs`](../src/kernel/mod.rs).
+definition is in [`crates/kernel/src/lib.rs`](../../crates/kernel/src/lib.rs).
 
 #### What constitutes a collision?
 
@@ -559,9 +562,9 @@ that may be incorrectly identified without lifting/freshening. Specifically:
 
 Current `resolve1_match` / `bicompose` scan the rule and goal for overlapping
 Free names and schematic Var `(name, index)` pairs. The reviewed implementation
-is [`ThmKernel::detect_collision`](../src/kernel/rules.rs); the corresponding
-public-shape design template remains in
-[`scripts/templates/resolution_api.rs`](../scripts/templates/resolution_api.rs).
+is [`KernelRules::detect_collision`](../../crates/kernel/src/rules.rs); the corresponding
+design template remains in
+[`scripts/templates/resolution_api.rs`](../../scripts/templates/resolution_api.rs).
 
 This is deliberately conservative: it may reject valid cases, but it will
 never silently produce a wrong theorem. As lifting is implemented, the
@@ -651,9 +654,10 @@ to avoid confusion with rule premises.
 
 ### Q4: `tpairs` / Flex-Flex
 
-The strict kernel currently has no `tpairs`. When full unification is added,
-unresolved flex-flex pairs must become `tpairs` on the result theorem. This is
-a deferred concern.
+The narrow `resolve1_match` operation does not create flex pairs.
+The separate `bicompose_candidate` path now retains checked residual pairs in
+the private theorem payload and replays them; unresolved pairs block closure.
+That partial checker is not a full ML unifier or `tpairs_of` interface.
 
 ### Q5: Invariant Replay
 
@@ -666,7 +670,7 @@ Each resolution rule must have:
 
 Current reusable errors are `KernelError::SubgoalIndexOutOfRange` and
 `KernelError::RequiresLifting`; their authoritative definitions are in
-[`src/kernel/mod.rs`](../src/kernel/mod.rs). Rules with no premises are valid and
+[`crates/kernel/src/lib.rs`](../../crates/kernel/src/lib.rs). Rules with no premises are valid and
 therefore do not require a separate error variant.
 
 Current strict matching failures are propagated from `match_terms_certified`
@@ -677,11 +681,10 @@ cleanup, not a blocker for the conservative design.
 
 ### Q7: `subst_premise` vs `bicompose` Ordering
 
-**Recommendation**: conservative `bicompose` v1 now exists only as the reviewed
-wrapper subset. Stabilize that wrapper and its variable namespace rejection
-before designing full bicomposition or `bicompose_eresolve`. The minimal
-`resolve1_match` prototype, conservative `subst_premise`, and conservative
-`bicompose` wrapper do not replace full Isabelle-style bicomposition.
+The current `resolve1_match` and `subst_premise` operations do not replace
+full Isabelle-style bicomposition. The separate P1 `bicompose_candidate` path
+adds a finite checked composition IR, not an ML unifier, search sequence, or
+compatibility acceptance.
 
 The first `subst_premise` version exercises premise indexing, propositional
 equality elimination, hypothesis union, and invariant replay without requiring
@@ -696,14 +699,14 @@ unification.
 | `dest_imp_chain` / `mk_imp_chain` / `nprems` / `select_subgoal` / `replace_subgoal_with_premises` | ✅ Implemented | Foundation for all resolution rules; `resolve1_match` uses the shared replacement helper |
 | `instantiate` with Var→CTerm | ✅ Done | Substitution under certified boundary |
 | `generalize` (Free→Var) | ✅ Done | For schematic rules |
-| `union_hyps` + substitution | ✅ Implemented for `resolve1_match` / `bicompose` | Applies substitution to rule and goal hyps before union |
-| Strict matcher (`match_terms` + `match_terms_certified`) | ✅ Implemented | Internal (`pub(in crate::kernel)`) only; no public Term→CTerm API |
+| `union_hyps` + substitution | Implemented for `resolve1_match` | Applies substitution to rule and goal hyps before union |
+| Strict matcher (`match_terms` + `match_terms_certified`) | ✅ Implemented | Dedicated-kernel-crate-private only; no public Term→CTerm API |
 | `resolve1_match` | ✅ Prototype implemented | Conservative one-way backward resolution; shared subgoal-splicing helper; invariant replay covered; rejects Free and schematic Var namespace collisions |
 | conservative `subst_premise` | ✅ Implemented | Prop equality only, lhs→rhs only, exact selected-subgoal match, no unification; invariant replay and attack tests covered |
-| conservative `bicompose` | ✅ Implemented wrapper | Thin wrapper over `resolve1_match`; records `Derivation::Resolve1Match`; no separate replay path or `Derivation::Bicompose` in v1 |
-| Full unification | Not started | Deferred |
-| Lifting / freshening | Not started | Deferred (caller responsibility for v1) |
-| `tpairs` / flex-flex | Not in strict kernel | Deferred |
+| historical conservative `bicompose` | Not exported by the current crate | Earlier alias of `resolve1_match`; residual source is not an active API or replay path |
+| Full ML unification/search | Not implemented | `bicompose_candidate` checks supplied finite candidates; no general ML unifier or Seq facade |
+| Lifting / freshening | Implemented in the separate P1 composition path | Not provided by `resolve1_match` |
+| `tpairs` / flex-flex | Residual flex pairs implemented in the separate P1 composition path | Checked obligations block closure; no complete ML projection or full unification |
 
 ---
 
@@ -711,7 +714,11 @@ unification.
 
 1. ✅ **Implication-chain utilities** — `dest_imp_chain`, `mk_imp_chain`, `nprems`,
    `select_subgoal`, `replace_subgoal_with_premises`.
-2. ✅ **Strict matcher** — `match_terms(pattern, target) -> Vec<InstEntry>`.
+2. **Strict matcher** — raw `match_terms(pattern, target)` returns
+   `Result<Vec<MatchBinding>, KernelError>`; crate-private
+   `KernelRules::match_terms_certified(pattern, target, context)` certifies
+   those bindings by origin under a `ContextStamp` and returns
+   `Result<Vec<InstEntry>, KernelError>` (see Section 5).
    Conservative: pattern Vars only, exact type match, consistent duplicates.
    Bindings are returned in deterministic `(name, index, type)` order so
    derivation replay is not HashMap-order dependent.
@@ -722,13 +729,17 @@ unification.
 5. ✅ **Conservative `bicompose` design** — explicit major/minor roles, selected
    goal subgoal semantics, no full unification, no lifting/freshening, reviewed
    variable namespace policy.
-6. ✅ **Conservative `bicompose` implementation** — thin wrapper over
-   `resolve1_match`; rejects Free and schematic Var namespace collisions.
-7. **`bicompose_eresolve`** — deferred elimination resolution with premise
-   solving.
+6. **Historical conservative `bicompose` implementation** — the earlier thin
+   alias is no longer exported; current callers use `resolve1_match`.
+7. **Full `bicompose_eresolve` / ML elimination search** — deferred. The
+   separate P1 `bicompose_candidate` checks finite elimination proposals but
+   does not provide the proposed search/Seq interface.
 
-Do not start item 7, workspace splitting, APP, `isabelle.toml`, or AFP
-benchmarks before the repository's context-bound trusted theorem loop closes.
+Neither this wrapper sequence nor the newer candidate checker can be broadened
+into ATP/HOL acceptance merely because a narrow sampled projection receives a
+token. Other sampled HOL proofs, proof-runtime crate splitting (not the Cargo
+workspace/xtask), APP, `isabelle.toml`, and AFP benchmarks remain separate
+deferred work.
 
 ---
 
@@ -761,21 +772,8 @@ Implemented `subst_premise` attack tests:
 - `subst_premise_invariant_check_passes`
 - `subst_premise_tampered_result_rejected`
 
-Implemented conservative `bicompose` wrapper attack tests:
-
-- `bicompose_basic_no_vars`
-- `bicompose_basic_with_rule_var_match`
-- `bicompose_rejects_match_failure`
-- `bicompose_rejects_out_of_range`
-- `bicompose_selected_index_is_goal_subgoal`
-- `bicompose_replaces_selected_subgoal`
-- `bicompose_applies_substitution_to_rule_premises`
-- `bicompose_rejects_goal_remaining_subgoal_substitution_without_lifting`
-- `bicompose_applies_substitution_to_hypotheses`
-- `bicompose_rejects_free_collision_without_lifting`
-- `bicompose_rejects_var_namespace_collision_without_lifting`
-- `bicompose_allows_same_var_name_different_index_without_lifting`
-- `bicompose_allows_non_overlapping_goal_side_var`
-- `bicompose_invariant_check_passes`
+Current conservative resolution coverage is listed in
+[Section 2A](#current-conservative-resolution-attack-tests). Historical
+`bicompose_*` wrapper test names are not evidence for the current module tree.
 
 ---
